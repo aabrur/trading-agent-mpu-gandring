@@ -16,6 +16,21 @@ export function floatToWire(x: number) {
   s = s.replace(/\.?0+$/, '');
   return s === '-0' ? '0' : s;
 }
+/** Hyperliquid perp order value minimum (docs: "Order must have minimum value of $10"). */
+export const HL_MIN_NOTIONAL = 10;
+/** Lot step for szDecimals, exact (10 ** -4 is 0.00009999... in floating point; toFixed makes it 0.0001). */
+export function hlStep(szDecimals: number) { return Number((10 ** -szDecimals).toFixed(szDecimals)); }
+/**
+ * A price tick that is valid for every price up to `px`: at most 5 significant figures and at most
+ * 6 - szDecimals decimals (integer prices are always allowed). A multiple of this tick never needs
+ * re-rounding by hlPrice, so a stop rounded to it toward the entry stays exactly where the planner put it.
+ */
+export function hlTick(px: number, szDecimals: number) {
+  const maxDec = Math.max(0, 6 - szDecimals);
+  const sigTick = 10 ** (Math.floor(Math.log10(px)) - 4);
+  const t = Math.min(1, Math.max(sigTick, 10 ** -maxDec));
+  return Number(t.toFixed(Math.max(maxDec, 0)));
+}
 /** Perp prices: 5 significant figures and at most 6 - szDecimals decimals. */
 export function hlPrice(px: number, szDecimals: number) {
   const sig = Number(px.toPrecision(5));
@@ -86,7 +101,9 @@ export class HyperliquidAdapter implements ExchangeAdapter {
   }
   async instrument(symbol: string) {
     const a = await this.asset(symbol);
-    return { symbol, qtyStep: 10 ** -a.szDecimals, minQty: 10 ** -a.szDecimals, tickSize: 0 };
+    // Tick sized for prices up to 10% above the mid, so a SHORT stop above the entry is on a valid tick too.
+    const px = await this.mid(a.coin);
+    return { symbol, qtyStep: hlStep(a.szDecimals), minQty: hlStep(a.szDecimals), tickSize: hlTick(px * 1.1, a.szDecimals), minNotional: HL_MIN_NOTIONAL };
   }
   async ticker(symbol: string) { return this.mid((await this.asset(symbol)).coin); }
   async placeOrder(o: PlaceOrder) {

@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { rulesFromExchangeInfo, cachedRules, type InstrumentRules, type RulesCache } from './rules.js';
 import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest, pickProtection } from './types.js';
 
 // EXPERIMENTAL, UNTESTED against a real account. Binance USD-M futures, one-way mode.
@@ -25,13 +26,14 @@ export class BinanceAdapter implements ExchangeAdapter {
     return { ok: !canWithdraw, canWithdraw, canTrade: !!r?.enableFutures, verified: true, detail: `${canWithdraw ? 'key HAS withdraw permission' : 'no withdraw permission'}; futures ${r?.enableFutures ? 'enabled' : 'disabled'}; ip restrict ${r?.ipRestrict ? 'on' : 'off (recommended on)'}` };
   }
   async balance() { const r = await this.req('GET', '/fapi/v2/account'); return { equityUsdt: Number(r.totalMarginBalance ?? 0), availableUsdt: Number(r.availableBalance ?? 0) }; }
+  private rulesCache: RulesCache = new Map();
+  /** LOT_SIZE + MARKET_LOT_SIZE (stricter wins), PRICE_FILTER and MIN_NOTIONAL from Binance exchangeInfo, cached 5 min. */
+  instrumentRules(symbol: string): Promise<InstrumentRules> {
+    return cachedRules(`binance:${this.base}:${symbol}`, async () => rulesFromExchangeInfo(await httpJson(this.fetchImpl, `${this.base}/fapi/v1/exchangeInfo`), symbol, `binance ${this.base}/fapi/v1/exchangeInfo`, null), this.rulesCache);
+  }
   async instrument(symbol: string) {
-    const r = await httpJson(this.fetchImpl, `${this.base}/fapi/v1/exchangeInfo`);
-    const s = r?.symbols?.find((x: any) => x.symbol === symbol);
-    if (!s) throw new ExchangeError(`binance: unknown symbol ${symbol}`);
-    const lot = s.filters.find((f: any) => f.filterType === 'MARKET_LOT_SIZE') ?? s.filters.find((f: any) => f.filterType === 'LOT_SIZE');
-    const px = s.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
-    return { symbol, qtyStep: Number(lot.stepSize), minQty: Number(lot.minQty), tickSize: Number(px.tickSize) };
+    const r = await this.instrumentRules(symbol).catch((e) => { throw new ExchangeError(`binance: ${(e as Error).message}`); });
+    return { symbol, qtyStep: r.qtyStep, minQty: r.minQty, tickSize: r.tickSize, minNotional: r.minNotional, maxQty: r.maxQty, status: r.status };
   }
   async ticker(symbol: string) { const r = await httpJson(this.fetchImpl, `${this.base}/fapi/v1/ticker/price?symbol=${symbol}`); const px = Number(r?.price); if (!px) throw new ExchangeError('binance: no price'); return px; }
   async placeOrder(o: PlaceOrder) {

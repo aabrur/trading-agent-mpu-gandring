@@ -55,7 +55,8 @@ export class BybitAdapter implements ExchangeAdapter {
     const r = await this.req('GET', '/v5/market/instruments-info', { category: 'linear', symbol });
     const i = r?.list?.[0];
     if (!i) throw new ExchangeError(`bybit: unknown symbol ${symbol}`);
-    return { symbol, qtyStep: Number(i.lotSizeFilter.qtyStep), minQty: Number(i.lotSizeFilter.minOrderQty), tickSize: Number(i.priceFilter.tickSize) };
+    const mn = Number(i.lotSizeFilter.minNotionalValue), mx = Number(i.lotSizeFilter.maxMktOrderQty ?? i.lotSizeFilter.maxOrderQty);
+    return { symbol, qtyStep: Number(i.lotSizeFilter.qtyStep), minQty: Number(i.lotSizeFilter.minOrderQty), tickSize: Number(i.priceFilter.tickSize), minNotional: mn > 0 ? mn : null, maxQty: mx > 0 ? mx : null, status: i.status ?? null };
   }
 
   async ticker(symbol: string) {

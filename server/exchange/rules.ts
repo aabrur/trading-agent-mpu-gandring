@@ -83,10 +83,11 @@ export async function publicRules(venue: string | null | undefined, symbol: stri
 
 /**
  * Rules for a live adapter: its own instrumentRules() when it has one, otherwise the plain instrument()
- * (lot step, min qty, tick) with no venue minimum notional and no venue fee (config values apply).
+ * (lot step, min qty, tick, and the venue minimum notional when it publishes one). No venue fee here (TAKER_FEE applies).
  */
-export async function adapterRules(adapter: { name: string; instrument(symbol: string): Promise<{ qtyStep: number; minQty: number; tickSize: number }>; instrumentRules?(symbol: string): Promise<InstrumentRules> }, symbol: string): Promise<InstrumentRules> {
+export async function adapterRules(adapter: { name: string; instrument(symbol: string): Promise<{ qtyStep: number; minQty: number; tickSize: number; minNotional?: number | null; maxQty?: number | null; status?: string | null }>; instrumentRules?(symbol: string): Promise<InstrumentRules> }, symbol: string): Promise<InstrumentRules> {
   if (adapter.instrumentRules) return adapter.instrumentRules(symbol);
   const i = await adapter.instrument(symbol);
-  return { symbol, qtyStep: i.qtyStep, minQty: i.minQty, maxQty: null, tickSize: i.tickSize, minNotional: null, takerFee: null, status: null, source: `${adapter.name} instrument()`, fetchedAt: Date.now() };
+  const mn = Number(i.minNotional);
+  return { symbol, qtyStep: i.qtyStep, minQty: i.minQty, maxQty: i.maxQty != null && i.maxQty > 0 ? i.maxQty : null, tickSize: i.tickSize, minNotional: mn > 0 ? mn : null, takerFee: null, status: i.status ? String(i.status).toUpperCase() : null, source: `${adapter.name} instrument()`, fetchedAt: Date.now() };
 }

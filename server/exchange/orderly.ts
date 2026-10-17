@@ -76,7 +76,8 @@ export class OrderlyAdapter implements ExchangeAdapter {
   async instrument(symbol: string) {
     const i = await this.pub(`/v1/public/info/${orderlySymbol(symbol)}`);
     if (!i) throw new ExchangeError(`orderly: unknown symbol ${symbol}`);
-    return { symbol, qtyStep: Number(i.base_tick), minQty: Math.max(Number(i.base_min), Number(i.base_tick)), tickSize: Number(i.quote_tick) };
+    const mn = Number(i.min_notional), mx = Number(i.base_max);
+    return { symbol, qtyStep: Number(i.base_tick), minQty: Math.max(Number(i.base_min), Number(i.base_tick)), tickSize: Number(i.quote_tick), minNotional: mn > 0 ? mn : null, maxQty: mx > 0 ? mx : null };
   }
   async ticker(symbol: string) { const d = await this.pub(`/v1/public/futures/${orderlySymbol(symbol)}`); const px = Number(d?.mark_price); if (!px) throw new ExchangeError('orderly: no price'); return px; }
   async funding(symbol: string) { const d = await this.pub(`/v1/public/funding_rate/${orderlySymbol(symbol)}`); return Number(d?.est_funding_rate ?? d?.last_funding_rate ?? NaN); }

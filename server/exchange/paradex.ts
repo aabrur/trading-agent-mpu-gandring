@@ -88,7 +88,8 @@ export class ParadexAdapter implements ExchangeAdapter {
     const r = await this.pub(`/markets?market=${paradexMarket(symbol)}`);
     const m = r?.results?.[0];
     if (!m) throw new ExchangeError(`paradex: unknown market ${paradexMarket(symbol)}`);
-    return { symbol, qtyStep: Number(m.order_size_increment), minQty: Number(m.order_size_increment), tickSize: Number(m.price_tick_size) };
+    const mn = Number(m.min_notional);
+    return { symbol, qtyStep: Number(m.order_size_increment), minQty: Number(m.order_size_increment), tickSize: Number(m.price_tick_size), minNotional: mn > 0 ? mn : null };
   }
   async ticker(symbol: string) { const r = await this.pub(`/markets/summary?market=${paradexMarket(symbol)}`); const px = Number(r?.results?.[0]?.mark_price ?? r?.results?.[0]?.last_traded_price); if (!px) throw new ExchangeError('paradex: no price'); return px; }
   async funding(symbol: string) { const r = await this.pub(`/markets/summary?market=${paradexMarket(symbol)}`); return Number(r?.results?.[0]?.funding_rate ?? NaN); }

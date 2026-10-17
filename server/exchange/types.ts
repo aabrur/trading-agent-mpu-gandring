@@ -34,7 +34,8 @@ export const ADAPTER_STATUS: Record<ExchangeName, 'implemented' | 'experimental'
   orderly: 'experimental'
 };
 
-export interface Instrument { symbol: string; qtyStep: number; minQty: number; tickSize: number }
+/** Lot step, min qty, tick. minNotional (qty * price, quote) when the venue publishes one; null/undefined = none published. */
+export interface Instrument { symbol: string; qtyStep: number; minQty: number; tickSize: number; minNotional?: number | null; maxQty?: number | null; status?: string | null }
 export interface Balance { equityUsdt: number; availableUsdt: number }
 export interface PermissionReport {
   /** true only when the venue told us the key cannot withdraw (or, on Hyperliquid, it is an approved agent wallet). */
