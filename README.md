@@ -61,7 +61,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **A cozy office.** Wood floors, a rug, sunset windows, a kopi corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. They walk to the table, type, point, punch, cheer when a trade fills and sweat when Risk says no.
 - **Interactive pop-up tutorial.** A 9-step guided onboarding tour (`? Tutorial` in the top bar) highlights each section of the desk with a spotlight and directional arrow, explaining how the virtual office, agent roster, command bar, chart, fight meter, portfolio book, desk ops, DEX wallet connector, and setup wizard work. Can be skipped or replayed anytime.
 - **Dual language mode: EN and ID.** Defaults to English (`EN`) and switches instantly to Bahasa Indonesia (`ID`) from the top bar (`EN ▾ ID`), backed by a strictly synchronized 1:1 translation dictionary verified by automated tests.
-- **In-app Version & Update Adapter (`v0.0.0.2.0`).** The version badge in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build updates in one click via `POST /api/update/apply`.
+- **In-app Version & Update Adapter (`v0.0.0.2.1`).** The version badge in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build updates in one click via `POST /api/update/apply`.
 - **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for Money Trade / N, and every desk monitor shows a sparkline.
 - **Day and night.** A toggle in the top bar. All colors and fonts live in `web/src/styles/tokens.css`.
 - **Live office feed.** Status, speech bubbles and fights stream over WebSocket, next to the fight meter, ticker strip, verdict cards and a desk log.
@@ -106,7 +106,7 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 | Live venue USDT balance & official deposit page link | `npm run gb -- account` | Portfolio panel venue balance bar & **Connect Wallet** modal |
 | Interactive onboarding tour | N/A | **? Tutorial** button in top bar |
 | Switch UI language (`EN` default / `ID`) | N/A | **EN ▾ ID** toggle in top bar |
-| Check version (`v0.0.0.2.0`) & one-click update | `git pull --ff-only && npm run build` | **v0.0.0.2.0** button in top bar |
+| Check version (`v0.0.0.2.1`) & one-click update | `git pull --ff-only && npm run build` | **v0.0.0.2.1** button in top bar |
 | Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup > Exchange & Safety **Run doctor** |
 | Switch mode to TESTNET or LIVE | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup > Exchange & Safety |
 | What is configured with secrets masked | `npm run setup -- status` | Setup header and status lines |
@@ -382,7 +382,7 @@ server/            Express + WebSocket backend
   exchange/        adapter interface; Bybit implemented; Binance, OKX, Hyperliquid, Aster, dYdX, Paradex, Orderly experimental
   live/            automatic key guard, optional testnet round trip, live executor
   wallet.ts        Connect wallet: DEX agent key + one signed approval + live venue balance + official deposit links
-  updater.ts       in-app version check (v0.0.0.2.0) and one-click git fast-forward updater
+  updater.ts       in-app version check (v0.0.0.2.1) and one-click git fast-forward updater
   auto.ts          full auto scheduler
   reports.ts       periodic reports to files, UI, bridge and Telegram
   learnings.ts     self-improving lessons store and the guard-loosening block
@@ -420,7 +420,7 @@ Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang
    mpu
    ```
 3. Ketik `mpu` kapan saja di terminal untuk langsung menjalankan desk dan membuka Web UI secara otomatis, atau `mpu setup` untuk langsung membuka menu pengaturan bernavigasi sidebar kiri. Di halaman Setup, Anda bisa mengatur saldo paper, safety net, memilih model untuk setiap agent dari 10 provider yang masing-masing menyediakan 20 model AI sehingga 1 API key bisa dipakai untuk banyak model, atau langsung menghubungkan agent CLI yang sudah terpasang di laptop Anda seperti Codex, Claude Code, Pi, Kimi Code, Kilo, Cline dan Grok Build maupun supervisor eksternal seperti Antigravity dan Grok Bot.
-4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia tombol hijau **Connect Wallet** khusus DEX, tombol **Setup**, tombol **? Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.2.0** untuk cek & klik update versi secara langsung, serta tombol **EN ▾ ID** untuk mengganti bahasa tampilan antara Bahasa Inggris dan Bahasa Indonesia.
+4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia tombol hijau **Connect Wallet** khusus DEX, tombol **Setup**, tombol **? Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.2.1** untuk cek & klik update versi secara langsung, serta tombol **EN ▾ ID** untuk mengganti bahasa tampilan antara Bahasa Inggris dan Bahasa Indonesia.
 5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order dari 1 sampai 4. Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss. Anda juga bisa memilih token perp apa saja lewat dropdown Watchlist, Popular Perps, atau `+ Custom token...` di Price Chart, Command Bar, dan Desk Ops.
 6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `mpu setup` atau `npm run setup` atau klik tombol **Setup** di kanan atas office: pilih venue dan mode, ikuti link langsung satu per satu untuk daftar, dana tes, halaman pembuatan key dan izin yang dicentang, lalu ketik key di input tersembunyi. Key masuk ke `.env` dengan chmod 600, tidak pernah ke chat. Izin: trade saja, withdraw dan transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Untuk DEX (`Hyperliquid`, `Aster`, `dYdX v4`, `Paradex`, `Orderly`) bisa melalui tombol **Connect Wallet** yang juga menampilkan saldo USDT secara live serta tombol **Halaman deposit resmi** untuk setiap DEX/CEX. Setelah itu jalankan `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
 7. Pakai agen AI sendiri seperti Grok Bot, Claude Code, Codex, Antigravity, Cursor atau Copilot? Suruh dia membaca [AGENTS.md](AGENTS.md) dan [docs/local-agents.md](docs/local-agents.md).

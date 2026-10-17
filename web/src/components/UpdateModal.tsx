@@ -27,7 +27,7 @@ export function UpdateModal({
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string; output?: string } | null>(null);
 
-  const cur = info?.currentVersion ?? '0.0.0.2.0';
+  const cur = info?.currentVersion ?? '0.0.0.2.1';
   const latest = info?.latestVersion ?? cur;
 
   const checkNow = async () => {
