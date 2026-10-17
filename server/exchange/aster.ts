@@ -23,11 +23,13 @@ export class AsterAdapter implements ExchangeAdapter {
   readonly exchangeStops = true;
   private base: string;
   private account: ReturnType<typeof privateKeyToAccount>;
-  constructor(public readonly network: Network, private user: string, signerPrivateKey: string, private fetchImpl: FetchLike = fetch, base = process.env[network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL']) {
+  private pinnedAgent: string;
+  constructor(public readonly network: Network, private user: string, signerPrivateKey: string, private fetchImpl: FetchLike = fetch, base = process.env[network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'], pinnedAgent = process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED) {
     if (!/^0x[0-9a-fA-F]{40}$/.test(user)) throw new ExchangeError('ASTER user address must be the 0x main wallet address (public)');
     if (!/^0x[0-9a-fA-F]{64}$/.test(signerPrivateKey)) throw new ExchangeError('Aster signer key must be the 0x private key of a Pro API agent wallet');
     this.account = privateKeyToAccount(signerPrivateKey as Hex);
     this.base = base || BASE[network];
+    this.pinnedAgent = (pinnedAgent ?? '').trim();
   }
   get signerAddress() { return this.account.address; }
 
@@ -56,13 +58,43 @@ export class AsterAdapter implements ExchangeAdapter {
     if (this.account.address.toLowerCase() === this.user.toLowerCase()) {
       return { ok: false, canWithdraw: true, canTrade: true, verified: true, detail: 'this is the MAIN wallet key, not a Pro API agent wallet. Refusing. Create an API wallet (asterdex.com/en/api-wallet, Pro API) with withdraw off and use that key.' };
     }
-    // Aster documents no per-agent permission query. The only exchange answer is the account flag read with the agent signature.
-    // We accept only an explicit canWithdraw false. Anything else is refused (fail closed).
+    // Account flags read with the agent signature. canWithdraw here is the ACCOUNT flag ("can transfer out asset").
     const r = await this.req('GET', '/fapi/v3/account');
     const canWithdraw = r?.canWithdraw === false ? false : r?.canWithdraw === true ? true : null;
     const canTrade = r?.canTrade !== false;
     const detail = `agent ${this.account.address} for ${this.user}; account reports canTrade ${String(r?.canTrade)}, canWithdraw ${String(r?.canWithdraw)}`;
-    return { ok: canWithdraw === false, canWithdraw, canTrade, verified: canWithdraw === false, detail: canWithdraw === false ? detail : `${detail}. Refusing unless Aster reports canWithdraw false for this signer.` };
+    if (canWithdraw === false) return { ok: true, canWithdraw, canTrade, verified: true, detail };
+    if (!this.pinnedAgent) return { ok: false, canWithdraw, canTrade, verified: false, detail: `${detail}. Refusing unless Aster reports canWithdraw false for this signer (opt in: ASTER_AGENT_WITHDRAW_OFF_VERIFIED=<your agent address>, see docs/venues.md).` };
+    return this.pinnedAgentCheck(r, detail, canWithdraw, canTrade);
+  }
+
+  /**
+   * Opt-in exception (ASTER_AGENT_WITHDRAW_OFF_VERIFIED=<agent address>). On Aster the account-level canWithdraw stays true
+   * for normal accounts; withdraw permission is set PER AGENT (approveAgent / registerAndApproveAgent canWithdraw, docs:
+   * https://asterdex.github.io/aster-api-website/asterCode/endpoints/). We accept only when the exchange's own per-agent
+   * record (GET /fapi/v3/agent) for THIS signer says canWithdraw false. The account reading is kept in the report.
+   */
+  private async pinnedAgentCheck(acct: any, detail: string, acctWithdraw: boolean | null, acctTrade: boolean): Promise<PermissionReport> {
+    const refuse = (why: string): PermissionReport => ({ ok: false, canWithdraw: acctWithdraw, canTrade: acctTrade, verified: false, detail: `${detail}. ASTER_AGENT_WITHDRAW_OFF_VERIFIED exception refused: ${why}` });
+    const signer = this.account.address.toLowerCase();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(this.pinnedAgent)) return refuse('the pinned value is not a 0x address');
+    if (this.pinnedAgent.toLowerCase() !== signer) return refuse(`the signer ${this.account.address} is not the pinned agent ${this.pinnedAgent}`);
+    if (signer === this.user.toLowerCase()) return refuse('the signer is the main wallet');
+    if (acct?.canTrade !== true) return refuse(`the account does not report canTrade true (got ${String(acct?.canTrade)})`);
+    let agents: unknown;
+    try { agents = await this.req('GET', '/fapi/v3/agent'); } catch (e) { return refuse(`could not read the agent list: ${(e as Error).message}`); }
+    if (!Array.isArray(agents)) return refuse('the agent list is not readable');
+    const me = agents.filter((a: any) => typeof a?.agentAddress === 'string' && a.agentAddress.toLowerCase() === signer);
+    if (me.length !== 1) return refuse(`the signer is not registered as an agent of ${this.user}`);
+    const a: any = me[0];
+    if (a.canWithdraw !== false) return refuse(`Aster reports this agent canWithdraw ${String(a.canWithdraw)}`);
+    if (a.canPerpTrade !== true) return refuse(`Aster reports this agent canPerpTrade ${String(a.canPerpTrade)}`);
+    if (!(Number(a.expired) > Date.now())) return refuse(`the agent approval is expired or has no expiry (${String(a.expired)})`);
+    return {
+      ok: true, canWithdraw: false, canTrade: true, verified: true,
+      exception: `ASTER_AGENT_WITHDRAW_OFF_VERIFIED accepted: account canWithdraw ${String(acct?.canWithdraw)}; signer ${this.account.address} is a registered agent of ${this.user} and Aster reports this agent canWithdraw false, canPerpTrade true (GET /fapi/v3/agent)`,
+      detail: `${detail}; accepted because signer ${this.account.address} is a registered agent of ${this.user} and Aster's per-agent record reports canWithdraw false, canPerpTrade true (ASTER_AGENT_WITHDRAW_OFF_VERIFIED pinned). The report's canWithdraw is the agent's flag; the account flag is canWithdraw ${String(acct?.canWithdraw)}`
+    };
   }
   async balance() { const r = await this.req('GET', '/fapi/v3/account'); return { equityUsdt: Number(r?.totalMarginBalance ?? 0), availableUsdt: Number(r?.availableBalance ?? 0) }; }
   private rulesCache: RulesCache = new Map();

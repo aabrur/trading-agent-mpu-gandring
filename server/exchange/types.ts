@@ -45,6 +45,8 @@ export interface PermissionReport {
   /** true when the answer came from the exchange API, false when we could not check. */
   verified: boolean;
   detail: string;
+  /** Set when an opt-in, exchange-checked exception was used to accept the key. Logged loudly at startup. */
+  exception?: string;
 }
 export interface PlaceOrder { symbol: string; side: Side; qty: number; stop: number; tp: number | null; leverage: number; clientId: string }
 export interface OrderRecord { clientId: string; orderId: string; status: 'filled' | 'partial' | 'open' | 'rejected' | 'cancelled' | 'unknown'; filledQty: number; avgPrice: number | null; raw?: string }

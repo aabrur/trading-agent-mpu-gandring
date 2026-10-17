@@ -255,7 +255,7 @@ Click an agent in the office or the roster under it. You get a chat panel. Plain
 | Binance | CEX | `binance` | experimental | API key + secret, futures on, withdrawals off |
 | OKX | CEX | `okx` | experimental | API key + secret + passphrase, trade only |
 | Hyperliquid | DEX | `hyperliquid` | experimental | `HYPERLIQUID_ACCOUNT_ADDRESS` + `HYPERLIQUID_AGENT_PRIVATE_KEY` (API agent wallet) |
-| Aster | DEX | `aster` | experimental | `ASTER_USER_ADDRESS` + `ASTER_SIGNER_PRIVATE_KEY` (Pro API agent, withdraw off) |
+| Aster | DEX | `aster` | experimental | `ASTER_USER_ADDRESS` + `ASTER_SIGNER_PRIVATE_KEY` (Pro API agent, withdraw off). Optional `ASTER_AGENT_WITHDRAW_OFF_VERIFIED=<your agent address>` checks the agent's own withdraw flag on Aster, see [docs/venues.md](docs/venues.md) |
 | dYdX v4 | DEX | `dydx` | experimental, **SDK required** (`npm install @dydxprotocol/v4-client-js`, not bundled) | `DYDX_ADDRESS` + `DYDX_API_PRIVATE_KEY` + `DYDX_AUTHENTICATOR_ID` (API Trading Key, place/cancel only) |
 | Paradex | DEX | `paradex` | experimental | `PARADEX_ACCOUNT_ADDRESS` + `PARADEX_SUBKEY_PRIVATE_KEY` (subkey) |
 | Orderly | DEX | `orderly` | experimental | `ORDERLY_ACCOUNT_ID` + `ORDERLY_KEY_SECRET` (scope read,trading) |

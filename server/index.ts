@@ -27,6 +27,7 @@ if (net) {
       process.exit(2);
     }
     executor = new LiveExecutor(adapter);
+    if (v.perm?.exception) log(`[withdraw guard] ${safe(v.perm.exception)}`);
     log(`${cfg.tradingMode} on ${ex.name}${cfg.live?.experimental ? ' (EXPERIMENTAL adapter)' : ''}: ${v.detail}`);
     // Every open position must have its stop resting ON THE EXCHANGE, so it stays protected while this computer is off.
     const pct = Math.min(20, Math.max(0.5, Number(process.env.PROTECT_STOP_PCT ?? 3) || 3));

@@ -13,7 +13,7 @@ function record(calls: Call[], url: string, init: RequestInit = {}) {
   calls.push(c);
   return c;
 }
-export interface FakeOpts { rejectStop?: boolean; canWithdraw?: boolean | null; dropStops?: boolean }
+export interface FakeOpts { rejectStop?: boolean; canWithdraw?: boolean | null; dropStops?: boolean; canTrade?: unknown; agents?: unknown; agentsError?: boolean }
 
 // ---------------- Aster (Binance-like v3) ----------------
 export function fakeAster(opts: FakeOpts = {}) {
@@ -24,7 +24,8 @@ export function fakeAster(opts: FakeOpts = {}) {
   const fetchImpl = (async (url: string, init?: RequestInit) => {
     const c = record(calls, url, init), q = c.query;
     switch (`${c.method} ${c.path}`) {
-      case 'GET /fapi/v3/account': return json({ canTrade: true, canWithdraw: opts.canWithdraw === undefined ? false : opts.canWithdraw, totalMarginBalance: '1000', availableBalance: '900' });
+      case 'GET /fapi/v3/agent': return opts.agentsError ? json({ code: -1022, msg: 'Signature for this request is not valid.' }, 400) : json(opts.agents ?? []);
+      case 'GET /fapi/v3/account': return json({ ...(opts.canTrade === undefined ? { canTrade: true } : opts.canTrade === 'missing' ? {} : { canTrade: opts.canTrade }), canWithdraw: opts.canWithdraw === undefined ? false : opts.canWithdraw, totalMarginBalance: '1000', availableBalance: '900' });
       case 'GET /fapi/v3/exchangeInfo': return json({ symbols: [{ symbol: 'BTCUSDT', filters: [{ filterType: 'LOT_SIZE', stepSize: '0.001', minQty: '0.001' }, { filterType: 'PRICE_FILTER', tickSize: '0.1' }] }] });
       case 'GET /fapi/v3/ticker/price': return json({ symbol: 'BTCUSDT', price: '60000' });
       case 'POST /fapi/v3/leverage': return json({ leverage: Number(q.get('leverage')) });
