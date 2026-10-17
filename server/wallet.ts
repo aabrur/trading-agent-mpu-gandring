@@ -9,15 +9,15 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { verifyTypedData, type Hex } from 'viem';
 import { randomBytes } from 'node:crypto';
-import { envNames, VENUE_KIND, VENUE_LABEL, httpJson, type ExchangeName, type FetchLike, type Network } from './exchange/index.js';
-import { setEnv } from '../cli/envfile.js';
+import { envNames, makeAdapter, VENUE_KIND, VENUE_LABEL, httpJson, type ExchangeName, type FetchLike, type Network } from './exchange/index.js';
+import { readEnv, setEnv } from '../cli/envfile.js';
 import { registerSecrets } from './redact.js';
 import { looksLikeSeed } from './live/steps.js';
 import { HyperliquidAdapter } from './exchange/hyperliquid.js';
 import { AsterAdapter } from './exchange/aster.js';
 
 export type WalletSupport = 'signature' | 'manual' | 'cex';
-export interface VenueWalletInfo { venue: ExchangeName; label: string; kind: 'CEX' | 'DEX'; support: WalletSupport; steps: string[]; revokeUrl: string | null; docsUrl: string }
+export interface VenueWalletInfo { venue: ExchangeName; label: string; kind: 'CEX' | 'DEX'; support: WalletSupport; steps: string[]; revokeUrl: string | null; docsUrl: string; depositUrl: string }
 
 const ZERO = '0x0000000000000000000000000000000000000000' as const;
 const AGENT_NAME = 'mpugandring';
@@ -25,19 +25,19 @@ export const ASTER_SIGNATURE_CHAIN_ID = 56; // per Aster docs: signatureChainId 
 const PENDING_TTL_MS = 10 * 60_000;
 
 export const WALLET_GUIDE: Record<ExchangeName, Omit<VenueWalletInfo, 'venue' | 'label' | 'kind'>> = {
-  hyperliquid: { support: 'signature', revokeUrl: 'https://app.hyperliquid.xyz/API', docsUrl: 'https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/nonces-and-api-wallets',
+  hyperliquid: { support: 'signature', revokeUrl: 'https://app.hyperliquid.xyz/API', docsUrl: 'https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/nonces-and-api-wallets', depositUrl: 'https://app.hyperliquid.xyz/portfolio',
     steps: ['Connect your wallet: main address is read for display only.', 'The app makes a fresh agent key on this computer and shows its address.', 'Sign "ApproveAgent" in your wallet. Agent wallets can trade but cannot withdraw.', 'The agent key and your main address are saved to .env with chmod 600. Restart the office to use them.'] },
-  aster: { support: 'signature', revokeUrl: 'https://www.asterdex.com/en/api-wallet', docsUrl: 'https://github.com/asterdex/api-docs',
+  aster: { support: 'signature', revokeUrl: 'https://www.asterdex.com/en/api-wallet', docsUrl: 'https://github.com/asterdex/api-docs', depositUrl: 'https://www.asterdex.com/en/portfolio',
     steps: ['Connect your wallet on BNB Chain: Aster signs approvals with chain id 56.', 'The app makes a fresh agent key on this computer and shows its address.', 'Sign the registerAndApproveAgent message: perp trading on, spot off, withdraw OFF forced.', 'The agent key and your main address are saved to .env with chmod 600. Restart the office to use them.'] },
-  dydx: { support: 'manual', revokeUrl: 'https://dydx.trade', docsUrl: 'https://help.dydx.trade/en/articles/267486-api-trading-keys-creating-a-new-key-on-the-front-end',
+  dydx: { support: 'manual', revokeUrl: 'https://dydx.trade', docsUrl: 'https://help.dydx.trade/en/articles/267486-api-trading-keys-creating-a-new-key-on-the-front-end', depositUrl: 'https://dydx.trade/portfolio',
     steps: ['dYdX has no browser-signature agent approval this app can use.', 'In the dYdX app open More, API Trading Keys, and create a key: trade only.', 'Copy your dydx1 address, the API key private key and the authenticator id.', 'Run npm run setup, pick dydx, paste them. Also run npm install @dydxprotocol/v4-client-js.'] },
-  paradex: { support: 'manual', revokeUrl: 'https://app.paradex.trade', docsUrl: 'https://docs.paradex.trade/api/general-information/api-authentication',
+  paradex: { support: 'manual', revokeUrl: 'https://app.paradex.trade', docsUrl: 'https://docs.paradex.trade/api/general-information/api-authentication', depositUrl: 'https://app.paradex.trade/portfolio',
     steps: ['Paradex uses Starknet subkeys, not an EVM wallet approval.', 'In the Paradex app create a subkey. Subkeys can trade but cannot withdraw or transfer.', 'Copy your Paradex account address and the subkey private key.', 'Run npm run setup, pick paradex, paste them.'] },
-  orderly: { support: 'manual', revokeUrl: 'https://orderly.network/docs/build-on-omnichain/user-flows/wallet-authentication', docsUrl: 'https://orderly.network/docs/build-on-omnichain/user-flows/wallet-authentication',
+  orderly: { support: 'manual', revokeUrl: 'https://orderly.network/docs/build-on-omnichain/user-flows/wallet-authentication', docsUrl: 'https://orderly.network/docs/build-on-omnichain/user-flows/wallet-authentication', depositUrl: 'https://app.orderly.network',
     steps: ['Create an Orderly key with scope read,trading in an Orderly-based app or with the add-orderly-key flow.', 'Orderly keys cannot withdraw; withdrawals need your wallet signature.', 'Copy your Orderly account id and the Orderly key secret: base58.', 'Run npm run setup, pick orderly, paste them.'] },
-  bybit: { support: 'cex', revokeUrl: null, docsUrl: 'https://www.bybit.com/app/user/api-management', steps: ['No wallet for a CEX.', 'Create an API key: Contract trade only, withdrawals OFF, IP whitelist recommended.', 'Run npm run setup, pick bybit, paste the key and secret.'] },
-  binance: { support: 'cex', revokeUrl: null, docsUrl: 'https://www.binance.com/en/my/settings/api-management', steps: ['No wallet for a CEX.', 'Create an API key: futures on, withdrawals OFF, IP restriction recommended.', 'Run npm run setup, pick binance, paste the key and secret.'] },
-  okx: { support: 'cex', revokeUrl: null, docsUrl: 'https://www.okx.com/account/my-api', steps: ['No wallet for a CEX.', 'Create an API key with Trade permission only, no Withdraw, IP whitelist recommended.', 'Run npm run setup, pick okx, paste key, secret and passphrase.'] }
+  bybit: { support: 'cex', revokeUrl: null, docsUrl: 'https://www.bybit.com/app/user/api-management', depositUrl: 'https://www.bybit.com/user/assets/deposit', steps: ['No wallet for a CEX.', 'Create an API key: Contract trade only, withdrawals OFF, IP whitelist recommended.', 'Run npm run setup, pick bybit, paste the key and secret.'] },
+  binance: { support: 'cex', revokeUrl: null, docsUrl: 'https://www.binance.com/en/my/settings/api-management', depositUrl: 'https://www.binance.com/en/my/wallet/account/main/deposit/crypto/USDT', steps: ['No wallet for a CEX.', 'Create an API key: futures on, withdrawals OFF, IP restriction recommended.', 'Run npm run setup, pick binance, paste the key and secret.'] },
+  okx: { support: 'cex', revokeUrl: null, docsUrl: 'https://www.okx.com/account/my-api', depositUrl: 'https://www.okx.com/balance/recharge', steps: ['No wallet for a CEX.', 'Create an API key with Trade permission only, no Withdraw, IP whitelist recommended.', 'Run npm run setup, pick okx, paste key, secret and passphrase.'] }
 };
 export const walletInfo = (venue: ExchangeName): VenueWalletInfo => ({ venue, label: VENUE_LABEL[venue], kind: VENUE_KIND[venue], ...WALLET_GUIDE[venue] });
 
@@ -168,6 +168,52 @@ export class WalletConnector {
       } catch (e) { last = (e as Error).message; }
     }
     return { ok: false, detail: last.slice(0, 160) };
+  }
+  /** Read live USDT balance from a DEX or CEX venue using saved trade-only credentials or a public wallet address. */
+  async readVenueBalance(venue: ExchangeName, network: Network, address?: string): Promise<{ ok: boolean; venue: ExchangeName; label: string; kind: 'CEX' | 'DEX'; network: Network; configured: boolean; address: string | null; equityUsdt: number | null; availableUsdt: number | null; depositUrl: string; note?: string; error?: string }> {
+    const f = this.opts.fetchImpl ?? fetch;
+    const fileEnv = readEnv(this.opts.envFile);
+    const getVar = (k?: string) => (k ? (fileEnv[k] || process.env[k] || '').trim() : '');
+    const n = envNames(venue, network);
+    const savedKey = getVar(n.key);
+    const savedSecret = getVar(n.secret);
+    const savedPass = getVar(n.passphrase);
+    const addr = (address || '').trim() || (VENUE_KIND[venue] === 'DEX' ? savedKey : '');
+    const depositUrl = WALLET_GUIDE[venue].depositUrl;
+    const base = { venue, label: VENUE_LABEL[venue], kind: VENUE_KIND[venue], network, depositUrl };
+
+    if (venue === 'hyperliquid' && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
+      try {
+        const s = await httpJson(f, `${HL_BASE[network]}/info`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'clearinghouseState', user: addr }) });
+        const equityUsdt = Number(s?.marginSummary?.accountValue ?? 0);
+        const availableUsdt = Number(s?.withdrawable ?? 0);
+        return { ok: true, ...base, configured: Boolean(savedKey && savedSecret), address: addr, equityUsdt, availableUsdt };
+      } catch (e) {
+        return { ok: false, ...base, configured: Boolean(savedKey && savedSecret), address: addr, equityUsdt: null, availableUsdt: null, error: (e as Error).message };
+      }
+    }
+
+    if (savedKey && savedSecret) {
+      try {
+        const adapter = makeAdapter(venue, network, { key: savedKey, secret: savedSecret, passphrase: savedPass || undefined }, f);
+        const b = await adapter.balance();
+        return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: b.equityUsdt, availableUsdt: b.availableUsdt };
+      } catch (e) {
+        return { ok: false, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: null, availableUsdt: null, error: (e as Error).message };
+      }
+    }
+
+    return {
+      ok: true,
+      ...base,
+      configured: false,
+      address: addr || null,
+      equityUsdt: null,
+      availableUsdt: null,
+      note: VENUE_KIND[venue] === 'DEX'
+        ? 'Connect wallet or configure your agent key in Setup to read live balance on this DEX.'
+        : 'Configure your trade-only API key in Setup to read live balance on this exchange.'
+    };
   }
   /** For tests only. */
   peek(id: string) { const p = this.pending.get(id); return p ? { agentAddress: p.agentAddress, main: p.main, typedData: p.typedData, submit: p.submit } : null; }

@@ -21,10 +21,11 @@ import type { LiveExecutor } from './live/executor.js';
 import { AutoTrader } from './auto.js';
 import { Reporter } from './reports.js';
 import { WalletConnector, walletAccess, walletInfo, findSecretLike } from './wallet.js';
-import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
+import { EXCHANGES, ADAPTER_STATUS, type ExchangeName, type Network } from './exchange/index.js';
 import { mountSetupRoutes, mountOpsRoutes } from './setup/routes.js';
 import { DeskLead } from './channels/supervisor.js';
 import { createInboundApp, mountChannelSetupRoutes } from './channels/routes.js';
+import { APP_VERSION, checkUpdate, applyUpdate } from './updater.js';
 
 const sameSecret = (given: string, want: string) => {
   const a = Buffer.from(given), b = Buffer.from(want);
@@ -82,13 +83,23 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.use(express.json({ limit: '32kb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, app: 'trading-agent-mpu-gandring', mode: cfg.tradingMode, appMode: cfg.appMode, exchange: cfg.live?.exchange ?? cfg.exchange.name, killed: desk.killed, tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off', agentEvents: cfg.agentEvents.enabled ? 'on' : 'off', marketSource: cfg.marketSource, bridge: cfg.bridge.enabled ? 'on' : 'off',
+    res.json({ ok: true, app: 'trading-agent-mpu-gandring', version: APP_VERSION, mode: cfg.tradingMode, appMode: cfg.appMode, exchange: cfg.live?.exchange ?? cfg.exchange.name, killed: desk.killed, tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off', agentEvents: cfg.agentEvents.enabled ? 'on' : 'off', marketSource: cfg.marketSource, bridge: cfg.bridge.enabled ? 'on' : 'off',
       agents: Object.fromEntries(AGENT_IDS.map((id) => [id, cfg.appMode === 'grokbot' ? { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false } : { provider: cfg.agents[id].provider, model: cfg.agents[id].model, fellBackToMock: cfg.agents[id].fellBackToMock }])) });
   });
   app.get('/api/state', (_req, res) => res.json(desk.snapshot()));
 
+  // Self-update adapter: check version status and apply git fast-forward update on localhost.
+  app.get('/api/update/status', async (_req, res) => {
+    res.json(await checkUpdate(opts.setupFetch ?? fetch));
+  });
+  app.post('/api/update/apply', (req, res) => {
+    const a = walletAccess({ appMode: cfg.appMode, host: cfg.host, remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
+    if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });
+    res.json(applyUpdate());
+  });
+
   // Connect wallet (EXPERIMENTAL). Local mode, office on 127.0.0.1, loopback clients only. Never accepts a private key or seed.
-  const wallet = opts.wallet ?? new WalletConnector({ envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env' });
+  const wallet = opts.wallet ?? new WalletConnector({ envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch });
   const walletLimit = limiter(20, 60_000);
   const access = (req: express.Request) => walletAccess({ appMode: cfg.appMode, host: cfg.host, remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
   const WalletStart = z.object({ venue: z.enum(EXCHANGES as unknown as [ExchangeName, ...ExchangeName[]]), network: z.enum(['testnet', 'mainnet']), mainAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/), chainId: z.number().int().positive().max(2 ** 40) }).strict();
@@ -97,6 +108,14 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const a = access(req);
     res.json({ available: a.ok, reason: a.reason, appMode: cfg.appMode, current: cfg.exchange.name, experimental: true,
       venues: EXCHANGES.map((v) => ({ ...walletInfo(v), status: ADAPTER_STATUS[v] })) });
+  });
+  app.get('/api/wallet/balance', async (req, res) => {
+    const a = access(req); if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });
+    const rawVenue = String(req.query.venue ?? cfg.live?.exchange ?? cfg.exchange.name).toLowerCase();
+    const venue = (EXCHANGES.includes(rawVenue as ExchangeName) ? rawVenue : cfg.exchange.name) as ExchangeName;
+    const network: Network = req.query.network === 'mainnet' || (req.query.network !== 'testnet' && cfg.tradingMode === 'LIVE') ? 'mainnet' : 'testnet';
+    const address = typeof req.query.address === 'string' ? req.query.address.slice(0, 120) : undefined;
+    res.json(await wallet.readVenueBalance(venue, network, address));
   });
   app.post('/api/wallet/start', (req, res) => {
     const a = access(req); if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });

@@ -4,6 +4,7 @@ import type { CandleData, DeskState } from '../types';
 import { POPULAR_SYMBOLS } from '../types';
 import { TradingViewChart } from './TradingViewChart';
 import { fmt, fmtPx } from './format';
+import { useI18n } from '../i18n';
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const localTime = (sec: number) => new Date(sec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -12,6 +13,7 @@ const localDay = (sec: number) => new Date(sec * 1000).toLocaleDateString([], { 
 interface Props { state: DeskState; symbol: string; onSymbol: (s: string) => void; data: CandleData | null; theme: string }
 
 export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
+  const { t } = useI18n();
   const [view, setView] = useState<'desk' | 'tv'>('desk');
   const tv = !!state.tradingview?.widget && view === 'tv';
   const box = useRef<HTMLDivElement>(null);
@@ -29,8 +31,8 @@ export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
       layout: { background: { color: 'transparent' }, textColor: css('--chart-text'), fontFamily: css('--font-ui'), fontSize: 12, attributionLogo: true },
       grid: { vertLines: { color: css('--chart-grid') }, horzLines: { color: css('--chart-grid') } },
       rightPriceScale: { borderColor: css('--chart-axis'), scaleMargins: { top: 0.12, bottom: 0.08 } },
-      timeScale: { borderColor: css('--chart-axis'), timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 8, tickMarkFormatter: (t: number) => { const d = new Date(t * 1000); return d.getHours() === 0 && d.getMinutes() === 0 ? localDay(t) : localTime(t); } },
-      localization: { timeFormatter: (t: number) => `${localDay(t)} ${localTime(t)}`, priceFormatter: (p: number) => fmtPx(p) },
+      timeScale: { borderColor: css('--chart-axis'), timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 8, tickMarkFormatter: (ts: number) => { const d = new Date(ts * 1000); return d.getHours() === 0 && d.getMinutes() === 0 ? localDay(ts) : localTime(ts); } },
+      localization: { timeFormatter: (ts: number) => `${localDay(ts)} ${localTime(ts)}`, priceFormatter: (p: number) => fmtPx(p) },
       crosshair: { vertLine: { color: css('--chart-cross'), labelBackgroundColor: css('--wood-dark') }, horzLine: { color: css('--chart-cross'), labelBackgroundColor: css('--wood-dark') } }
     });
     const s = c.addSeries(CandlestickSeries, {
@@ -85,10 +87,10 @@ export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
           <h2>{symbol}</h2>
           <span className="chart-price">{tick ? fmtPx(tick.last) : data ? fmtPx(data.last) : '...'}</span>
           {tick && <span className={`chip-change ${tick.change24hPct >= 0 ? 'up' : 'down'}`}>{tick.change24hPct >= 0 ? '+' : ''}{fmt(tick.change24hPct)}% 24h</span>}
-          <span className="muted small">15m candles · {data ? (data.example ? 'sample data · EXAMPLE' : data.source) : 'loading'}</span>
+          <span className="muted small">{t('candles15m')} · {data ? (data.example ? 'sample data · EXAMPLE' : data.source) : t('loading')}</span>
         </div>
         {state.tradingview?.widget && <div className="seg">
-          <button className={view === 'desk' ? 'on' : ''} onClick={() => setView('desk')}>desk chart</button>
+          <button className={view === 'desk' ? 'on' : ''} onClick={() => setView('desk')}>{t('deskChart')}</button>
           <button className={view === 'tv' ? 'on' : ''} onClick={() => setView('tv')}>TradingView</button>
         </div>}
         <div className="seg chart-symbols-bar">
@@ -99,30 +101,30 @@ export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
             value={symbol}
             onChange={(e) => {
               if (e.target.value === '__custom__') {
-                const c = window.prompt('Enter token symbol, for example PEPEUSDT, DOGEUSDT, AVAXUSDT:');
+                const c = window.prompt(t('customTokenPrompt'));
                 if (c) onSymbol(c.trim().toUpperCase());
               } else {
                 onSymbol(e.target.value);
               }
             }}
           >
-            <optgroup label="Watchlist">
+            <optgroup label={t('watchlistGroup')}>
               {state.watchlist.map((s) => <option key={s} value={s}>{s}</option>)}
             </optgroup>
-            <optgroup label="Popular Perps">
+            <optgroup label={t('popularPerpsGroup')}>
               {POPULAR_SYMBOLS.filter((s) => !state.watchlist.includes(s)).map((s) => <option key={s} value={s}>{s}</option>)}
             </optgroup>
-            <option value="__custom__">+ Custom token...</option>
+            <option value="__custom__">{t('customTokenOpt')}</option>
           </select>
           <button
             className="chart-custom-btn"
             title="Type any token to view on chart"
             onClick={() => {
-              const c = window.prompt('Enter token symbol, for example PEPEUSDT, DOGEUSDT, AVAXUSDT:');
+              const c = window.prompt(t('customTokenPrompt'));
               if (c) onSymbol(c.trim().toUpperCase());
             }}
           >
-            + Token
+            {t('addTokenBtn')}
           </button>
         </div>
       </div>
@@ -132,11 +134,11 @@ export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
           <span>O <b>{fmtPx(shown.o)}</b></span><span>H <b>{fmtPx(shown.h)}</b></span><span>L <b>{fmtPx(shown.l)}</b></span>
           <span>C <b className={shown.c >= shown.o ? 'up' : 'down'}>{fmtPx(shown.c)}</b></span>
         </>}
-        <span className="legend"><i className="lg entry" />entry <i className="lg stop" />stop <i className="lg tp" />take profit <i className="lg now" />last price</span>
+        <span className="legend"><i className="lg entry" />{t('entryLegend')} <i className="lg stop" />{t('stopLegend')} <i className="lg tp" />{t('tpLegend')} <i className="lg now" />{t('lastPriceLegend')}</span>
       </div>}
       <div className="chart-box" ref={box} style={tv ? { display: 'none' } : undefined} />
       {tv && <TradingViewChart symbol={symbol} prefix={state.tradingview.prefix} theme={theme} />}
-      {!tv && positions.length === 0 && <p className="chart-note">No open {state.mode === 'PAPER' ? 'paper' : state.mode} position on {symbol}. Entry, stop and take profit lines show up here when one opens.</p>}
+      {!tv && positions.length === 0 && <p className="chart-note">{t('noOpenPositionOn')} {symbol}. {t('chartLinesNote')}</p>}
     </section>
   );
 }

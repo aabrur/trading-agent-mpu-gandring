@@ -525,3 +525,50 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .chart-custom-btn { border: 1.5px dashed var(--line); background: transparent; color: var(--text-dim); border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--fs-xs); cursor: pointer; }
 .chart-custom-btn:hover { border-color: var(--teal); color: var(--teal); }
 
+/* Venue balance & official deposit link */
+.venue-balance-box { margin: 10px 0; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); display: grid; gap: 6px; }
+.venue-balance-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; font-size: var(--fs-xs); }
+.venue-balance-select { border: 1.5px solid var(--line); background: var(--bg); color: var(--text); border-radius: var(--radius-sm); padding: 4px 8px; font-weight: 700; font-size: var(--fs-xs); }
+.venue-balance-stats { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.venue-balance-stats b { color: var(--teal); }
+.deposit-link-btn { background: #198754 !important; color: #fff !important; border-color: #146c43 !important; text-decoration: none; font-weight: 800; padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+.deposit-link-btn:hover { background: #157347 !important; }
+
+/* Version & Update Modal + Language Toggle */
+.version-btn { border-color: var(--wood) !important; font-family: var(--font-mono); }
+.update-avail-badge { background: var(--terracotta) !important; color: #fff !important; border-color: #a9532f !important; font-weight: 800; }
+.lang-toggle-btn { font-weight: 800; border-color: var(--teal) !important; }
+.tour-trigger-btn { border-color: var(--brass) !important; font-weight: 800; }
+.update-modal { max-width: 560px; }
+.update-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.update-notes { background: var(--panel-2); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 12px; font-size: var(--fs-sm); }
+.update-notes h4 { margin: 0 0 6px !important; font-size: var(--fs-sm) !important; }
+.update-notes ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.setup-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.setup-actions button.primary { background: var(--terracotta) !important; color: #fff !important; border-color: #a9532f !important; }
+.update-log { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; }
+
+/* Interactive Pop-up Tutorial (Tour) */
+.tour-layer { position: fixed; inset: 0; z-index: 12000; pointer-events: none; }
+.tour-spotlight { position: fixed; border: 3px solid var(--terracotta); border-radius: var(--radius); box-shadow: 0 0 0 9999px rgba(18, 13, 8, 0.52), 0 0 24px rgba(212, 101, 59, 0.65); transition: all 0.25s cubic-bezier(0.25, 1, 0.5, 1); pointer-events: none; }
+.tour-card { position: fixed; pointer-events: auto; background: var(--panel); color: var(--text); border: 2px solid var(--terracotta); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 14px 36px rgba(0, 0, 0, 0.35); display: grid; gap: 8px; transition: top 0.25s ease, left 0.25s ease; z-index: 12001; }
+.tour-card::before { content: ''; position: absolute; width: 12px; height: 12px; background: var(--panel); border-left: 2px solid var(--terracotta); border-top: 2px solid var(--terracotta); }
+.tour-card.arrow-up::before { top: -8px; left: calc(50% - 6px); transform: rotate(45deg); }
+.tour-card.arrow-down::before { bottom: -8px; left: calc(50% - 6px); transform: rotate(225deg); }
+.tour-card.arrow-left::before { left: -8px; top: 28px; transform: rotate(-45deg); }
+.tour-card.arrow-right::before { right: -8px; top: 28px; transform: rotate(135deg); }
+.tour-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tour-step-badge { font-family: var(--font-mono); font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); color: var(--terracotta); }
+.tour-skip-btn { border: 1px solid var(--line); background: transparent; color: var(--text-dim); border-radius: var(--radius-sm); padding: 3px 8px; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.tour-skip-btn:hover { border-color: var(--short); color: var(--short); }
+.tour-card h3 { margin: 2px 0 0; font-family: var(--font-head); font-size: 18px; color: var(--text); }
+.tour-card p { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45; }
+.tour-dots { display: flex; gap: 5px; justify-content: center; margin: 4px 0 2px; }
+.tour-dot { width: 8px; height: 8px; border-radius: 50%; border: none; background: var(--line); padding: 0; cursor: pointer; }
+.tour-dot.on { width: 20px; border-radius: 999px; background: var(--terracotta); }
+.tour-card-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.tour-card-actions button { border: 1.5px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: var(--radius-sm); padding: 6px 12px; font-weight: 800; font-size: var(--fs-xs); cursor: pointer; }
+.tour-card-actions button.primary { background: var(--terracotta); color: #fff; border-color: #a9532f; }
+.tour-card-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+
