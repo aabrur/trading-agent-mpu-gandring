@@ -83,12 +83,6 @@ export function TopBar({
           rel="noopener noreferrer"
           title="Dukung saya di trakteer.id"
           className="trbtn"
-          onClick={(e) => {
-            if (onOpenTrakteer) {
-              e.preventDefault();
-              onOpenTrakteer();
-            }
-          }}
         >
           <span className="trbtn-txt">
             <img
@@ -115,17 +109,6 @@ export function TopBar({
 
 export function TrakteerPopup({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  const embedUrl = `https://trakteer.id/v1/aabrur/tip/embed/modal?embedId=0&ref=${encodeURIComponent(window.location.href)}`;
-
-  useEffect(() => {
-    const onMsg = (ev: MessageEvent) => {
-      if (ev.data && typeof ev.data === 'object' && ev.data.type === 'embed.modalClosed') {
-        onClose();
-      }
-    };
-    window.addEventListener('message', onMsg);
-    return () => window.removeEventListener('message', onMsg);
-  }, [onClose]);
 
   return (
     <div
@@ -136,38 +119,25 @@ export function TrakteerPopup({ onClose }: { onClose: () => void }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="panel trakteer-popup-card">
-        <div className="panel-head">
-          <h2>{t('trakteerTitle')}</h2>
-          <div className="trakteer-head-actions">
-            <a
-              href="https://trakteer.id/aabrur/tip"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="badge setup-btn"
-            >
-              trakteer.id/aabrur/tip ↗
-            </a>
-            <button onClick={onClose}>{t('closeModal')}</button>
+        <button className="trakteer-close-x" onClick={onClose} aria-label={t('closeModal')}>✕</button>
+        <div className="trakteer-creator">
+          <img
+            src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+            alt="Cendol"
+            className="trakteer-cendol-icon"
+          />
+          <div className="trakteer-creator-info">
+            <strong>Abrur <span>@aabrur</span></strong>
+            <small>1 Cendol · Rp 5.000 / unit</small>
           </div>
         </div>
-        <div className="trakteer-iframe-wrap">
-          <iframe
-            src={embedUrl}
-            title="Dukung Saya di Trakteer"
-            className="trakteer-iframe"
-            onLoad={(e) => {
-              try {
-                e.currentTarget.contentWindow?.postMessage({ type: 'embed.openModal' }, '*');
-              } catch { /* ignore */ }
-            }}
-          />
-        </div>
+        <p className="trakteer-popup-body">{t('trakteerBody')}</p>
         <div className="trakteer-popup-actions">
           <a
             href="https://trakteer.id/aabrur/tip"
             target="_blank"
             rel="noopener noreferrer"
-            className="trbtn"
+            className="trbtn trakteer-pay-btn"
             onClick={onClose}
           >
             <span className="trbtn-txt">
@@ -176,10 +146,10 @@ export function TrakteerPopup({ onClose }: { onClose: () => void }) {
                 alt="Traktiran"
                 className="trbtn-img"
               />
-              <span>Dukung Saya di Trakteer</span>
+              <span>Lanjutkan Pembayaran · Rp 5.000</span>
             </span>
           </a>
-          <button className="badge setup-btn" onClick={onClose}>{t('trakteerDismiss')}</button>
+          <button className="badge setup-btn trakteer-later-btn" onClick={onClose}>{t('trakteerDismiss')}</button>
         </div>
       </div>
     </div>
