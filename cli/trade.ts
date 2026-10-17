@@ -24,6 +24,11 @@ export function tradeEnv(base: NodeJS.ProcessEnv, file: Record<string, string>):
   if (appMode !== 'grokbot') out.AUTO_TRADING = 'on'; // full auto in local mode
   return out;
 }
+/** launchd and systemd start services with a minimal PATH (no Homebrew or nvm), so npm sits next to the node that runs us. */
+export function buildEnv(base: NodeJS.ProcessEnv, nodePath: string): NodeJS.ProcessEnv {
+  const key = Object.keys(base).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  return { ...base, [key]: [path.dirname(nodePath), base[key]].filter(Boolean).join(path.delimiter) };
+}
 export function officeUrl(host: string, port: string) { return `http://${host === '0.0.0.0' || host === '' || host === '::' ? '127.0.0.1' : host}:${port}`; }
 
 function needsBuild() {
@@ -39,7 +44,7 @@ async function main() {
   if (!existsSync(envFile)) log('no .env yet. Run npm run setup first (PAPER is the default). Starting with defaults.');
   if (needsBuild()) {
     log('building the backend and office UI once (npm run build)...');
-    const b = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+    const b = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32', env: buildEnv(process.env, process.execPath) });
     if (b.status !== 0) { log('build failed'); process.exit(1); }
   }
   const appMode = get('APP_MODE', 'local').toLowerCase();
