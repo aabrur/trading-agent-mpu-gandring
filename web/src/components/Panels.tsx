@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentId, DeskState, Verdict } from '../types';
 import { AGENT_ORDER } from '../types';
-import { Keris, PamorPattern } from './Keris';
-
-export const fmt = (v: number, d = 2) => (Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) : '-');
-export const fmtPx = (v: number) => (v >= 1000 ? fmt(v, 1) : v >= 1 ? fmt(v, 3) : v.toPrecision(4));
+import { KerisBlade, PamorPattern } from './Keris';
+import { Bot } from './Bot';
+import { EquityChart, AllocationBars } from './MiniCharts';
+import { fmt, fmtPx } from './format';
+export { fmt, fmtPx };
 const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec', reviewer: 'Reviewer' };
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+void PamorPattern;
 
-export function TopBar({ state, connected }: { state: DeskState | null; connected: boolean }) {
+export function TopBar({ state, connected, theme, onTheme }: { state: DeskState | null; connected: boolean; theme?: string; onTheme?: () => void }) {
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark"><Keris className="brand-keris" height={34} /></div>
+        <div className="brand-mark"><KerisBlade size={40} /></div>
         <div>
           <h1>Trading Agent <span>Mpu Gandring</span></h1>
-          <p>seven agents, one paper book, zero chill</p>
+          <p>seven little bots, one paper book, plenty of arguing</p>
         </div>
       </div>
       <div className="badges">
@@ -24,6 +26,7 @@ export function TopBar({ state, connected }: { state: DeskState | null; connecte
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">paused</span>}
         <span className={`badge conn ${connected ? 'on' : 'off'}`}><i />{connected ? 'live' : 'reconnecting'}</span>
+        {onTheme && <button className="badge theme-toggle" onClick={onTheme} aria-label="toggle day or night">{theme === 'night' ? '☾ night' : '☀ day'}</button>}
       </div>
     </header>
   );
@@ -90,7 +93,6 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   useEffect(() => setBalance(String(p.balance)), [p.balance]);
   return (
     <section className="panel portfolio">
-      <PamorPattern />
       <div className="panel-head"><h2>Paper book</h2><span className={`pnl ${p.unrealized >= 0 ? 'up' : 'down'}`}>uPnL {p.unrealized >= 0 ? '+' : ''}{fmt(p.unrealized)}</span></div>
       <div className="stats">
         <label className="stat"><small>Total balance</small>
@@ -107,6 +109,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
         {[1, 2, 3, 4].map((n) => <button key={n} className={p.n === n ? 'on' : ''} onClick={() => command(`set n ${n}`)}>{n}</button>)}
         <span className="slots">{p.positions.length}/{p.n} used</span>
       </div>
+      <div className="mini-charts"><AllocationBars state={state} /><EquityChart state={state} /></div>
       <p className="formula">Money Trade = {fmt(p.balance)} - {fmt(p.safetyNet)} = <b>{fmt(p.moneyTrade)}</b> · / {p.n} = <b>{fmt(p.perOrder)}</b> per order{!p.canOpen && <em> · at safety net, no new orders</em>}</p>
       <div className="positions">
         {p.positions.length === 0 && <p className="muted">No open paper positions.</p>}
@@ -114,7 +117,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
           <div key={x.id} className={`pos ${x.side}`}>
             <b>{x.side} {x.symbol}</b>
             <span>{x.qty} @ {fmtPx(x.entry)}</span>
-            <span className="sl">SL {fmtPx(x.stop)}</span>
+            <span className="sl">SL {fmtPx(x.stop)}{x.tp ? <em className="tp"> TP {fmtPx(x.tp)}</em> : null}</span>
             <span>{x.leverage}x · {fmt(x.margin)}</span>
             <span className={x.unrealizedPnl >= 0 ? 'up' : 'down'}>{x.unrealizedPnl >= 0 ? '+' : ''}{fmt(x.unrealizedPnl)}</span>
             <button className="mini" onClick={() => command(`close ${x.symbol}`)}>close</button>
@@ -146,7 +149,7 @@ export function Verdicts({ state }: { state: DeskState }) {
               <span>risk {v.riskDecision}</span>
               <span>heat {Math.round(v.disagreement * 100)}%</span>
               <span>{v.executed ? 'paper filled' : 'no fill'}</span>
-              {v.order && <span>{v.order.qty} @ {fmtPx(v.order.entry)} · SL {fmtPx(v.order.stop)}</span>}
+              {v.order && <span>{v.order.qty} @ {fmtPx(v.order.entry)} · SL {fmtPx(v.order.stop)}{v.order.tp ? ` · TP ${fmtPx(v.order.tp)}` : ''}</span>}
             </div>
           </article>
         ))}
@@ -185,12 +188,13 @@ export function Roster({ state, onSelect }: { state: DeskState; onSelect: (id: A
         const a = state.agents[id];
         return (
           <button key={id} className={`roster-item status-${a.status}`} style={{ ['--agent' as string]: a.color }} onClick={() => onSelect(id)}>
-            <i className="dot" />
+            <Bot id={id} size={26} pose="idle" />
             <span>{a.name}</span>
             <small>{a.provider === 'mock' ? 'mock' : a.provider}</small>
           </button>
         );
       })}
+      <span className="roster-hint">Click anyone to chat or give orders</span>
     </div>
   );
 }

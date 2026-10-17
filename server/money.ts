@@ -42,10 +42,11 @@ export interface PlanInput {
   minOrderUsdt: number;
   maxLossPerTradePct: number;
   qtyStep?: number;
+  takeProfitR?: number; // take profit at R times the stop distance, 0 = none
 }
 
 export type Plan =
-  | { ok: true; margin: number; notional: number; qty: number; stop: number; leverage: number; split: Split; notes: string[] }
+  | { ok: true; margin: number; notional: number; qty: number; stop: number; tp: number | null; leverage: number; split: Split; notes: string[] }
   | { ok: false; reason: string; split: Split; suggestion?: string };
 
 export function planOrder(p: PlanInput): Plan {
@@ -84,7 +85,10 @@ export function planOrder(p: PlanInput): Plan {
     return { ok: false, reason: `Allocation ${round2(margin)} USDT is below the minimum order of ${p.minOrderUsdt} USDT. Not rounding up.`, split, suggestion };
   }
   const stop = p.side === 'LONG' ? p.price * (1 - p.stopPct / 100) : p.price * (1 + p.stopPct / 100);
-  return { ok: true, margin: round2(margin), notional: round2(notional), qty, stop: roundPrice(stop), leverage: p.leverage, split, notes };
+  const r = p.takeProfitR ?? 2;
+  const dist = p.price * (p.stopPct / 100) * r;
+  const tp = r > 0 ? roundPrice(p.side === 'LONG' ? p.price + dist : p.price - dist) : null;
+  return { ok: true, margin: round2(margin), notional: round2(notional), qty, stop: roundPrice(stop), tp, leverage: p.leverage, split, notes };
 }
 
 export function qtyStepFor(price: number): number {

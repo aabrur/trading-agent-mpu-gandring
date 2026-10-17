@@ -65,7 +65,7 @@ describe('full mock debate, zero keys, zero network', () => {
     const desk = new Desk(c, makeCaller(c), { reportsDir: null });
     const r = await desk.command('what do you think about funding?', 'risk');
     expect(r.command).toBe('chat');
-    expect(r.reply).toMatch(/Risk Manager/);
+    expect(r.reply).toMatch(/leverage|stop|cap/i);
     expect(desk.chats.risk.length).toBe(2);
   });
 });

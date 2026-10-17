@@ -142,19 +142,24 @@ function review(c: Ctx) {
 }
 
 function chat(c: Ctx) {
-  const name = NAMES[String(c.agent)] ?? 'Agent';
-  const msg = String(c.message ?? '').slice(0, 120);
-  const snap = c.summary ? ` ${c.summary}` : '';
-  const voices: Record<string, string> = {
-    lead: `Desk Lead here. Noted: "${msg}". I chair the debate and I sign the verdict, nothing opens without Risk.${snap}`,
-    market: `Market Analyst. You said "${msg}". I read prices from public feeds, nothing else.${snap}`,
-    research: `Research Analyst. On "${msg}": I only trust things I can source, and I can veto.${snap}`,
-    strategist: `Strategist. "${msg}" noted. My votes come from closed bars and a written rule.${snap}`,
-    risk: `Risk Manager. "${msg}" heard. I can make trades smaller or kill them. I can never make them bigger than the caps.${snap}`,
-    execution: `Execution Trader. "${msg}" noted. Paper fills only in this build. Every order gets a stop.${snap}`,
-    reviewer: `Trade Reviewer. "${msg}". I keep the journal and I remind the room when it gets overconfident.${snap}`
-  };
-  return { reply: voices[String(c.agent)] ?? `${name}: noted.` };
+  const agent = String(c.agent);
+  const msg = String(c.message ?? '').toLowerCase();
+  const paper = c.paper ?? {};
+  const pos: { symbol: string; side: string; entry: number; stop: number; qty: number }[] = c.openPositions ?? [];
+  const posTxt = pos.length ? pos.map((p) => `${p.side} ${p.symbol} from ${p.entry}, stop ${p.stop}`).join('; ') : 'nothing open right now';
+  const riskAtStop = pos.reduce((s, p) => s + Math.abs(p.entry - p.stop) * p.qty, 0);
+  const asks = (...w: string[]) => w.some((x) => msg.includes(x));
+  if (agent === 'risk') {
+    if (asks('stop', 'lose', 'loss', 'rugi')) return { reply: pos.length ? `If every stop hits, we give back about ${r2(riskAtStop)} USDT plus fees. Each trade is capped at ${c.maxLossPct}% of the balance, so the worst single hit is ${r2((paper.balance ?? 0) * (c.maxLossPct ?? 1) / 100)} USDT.` : `Nothing open, so nothing to lose right now. When we do trade, a stop hit costs at most ${c.maxLossPct}% of the balance. That cap is in code.` };
+    return { reply: `My job is saying no politely. Leverage tops out at ${c.maxLeverage}x and the safety net of ${paper.safetyNet} USDT never moves. I can shrink a trade or kill it, never grow it.` };
+  }
+  if (agent === 'lead') return { reply: asks('why', 'kenapa') ? `I only sign what survives the argument and the risk gate. HOLD is a perfectly good answer.` : `Give me a symbol and I will call the table. Positions: ${posTxt}.` };
+  if (agent === 'market') return { reply: `I read public prices and closed candles, nothing else. Ask me after a debate and I will tell you what the tape said.` };
+  if (agent === 'research') return { reply: asks('veto') ? 'Delisting, halt, exploit or chain outage. Any of those and I veto, no debate.' : 'I trust sources, not vibes. Every claim gets a label: verified, reported or claimed.' };
+  if (agent === 'strategist') return { reply: 'EMA9, EMA21 and EMA50 on closed 15 minute bars. Above all three is long, below all three is short, otherwise I abstain.' };
+  if (agent === 'execution') return { reply: `Paper fills only. Every order goes in with a stop and a take profit. Open now: ${posTxt}.` };
+  if (agent === 'reviewer') return { reply: 'I keep the journal and I argue with whoever sounds too sure. Ask me again after a few closed trades.' };
+  return { reply: 'Noted.' };
 }
 
 export async function mockReply(req: ModelRequest): Promise<string> {

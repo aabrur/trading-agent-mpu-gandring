@@ -39,6 +39,7 @@ export class Desk extends EventEmitter {
   chats: Record<AgentId, ChatLine[]>;
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
   paused = false;
+  equityHistory: { t: number; equity: number; balance: number }[] = [];
   private stopFlag = false;
   private liveBackoffUntil = 0;
   private timers: NodeJS.Timeout[] = [];
@@ -67,9 +68,13 @@ export class Desk extends EventEmitter {
         equity: round2(this.book.balance + this.book.unrealized), positions: this.book.positions, closed: this.book.closed.slice(0, 20),
         minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLeverage: this.cfg.risk.maxLeverage
       },
-      verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-120), chats: this.chats,
+      equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-120), chats: this.chats,
       watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold
     };
+  }
+  recordEquity() {
+    this.equityHistory.push({ t: Date.now(), equity: round2(this.book.balance + this.book.unrealized), balance: this.book.balance });
+    if (this.equityHistory.length > 600) this.equityHistory.splice(0, this.equityHistory.length - 600);
   }
   private changed() { this.emit('state', this.snapshot()); }
   private addLog(l: Omit<LogLine, 'at'>) {
@@ -110,6 +115,7 @@ export class Desk extends EventEmitter {
       this.updateTicker(snap);
     }));
     if (live !== 'sample' && allSample) this.liveBackoffUntil = Date.now() + 5 * 60_000;
+    this.recordEquity();
     this.changed();
   }
   private updateTicker(snap: MarketSnapshot) {
@@ -266,14 +272,15 @@ export class Desk extends EventEmitter {
           const price = roundPrice(side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
           const plan = planOrder({
             balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
-            price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage, stopPct: gate.stopPct, minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct
+            price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage, stopPct: gate.stopPct, minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takeProfitR: this.cfg.risk.takeProfitR
           });
           this.setStatus('execution', 'executing'); this.changed();
           if (plan.ok) {
-            const p = this.book.open({ symbol, side, qty: plan.qty, entry: price, stop: plan.stop, margin: plan.margin, leverage: plan.leverage });
+            const p = this.book.open({ symbol, side, qty: plan.qty, entry: price, stop: plan.stop, tp: plan.tp, margin: plan.margin, leverage: plan.leverage });
+            this.recordEquity();
             verdict.executed = true;
-            verdict.order = { side, qty: p.qty, entry: p.entry, stop: p.stop, margin: p.margin, leverage: p.leverage };
-            const line = `Paper fill: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
+            verdict.order = { side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage };
+            const line = `Paper fill: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
             this.addLog({ kind: 'trade', agent: 'execution', text: line });
             await this.say('execution', line, false, 'idle'); note('Execution Trader', line);
           } else {
@@ -413,7 +420,7 @@ export class Desk extends EventEmitter {
           const res = await runAgent(this.cfg, this.call, target, 'chat', {
             instruction: 'The desk owner wrote to you directly (below). Answer briefly in character. You cannot place real trades. If they ask for something only a command can do, tell them the command.',
             data: { ownerMessage: cmd.text.slice(0, 500), yourStance: this.agents[target].stance, paper: this.book.split(), commands: HELP },
-            context: { message: cmd.text, summary: this.agents[target].lastLine ? `Last thing I said: "${this.agents[target].lastLine.slice(0, 90)}"` : '' }
+            context: { message: cmd.text, paper: this.book.split(), maxLossPct: this.cfg.risk.maxLossPerTradePct, maxLeverage: this.cfg.risk.maxLeverage, openPositions: this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty })), stance: this.agents[target].stance, summary: this.agents[target].lastLine ? `Last thing I said: "${this.agents[target].lastLine.slice(0, 90)}"` : '' }
           });
           this.setStatus(target, 'idle');
           reply = res.data.reply; break;

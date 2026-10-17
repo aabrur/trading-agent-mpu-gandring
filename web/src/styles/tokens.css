@@ -1,48 +1,117 @@
-/* Trading Agent Mpu Gandring design tokens. Change the look here, in one place. */
-:root {
-  /* surfaces */
-  --bg: #0b0a12;
-  --bg-2: #110f1e;
-  --panel: #15122a;
-  --panel-2: #1b1734;
-  --line: #2a2550;
-  --grid-line: rgba(120, 110, 220, 0.12);
+/* Trading Agent Mpu Gandring design tokens. Every color, font and motion value lives here. */
+:root,
+[data-theme='day'] {
+  /* page and panels */
+  --bg: #f4ead7;
+  --bg-2: #efe2c8;
+  --panel: #fffaf1;
+  --panel-2: #f8efdf;
+  --line: #e6d5b8;
+  --shadow-color: 92, 58, 30;
 
   /* text */
-  --text: #ece9f7;
-  --text-dim: #a49fc4;
-  --text-faint: #6d6894;
+  --ink: #3b2a1e;
+  --text: #3b2a1e;
+  --text-dim: #7a6450;
+  --text-faint: #a8927a;
 
-  /* accents: brass from the keris hilt, teal from old CRTs */
-  --brass: #e8b44c;
-  --brass-deep: #9c6b1f;
-  --teal: #3ee6c4;
-  --violet: #8b7bff;
-  --long: #2ee59d;
-  --short: #ff5a7a;
-  --neutral: #8f8aae;
-  --warn: #ffb547;
-  --arena-glow: #8b7bff;
-  --hit: #ff3b3b;
+  /* warm accents */
+  --cream: #fff6e6;
+  --cream-deep: #f1dfbd;
+  --wood: #c08552;
+  --wood-dark: #8b5a33;
+  --sage: #8fb39a;
+  --sage-deep: #5f8a6c;
+  --terracotta: #d9774f;
+  --rose: #e8a3a0;
+  --teal: #3ea99f;
+  --brass: #c99a3b;
+  --long: #3f9a6b;
+  --short: #d0583f;
+  --neutral: #9b8b78;
+  --warn: #d98a2b;
+  --hit: #e2553f;
+
+  /* office scene */
+  --wall: #f6e7cc;
+  --wall-dot: #ead4ad;
+  --wainscot: #d8b083;
+  --shelf-back: #6f4627;
+  --floor: #d9a874;
+  --floor-alt: #cf9a64;
+  --floor-line: #b98552;
+  --rug: #d9876a;
+  --rug-edge: #b8664a;
+  --rug-pattern: #f6dcc0;
+  --sky-top: #ffd9a8;
+  --sky-bottom: #f6a77c;
+  --sun: #fff1b8;
+  --hill: #c98b6b;
+  --machine: #5b4a3f;
+  --lamp-glow: #ffd27a;
+  --desk-top: #c58b58;
+  --desk-front: #a8703f;
+  --screen: #2e3b36;
+
+  /* charts */
+  --chart-text: #5a4634;
+  --chart-grid: rgba(139, 90, 51, 0.12);
+  --chart-axis: rgba(139, 90, 51, 0.35);
+  --chart-cross: rgba(59, 42, 30, 0.45);
 
   /* type */
-  --font-ui: 'Space Grotesk', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-ui: 'Nunito', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-head: 'Fredoka', 'Nunito', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
   --font-comic: 'Bangers', 'Impact', 'Arial Black', sans-serif;
-  --fs-xs: 11px;
-  --fs-sm: 12.5px;
-  --fs-md: 14px;
+  --fs-xs: 11.5px;
+  --fs-sm: 13px;
+  --fs-md: 14.5px;
   --fs-lg: 18px;
-  --fs-xl: 24px;
+  --fs-xl: 25px;
 
   /* shape */
-  --radius-sm: 6px;
-  --radius: 12px;
-  --radius-lg: 18px;
-  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  --glow-brass: 0 0 0 1px rgba(232, 180, 76, 0.35), 0 0 24px rgba(232, 180, 76, 0.18);
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 22px;
+  --shadow: 0 8px 24px rgba(var(--shadow-color), 0.12), 0 2px 6px rgba(var(--shadow-color), 0.08);
 
   /* motion */
-  --walk: 900ms cubic-bezier(0.6, 0.05, 0.3, 1);
+  --walk: 900ms cubic-bezier(0.5, 0.05, 0.3, 1);
   --fast: 160ms ease;
+}
+
+[data-theme='night'] {
+  --bg: #2a2130;
+  --bg-2: #241c2a;
+  --panel: #33293a;
+  --panel-2: #3b3043;
+  --line: #4b3e52;
+  --shadow-color: 10, 5, 15;
+  --ink: #2a1d14;
+  --text: #f6ead8;
+  --text-dim: #cdb9a3;
+  --text-faint: #9a8673;
+  --cream: #f3e4c8;
+  --wall: #4a3a4c;
+  --wall-dot: #574657;
+  --wainscot: #6a4a3a;
+  --shelf-back: #3a2618;
+  --floor: #8a6040;
+  --floor-alt: #7f5739;
+  --floor-line: #6a472e;
+  --rug: #a5594a;
+  --rug-edge: #874538;
+  --rug-pattern: #d9b49a;
+  --sky-top: #232046;
+  --sky-bottom: #5b3f6e;
+  --sun: #f4f0d0;
+  --hill: #2e2440;
+  --lamp-glow: #ffbf5e;
+  --desk-top: #8f6240;
+  --desk-front: #744d30;
+  --chart-text: #e7d6c1;
+  --chart-grid: rgba(255, 230, 200, 0.08);
+  --chart-axis: rgba(255, 230, 200, 0.25);
+  --chart-cross: rgba(255, 230, 200, 0.45);
 }

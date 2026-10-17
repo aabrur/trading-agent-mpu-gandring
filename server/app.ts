@@ -11,6 +11,8 @@ import { makeCaller, type ModelCaller } from './providers/index.js';
 import { moneySplit } from './money.js';
 import { safe } from './redact.js';
 import { sendToGrokBot } from './bridge.js';
+import { getSnapshot } from './market/index.js';
+import { normSymbol } from './commands.js';
 import type { AgentId } from './types.js';
 
 export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string } = {}) {
@@ -23,6 +25,20 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
       agents: Object.fromEntries(AGENT_IDS.map((id) => [id, { provider: cfg.agents[id].provider, model: cfg.agents[id].model, fellBackToMock: cfg.agents[id].fellBackToMock }])) });
   });
   app.get('/api/state', (_req, res) => res.json(desk.snapshot()));
+  // Closed 15m candles for the price chart. Cached briefly so the UI cannot hammer public APIs.
+  const candleCache = new Map<string, { at: number; body: unknown }>();
+  app.get('/api/candles', async (req, res) => {
+    const symbol = normSymbol(String(req.query.symbol ?? cfg.watchlist[0] ?? 'BTCUSDT')).slice(0, 20);
+    const hit = candleCache.get(symbol);
+    if (hit && Date.now() - hit.at < 20_000) return res.json(hit.body);
+    const snap = await getSnapshot(symbol, cfg.marketSource);
+    const body = {
+      symbol, source: snap.source, example: snap.example, last: snap.last, change24hPct: snap.change24hPct,
+      candles: snap.candles.slice(-200).map((c) => ({ time: Math.floor(c.t / 1000), open: c.o, high: c.h, low: c.l, close: c.c }))
+    };
+    candleCache.set(symbol, { at: Date.now(), body });
+    res.json(body);
+  });
   app.get('/api/split', (req, res) => {
     try {
       res.json(moneySplit({ balance: Number(req.query.balance ?? desk.book.balance), safetyNet: Number(req.query.safetyNet ?? desk.book.safetyNet), n: Number(req.query.n ?? desk.book.n) }));

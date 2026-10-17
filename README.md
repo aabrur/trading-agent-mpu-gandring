@@ -4,7 +4,11 @@ Seven AI trading agents share one office. They read the market, argue about it, 
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
 
-![The virtual office mid-debate](docs/screenshot.png)
+![The cozy office mid-debate, Market Analyst landing a punch on the Strategist](docs/screenshot.png)
+
+![Chatting with the Risk Manager while the ETH chart shows the paper SHORT with its entry, stop and take profit](docs/screenshot-chat.png)
+
+Screenshots use the offline sample data (`MARKET_SOURCE=sample`), so prices are tagged EXAMPLE.
 
 > **Paper trading only.** This is an educational project about how multi-agent decision making works. It is not financial advice, it does not promise profit, and this version has no code that can place a real order, touch a wallet, or withdraw anything.
 
@@ -16,10 +20,13 @@ You watch all of it live in a little virtual office in your browser, and you can
 - **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
 - **Risk can only tighten.** The Risk Manager can approve, reduce or reject. Hard caps in code clip leverage, stop distance and loss per trade, whatever any model says.
 - **Boss's money split.** You set a total balance, a safety net and N open orders (1 to 4). Money Trade = balance minus safety net, and each order gets Money Trade / N. The safety net is never touched.
-- **Every paper order has a stop loss.** No stop, no order.
+- **Every paper order has a stop loss and a take profit.** No stop, no order. The take profit sits `TAKE_PROFIT_R` times the stop distance away (2R by default).
 - **Live public market data.** Bybit, Binance and Hyperliquid public endpoints, no key needed, with offline sample data as a fallback.
 - **Injection-aware.** News and posts are treated as untrusted data. The sample news even has a planted "ignore previous instructions" line, and a test proves the agents never see it.
-- **Virtual office UI.** Desks, avatars, live status, speech bubbles streamed over WebSocket, a debate arena, fight meter, ticker strip, paper book, verdict cards and a desk log.
+- **A cozy office.** Wood floors, a rug, sunset windows, a kopi corner and seven round little bots with mitten hands. Each role has its own color and prop: tie and keris pin for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk, cap and stopwatch for Execution, clipboard and monocle for the Reviewer. They walk to the table, type, point, punch, cheer when a trade fills and sweat when Risk says no.
+- **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for Money Trade / N, and every desk monitor shows a sparkline.
+- **Day and night.** A toggle in the top bar. All colors and fonts live in `web/src/styles/tokens.css`.
+- **Live office feed.** Status, speech bubbles and fights stream over WebSocket, next to the fight meter, ticker strip, verdict cards and a desk log.
 - **Talk to the agents.** Click an agent to chat or give commands like `analyze ETHUSDT`, `be more cautious` or `close all`.
 - **Optional Grok Bot bridge.** Send verdicts and commands to a Grok Bot webhook routine from the server. Off by default.
 
@@ -70,7 +77,7 @@ npm run debate -- --symbol SOLUSDT --json     # machine readable verdict
 | `npm start` | Runs the built server, which also serves the built UI on port 8787 |
 | `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, paper-only switch |
 | `npm run debate -- --symbol X` | One debate in the terminal |
-| `npm run screenshot` | Saves `docs/screenshot.png` from a running dev server (needs Chrome) |
+| `npm run screenshot` | Saves `docs/screenshot.png` (overview mid-debate) and `docs/screenshot-chat.png` (agent chat and chart) from a running dev server (needs Chrome) |
 
 ## Configuration
 
@@ -91,6 +98,7 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `OPEN_ORDERS_N` | `4` | Max open orders, 1 to 4 |
 | `MAX_LEVERAGE` | `3` | Hard cap |
 | `DEFAULT_STOP_PCT` / `MIN_STOP_PCT` | `1.5` / `0.3` | Widest and tightest allowed stop distance, in percent |
+| `TAKE_PROFIT_R` | `2` | Take profit distance as a multiple of the stop distance. `0` turns take profit off. |
 | `MAX_LOSS_PER_TRADE_PCT` | `1` | A stop hit may lose at most this share of the balance |
 | `MIN_ORDER_USDT` | `5` | Below this the order is skipped. It is never rounded up. |
 | `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate (1 to 4) |
@@ -115,6 +123,7 @@ Rules the code enforces:
 - If an allocation is under the minimum order or under one lot step, the order is skipped and the desk suggests a smaller N. Nothing is rounded up.
 - When the balance is at or below the safety net, no new orders.
 - The allocation is recalculated from the current balance before every order.
+- Every order carries a stop loss, and a take profit unless `TAKE_PROFIT_R=0`. The paper book checks the stop first, then the take profit.
 - A stop hit may lose at most `MAX_LOSS_PER_TRADE_PCT` of the balance, so size can come out smaller than the allocation.
 
 Full note: [docs/money-split.md](docs/money-split.md).
@@ -237,6 +246,10 @@ Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `se
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+
+## Credits
+
+Price charts use [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache 2.0). Fonts are Nunito, Fredoka, JetBrains Mono and Bangers from Google Fonts.
 
 ## License
 

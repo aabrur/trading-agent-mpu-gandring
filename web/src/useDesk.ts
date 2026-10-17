@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentId, DeskState, Fight, Speech } from './types';
+import type { AgentId, DeskState, Fight, Reaction, Speech, Verdict } from './types';
 
 export function useDesk() {
   const [state, setState] = useState<DeskState | null>(null);
@@ -7,6 +7,7 @@ export function useDesk() {
   const [speech, setSpeech] = useState<Partial<Record<AgentId, Speech>>>({});
   const [fights, setFights] = useState<Fight[]>([]);
   const [meter, setMeter] = useState<{ weighted: number; disagreement: number } | null>(null);
+  const [reactions, setReactions] = useState<Partial<Record<AgentId, Reaction>>>({});
   const fightId = useRef(0);
 
   useEffect(() => {
@@ -27,7 +28,19 @@ export function useDesk() {
           const f: Fight = { ...payload, id: ++fightId.current, at: Date.now() };
           setFights((xs) => [...xs.slice(-4), f]);
           window.setTimeout(() => setFights((xs) => xs.filter((x) => x.id !== f.id)), 2600);
-        } else if (type === 'debate' && payload?.phase === 'opening') { setSpeech({}); setFights([]); }
+        } else if (type === 'verdict') {
+          const v = payload as Verdict;
+          const r: Partial<Record<AgentId, Reaction>> = {};
+          if (v.executed && v.order) {
+            const winners = v.order.side === 'LONG' ? v.camps.bull : v.camps.bear;
+            for (const a of [...winners, 'lead', 'execution'] as AgentId[]) r[a] = 'cheer';
+          } else if (v.riskDecision === 'REJECT') {
+            for (const a of ['lead', ...(v.action === 'OPEN_LONG' ? v.camps.bull : v.camps.bear)] as AgentId[]) r[a] = 'worried';
+            r.risk = 'worried';
+          }
+          setReactions(r);
+          window.setTimeout(() => setReactions({}), 4500);
+        } else if (type === 'debate' && payload?.phase === 'opening') { setSpeech({}); setFights([]); setReactions({}); }
         else if (type === 'status') setState((s) => (s ? { ...s, agents: { ...s.agents, [payload.agent]: { ...s.agents[payload.agent as AgentId], status: payload.status } } } : s));
       };
     };
@@ -57,5 +70,5 @@ export function useDesk() {
     return (await res.json()) as { ok: boolean; reply: string; command: string };
   }, []);
 
-  return { state, connected, speech, fights, meter, command };
+  return { state, connected, speech, fights, meter, reactions, command };
 }

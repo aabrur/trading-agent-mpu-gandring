@@ -30,7 +30,7 @@ export interface AppConfig {
   watchlist: string[];
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
-  risk: { maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number };
+  risk: { maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number };
   debate: { rounds: number; paceMs: number; fightThreshold: number; autoMinutes: number };
   bridge: { url: string; key: string; enabled: boolean };
 }
@@ -102,7 +102,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       minStopPct: num(env, 'MIN_STOP_PCT', 0.3),
       maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', 1),
       minOrderUsdt: num(env, 'MIN_ORDER_USDT', 5),
-      takerFee: num(env, 'TAKER_FEE', 0.00055)
+      takerFee: num(env, 'TAKER_FEE', 0.00055),
+      takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 2))
     },
     debate: {
       rounds: Math.min(4, Math.max(1, num(env, 'DEBATE_ROUNDS', 2))),

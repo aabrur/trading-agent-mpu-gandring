@@ -56,5 +56,19 @@ describe('order planning', () => {
     const s = planOrder({ ...base, side: 'SHORT' });
     expect(l.ok && l.stop < 100).toBe(true);
     expect(s.ok && s.stop > 100).toBe(true);
+    expect(l.ok && l.tp! > 100).toBe(true);
+    expect(s.ok && s.tp! < 100).toBe(true);
+  });
+});
+
+import { PaperBook } from '../server/paper.js';
+describe('paper book exits', () => {
+  it('closes at the stop or the take profit', () => {
+    const b = new PaperBook(1000, 200, 4, 0);
+    b.open({ symbol: 'X', side: 'LONG', qty: 1, entry: 100, stop: 98, tp: 104, margin: 50, leverage: 2 });
+    b.open({ symbol: 'Y', side: 'SHORT', qty: 1, entry: 100, stop: 102, tp: 96, margin: 50, leverage: 2 });
+    expect(b.mark('X', 104.5)[0].reason).toMatch(/take profit/);
+    expect(b.mark('Y', 102.5)[0].reason).toMatch(/stop/);
+    expect(b.balance).toBe(1000 + 4 - 2);
   });
 });

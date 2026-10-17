@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentId, DeskState } from '../types';
-import { Avatar } from './Avatar';
+import { Bot } from './Bot';
 
 const QUICK: Record<AgentId, string[]> = {
   lead: ['analyze BTCUSDT', 'analyze ETHUSDT', 'be more cautious', 'status'],
@@ -28,7 +28,7 @@ export function AgentPanel({ state, id, onClose, command }: { state: DeskState; 
     <aside className="agent-panel" style={{ ['--agent' as string]: a.color }} aria-label={`${a.name} panel`}>
       <button className="close" onClick={onClose} aria-label="close">×</button>
       <div className="ap-head">
-        <div className="ap-avatar"><Avatar id={id} color={a.color} size={70} /></div>
+        <div className="ap-avatar"><Bot id={id} size={78} pose={busy ? 'type' : 'idle'} talking={busy} /></div>
         <div>
           <h3>{a.name}</h3>
           <p>{a.title}</p>

@@ -36,6 +36,7 @@ export interface Position {
   qty: number;
   entry: number;
   stop: number;
+  tp: number | null;
   margin: number;
   leverage: number;
   openedAt: number;
@@ -66,7 +67,7 @@ export interface Verdict {
   reason: string;
   disagreement: number;
   camps: { bull: AgentId[]; bear: AgentId[]; neutral: AgentId[] };
-  order?: { side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; margin: number; leverage: number };
+  order?: { side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number };
   example: boolean;
   at: number;
 }
