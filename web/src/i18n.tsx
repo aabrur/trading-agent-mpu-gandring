@@ -174,6 +174,11 @@ export const en = {
   tour9Title: '9. Left-Sidebar Setup Wizard',
   tour9Body: 'Configure AI providers, 200+ models, CEX/DEX keys, TradingView, and notification channels in a clean sidebar layout.',
 
+  // Trakteer Popup
+  trakteerTitle: 'Support Mpu Gandring with Cendol!',
+  trakteerBody: 'Enjoying the 6-agent trading desk? Treat the creator to a glass of Cendol on Trakteer to keep updates and new adapters coming.',
+  trakteerDismiss: 'Maybe later',
+
   // Footer
   footerNote: 'Paper trading simulation for learning. Not financial advice. No profit promised. Trading Agent Mpu Gandring, MIT license.'
 } as const;
@@ -351,6 +356,11 @@ export const id: Record<TranslationKey, string> = {
   tour8Body: 'Hubungkan MetaMask atau Rabby ke DEX, baca saldo DEX langsung, atau buka halaman deposit resmi DEX.',
   tour9Title: '9. Menu Pengaturan Sidebar Kiri',
   tour9Body: 'Atur provider AI, 200+ model, API key CEX/DEX, TradingView, dan channel notifikasi lewat navigasi kiri yang rapi.',
+
+  // Trakteer Popup
+  trakteerTitle: 'Trakteer Cendol untuk Mpu Gandring!',
+  trakteerBody: 'Suka dengan meja trading 6 agen ini? Trakteer pembuatnya segelas Cendol supaya update fitur dan adapter baru terus jalan.',
+  trakteerDismiss: 'Nanti dulu',
 
   // Footer
   footerNote: 'Simulasi paper trading untuk belajar. Bukan saran keuangan. Tidak menjanjikan keuntungan. Trading Agent Mpu Gandring, lisensi MIT.'

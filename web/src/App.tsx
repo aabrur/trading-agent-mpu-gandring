@@ -12,7 +12,7 @@ import { SetupWizard } from './components/Setup';
 import { DeskOps } from './components/DeskOps';
 import { Tour } from './components/Tour';
 import { UpdateModal, type UpdateInfo } from './components/UpdateModal';
-import { TopBar, TickerStrip, FightMeter, Portfolio, Verdicts, TradeLog, Roster } from './components/Panels';
+import { TopBar, TickerStrip, FightMeter, Portfolio, Verdicts, TradeLog, Roster, TrakteerPopup } from './components/Panels';
 import { I18nProvider, useI18n } from './i18n';
 
 function initialTheme() {
@@ -23,7 +23,11 @@ function initialTheme() {
 
 function initialTourOpen() {
   try {
-    return localStorage.getItem('mpu_tour_done_v1') !== '1';
+    const firstRun = localStorage.getItem('mpu_tour_done_v1') !== '1';
+    if (firstRun) {
+      localStorage.setItem('mpu_tour_done_v1', '1');
+    }
+    return firstRun;
   } catch {
     return false;
   }
@@ -41,6 +45,14 @@ function AppInner() {
   const [tourOpen, setTourOpen] = useState<boolean>(initialTourOpen);
   const [updateOpen, setUpdateOpen] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [trakteerOpen, setTrakteerOpen] = useState<boolean>(true);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setTrakteerOpen(true);
+    }, 60 * 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const h = () => {
@@ -108,6 +120,7 @@ function AppInner() {
         onTour={() => setTourOpen(true)}
         updateInfo={updateInfo}
         onOpenUpdate={() => setUpdateOpen(true)}
+        onOpenTrakteer={() => setTrakteerOpen(true)}
       />
       <TickerStrip state={state} />
       <main className="layout">
@@ -135,6 +148,7 @@ function AppInner() {
         <div className="panel setup"><div className="panel-head"><h2>{t('connectWallet')}</h2><button autoFocus onClick={closeVenueKeys}>{t('closeModal')}</button></div><WalletPanel state={state} embedded /></div>
       </div>}
       {updateOpen && <UpdateModal info={updateInfo} onRefresh={refreshUpdate} onClose={() => setUpdateOpen(false)} />}
+      {trakteerOpen && !tourOpen && !setup && !venueKeys && !updateOpen && <TrakteerPopup onClose={() => setTrakteerOpen(false)} />}
       {selected && <AgentPanel state={state} id={selected} onClose={() => setSelected(null)} command={command} />}
       <Tour open={tourOpen && !setup && !venueKeys && !updateOpen} onClose={closeTour} />
       <footer className="footer">{t('footerNote')} Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a>.</footer>

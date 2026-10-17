@@ -22,7 +22,8 @@ export function TopBar({
   onVenueKeys,
   onTour,
   updateInfo,
-  onOpenUpdate
+  onOpenUpdate,
+  onOpenTrakteer
 }: {
   state: DeskState | null;
   connected: boolean;
@@ -33,6 +34,7 @@ export function TopBar({
   onTour?: () => void;
   updateInfo?: UpdateInfo | null;
   onOpenUpdate?: () => void;
+  onOpenTrakteer?: () => void;
 }) {
   const { lang, toggleLang, t } = useI18n();
   const ver = updateInfo?.currentVersion ?? '0.0.0.2.0';
@@ -74,6 +76,30 @@ export function TopBar({
           </div>
         </div>
       </div>
+      <div className="topbar-center">
+        <a
+          href="https://trakteer.id/aabrur/tip"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Dukung saya di trakteer.id"
+          className="trbtn"
+          onClick={(e) => {
+            if (onOpenTrakteer) {
+              e.preventDefault();
+              onOpenTrakteer();
+            }
+          }}
+        >
+          <span className="trbtn-txt">
+            <img
+              src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+              alt="Traktiran"
+              className="trbtn-img"
+            />
+            <span>Dukung Saya di Trakteer</span>
+          </span>
+        </a>
+      </div>
       <div className="badges">
         {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title="Connect browser wallet for DEX venues">{t('connectWallet')}</button>}
         {onSetup && <button id="setup-trigger" className="badge setup-btn" onClick={onSetup} title="Setup wizard: venue, mode, keys, doctor">{t('setup')}</button>}
@@ -84,6 +110,79 @@ export function TopBar({
         {onTheme && <button className="badge theme-toggle" onClick={onTheme} aria-label="toggle day or night">{theme === 'night' ? t('nightMode') : t('dayMode')}</button>}
       </div>
     </header>
+  );
+}
+
+export function TrakteerPopup({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  const embedUrl = `https://trakteer.id/v1/aabrur/tip/embed/modal?embedId=0&ref=${encodeURIComponent(window.location.href)}`;
+
+  useEffect(() => {
+    const onMsg = (ev: MessageEvent) => {
+      if (ev.data && typeof ev.data === 'object' && ev.data.type === 'embed.modalClosed') {
+        onClose();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [onClose]);
+
+  return (
+    <div
+      className="setup-overlay trakteer-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('trakteerTitle')}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="panel trakteer-popup-card">
+        <div className="panel-head">
+          <h2>{t('trakteerTitle')}</h2>
+          <div className="trakteer-head-actions">
+            <a
+              href="https://trakteer.id/aabrur/tip"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="badge setup-btn"
+            >
+              trakteer.id/aabrur/tip ↗
+            </a>
+            <button onClick={onClose}>{t('closeModal')}</button>
+          </div>
+        </div>
+        <div className="trakteer-iframe-wrap">
+          <iframe
+            src={embedUrl}
+            title="Dukung Saya di Trakteer"
+            className="trakteer-iframe"
+            onLoad={(e) => {
+              try {
+                e.currentTarget.contentWindow?.postMessage({ type: 'embed.openModal' }, '*');
+              } catch { /* ignore */ }
+            }}
+          />
+        </div>
+        <div className="trakteer-popup-actions">
+          <a
+            href="https://trakteer.id/aabrur/tip"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="trbtn"
+            onClick={onClose}
+          >
+            <span className="trbtn-txt">
+              <img
+                src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+                alt="Traktiran"
+                className="trbtn-img"
+              />
+              <span>Dukung Saya di Trakteer</span>
+            </span>
+          </a>
+          <button className="badge setup-btn" onClick={onClose}>{t('trakteerDismiss')}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
