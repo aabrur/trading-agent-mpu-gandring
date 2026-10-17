@@ -113,8 +113,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     tradingMode: mode as AppConfig['tradingMode'],
     appMode: appMode as AppConfig['appMode'],
-    // LIVE always binds to this computer only. TESTNET defaults to it too.
-    host: mode === 'LIVE' ? '127.0.0.1' : (env.HOST || (mode === 'TESTNET' ? '127.0.0.1' : '0.0.0.0')).trim(),
+    // LIVE always binds to this computer only. PAPER and TESTNET default to it too; set HOST=0.0.0.0 to open the office to your network.
+    host: mode === 'LIVE' ? '127.0.0.1' : (env.HOST || '127.0.0.1').trim(),
     live,
     exchange: { name: ex.name, hasTestnetKeys: !!ex.creds.testnet, hasMainnetKeys: !!ex.creds.mainnet },
     agentEvents: { secret: agentEventSecret, enabled: appMode === 'grokbot' && !!agentEventSecret },

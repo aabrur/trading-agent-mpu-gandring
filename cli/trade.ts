@@ -45,7 +45,7 @@ async function main() {
   const appMode = get('APP_MODE', 'local').toLowerCase();
   const mode = get('TRADING_MODE', 'PAPER').toUpperCase();
   const port = get('PORT', '8787');
-  const host = mode === 'PAPER' ? get('HOST', '0.0.0.0') : '127.0.0.1';
+  const host = mode === 'LIVE' ? '127.0.0.1' : get('HOST', '127.0.0.1');
   const url = officeUrl(host, port);
   log(`Trading Agent Mpu Gandring: ${mode}, ${appMode === 'grokbot' ? 'Grok Bot mode (your Grok Bot team drives the desk)' : 'local mode, full auto ON'}`);
   if (mode === 'LIVE') log('LIVE: real money, full auto. You can lose money. Not financial advice. Kill switch is in the office.');

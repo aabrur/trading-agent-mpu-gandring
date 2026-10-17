@@ -88,7 +88,7 @@ npm test
 npm run dev
 ```
 
-Then open **http://localhost:5173**. The backend runs on port 8787 and binds `0.0.0.0`, so a phone on the same network (or your tailnet) can open `http://<your-computer-ip>:5173` too.
+Then open **http://localhost:5173**. The backend (port 8787) and the office (port 5173) bind `127.0.0.1` by default, so only this computer can reach them. To open the office from a phone on the same network or your tailnet, set `HOST=0.0.0.0` (PAPER or TESTNET only) and open `http://<your-computer-ip>:5173`. In LIVE both always stay on `127.0.0.1`. Grok Bot mode is not affected: a tunnel (`tailscale funnel 8787`, Cloudflare Tunnel) connects to `127.0.0.1:8787`.
 
 Press the **Start debate** button, or type `analyze BTCUSDT` in the command bar.
 
@@ -127,7 +127,7 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `TRADING_MODE` | `PAPER` | `PAPER`, `TESTNET` or `LIVE`. TESTNET and LIVE need an exchange key that can trade and cannot withdraw, checked on every start; otherwise exit code 2. |
 | `APP_MODE` | `local` | `local` or `grokbot` |
 | `AGENT_EVENT_SECRET` | empty | Grok Bot mode: secret for `POST /api/agent-event` (24+ chars) |
-| `HOST` | `0.0.0.0` (PAPER), `127.0.0.1` (TESTNET) | Bind address. LIVE always binds `127.0.0.1`. |
+| `HOST` | `127.0.0.1` | Bind address of the backend and the office. `0.0.0.0` opens them to your network (PAPER/TESTNET only). LIVE always binds `127.0.0.1`. |
 | `TRADINGVIEW_WIDGET` / `TRADINGVIEW_EXCHANGE_PREFIX` | `off` / `BYBIT` | TradingView chart widget in the UI |
 | `TRADINGVIEW_PASSPHRASE` | empty | Turns on `POST /api/tradingview` (12+ chars) |
 | `NEWS_PROVIDER` / `CRYPTOPANIC_API_KEY` | `sample` | Optional news plugin (experimental) |
