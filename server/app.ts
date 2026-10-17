@@ -23,6 +23,8 @@ import { Reporter } from './reports.js';
 import { WalletConnector, walletAccess, walletInfo, findSecretLike } from './wallet.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
 import { mountSetupRoutes, mountOpsRoutes } from './setup/routes.js';
+import { DeskLead } from './channels/supervisor.js';
+import { createInboundApp, mountChannelSetupRoutes } from './channels/routes.js';
 
 const sameSecret = (given: string, want: string) => {
   const a = Buffer.from(given), b = Buffer.from(want);
@@ -71,7 +73,7 @@ const GbLessonSchema = z.object({
   symbol: z.string().max(20).optional(), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default(''), lesson: z.string().min(8).max(300)
 }).strict();
 
-export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null; setupFetch?: typeof fetch } = {}) {
+export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null; setupFetch?: typeof fetch; channelFetch?: typeof fetch } = {}) {
   const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
   const desk = new Desk(cfg, caller, { reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, killFile: opts.killFile ?? null });
   const auto = new AutoTrader(desk);
@@ -115,6 +117,11 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   const routeCtx = { cfg, desk, envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch, limiter };
   mountSetupRoutes(app, routeCtx);
   mountOpsRoutes(app, routeCtx);
+  // Desk Lead supervisor and chat channels. Inbound chat webhooks get their own server (see channels/routes.ts).
+  const onKill = () => auto.stop();
+  const lead = new DeskLead(desk, cfg.channels, opts.channelFetch ?? fetch, onKill);
+  mountChannelSetupRoutes(app, routeCtx);
+  const inbound = createInboundApp({ ...routeCtx, fetchImpl: opts.channelFetch ?? routeCtx.fetchImpl, lead, onKill });
   // Closed 15m candles for the price chart. Cached briefly so the UI cannot hammer public APIs.
   const candleCache = new Map<string, { at: number; body: unknown }>();
   app.get('/api/candles', async (req, res) => {
@@ -251,5 +258,5 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
       } catch { /* ignore malformed frames */ }
     });
   });
-  return { app, server, desk, wss, auto, reporter };
+  return { app, server, desk, wss, auto, reporter, lead, inbound };
 }

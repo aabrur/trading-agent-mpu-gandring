@@ -2,6 +2,7 @@ import 'dotenv/config';
 import type { AgentId } from './types.js';
 import { registerSecrets } from './redact.js';
 import { exchangeSettings, exchangeSecrets, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
+import { channelConfig, CHANNEL_SECRET_ENV, type ChannelConfig } from './channels/config.js';
 import { checkTradingMode, type TradingMode } from './live/guard.js';
 
 export type ProviderName = 'mock' | 'xai' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter';
@@ -27,6 +28,7 @@ export interface AppConfig {
   live: { exchange: ExchangeName; network: 'testnet' | 'mainnet'; experimental: boolean } | null;
   auto: { on: boolean; intervalMin: number; symbols: string[]; maxHoldHours: number };
   reports: { intervalMin: number; telegram: { token: string; chatId: string; enabled: boolean } };
+  channels: ChannelConfig;
   /** proaktif-agent (scan before each cycle) and self-improving (reflect after) */
   learning: { on: boolean; scan: boolean; reflectEveryCycles: number; promoteAfter: number; lossWarnPct: number; staleFeedMin: number; path: string | null };
   exchange: { name: ExchangeName | null; hasTestnetKeys: boolean; hasMainnetKeys: boolean };
@@ -75,7 +77,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     xai: env.XAI_API_KEY ?? '', openai: env.OPENAI_API_KEY ?? '', anthropic: env.ANTHROPIC_API_KEY ?? '',
     gemini: env.GEMINI_API_KEY ?? '', deepseek: env.DEEPSEEK_API_KEY ?? '', openrouter: env.OPENROUTER_API_KEY ?? ''
   };
-  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, env.TELEGRAM_BOT_TOKEN, ...exchangeSecrets(env)]);
+  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, ...CHANNEL_SECRET_ENV.map((k) => env[k]), ...exchangeSecrets(env)]);
   const defaultModels: Record<ProviderName, string> = {
     mock: 'mock-desk-v1',
     xai: env.XAI_MODEL || 'grok-3-mini',
@@ -170,6 +172,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       intervalMin: Math.max(1, num(env, 'REPORT_INTERVAL_MIN', 60)),
       telegram: { token: (env.TELEGRAM_BOT_TOKEN ?? '').trim(), chatId: (env.TELEGRAM_CHAT_ID ?? '').trim(), enabled: !!(env.TELEGRAM_BOT_TOKEN ?? '').trim() && !!(env.TELEGRAM_CHAT_ID ?? '').trim() }
     },
+    channels: channelConfig(env),
     bridge: { url, key, enabled: !!url && !!key }
   };
 }

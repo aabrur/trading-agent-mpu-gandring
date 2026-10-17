@@ -1,0 +1,55 @@
+// Outbound adapters for the official APIs only: Telegram Bot API, Discord webhooks, Slack incoming webhooks, WhatsApp Business Cloud API (Meta Graph).
+// Everything sent passes the secret redactor first. Failures are logged without the URL or token.
+import { safe, log } from '../redact.js';
+import { CHANNELS, type ChannelConfig, type ChannelName } from './config.js';
+
+export type SendResult = 'sent' | 'failed' | 'off';
+const T = 8000;
+const post = (fetchImpl: typeof fetch, url: string, body: unknown, headers: Record<string, string> = {}) =>
+  fetchImpl(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(T) });
+
+async function attempt(name: ChannelName, fn: () => Promise<Response>): Promise<SendResult> {
+  try { const r = await fn(); if (!r.ok) throw new Error(`HTTP ${r.status}`); return 'sent'; }
+  catch (e) { log(`[channel] ${name} not delivered: ${safe((e as Error).message).slice(0, 160)}`); return 'failed'; }
+}
+
+export function telegramSend(c: ChannelConfig['telegram'], text: string, fetchImpl: typeof fetch = fetch, chatId = c.chatId): Promise<SendResult> {
+  if (!c.token || !chatId) return Promise.resolve('off');
+  return attempt('telegram', () => post(fetchImpl, `https://api.telegram.org/bot${c.token}/sendMessage`, { chat_id: chatId, text: safe(text).slice(0, 4000), disable_web_page_preview: true }));
+}
+export function discordSend(c: ChannelConfig['discord'], text: string, fetchImpl: typeof fetch = fetch): Promise<SendResult> {
+  if (!c.enabled) return Promise.resolve('off');
+  return attempt('discord', () => post(fetchImpl, c.webhookUrl, { content: safe(text).slice(0, 1990), allowed_mentions: { parse: [] } }));
+}
+export function slackSend(c: ChannelConfig['slack'], text: string, fetchImpl: typeof fetch = fetch): Promise<SendResult> {
+  if (!c.enabled) return Promise.resolve('off');
+  return attempt('slack', () => post(fetchImpl, c.webhookUrl, { text: safe(text).slice(0, 3900) }));
+}
+/** Free-form text only reaches a user inside the 24-hour window after they last messaged the number. Outside it Meta requires an
+ *  approved template: set WHATSAPP_TEMPLATE_NAME (one body parameter, {{1}}) and alerts use it. */
+export function whatsappSend(c: ChannelConfig['whatsapp'], text: string, fetchImpl: typeof fetch = fetch, to = c.to, freeForm = false): Promise<SendResult> {
+  if (!c.token || !c.phoneNumberId || !to) return Promise.resolve('off');
+  const body = safe(text);
+  const msg = c.template && !freeForm
+    ? { messaging_product: 'whatsapp', to, type: 'template', template: { name: c.template, language: { code: c.templateLang }, components: [{ type: 'body', parameters: [{ type: 'text', text: body.replace(/\s*\n\s*/g, ' | ').slice(0, 1000) }] }] } }
+    : { messaging_product: 'whatsapp', to, type: 'text', text: { body: body.slice(0, 4000), preview_url: false } };
+  return attempt('whatsapp', () => post(fetchImpl, `https://graph.facebook.com/${c.graphVersion}/${encodeURIComponent(c.phoneNumberId)}/messages`, msg, { Authorization: `Bearer ${c.token}` }));
+}
+
+export class ChannelHub {
+  constructor(public cfg: ChannelConfig, private fetchImpl: typeof fetch = fetch) {}
+  enabled(): ChannelName[] { return CHANNELS.filter((n) => this.cfg[n].enabled); }
+  send(name: ChannelName, text: string): Promise<SendResult> {
+    switch (name) {
+      case 'telegram': return telegramSend(this.cfg.telegram, text, this.fetchImpl);
+      case 'discord': return discordSend(this.cfg.discord, text, this.fetchImpl);
+      case 'slack': return slackSend(this.cfg.slack, text, this.fetchImpl);
+      case 'whatsapp': return whatsappSend(this.cfg.whatsapp, text, this.fetchImpl);
+    }
+  }
+  async broadcast(text: string, o: { except?: ChannelName[] } = {}): Promise<Partial<Record<ChannelName, SendResult>>> {
+    const out: Partial<Record<ChannelName, SendResult>> = {};
+    await Promise.all(this.enabled().filter((n) => !o.except?.includes(n)).map(async (n) => { out[n] = await this.send(n, text); }));
+    return out;
+  }
+}

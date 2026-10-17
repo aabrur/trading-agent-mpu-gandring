@@ -39,7 +39,7 @@ if (net) {
 }
 
 const killFile = process.env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE;
-const { server, desk, auto, reporter } = createApp(cfg, { executor, killFile });
+const { server, desk, auto, reporter, lead, inbound } = createApp(cfg, { executor, killFile });
 const killRec = readKill(killFile);
 if (killRec) log(`KILL SWITCH IS ON (saved ${killRec.at ? new Date(killRec.at).toISOString() : 'earlier'}). No new orders. Release it with: npm run unkill -- --yes, then restart.`);
 server.listen(cfg.port, cfg.host, () => {
@@ -49,8 +49,13 @@ server.listen(cfg.port, cfg.host, () => {
   desk.start();
   auto.start();
   reporter.start();
+  lead.start();
   log(`reports every ${cfg.reports.intervalMin} min${cfg.reports.telegram.enabled ? ' (also to Telegram)' : ''}; auto trading ${cfg.auto.on ? `on, every ${cfg.auto.intervalMin} min` : 'off'}`);
 });
-const shutdown = () => { auto.stop(); reporter.stop(); desk.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500).unref(); };
+const ch = cfg.channels;
+const inboundServer = (ch.discord.inbound || ch.slack.inbound || ch.whatsapp.inbound) && ch.commands
+  ? inbound.listen(ch.inbound.port, ch.inbound.host, () => log(`chat command webhooks on http://${ch.inbound.host}:${ch.inbound.port}/api/channels/* (point your tunnel at this port only)`))
+  : null;
+const shutdown = () => { auto.stop(); reporter.stop(); lead.stop(); inboundServer?.close(); desk.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500).unref(); };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
