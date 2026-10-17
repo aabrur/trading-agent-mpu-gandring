@@ -1,0 +1,243 @@
+# Trading Agent Mpu Gandring
+
+Seven AI trading agents share one office. They read the market, argue about it, throw cartoon punches when they really disagree, and then a Risk Manager decides whether the Desk Lead's call is allowed to touch the paper book.
+
+You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
+
+![The virtual office mid-debate](docs/screenshot.png)
+
+> **Paper trading only.** This is an educational project about how multi-agent decision making works. It is not financial advice, it does not promise profit, and this version has no code that can place a real order, touch a wallet, or withdraw anything.
+
+## What it does
+
+- **A real desk, not one bot.** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager, Execution Trader and Trade Reviewer each have a job, a personality and their own model.
+- **Bring your own brains.** Every agent can run on a different provider: xAI, OpenAI, Anthropic, Gemini, DeepSeek or OpenRouter. Mix them so the arguments get interesting.
+- **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
+- **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
+- **Risk can only tighten.** The Risk Manager can approve, reduce or reject. Hard caps in code clip leverage, stop distance and loss per trade, whatever any model says.
+- **Boss's money split.** You set a total balance, a safety net and N open orders (1 to 4). Money Trade = balance minus safety net, and each order gets Money Trade / N. The safety net is never touched.
+- **Every paper order has a stop loss.** No stop, no order.
+- **Live public market data.** Bybit, Binance and Hyperliquid public endpoints, no key needed, with offline sample data as a fallback.
+- **Injection-aware.** News and posts are treated as untrusted data. The sample news even has a planted "ignore previous instructions" line, and a test proves the agents never see it.
+- **Virtual office UI.** Desks, avatars, live status, speech bubbles streamed over WebSocket, a debate arena, fight meter, ticker strip, paper book, verdict cards and a desk log.
+- **Talk to the agents.** Click an agent to chat or give commands like `analyze ETHUSDT`, `be more cautious` or `close all`.
+- **Optional Grok Bot bridge.** Send verdicts and commands to a Grok Bot webhook routine from the server. Off by default.
+
+## Quickstart
+
+You need [Node.js 20 or newer](https://nodejs.org) and git.
+
+### macOS and Linux
+
+```bash
+git clone https://github.com/<your-account>/trading-agent-mpu-gandring.git
+cd trading-agent-mpu-gandring
+cp .env.example .env      # optional: add API keys in .env, never in a chat
+npm install
+npm test
+npm run dev
+```
+
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/<your-account>/trading-agent-mpu-gandring.git
+cd trading-agent-mpu-gandring
+Copy-Item .env.example .env
+npm install
+npm test
+npm run dev
+```
+
+Then open **http://localhost:5173**. The backend runs on port 8787 and binds `0.0.0.0`, so a phone on the same network (or your tailnet) can open `http://<your-computer-ip>:5173` too.
+
+Press the **Start debate** button, or type `analyze BTCUSDT` in the command bar.
+
+### Headless debate
+
+```bash
+npm run debate -- --symbol BTCUSDT            # live public prices, falls back to sample data
+npm run debate -- --symbol ETHUSDT --offline  # sample data only, no network at all
+npm run debate -- --symbol SOLUSDT --json     # machine readable verdict
+```
+
+### Other scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Backend (Express + WebSocket) and frontend (Vite + React) together |
+| `npm run build` | Compiles the server and builds the UI into `dist/` |
+| `npm start` | Runs the built server, which also serves the built UI on port 8787 |
+| `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, paper-only switch |
+| `npm run debate -- --symbol X` | One debate in the terminal |
+| `npm run screenshot` | Saves `docs/screenshot.png` from a running dev server (needs Chrome) |
+
+## Configuration
+
+Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the server only and never reach the browser.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `TRADING_MODE` | `PAPER` | Must be `PAPER`. Anything else and the server exits with code 2. |
+| `PORT` / `WEB_PORT` | `8787` / `5173` | Backend and frontend ports |
+| `XAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` | empty | Model keys. All optional. |
+| `XAI_MODEL`, `OPENAI_MODEL`, ... | placeholders | Default model per provider. Model names change, so check your provider's list and edit. |
+| `DEFAULT_PROVIDER` | `mock` | Provider for agents without their own mapping |
+| `AGENT_<ID>_PROVIDER` / `AGENT_<ID>_MODEL` | unset | Per-agent mapping. IDs: `LEAD`, `MARKET`, `RESEARCH`, `STRATEGIST`, `RISK`, `EXECUTION`, `REVIEWER`. A provider without a key falls back to mock and the UI says so. |
+| `MARKET_SOURCE` | `bybit` | `bybit`, `binance`, `hyperliquid` or `sample`. Falls through the others, then to sample data. |
+| `WATCHLIST` | `BTCUSDT,ETHUSDT,SOLUSDT` | Symbols in the ticker and the debate picker |
+| `PAPER_BALANCE` | `1000` | Starting paper balance in USDT |
+| `SAFETY_NET` | `200` | Part of the balance that is never used |
+| `OPEN_ORDERS_N` | `4` | Max open orders, 1 to 4 |
+| `MAX_LEVERAGE` | `3` | Hard cap |
+| `DEFAULT_STOP_PCT` / `MIN_STOP_PCT` | `1.5` / `0.3` | Widest and tightest allowed stop distance, in percent |
+| `MAX_LOSS_PER_TRADE_PCT` | `1` | A stop hit may lose at most this share of the balance |
+| `MIN_ORDER_USDT` | `5` | Below this the order is skipped. It is never rounded up. |
+| `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate (1 to 4) |
+| `DEBATE_PACE_MS` | `700` | Speech pacing for the office. `0` is instant. |
+| `FIGHT_THRESHOLD` | `0.45` | Disagreement level where punches start |
+| `AUTO_DEBATE_MINUTES` | `0` | Debate the watchlist on a timer. `0` is off. |
+| `GROKBOT_WEBHOOK_URL` / `GROKBOT_WEBHOOK_KEY` | empty | Optional bridge, see [docs/grokbot-bridge.md](docs/grokbot-bridge.md) |
+
+### The money split
+
+```
+Money Trade          = total balance - safety net
+Allocation per order = Money Trade / N        (N = 1, 2, 3 or 4)
+```
+
+Example: balance 100 USDT, safety net 20 USDT, N = 4 gives Money Trade 80 and 20 USDT per order.
+
+Rules the code enforces:
+
+- Never more than N open positions.
+- Margin in use never goes past Money Trade, so the safety net stays whole.
+- If an allocation is under the minimum order or under one lot step, the order is skipped and the desk suggests a smaller N. Nothing is rounded up.
+- When the balance is at or below the safety net, no new orders.
+- The allocation is recalculated from the current balance before every order.
+- A stop hit may lose at most `MAX_LOSS_PER_TRADE_PCT` of the balance, so size can come out smaller than the allocation.
+
+Full note: [docs/money-split.md](docs/money-split.md).
+
+## How a debate flows
+
+```mermaid
+flowchart TD
+    U[You: Start debate / analyze SYMBOL] --> L0[Desk Lead opens the table]
+    L0 --> M[Market Analyst<br/>public prices, funding, closed candles]
+    M --> R[Research Analyst<br/>news and catalysts, sanitized<br/>LONG / SHORT / ABSTAIN / VETO]
+    R --> S[Strategist<br/>EMA rule on closed bars, in code<br/>side + invalidation]
+    S --> D{Rebuttal rounds<br/>Market, Research, Strategist, Reviewer}
+    D -->|disagreement above threshold| F[Cartoon fight in the office]
+    F --> D
+    D --> L[Desk Lead<br/>OPEN_LONG / OPEN_SHORT / CLOSE / HOLD]
+    L --> K[Risk Manager opinion]
+    K --> C[Code caps<br/>leverage, stop, loss per trade<br/>tighten only]
+    C -->|REJECT| V[Verdict card]
+    C -->|APPROVE or REDUCE| P[Money split<br/>Money Trade / N, safety net, min order]
+    P --> E[Execution Trader<br/>paper fill with stop loss]
+    E --> V
+    V --> J[Trade Reviewer journals closes]
+    V -.optional.-> G[Grok Bot webhook]
+```
+
+```mermaid
+flowchart LR
+    subgraph Browser
+      UI[Virtual office<br/>React + Vite]
+    end
+    subgraph Server[Node server]
+      API[Express /api] --- WS[WebSocket /ws]
+      API --> Desk[Desk orchestrator]
+      Desk --> Agents[Agent runner<br/>JSON schema, 1 retry, safe HOLD]
+      Agents --> Prov[Providers<br/>mock, xAI, OpenAI, Anthropic,<br/>Gemini, DeepSeek, OpenRouter]
+      Desk --> Mkt[Market data<br/>Bybit, Binance, Hyperliquid, sample]
+      Desk --> Book[Paper book]
+      Desk --> Bridge[Grok Bot bridge]
+    end
+    UI <--> WS
+    UI --> API
+```
+
+Each agent must answer with one JSON object that matches its schema (`server/schemas.ts`). A bad answer gets one retry. A second bad answer becomes the safe default: HOLD for the Desk Lead, REJECT for Risk, neutral for everyone else.
+
+The Strategist's side comes from code, not from the model. If the model says something different, the rule wins.
+
+## Talking to the agents
+
+Click an agent in the office or the roster under it. You get a chat panel. Plain questions go to that agent's model. These commands work anywhere:
+
+| Command | Effect |
+| --- | --- |
+| `analyze ETHUSDT` (or `debate eth`, `cek sol`) | Starts a debate |
+| `pause` / `resume` (or `tahan` / `lanjut`) | Stops after the current speaker / allows debates again |
+| `set n 3` | Max open orders |
+| `set safety 150` | Safety net in USDT |
+| `set balance 1000` | Resets the paper balance when nothing is open |
+| `close all`, `close BTC` | Closes paper positions at the last price |
+| `be more cautious`, `be more aggressive`, `calm down` | Changes the mood of one agent (in its panel) or the whole desk (in the command bar). Caps never loosen. |
+| `status`, `help` | Quick summary |
+
+## Safety notes
+
+- `TRADING_MODE` must be `PAPER`. The server refuses to start otherwise (exit code 2), and there is a test for it.
+- There is no exchange order code, no wallet code and no withdrawal code in this repository.
+- API keys are read from `.env` on the server. They never go to the browser, and anything key-shaped is scrubbed from logs, reports, chat replies and bridge payloads.
+- News, posts and market text are wrapped as untrusted data. Lines that read like instructions are removed before any prompt is built.
+- Agreement between agents is not evidence. HOLD is a normal answer.
+
+## Going live later
+
+This version will not trade real money, on purpose. If you want to go live one day, write a separate live adapter as its own module, get it reviewed by someone who did not write it, start on testnet, and require a human to approve every order (or at least the switch to automatic mode). Keep withdrawal permission off on any key you create. The skill notes in `skills/` describe how such a desk should behave, but they are guidance, not code in this build.
+
+## Repository layout
+
+```
+server/            Express + WebSocket backend
+  agents/          roles, prompts, JSON-validated agent runner
+  providers/       mock plus OpenAI-compatible, Anthropic and Gemini callers
+  market/          public market data and offline sample data
+  desk.ts          debate orchestrator, commands, chat
+  money.ts         money split and order planning
+  risk.ts          code caps for the risk gate
+  paper.ts         paper book
+  bridge.ts        optional Grok Bot webhook
+cli/debate.ts      headless debate
+web/               Vite + React virtual office (tokens in web/src/styles/tokens.css)
+skills/            desk role notes for agents (market scan, research, strategy, risk, execution)
+data/sample/       sample news with a planted injection line
+tests/             vitest suite
+docs/              screenshot, money split, Grok Bot bridge
+```
+
+## Setting it up with an agent
+
+If you use a coding agent or a Grok Bot, point it at [AGENTS.md](AGENTS.md). It has the exact steps, including how to ask you for keys without putting them in a chat.
+
+## Bahasa Indonesia: mulai cepat
+
+Proyek ini simulasi trading kertas (paper trading). Tujuh agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan, tidak ada janji untung, dan tidak ada kode untuk order sungguhan.
+
+1. Pasang Node.js 20 atau lebih baru.
+2. Jalankan:
+   ```bash
+   git clone https://github.com/<akun-anda>/trading-agent-mpu-gandring.git
+   cd trading-agent-mpu-gandring
+   cp .env.example .env
+   npm install
+   npm test
+   npm run dev
+   ```
+3. Buka **http://localhost:5173** lalu klik **Start debate**, atau ketik `analyze BTCUSDT`.
+4. Tanpa API key pun jalan, karena ada provider `mock`. Kalau mau pakai model sungguhan, isi key di file `.env` (jangan pernah tempel key di chat), misalnya `XAI_API_KEY=...` lalu `AGENT_LEAD_PROVIDER=xai`.
+5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order (1 sampai 4). Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss.
+
+Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `set n 3`, `set safety 150`, `close all`, `be more cautious`.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT, copyright 2026 Abrur Alaina. See [LICENSE](LICENSE).

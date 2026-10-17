@@ -1,0 +1,48 @@
+/* Trading Agent Mpu Gandring design tokens. Change the look here, in one place. */
+:root {
+  /* surfaces */
+  --bg: #0b0a12;
+  --bg-2: #110f1e;
+  --panel: #15122a;
+  --panel-2: #1b1734;
+  --line: #2a2550;
+  --grid-line: rgba(120, 110, 220, 0.12);
+
+  /* text */
+  --text: #ece9f7;
+  --text-dim: #a49fc4;
+  --text-faint: #6d6894;
+
+  /* accents: brass from the keris hilt, teal from old CRTs */
+  --brass: #e8b44c;
+  --brass-deep: #9c6b1f;
+  --teal: #3ee6c4;
+  --violet: #8b7bff;
+  --long: #2ee59d;
+  --short: #ff5a7a;
+  --neutral: #8f8aae;
+  --warn: #ffb547;
+  --arena-glow: #8b7bff;
+  --hit: #ff3b3b;
+
+  /* type */
+  --font-ui: 'Space Grotesk', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --font-comic: 'Bangers', 'Impact', 'Arial Black', sans-serif;
+  --fs-xs: 11px;
+  --fs-sm: 12.5px;
+  --fs-md: 14px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
+
+  /* shape */
+  --radius-sm: 6px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --glow-brass: 0 0 0 1px rgba(232, 180, 76, 0.35), 0 0 24px rgba(232, 180, 76, 0.18);
+
+  /* motion */
+  --walk: 900ms cubic-bezier(0.6, 0.05, 0.3, 1);
+  --fast: 160ms ease;
+}
