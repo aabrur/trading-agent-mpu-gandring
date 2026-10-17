@@ -140,6 +140,9 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
             <rect width="28" height="28" fill="var(--wall)" />
             <circle cx="14" cy="14" r="1.6" fill="var(--wall-dot)" />
           </pattern>
+          <clipPath id="frame-clip">
+            <rect x="458" y="30" width="84" height="74" rx="3" />
+          </clipPath>
         </defs>
 
         {/* wall */}
@@ -174,16 +177,11 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
             </g>
           ))}
         </g>
-        {/* framed keris and plaque */}
+        {/* framed logo and plaque */}
         <g>
           <rect x="450" y="22" width="100" height="90" rx="6" fill="var(--sage)" stroke="var(--wood)" strokeWidth="6" />
           <rect x="458" y="30" width="84" height="74" rx="3" fill="var(--cream)" />
-          <g transform="translate(500 67) rotate(-38)">
-            <path d="M0 -40 C5 -32 -4 -26 2 -18 S-4 -6 2 2 S-4 14 1 20 L-3 24 L5 24 L3 20 C8 12 0 6 6 -2 S0 -14 6 -22 S2 -34 0 -40Z" fill="#9aa3b3" stroke="#5f6676" strokeWidth="1.2" />
-            <path d="M1 -34 C3 -28 -1 -24 3 -18 S-1 -6 3 2 S-1 12 2 18" stroke="#e7ecf3" strokeWidth="1" fill="none" />
-            <rect x="-7" y="23" width="16" height="5" rx="2.5" fill="var(--brass)" />
-            <path d="M-3 28 Q1 46 6 28Z" fill="var(--wood-dark)" />
-          </g>
+          <image href="/mpu-gandring-logo.webp" x="460" y="32" width="80" height="70" preserveAspectRatio="xMidYMid meet" clipPath="url(#frame-clip)" />
           <rect x="448" y="112" width="104" height="15" rx="4" fill="var(--wood-dark)" />
           <text x="500" y="122.5" textAnchor="middle" className="plaque">MPU GANDRING</text>
         </g>
