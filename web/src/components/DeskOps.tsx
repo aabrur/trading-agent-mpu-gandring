@@ -34,20 +34,20 @@ export function DeskOps({ state }: { state: DeskState }) {
         <div className="seg" role="group" aria-label="side">{(['LONG', 'SHORT'] as const).map((s) => <button key={s} className={side === s ? 'on' : ''} onClick={() => setSide(s)}>{s}</button>)}</div>
       </div>
       <div className="ops-row">
-        <input aria-label="entry" placeholder="entry (blank = live)" value={entry} onChange={(e) => setEntry(e.target.value)} />
-        <input aria-label="stop" placeholder="stop (required)" value={stop} onChange={(e) => setStop(e.target.value)} />
+        <input aria-label="entry" placeholder="entry, blank for live" value={entry} onChange={(e) => setEntry(e.target.value)} />
+        <input aria-label="stop" placeholder="stop, required" value={stop} onChange={(e) => setStop(e.target.value)} />
         <input aria-label="take profit" placeholder="tp" value={tp} onChange={(e) => setTp(e.target.value)} />
         <input aria-label="leverage" placeholder="lev" value={lev} onChange={(e) => setLev(e.target.value)} />
       </div>
       <div className="ops-row">
-        <button onClick={size}>Size (read only)</button>
+        <button onClick={size}>Size ticket</button>
         <button onClick={open} disabled={state.killed || !(Number(stop) > 0)}>Open with stop</button>
         <button onClick={() => close(symbol)}>Close {symbol}</button>
         <button onClick={() => close('all')}>Close all</button>
         <button onClick={scan}>Proaktif scan</button>
       </div>
       <div className="ops-row">
-        <input aria-label="lesson" placeholder="add a lesson (cannot loosen a guard)" value={lesson} onChange={(e) => setLesson(e.target.value)} />
+        <input aria-label="lesson" placeholder="add a lesson, cannot loosen a guard" value={lesson} onChange={(e) => setLesson(e.target.value)} />
         <button disabled={lesson.trim().length < 8} onClick={addLesson}>Add lesson</button>
       </div>
       {out && <p className={`wallet-msg ${out.ok ? 'ok' : 'bad'}`}>{out.text}</p>}

@@ -139,7 +139,7 @@ describe('channel setup (shared by CLI and office)', () => {
     const r = saveChannel(env, 'telegram', { TELEGRAM_BOT_TOKEN: TG_TOKEN, TELEGRAM_CHAT_ID: '1111', TELEGRAM_ALLOWED_USER_IDS: '2222' }, { commands: true });
     expect(r.ok).toBe(true);
     expect(JSON.stringify(r)).not.toContain(TG_TOKEN);
-    expect(statSync(env).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(env).mode & 0o777).toBe(0o600);
     expect(readFileSync(env, 'utf8')).toContain('CHANNEL_COMMANDS=on');
     const st = channelStatus({ ...allEnv });
     expect(JSON.stringify(st)).not.toContain(TG_TOKEN);

@@ -6,7 +6,7 @@ import { venueDoc, indexDoc } from '../server/setup/docs.js';
 
 describe('setup docs are generated from the guide', () => {
   it('every venue doc and the index are up to date', () => {
-    for (const v of EXCHANGES) expect(readFileSync(`docs/setup/${v}.md`, 'utf8'), `docs/setup/${v}.md is stale: npm run docs:setup`).toBe(venueDoc(v));
-    expect(readFileSync('docs/setup/README.md', 'utf8')).toBe(indexDoc());
+    for (const v of EXCHANGES) expect(readFileSync(`docs/setup/${v}.md`, 'utf8').replace(/\r\n/g, '\n'), `docs/setup/${v}.md is stale: npm run docs:setup`).toBe(venueDoc(v).replace(/\r\n/g, '\n'));
+    expect(readFileSync('docs/setup/README.md', 'utf8').replace(/\r\n/g, '\n')).toBe(indexDoc().replace(/\r\n/g, '\n'));
   });
 });

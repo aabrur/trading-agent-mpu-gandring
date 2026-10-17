@@ -19,7 +19,7 @@ describe('autostart service files', () => {
   const secretish = /API_KEY|SECRET|PRIVATE_KEY|PASSPHRASE|TOKEN|EnvironmentVariables|Environment=/;
   it('macOS launchd: run at login, restart on crash, no keys', () => {
     const p = servicePlan('darwin', o);
-    expect(p.file).toBe('/Users/me/Library/LaunchAgents/com.mpugandring.trading-agent.plist');
+    expect(p.file?.replace(/\\/g, '/')).toBe('/Users/me/Library/LaunchAgents/com.mpugandring.trading-agent.plist');
     expect(p.content).toContain('<key>RunAtLoad</key><true/>');
     expect(p.content).toContain('<key>SuccessfulExit</key><false/>');
     expect(p.content).toContain('--service');
@@ -33,7 +33,7 @@ describe('autostart service files', () => {
   });
   it('Linux systemd --user: restart on failure, but not after a guard refusal (exit 2), no keys', () => {
     const p = servicePlan('linux', { ...o, repo: '/home/me/tamg', home: '/home/me' });
-    expect(p.file).toBe('/home/me/.config/systemd/user/trading-agent-mpu-gandring.service');
+    expect(p.file?.replace(/\\/g, '/')).toBe('/home/me/.config/systemd/user/trading-agent-mpu-gandring.service');
     expect(p.content).toContain('Restart=on-failure');
     expect(p.content).toContain('RestartPreventExitStatus=2');
     expect(p.content).not.toMatch(secretish);
