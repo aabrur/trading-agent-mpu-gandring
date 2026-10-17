@@ -6,7 +6,7 @@ In Grok Bot mode you need **no AI model API keys**. Six Grok Bot agents are the 
 
 ## Option A: template (one click)
 
-Open the template link: `TEMPLATE_LINK_TBD`
+Open the template link: `https://x.ai/bot/fX91UALWOlFMk_Oj2LBjn`
 
 The template bot reads [BOOTSTRAP.md](BOOTSTRAP.md) and does everything below by itself: clones the repo, creates the six employees and their group chat, saves the two learning skills, interviews you once, and starts the trading loop and the reports.
 
