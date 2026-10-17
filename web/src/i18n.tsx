@@ -175,6 +175,7 @@ export const en = {
   tour9Body: 'Configure AI providers, 200+ models, CEX/DEX keys, TradingView, and notification channels in a clean sidebar layout.',
 
   // Trakteer Popup
+  trakteerBtn: 'Support on Trakteer',
   trakteerTitle: 'Support Mpu Gandring with Cendol!',
   trakteerBody: 'Enjoying the 6-agent trading desk? Treat the creator to a glass of Cendol on Trakteer to keep updates and new adapters coming.',
   trakteerDismiss: 'Maybe later',
@@ -358,6 +359,7 @@ export const id: Record<TranslationKey, string> = {
   tour9Body: 'Atur provider AI, 200+ model, API key CEX/DEX, TradingView, dan channel notifikasi lewat navigasi kiri yang rapi.',
 
   // Trakteer Popup
+  trakteerBtn: 'Dukung Saya di Trakteer',
   trakteerTitle: 'Trakteer Cendol untuk Mpu Gandring!',
   trakteerBody: 'Suka dengan meja trading 6 agen ini? Trakteer pembuatnya segelas Cendol supaya update fitur dan adapter baru terus jalan.',
   trakteerDismiss: 'Nanti dulu',

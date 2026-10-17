@@ -81,7 +81,7 @@ export function TopBar({
           href="https://trakteer.id/aabrur/tip"
           target="_blank"
           rel="noopener noreferrer"
-          title="Dukung saya di trakteer.id"
+          title={t('trakteerBtn')}
           className="trbtn"
         >
           <span className="trbtn-txt">
@@ -90,7 +90,7 @@ export function TopBar({
               alt="Traktiran"
               className="trbtn-img"
             />
-            <span>Dukung Saya di Trakteer</span>
+            <span>{t('trakteerBtn')}</span>
           </span>
         </a>
       </div>
@@ -109,6 +109,17 @@ export function TopBar({
 
 export function TrakteerPopup({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
+  const embedUrl = `https://trakteer.id/v1/aabrur/tip/embed/modal?embedId=0&ref=${encodeURIComponent(window.location.href)}`;
+
+  useEffect(() => {
+    const onMsg = (ev: MessageEvent) => {
+      if (ev.data && typeof ev.data === 'object' && ev.data.type === 'embed.modalClosed') {
+        onClose();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [onClose]);
 
   return (
     <div
@@ -119,36 +130,23 @@ export function TrakteerPopup({ onClose }: { onClose: () => void }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="panel trakteer-popup-card">
-        <button className="trakteer-close-x" onClick={onClose} aria-label={t('closeModal')}>✕</button>
-        <div className="trakteer-creator">
-          <img
-            src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
-            alt="Cendol"
-            className="trakteer-cendol-icon"
-          />
-          <div className="trakteer-creator-info">
-            <strong>Abrur <span>@aabrur</span></strong>
-            <small>1 Cendol · Rp 5.000 / unit</small>
-          </div>
+        <div className="panel-head trakteer-head">
+          <h2>{t('trakteerTitle')}</h2>
+          <button className="trakteer-close-x" onClick={onClose} aria-label={t('closeModal')} title={t('closeModal')}>✕</button>
         </div>
-        <p className="trakteer-popup-body">{t('trakteerBody')}</p>
+        <div className="trakteer-iframe-wrap">
+          <iframe
+            src={embedUrl}
+            title="Dukung Saya di Trakteer"
+            className="trakteer-iframe"
+            onLoad={(e) => {
+              try {
+                e.currentTarget.contentWindow?.postMessage({ type: 'embed.openModal' }, '*');
+              } catch { /* ignore */ }
+            }}
+          />
+        </div>
         <div className="trakteer-popup-actions">
-          <a
-            href="https://trakteer.id/aabrur/tip"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="trbtn trakteer-pay-btn"
-            onClick={onClose}
-          >
-            <span className="trbtn-txt">
-              <img
-                src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
-                alt="Traktiran"
-                className="trbtn-img"
-              />
-              <span>Lanjutkan Pembayaran · Rp 5.000</span>
-            </span>
-          </a>
           <button className="badge setup-btn trakteer-later-btn" onClick={onClose}>{t('trakteerDismiss')}</button>
         </div>
       </div>
@@ -227,15 +225,15 @@ interface VenueBalance {
   error?: string;
 }
 
-const ALL_VENUES = [
-  { venue: 'bybit', label: 'Bybit · CEX' },
-  { venue: 'binance', label: 'Binance · CEX' },
-  { venue: 'okx', label: 'OKX · CEX' },
-  { venue: 'hyperliquid', label: 'Hyperliquid · DEX' },
-  { venue: 'aster', label: 'Aster · DEX' },
-  { venue: 'dydx', label: 'dYdX v4 · DEX' },
-  { venue: 'paradex', label: 'Paradex · DEX' },
-  { venue: 'orderly', label: 'Orderly · DEX' }
+const ALL_VENUES: { venue: string; label: string; depositUrl: string }[] = [
+  { venue: 'bybit', label: 'Bybit · CEX', depositUrl: 'https://www.bybit.com/user/assets/deposit' },
+  { venue: 'binance', label: 'Binance · CEX', depositUrl: 'https://www.binance.com/en/my/wallet/account/main/deposit/crypto' },
+  { venue: 'okx', label: 'OKX · CEX', depositUrl: 'https://www.okx.com/balance/recharge' },
+  { venue: 'hyperliquid', label: 'Hyperliquid · DEX', depositUrl: 'https://app.hyperliquid.xyz/portfolio' },
+  { venue: 'aster', label: 'Aster · DEX', depositUrl: 'https://app.asterdex.com/deposit' },
+  { venue: 'dydx', label: 'dYdX v4 · DEX', depositUrl: 'https://dydx.exchange/portfolio' },
+  { venue: 'paradex', label: 'Paradex · DEX', depositUrl: 'https://app.paradex.trade/portfolio' },
+  { venue: 'orderly', label: 'Orderly · DEX', depositUrl: 'https://app.orderly.network/deposit' }
 ];
 
 export function Portfolio({ state, command }: { state: DeskState; command: (t: string) => void }) {
@@ -268,6 +266,8 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   }, [selectedVenue, fetchVenueBal]);
 
   const bookTitle = state.mode === 'PAPER' ? t('paperBook') : state.mode === 'LIVE' ? t('liveBook') : t('testnetBook');
+  const currentVenue = ALL_VENUES.find((v) => v.venue === selectedVenue) ?? ALL_VENUES[0];
+  const activeDepositUrl = venueBal?.depositUrl || currentVenue.depositUrl;
 
   return (
     <section className="panel portfolio">
@@ -284,7 +284,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
       </div>
 
       <div className="venue-balance-box">
-        <div className="venue-balance-head">
+        <div className="venue-balance-controls">
           <select
             className="venue-balance-select"
             aria-label="select venue balance"
@@ -293,23 +293,30 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
           >
             {ALL_VENUES.map((v) => <option key={v.venue} value={v.venue}>{v.label}</option>)}
           </select>
-          <button className="mini" disabled={balBusy} onClick={() => fetchVenueBal(selectedVenue)}>
-            {balBusy ? '...' : t('refreshBalance')}
+          <button
+            className={`mini venue-refresh-btn ${balBusy ? 'busy' : ''}`}
+            disabled={balBusy}
+            onClick={() => fetchVenueBal(selectedVenue)}
+            title={t('refreshBalance')}
+          >
+            {t('refreshBalance')}
           </button>
-          {venueBal?.depositUrl && (
-            <a className="badge deposit-link-btn" href={venueBal.depositUrl} target="_blank" rel="noreferrer">
-              {t('depositOfficial')} ↗
-            </a>
+        </div>
+        <div className="venue-balance-deposit-row">
+          <a className="badge deposit-link-btn" href={activeDepositUrl} target="_blank" rel="noreferrer">
+            {t('depositOfficial')} ↗
+          </a>
+        </div>
+        <div className="venue-balance-status-row">
+          {venueBal && venueBal.equityUsdt !== null ? (
+            <div className="venue-balance-stats">
+              <span>{t('equityUsdt')}: <b>{fmt(venueBal.equityUsdt)} USDT</b></span>
+              <span>{t('availableUsdt')}: <b>{fmt(venueBal.availableUsdt ?? 0)} USDT</b></span>
+            </div>
+          ) : (
+            <p className="wallet-note small">{venueBal?.error ? venueBal.error : t('notConnectedBalance')}</p>
           )}
         </div>
-        {venueBal && venueBal.equityUsdt !== null ? (
-          <div className="venue-balance-stats">
-            <span>{t('equityUsdt')}: <b>{fmt(venueBal.equityUsdt)} USDT</b></span>
-            <span>{t('availableUsdt')}: <b>{fmt(venueBal.availableUsdt ?? 0)} USDT</b></span>
-          </div>
-        ) : (
-          <p className="wallet-note small">{venueBal?.error ? venueBal.error : t('notConnectedBalance')}</p>
-        )}
       </div>
 
       <div className="n-picker">

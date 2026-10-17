@@ -41,19 +41,15 @@ a.trbtn:hover { opacity: 0.9; transform: translateY(-1px); color: #fff !importan
 .trbtn-txt { display: inline-flex; align-items: center; gap: 8px; color: #fff !important; letter-spacing: -0.15px; line-height: 30px; }
 .trbtn-txt img.trbtn-img { display: inline-block; height: 20px; width: auto; animation: trbtn-wiggle 3s infinite; }
 @keyframes trbtn-wiggle { 0%, 60%, 100% { transform: rotate(0) scale(1); } 75% { transform: rotate(0) scale(1.12); } 80% { transform: rotate(0) scale(1.1); } 84%, 92% { transform: rotate(-10deg) scale(1.1); } 88%, 96% { transform: rotate(10deg) scale(1.1); } }
-.trakteer-popup-card { position: relative; width: min(340px, 90vw); padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; text-align: center; }
-.trakteer-close-x { position: absolute; top: 10px; right: 12px; background: transparent; border: 0; font-size: 14px; color: var(--text-dim); padding: 4px 6px; border-radius: 6px; line-height: 1; }
+.trakteer-popup-card { position: relative; width: min(540px, 94vw); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.trakteer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.trakteer-head h2 { font-size: 16px; margin: 0; font-family: var(--font-head); font-weight: 600; color: var(--text); }
+.trakteer-close-x { background: transparent; border: 0; font-size: 16px; font-weight: 700; color: var(--text-dim); padding: 2px 8px; cursor: pointer; border-radius: 6px; line-height: 1; }
 .trakteer-close-x:hover { background: var(--cream-deep); color: var(--text); }
-.trakteer-creator { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 2px; }
-.trakteer-cendol-icon { width: 42px; height: 42px; object-fit: contain; padding: 6px; border-radius: 12px; background: #be1e2d; box-shadow: var(--shadow); }
-.trakteer-creator-info { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
-.trakteer-creator-info strong { font-size: 15px; color: var(--text); }
-.trakteer-creator-info strong span { font-weight: 500; font-size: 12px; color: var(--text-dim); margin-left: 4px; }
-.trakteer-creator-info small { font-size: 12px; font-weight: 700; color: #be1e2d; }
-.trakteer-popup-body { margin: 0; color: var(--text-dim); font-size: 12.5px; line-height: 1.45; }
-.trakteer-popup-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 2px; }
-a.trbtn.trakteer-pay-btn { width: 100%; padding: 5px 18px; font-size: 13.5px; }
-.trakteer-later-btn { justify-content: center; width: 100%; padding: 6px 12px; }
+.trakteer-iframe-wrap { width: 100%; height: min(530px, 70vh); border-radius: 12px; overflow: hidden; border: 1.5px solid var(--line); background: #181818; }
+.trakteer-iframe { width: 100%; height: 100%; border: 0; display: block; }
+.trakteer-popup-actions { display: flex; align-items: center; justify-content: center; margin-top: 4px; }
+.trakteer-later-btn { justify-content: center; padding: 6px 20px; font-size: 12px; }
 .badges { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; flex-shrink: 0; }
 .badge { font-size: var(--fs-xs); font-weight: 700; padding: 5px 11px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--panel); color: var(--text-dim); display: inline-flex; align-items: center; gap: 6px; }
 .badge.paper { color: #fff; background: var(--sage-deep); border-color: var(--sage-deep); letter-spacing: 0.06em; }
@@ -548,13 +544,17 @@ a.trbtn.trakteer-pay-btn { width: 100%; padding: 5px 18px; font-size: 13.5px; }
 .chart-custom-btn { border: 1.5px dashed var(--line); background: transparent; color: var(--text-dim); border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--fs-xs); cursor: pointer; }
 .chart-custom-btn:hover { border-color: var(--teal); color: var(--teal); }
 
-/* Venue balance & official deposit link */
-.venue-balance-box { margin: 10px 0; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); display: grid; gap: 6px; }
-.venue-balance-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; font-size: var(--fs-xs); }
-.venue-balance-select { border: 1.5px solid var(--line); background: var(--bg); color: var(--text); border-radius: var(--radius-sm); padding: 4px 8px; font-weight: 700; font-size: var(--fs-xs); }
+/* Venue balance & official deposit link (zero-jitter layout) */
+.venue-balance-box { margin: 10px 0; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); display: flex; flex-direction: column; gap: 8px; min-height: 124px; box-sizing: border-box; }
+.venue-balance-controls { display: flex; align-items: center; gap: 8px; width: 100%; }
+.venue-balance-select { flex: 1; min-width: 0; border: 1.5px solid var(--line); background: var(--bg); color: var(--text); border-radius: var(--radius-sm); padding: 5px 8px; font-weight: 700; font-size: var(--fs-xs); }
+.venue-refresh-btn { width: 80px; flex-shrink: 0; text-align: center; white-space: nowrap; font-weight: 700; transition: opacity 0.15s ease; }
+.venue-refresh-btn.busy { opacity: 0.6; cursor: wait; }
+.venue-balance-deposit-row { display: flex; align-items: center; min-height: 28px; }
+.venue-balance-status-row { display: flex; align-items: center; min-height: 34px; }
 .venue-balance-stats { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-family: var(--font-mono); font-size: var(--fs-sm); }
 .venue-balance-stats b { color: var(--teal); }
-.deposit-link-btn { background: #198754 !important; color: #fff !important; border-color: #146c43 !important; text-decoration: none; font-weight: 800; padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+.deposit-link-btn { background: #198754 !important; color: #fff !important; border-color: #146c43 !important; text-decoration: none; font-weight: 800; padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); line-height: 1.2; }
 .deposit-link-btn:hover { background: #157347 !important; }
 
 /* Version & Update Modal + Language Toggle */
