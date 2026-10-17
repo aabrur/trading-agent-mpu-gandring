@@ -50,6 +50,8 @@ export interface PlanInput {
   stopPct?: number;
   /** Stops closer than this (in % of entry) are refused. */
   minStopPct?: number;
+  /** A given stop wider than this (in % of entry, DEFAULT_STOP_PCT) is refused, never tightened or moved. */
+  maxStopPct?: number;
   /** Fallback minimum order value (qty * price) when the venue publishes none. */
   minOrderUsdt: number;
   maxLossPerTradePct: number;
@@ -68,7 +70,7 @@ export type Plan =
 
 /**
  * Sizes one order. Order of work:
- *  1. guards: safety net, N, valid price, a stop on the right side and not closer than MIN_STOP_PCT
+ *  1. guards: safety net, N, valid price, a stop on the right side, not closer than MIN_STOP_PCT and not wider than DEFAULT_STOP_PCT
  *  2. stop = the given stop rounded to the tick TOWARD the entry (less risk), never moved otherwise
  *  3. qty = the smallest of: allocation * leverage / price, Money Trade headroom, and the loss cap
  *     (|entry - stop| * qty + round-trip taker fee <= MAX_LOSS_PER_TRADE_PCT of equity), floored to the lot step
@@ -102,6 +104,7 @@ export function planOrder(p: PlanInput): Plan {
   const dist = Math.abs(p.price - stop);
   const stopPct = (dist / p.price) * 100;
   if (p.minStopPct != null && stopPct < p.minStopPct - 1e-9) return { ok: false, reason: `Stop ${stop} is ${round2(stopPct)}% from the entry ${p.price}, closer than the ${p.minStopPct}% floor. Not moving it; refusing.`, split };
+  if (p.maxStopPct != null && p.maxStopPct > 0 && stopPct > p.maxStopPct + 1e-9) return { ok: false, reason: `Stop ${stop} is ${round2(stopPct)}% from the entry ${p.price}, wider than the ${p.maxStopPct}% limit (DEFAULT_STOP_PCT). Not moving it; refusing.`, split };
 
   // Margin: allocation per order (Money Trade / N) times the risk factor, inside Money Trade headroom.
   const factor = Math.min(1, Math.max(0, p.sizeFactor));
@@ -112,7 +115,8 @@ export function planOrder(p: PlanInput): Plan {
   let qtyMax = (margin * p.leverage) / p.price;
 
   // Loss cap including the round-trip taker fee: qty * (dist + fee * (entry + stop)) <= maxLoss.
-  const equity = p.equity ?? p.balance;
+  // Loss cap base: the lower of balance and equity, so unrealized profit never raises the cap.
+  const equity = Math.min(p.balance, p.equity ?? p.balance);
   const maxLoss = (equity * p.maxLossPerTradePct) / 100;
   const lossPerUnit = dist + fee * (p.price + stop);
   const qtyLoss = maxLoss / lossPerUnit;

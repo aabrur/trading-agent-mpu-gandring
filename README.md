@@ -179,7 +179,8 @@ Rules the code enforces:
 
 - Never more than N open positions.
 - Margin in use never goes past Money Trade, so the safety net stays whole.
-- If an allocation is under the minimum order or under one lot step, the order is skipped and the desk suggests a smaller N. Nothing is rounded up.
+- Lot step, minimum quantity, tick and minimum notional come from the exchange (Aster `exchangeInfo`, cached 5 minutes). If the allowed size is under the minimum quantity, or its notional (qty x price) is under the minimum notional (`MIN_ORDER_USDT` when the venue publishes none), the order is skipped and the desk suggests a smaller N. Nothing is rounded up.
+- The loss at the stop includes the round-trip taker fee (the larger of `TAKER_FEE` and the venue fee).
 - When the balance is at or below the safety net, no new orders.
 - The allocation is recalculated from the current balance before every order.
 - Every order carries a stop loss, and a take profit unless `TAKE_PROFIT_R=0`. The paper book checks the stop first, then the take profit.

@@ -45,15 +45,22 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(built.desk.agents.market.stance).toBe('SHORT');
   });
   it('open goes through the risk gate caps, money split and mandatory stop; close all flattens', async () => {
-    const r = await run('open', 'ETHUSDT', 'SHORT', '--stop', '3600', '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop above the range.');
+    // A stop wider than DEFAULT_STOP_PCT is refused, never tightened or moved, and nothing reaches the exchange.
+    const wide = await run('open', 'ETHUSDT', 'SHORT', '--stop', '3600', '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop far above the range.');
+    expect(wide.ok).toBe(false);
+    expect(wide.text).toMatch(/wider than the 1.5% limit/);
+    expect(adapter.placed).toHaveLength(0);
+    const mk = (await run('market', 'ETHUSDT')).data as { last?: number; bid?: number | null };
+    const px = Number(mk.bid ?? mk.last);
+    const stop = Math.round(px * 1.012); // 1.2% above the bid, inside the 1.5% limit, on the fake tick
+    const r = await run('open', 'ETHUSDT', 'SHORT', '--stop', String(stop), '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop above the range.');
     expect(r.ok).toBe(true);
     const notes = (r.data as { notes: string[] }).notes.join(' ');
     expect(notes).toMatch(/capped to 3x/);
     expect(adapter.placed).toHaveLength(1);
     expect(adapter.placed[0].leverage).toBeLessThanOrEqual(3);
-    // The given stop is never moved or clamped; a wide stop shrinks the size instead.
-    expect(adapter.placed[0].stop).toBe(3600);
-    expect(r.text).toMatch(/Size cut so a stop hit \(with fees\)/);
+    // The given stop is used exactly (already on the tick), never moved.
+    expect(adapter.placed[0].stop).toBe(stop);
     const pos = await run('positions');
     expect((pos.data as unknown[]).length).toBe(1);
     const acc = await run('account');

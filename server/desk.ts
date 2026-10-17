@@ -460,7 +460,7 @@ export class Desk extends EventEmitter {
       balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
       price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage,
       // A given stop (Strategist / Grok Bot ticket) is used exactly. Only the internal debate falls back to stopPct.
-      stop: gate.stop ?? null, stopPct: gate.stopPct, minStopPct: this.cfg.risk.minStopPct,
+      stop: gate.stop ?? null, stopPct: gate.stopPct, minStopPct: this.cfg.risk.minStopPct, maxStopPct: this.cfg.risk.defaultStopPct,
       minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takerFee: this.cfg.risk.takerFee, rules, takeProfitR: this.cfg.risk.takeProfitR
     });
     if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
@@ -578,8 +578,8 @@ export class Desk extends EventEmitter {
   /**
    * Keyless agent path (npm run gb -- open, Grok Bot Desk Lead). Same single execution path as the
    * internal debate: risk gate code caps, money split, stop loss, daily loss stop, kill switch.
-   * A given stop is used exactly (tick-rounded toward the entry) and never moved: qty shrinks to fit the
-   * loss cap including round-trip fees, or the ticket is refused. A missing stop uses the default; leverage is capped.
+   * A given stop is used exactly (tick-rounded toward the entry) and never moved. A stop wider than DEFAULT_STOP_PCT
+   * or closer than MIN_STOP_PCT is refused; otherwise qty shrinks to fit the loss cap including round-trip fees, or the ticket is refused. A missing stop uses the default; leverage is capped.
    */
   async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId }): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
     const symbol = normSymbol(o.symbol);
@@ -592,8 +592,9 @@ export class Desk extends EventEmitter {
     // Entry is the live ask (LONG) or bid (SHORT), not rounded: the stop distance and size are measured from it.
     const price = o.side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last);
     if (o.stop != null && (!(o.stop > 0) || (o.side === 'LONG' ? o.stop >= price : o.stop <= price))) return { ok: false, reply: `stop ${o.stop} is on the wrong side of the entry ${price}`, notes: [] };
-    // The gate caps leverage and size factor. The given stop is NOT clamped: it goes to the planner exactly,
-    // which shrinks qty to fit the loss cap (fees included) or refuses. No stop given: DEFAULT_STOP_PCT.
+    // The gate caps leverage and size factor. The given stop is NOT moved: it goes to the planner exactly,
+    // which refuses it if it is wider than DEFAULT_STOP_PCT or closer than MIN_STOP_PCT, and otherwise shrinks
+    // qty to fit the loss cap (fees included) or refuses. No stop given: DEFAULT_STOP_PCT.
     const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot ticket, code caps only', sizeFactor: 1, leverage: o.leverage ?? this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct } as never, this.cfg.risk, this.agents.risk.mood);
     this.scorecard.verdict(); this.scorecard.riskDecision(gate.decision);
     await this.say('risk', `${gate.decision}. Ticket ${o.side} ${symbol} checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');

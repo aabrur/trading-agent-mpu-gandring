@@ -6,7 +6,7 @@ The app lives in `/workspace/trading-agent-mpu-gandring-app`. Use `npm run gb --
 
 ## When the Desk Lead proposes an open
 1. `gb account`, `gb positions`, `gb split`. Check the daily loss stop, free slots (max N) and Money Trade.
-2. Pick a stop from structure (Strategist's invalidation) and size it: `gb size <symbol> <LONG|SHORT> <entry> <stop>`. The tool clamps the stop and leverage to the code caps and respects the max loss per trade.
+2. Pick a stop from structure (Strategist's invalidation) and size it: `gb size <symbol> <LONG|SHORT> <entry> <stop>`. The tool uses the stop exactly (only rounded to the exchange tick toward the entry), refuses a stop wider than `DEFAULT_STOP_PCT` or closer than `MIN_STOP_PCT` instead of moving it, caps leverage, and shrinks qty so a stop hit plus round-trip taker fees stays within the max loss per trade. Lot step, tick and min notional come from the exchange.
 3. Decide APPROVE, REDUCE or REJECT. REJECT when the rule does not back the trade and the room is split, when the daily loss cap is mostly used, or on Research VETO.
 4. Post it: `gb event risk "<decision, stop, size, why>"`, then give Execution Trader the exact stop, take profit and leverage.
 
