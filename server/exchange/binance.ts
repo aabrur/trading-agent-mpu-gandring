@@ -11,7 +11,7 @@ export class BinanceAdapter implements ExchangeAdapter {
   private base: string;
   constructor(public readonly network: Network, private key: string, private secret: string, private fetchImpl: FetchLike = fetch, testnetBase = process.env.BINANCE_TESTNET_BASE_URL) {
     if (!key || !secret) throw new ExchangeError('Binance key and secret are required');
-    this.base = network === 'testnet' ? (testnetBase || 'https://testnet.binancefuture.com') : 'https://fapi.binance.com';
+    this.base = network === 'testnet' ? (testnetBase || 'https://demo-fapi.binance.com') : 'https://fapi.binance.com';
   }
   private async req(method: 'GET' | 'POST' | 'DELETE', path: string, params: Record<string, string | number | boolean | undefined> = {}, base = this.base) {
     const q = new URLSearchParams(Object.fromEntries(Object.entries({ ...params, recvWindow: 5000, timestamp: Date.now() }).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));

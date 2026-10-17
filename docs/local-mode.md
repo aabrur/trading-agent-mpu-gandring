@@ -80,7 +80,7 @@ All venues sit behind one interface, `server/exchange/types.ts` (`ExchangeAdapte
 | Venue | Status | Testnet | Withdraw check |
 | --- | --- | --- | --- |
 | Bybit (USDT perps) | **Implemented**, tested against a mocked Bybit API | api-testnet.bybit.com | `/v5/user/query-api`, refuses `Wallet: Withdraw` and read-only keys |
-| Binance (USD-M futures) | Experimental, untested on a real account | testnet.binancefuture.com (override with `BINANCE_TESTNET_BASE_URL`) | `/sapi/v1/account/apiRestrictions` `enableWithdrawals` |
+| Binance (USD-M futures) | Experimental, untested on a real account | Demo Trading, demo-fapi.binance.com (override with `BINANCE_TESTNET_BASE_URL`) | `/sapi/v1/account/apiRestrictions` `enableWithdrawals` |
 | OKX (USDT swaps) | Experimental, untested on a real account | demo trading (`x-simulated-trading`) | `/api/v5/account/config` `perm` |
 | Hyperliquid (perps) | Experimental, untested on a real account | api.hyperliquid-testnet.xyz | must be an approved API agent wallet (`extraAgents`), never the main wallet key |
 | Aster (perps, API v3) | Experimental, untested on a real account | fapi.asterdex-testnet.com | Pro API agent wallet, not the main key; `/fapi/v3/account` must report `canWithdraw: false` |

@@ -31,7 +31,7 @@ describe('bug 1: minimum notional is read on every venue that publishes one', ()
   it('Binance: MIN_NOTIONAL 20 from exchangeInfo; a 17 USDT order is refused instead of being sent', async () => {
     const info = { symbols: [{ symbol: 'ETHUSDT', status: 'TRADING', filters: [{ filterType: 'PRICE_FILTER', tickSize: '0.01' }, { filterType: 'LOT_SIZE', stepSize: '0.001', minQty: '0.001', maxQty: '10000' }, { filterType: 'MARKET_LOT_SIZE', stepSize: '0.001', minQty: '0.001', maxQty: '2000' }, { filterType: 'MIN_NOTIONAL', notional: '20' }] }] };
     let calls = 0;
-    const f = (async (url: string) => { calls++; expect(url).toBe('https://testnet.binancefuture.com/fapi/v1/exchangeInfo'); return json(info); }) as unknown as typeof fetch;
+    const f = (async (url: string) => { calls++; expect(url).toBe('https://demo-fapi.binance.com/fapi/v1/exchangeInfo'); return json(info); }) as unknown as typeof fetch;
     const a = new BinanceAdapter('testnet', 'k', 's', f);
     const r = await adapterRules(a, 'ETHUSDT');
     expect(r).toMatchObject({ qtyStep: 0.001, minQty: 0.001, tickSize: 0.01, minNotional: 20, maxQty: 2000, status: 'TRADING' });
