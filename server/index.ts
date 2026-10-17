@@ -4,6 +4,7 @@ import { log, safe } from './redact.js';
 import { exchangeSettings, makeAdapter } from './exchange/index.js';
 import { LiveExecutor } from './live/executor.js';
 import { verifyKey, networkFor } from './live/guard.js';
+import { DEFAULT_KILL_FILE, readKill } from './killswitch.js';
 
 let cfg;
 try {
@@ -36,7 +37,10 @@ if (net) {
   }
 }
 
-const { server, desk, auto, reporter } = createApp(cfg, { executor });
+const killFile = process.env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE;
+const { server, desk, auto, reporter } = createApp(cfg, { executor, killFile });
+const killRec = readKill(killFile);
+if (killRec) log(`KILL SWITCH IS ON (saved ${killRec.at ? new Date(killRec.at).toISOString() : 'earlier'}). No new orders. Release it with: npm run unkill -- --yes, then restart.`);
 server.listen(cfg.port, cfg.host, () => {
   log(`Trading Agent Mpu Gandring backend on http://${cfg.host}:${cfg.port} (mode ${cfg.tradingMode}, app ${cfg.appMode}, market ${cfg.marketSource}, bridge ${cfg.bridge.enabled ? 'on' : 'off'})`);
   if (cfg.tradingMode === 'LIVE') log('LIVE TRADING IS ON. Real money, full auto. Kill switch: POST /api/kill or the red button in the office.');

@@ -14,3 +14,4 @@ test-results/
 # live unlock state (install key, signed records)
 .mpu-gandring/
 data/learnings.json
+data/kill-switch.json

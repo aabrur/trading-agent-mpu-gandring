@@ -22,6 +22,7 @@
     "setup": "tsx cli/setup.ts",
     "doctor": "tsx cli/doctor.ts",
     "gb": "tsx cli/gb.ts",
+    "unkill": "tsx cli/unkill.ts",
     "office": "concurrently -k --raw -n server,web \"npm:dev:server\" \"npm:dev:web\"",
     "office:status": "tsx cli/office-status.ts",
     "trade": "tsx cli/trade.ts",

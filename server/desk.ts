@@ -1,4 +1,5 @@
 import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS } from './exchange/types.js';
+import { readKill, writeKill } from './killswitch.js';
 import { adapterRules, publicRules, type InstrumentRules } from './exchange/rules.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
@@ -37,7 +38,7 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'warn'; agent?: AgentId; text: string; example?: boolean }
 
-export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null }
+export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action }
@@ -52,6 +53,7 @@ export class Desk extends EventEmitter {
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
   paused = false;
   killed = false;
+  killedAt = 0;
   /** Everything the desk opened, closed or skipped, with the reason. Feeds the periodic reports. */
   activity: Activity[] = [];
   autoState = { on: false, intervalMin: 0, nextAt: 0, cycles: 0, lastCycleAt: 0, running: false };
@@ -75,6 +77,9 @@ export class Desk extends EventEmitter {
     super();
     this.setMaxListeners(50);
     this.book = new PaperBook(cfg.paper.balance, cfg.paper.safetyNet, cfg.paper.n, cfg.risk.takerFee);
+    // A kill switch pressed before a restart stays on until the owner runs `npm run unkill -- --yes`.
+    const k = readKill(opts.killFile);
+    if (k) { this.killed = true; this.paused = true; this.stopFlag = true; this.killedAt = k.at; }
     // In LIVE the exchange owns stop and take profit. The local book is a mirror and never exits on its own.
     if (opts.executor) this.book.autoExit = false;
     this.agents = Object.fromEntries(AGENT_IDS.map((id) => {
@@ -281,7 +286,7 @@ export class Desk extends EventEmitter {
   async runDebate(symbolIn: string, signal?: ExternalSignal): Promise<Verdict> {
     const symbol = normSymbol(symbolIn);
     if (!symbol) throw new Error('no symbol');
-    if (this.killed) throw new Error('kill switch is on, restart the server to trade again');
+    if (this.killed) throw new Error('kill switch is on. Release it with npm run unkill -- --yes, then restart the server');
     if (this.paused) throw new Error('desk is paused, send "resume" first');
     if (this.debate) throw new Error(`a debate on ${this.debate.symbol} is already running`);
     if (this.grokbot) throw new Error('Grok Bot mode: the debate runs in your Grok Bot group chat (npm run gb -- event ...), the internal engine is off');
@@ -519,9 +524,11 @@ export class Desk extends EventEmitter {
     return n;
   }
 
-  /** Kill switch: stop debating, cancel and flatten everything, stay stopped until restart. */
+  /** Kill switch: stop debating, cancel and flatten everything. Persisted: stays on across restarts until `npm run unkill -- --yes`. */
   async kill(): Promise<string[]> {
     this.killed = true; this.paused = true; this.stopFlag = true; this.autoState.on = false;
+    if (!this.killedAt) this.killedAt = Date.now();
+    try { writeKill(this.opts.killFile, { at: this.killedAt, reason: 'kill switch' }); } catch (e) { this.addLog({ kind: 'warn', text: `Kill switch is on but could not be saved to disk (${safe((e as Error).message)}); it will reset on restart.` }); }
     let notes: string[] = [];
     if (this.opts.executor) {
       notes = await this.opts.executor.killAll(this.book.positions.map((p) => p.symbol));
@@ -531,7 +538,7 @@ export class Desk extends EventEmitter {
       const prices = Object.fromEntries(Object.values(this.tickers).map((t) => [t.symbol, t.last]));
       notes = this.book.closeAll(prices, 'kill switch').map((c) => `${c.symbol} closed, ${c.realizedPnl} USDT`);
     }
-    this.addLog({ kind: 'warn', text: `KILL SWITCH. ${notes.join('; ') || 'nothing open'}. Restart the server to trade again.` });
+    this.addLog({ kind: 'warn', text: `KILL SWITCH. ${notes.join('; ') || 'nothing open'}. To trade again: npm run unkill -- --yes on this machine, then restart.` });
     void sendToGrokBot(this.cfg, 'command', { command: 'kill', notes }, this.opts.outboxPath);
     this.changed();
     return notes;
