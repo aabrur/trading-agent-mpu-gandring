@@ -696,4 +696,25 @@ a.trbtn:hover { opacity: 0.9; transform: translateY(-1px); color: #fff !importan
 .tour-card-actions button.primary { background: var(--terracotta); color: #fff; border-color: #a9532f; }
 .tour-card-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* Kill Switch, Restart Office, and Auto Stop controls */
+.ops-kill-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 7px 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--line); background: var(--panel-2); margin-bottom: 8px; }
+.ops-kill-bar.is-killed { border-color: var(--short); background: color-mix(in srgb, var(--short) 10%, var(--panel-2)); }
+.ops-kill-bar.is-active { border-color: var(--line); }
+.kill-status-wrap { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 800; }
+.kill-indicator { width: 9px; height: 9px; border-radius: 50%; background: var(--long); display: inline-block; }
+.ops-kill-bar.is-killed .kill-indicator { background: var(--short); box-shadow: 0 0 0 3px rgba(212, 60, 60, 0.25); animation: live-pulse 1s infinite; }
+.kill-status-label { font-size: 11.5px; }
+.ops-kill-bar.is-killed .kill-status-label { color: var(--short); }
+.kill-actions-wrap { display: flex; align-items: center; gap: 6px; }
+.kill-toggle-btn { padding: 4px 9px !important; font-size: 11px !important; font-weight: 800 !important; border-radius: var(--radius-sm); cursor: pointer; }
+.kill-toggle-btn.release-btn, button.release-btn { background: #198754 !important; color: #fff !important; border-color: #146c43 !important; }
+.kill-toggle-btn.engage-btn { background: var(--bg) !important; color: var(--short) !important; border-color: var(--short) !important; }
+.kill-toggle-btn.engage-btn:hover { background: var(--short) !important; color: #fff !important; }
+.office-restart-btn, .commandbar button.restart-btn { padding: 4px 9px !important; font-size: 11px !important; font-weight: 800 !important; border-color: var(--teal) !important; color: var(--teal) !important; background: var(--bg) !important; cursor: pointer; border-radius: var(--radius-sm); }
+.office-restart-btn:hover, .commandbar button.restart-btn:hover { background: var(--teal) !important; color: #fff !important; }
+.commandbar button.kill.is-released { background: #198754 !important; color: #fff !important; border-color: #146c43 !important; }
+.auto-stop-pill-btn { padding: 3px 8px !important; font-size: 11px !important; font-weight: 800 !important; border: 1.5px dashed var(--line) !important; background: var(--bg) !important; color: var(--teal) !important; border-radius: var(--radius-sm) !important; cursor: pointer; white-space: nowrap; }
+.auto-stop-pill-btn:hover { border-color: var(--teal) !important; background: var(--teal) !important; color: #fff !important; }
+
+
 

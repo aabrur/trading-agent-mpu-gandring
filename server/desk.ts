@@ -1,5 +1,5 @@
 import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS } from './exchange/types.js';
-import { readKill, writeKill } from './killswitch.js';
+import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE } from './killswitch.js';
 import { adapterRules, publicRules, type InstrumentRules } from './exchange/rules.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
@@ -72,6 +72,7 @@ export class Desk extends EventEmitter {
   private stopFlag = false;
   private liveBackoffUntil = 0;
   private timers: NodeJS.Timeout[] = [];
+  private killFilePath: string | null = null;
 
   constructor(public cfg: AppConfig, private call: ModelCaller, private opts: DeskOptions = {}) {
     super();
@@ -79,7 +80,8 @@ export class Desk extends EventEmitter {
     this.autoState.intervalMin = cfg.auto.intervalMin;
     this.book = new PaperBook(cfg.paper.balance, cfg.paper.safetyNet, cfg.paper.n, cfg.risk.takerFee);
     // A kill switch pressed before a restart stays on until the owner runs `npm run unkill -- --yes`.
-    const k = readKill(opts.killFile);
+    this.killFilePath = opts.killFile !== undefined ? opts.killFile : process.env.VITEST ? null : (process.env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE);
+    const k = readKill(this.killFilePath);
     if (k) { this.killed = true; this.paused = true; this.stopFlag = true; this.killedAt = k.at; }
     // In LIVE the exchange owns stop and take profit. The local book is a mirror and never exits on its own.
     if (opts.executor) this.book.autoExit = false;
@@ -530,7 +532,7 @@ export class Desk extends EventEmitter {
   async kill(): Promise<string[]> {
     this.killed = true; this.paused = true; this.stopFlag = true; this.autoState.on = false;
     if (!this.killedAt) this.killedAt = Date.now();
-    try { writeKill(this.opts.killFile, { at: this.killedAt, reason: 'kill switch' }); } catch (e) { this.addLog({ kind: 'warn', text: `Kill switch is on but could not be saved to disk (${safe((e as Error).message)}); it will reset on restart.` }); }
+    try { writeKill(this.killFilePath, { at: this.killedAt, reason: 'kill switch' }); } catch (e) { this.addLog({ kind: 'warn', text: `Kill switch is on but could not be saved to disk (${safe((e as Error).message)}); it will reset on restart.` }); }
     let notes: string[] = [];
     if (this.opts.executor) {
       notes = await this.opts.executor.killAll(this.book.positions.map((p) => p.symbol));
@@ -544,6 +546,65 @@ export class Desk extends EventEmitter {
     void sendToGrokBot(this.cfg, 'command', { command: 'kill', notes }, this.opts.outboxPath);
     this.changed();
     return notes;
+  }
+
+  /** Release kill switch from the office or command, clearing persisted kill state */
+  unkill(): boolean {
+    if (this.killFilePath) clearKill(this.killFilePath);
+    this.killed = false;
+    this.killedAt = 0;
+    this.paused = false;
+    this.stopFlag = false;
+    this.addLog({ kind: 'info', text: 'Kill switch released. Trading resumed and buttons re-enabled.' });
+    this.changed();
+    return true;
+  }
+
+  /** Reload runtime configuration in-place from .env without dropping connections */
+  reloadRuntimeConfig(env: Record<string, string | undefined>) {
+    if (env.PAPER_BALANCE && Number(env.PAPER_BALANCE) > 0 && this.book.positions.length === 0) {
+      this.book.balance = Number(env.PAPER_BALANCE);
+    }
+    if (env.SAFETY_NET && Number(env.SAFETY_NET) >= 0) {
+      this.book.safetyNet = Number(env.SAFETY_NET);
+    }
+    if (env.OPEN_ORDERS_N && [1, 2, 3, 4].includes(Number(env.OPEN_ORDERS_N))) {
+      this.book.n = Number(env.OPEN_ORDERS_N) as 1 | 2 | 3 | 4;
+      this.cfg.paper.n = Number(env.OPEN_ORDERS_N) as 1 | 2 | 3 | 4;
+    }
+    if (env.TRADING_MODE) {
+      this.cfg.tradingMode = env.TRADING_MODE.toUpperCase() as never;
+    }
+    if (env.EXCHANGE) {
+      this.cfg.exchange.name = env.EXCHANGE as never;
+    }
+    if (env.AUTO_TRADING) {
+      this.cfg.auto.on = env.AUTO_TRADING === 'on';
+      this.autoState.on = env.AUTO_TRADING === 'on';
+    }
+    if (env.DEBATE_INTERVAL_MIN && Number(env.DEBATE_INTERVAL_MIN) > 0) {
+      this.cfg.auto.intervalMin = Number(env.DEBATE_INTERVAL_MIN);
+      this.autoState.intervalMin = this.cfg.auto.intervalMin;
+    }
+    if (env.AUTO_SYMBOLS) {
+      const syms = env.AUTO_SYMBOLS.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+      if (syms.length) this.cfg.auto.symbols = syms;
+    }
+    const k = readKill(this.killFilePath);
+    if (!k) {
+      this.killed = false;
+      this.paused = false;
+      this.stopFlag = false;
+      this.killedAt = 0;
+    } else {
+      this.killed = true;
+      this.paused = true;
+      this.stopFlag = true;
+      this.killedAt = k.at;
+    }
+    this.addLog({ kind: 'info', text: 'Office settings reloaded and synchronized in-place.' });
+    void this.refreshTickers();
+    this.changed();
   }
 
   /** TradingView alert. Treated as an untrusted hint: it only starts a normal debate, and Risk still gates. */

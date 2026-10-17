@@ -107,7 +107,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
   const visible = new Set((Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at).slice(0, 1).map((s) => s.agent));
 
-  const displayFights = useMemo<FightFX[]>(() => {
+  const displayFights = useMemo<Fight[]>(() => {
     if (fights.length > 0) return fights;
     if (!inDebate || (state.debate?.round ?? 0) < 1) return [];
     const debaters: AgentId[] = ['market', 'research', 'strategist'];
@@ -121,7 +121,8 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
       from: speaker,
       to: opponent,
       intensity: Math.max(0.7, disagreement),
-      punches: 3
+      punches: 3,
+      at: Date.now()
     }];
   }, [fights, inDebate, state.debate?.round, state.agents, visible, disagreement]);
   const activeFight = displayFights.at(-1);

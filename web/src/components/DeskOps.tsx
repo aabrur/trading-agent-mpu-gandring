@@ -30,7 +30,7 @@ export function DeskOps({ state }: { state: DeskState }) {
     if (auto?.symbols?.length) setAutoSyms(auto.symbols.join(', '));
   }, [auto?.symbols]);
   useEffect(() => {
-    if (state.paper?.n) setAutoN(state.paper.n);
+    if (state.paper?.n) setAutoN(Math.min(4, Math.max(1, state.paper.n)) as 1 | 2 | 3 | 4);
   }, [state.paper?.n]);
 
   useEffect(() => { fetch('/api/ops/kill').then((r) => r.json()).then(setKill).catch(() => {}); }, [state.killed]);
@@ -42,6 +42,14 @@ export function DeskOps({ state }: { state: DeskState }) {
   const updateAuto = async (patch: { on?: boolean; runNow?: boolean; n?: 1 | 2 | 3 | 4; symbolsOverride?: string[] }) => {
     setAutoBusy(true);
     try {
+      if (patch.on && state.killed) {
+        if (window.confirm('Kill switch is currently ON. Release kill switch and enable Auto Trade?')) {
+          await post('/api/ops/kill', { on: false }).catch(() => null);
+        } else {
+          setAutoBusy(false);
+          return;
+        }
+      }
       const syms = patch.symbolsOverride ?? parseSyms();
       const mins = Math.max(1, Math.min(1440, Number(autoMin) || 15));
       const nextN = patch.n ?? autoN;
@@ -79,12 +87,83 @@ export function DeskOps({ state }: { state: DeskState }) {
     void updateAuto({ n: nVal });
   };
 
-  const size = async () => { const r = await post('/api/ops/size', { symbol, side, entry: num(entry), stop: num(stop), leverage: num(lev) }).catch(() => null); show(!!r?.ok, r?.text ?? 'office not reachable'); };
-  const open = async () => {
-    if (!(Number(stop) > 0)) return show(false, 'no stop: every ticket needs a stop price. Not opening without one.');
-    if (!window.confirm(`${state.mode}: open ${side} ${symbol} with stop ${stop}?`)) return;
-    const r = await post('/api/ops/open', { symbol, side, stop: Number(stop), tp: num(tp), leverage: num(lev) }).catch(() => null); show(!!r?.ok, r?.reply ?? 'office not reachable');
+  const toggleKillSwitch = async (turnOn: boolean) => {
+    if (turnOn) {
+      if (!window.confirm('Kill switch: cancel all orders, close open positions, and stop the desk?')) return;
+    }
+    const r = await post('/api/ops/kill', { on: turnOn }).catch(() => null);
+    if (r?.ok) {
+      setKill((prev) => (prev ? { ...prev, killed: r.killed } : null));
+      show(true, r.killed ? 'Kill switch is now ON.' : 'Kill switch released. Trading & buttons active.');
+    } else {
+      show(false, r?.error ?? 'Could not update kill switch');
+    }
   };
+
+  const restartOffice = async () => {
+    show(true, 'Restarting and synchronizing office...');
+    const r = await post('/api/setup/restart', {}).catch(() => null);
+    if (r?.ok) {
+      show(true, r.detail || 'Office restarted successfully.');
+    } else {
+      show(false, r?.detail ?? 'Restart request failed');
+    }
+  };
+
+  const calcDefaultStop = (targetSym = symbol, targetSide = side, targetEntry = entry) => {
+    const livePx = Number(targetEntry) > 0 ? Number(targetEntry) : (state.tickers[targetSym]?.last ?? 0);
+    if (!(livePx > 0)) return '';
+    const sl = targetSide === 'LONG' ? livePx * 0.985 : livePx * 1.015;
+    return sl > 10 ? sl.toFixed(2) : sl > 1 ? sl.toFixed(4) : sl.toFixed(6);
+  };
+
+  const autoFillStop = () => {
+    const sl = calcDefaultStop();
+    if (sl) {
+      setStop(sl);
+      const livePx = state.tickers[symbol]?.last;
+      if (!entry && livePx) setEntry(String(livePx));
+      const currentEntry = Number(entry) || livePx;
+      if (currentEntry) {
+        const risk = Math.abs(currentEntry - Number(sl));
+        const targetTp = side === 'LONG' ? currentEntry + risk * 2 : currentEntry - risk * 2;
+        if (targetTp > 0) setTp(targetTp > 10 ? targetTp.toFixed(2) : targetTp.toFixed(4));
+      }
+      show(true, `Calculated 1.5% SL & 2R TP for ${symbol}`);
+    } else {
+      show(false, `No live price for ${symbol}. Enter entry price first.`);
+    }
+  };
+
+  const size = async () => {
+    let stopVal = num(stop);
+    if (!stopVal) {
+      const def = calcDefaultStop();
+      if (def) {
+        setStop(def);
+        stopVal = Number(def);
+      }
+    }
+    const r = await post('/api/ops/size', { symbol, side, entry: num(entry), stop: stopVal, leverage: num(lev) }).catch(() => null);
+    show(!!r?.ok, r?.text ?? 'office not reachable');
+  };
+
+  const open = async () => {
+    let stopVal = Number(stop);
+    if (!(stopVal > 0)) {
+      const def = calcDefaultStop();
+      if (def) {
+        setStop(def);
+        stopVal = Number(def);
+      } else {
+        return show(false, 'no stop: enter a stop price or select an active token to auto-compute.');
+      }
+    }
+    if (!window.confirm(`${state.mode}: open ${side} ${symbol} with stop ${stopVal}?`)) return;
+    const r = await post('/api/ops/open', { symbol, side, stop: stopVal, tp: num(tp), leverage: num(lev) }).catch(() => null);
+    show(!!r?.ok, r?.reply ?? 'office not reachable');
+  };
+
   const close = async (target: string) => { if (!window.confirm(`Close ${target}?`)) return; const r = await post('/api/ops/close', { symbol: target }).catch(() => null); show(!!r?.ok, r?.reply ?? 'office not reachable'); };
   const scan = async () => { const r = await post('/api/ops/scan', {}).catch(() => null); show(!!r?.ok, r?.findings?.length ? r.findings.map((f: { level: string; text: string }) => `${f.level}: ${f.text}`).join(' | ') : 'scan: all clear'); };
   const addLesson = async () => { const r = await post('/api/ops/lessons', { role: 'desk', lesson, kind: 'note' }).catch(() => null); show(!!r?.ok, r?.ok ? 'lesson saved' : r?.error ?? 'office not reachable'); if (r?.ok) setLesson(''); };
@@ -95,6 +174,33 @@ export function DeskOps({ state }: { state: DeskState }) {
   return (
     <div className="panel desk-ops">
       <div className="panel-head"><h2>{t('deskOpsTitle')}</h2><span className="badge">{t('deskOpsSub')}</span></div>
+
+      <div className={`ops-kill-bar ${state.killed ? 'is-killed' : 'is-active'}`}>
+        <div className="kill-status-wrap">
+          <span className="kill-indicator" />
+          <span className="kill-status-label">
+            {state.killed ? t('killSwitchOnLocked') : t('killSwitchOffReady')}
+          </span>
+        </div>
+        <div className="kill-actions-wrap">
+          <button
+            type="button"
+            className={`kill-toggle-btn ${state.killed ? 'release-btn' : 'engage-btn'}`}
+            onClick={() => toggleKillSwitch(!state.killed)}
+            title={state.killed ? 'Click to release Kill Switch and re-enable all controls' : 'Click to trigger emergency kill switch'}
+          >
+            {state.killed ? t('unlockKillBtn') : t('engageKillBtn')}
+          </button>
+          <button
+            type="button"
+            className="office-restart-btn"
+            onClick={restartOffice}
+            title="Reload configuration and synchronize office in-place"
+          >
+            {t('restartOfficeBtn')}
+          </button>
+        </div>
+      </div>
 
       <div className={`auto-setup-box ${isAutoOn ? 'is-on' : 'is-off'}`}>
         <div className="auto-setup-head">
@@ -115,7 +221,7 @@ export function DeskOps({ state }: { state: DeskState }) {
             <button
               type="button"
               className={isAutoOn ? 'on auto-on-btn' : ''}
-              disabled={autoBusy || state.killed}
+              disabled={autoBusy}
               onClick={() => void updateAuto({ on: true })}
             >
               {t('autoStartBtn')}
@@ -234,20 +340,21 @@ export function DeskOps({ state }: { state: DeskState }) {
         <input aria-label="stop" placeholder={t('stopPlaceholder')} value={stop} onChange={(e) => setStop(e.target.value)} />
         <input aria-label="take profit" placeholder={t('tpPlaceholder')} value={tp} onChange={(e) => setTp(e.target.value)} />
         <input aria-label="leverage" placeholder={t('levPlaceholder')} value={lev} onChange={(e) => setLev(e.target.value)} />
+        <button type="button" className="auto-stop-pill-btn" onClick={autoFillStop} title="Auto-calculate 1.5% stop loss and 2R take profit from current price">{t('calcAutoStopBtn')}</button>
       </div>
       <div className="ops-row ops-actions-row">
         <button onClick={size}>{t('sizeTicket')}</button>
-        <button onClick={open} disabled={state.killed || !(Number(stop) > 0)}>{t('openWithStop')}</button>
+        <button onClick={open} disabled={state.killed}>{t('openWithStop')}</button>
         <button onClick={() => close(symbol)}>{t('closeSymbolPrefix')} {symbol}</button>
         <button onClick={() => close('all')}>{t('closeAll')}</button>
         <button onClick={scan}>{t('proaktifScan')}</button>
       </div>
       <div className="ops-row">
         <input aria-label="lesson" placeholder={t('lessonPlaceholder')} value={lesson} onChange={(e) => setLesson(e.target.value)} />
-        <button disabled={lesson.trim().length < 8} onClick={addLesson}>{t('addLessonBtn')}</button>
+        <button disabled={lesson.trim().length < 2} onClick={addLesson}>{t('addLessonBtn')}</button>
       </div>
       {out && <p className={`wallet-msg ${out.ok ? 'ok' : 'bad'}`}>{out.text}</p>}
-      <p className="wallet-note small">{t('killSwitch')}: {kill?.killed ? <>ON. {kill.release}</> : <>off. Releasing it is terminal-only: <code>{kill?.unkillCommand ?? 'npm run unkill -- --yes'}</code></>}</p>
+      <p className="wallet-note small">{t('killSwitch')}: {kill?.killed ? <>ON. {kill.release} <button type="button" className="mini release-btn" style={{ marginLeft: 6, padding: '2px 6px' }} onClick={() => toggleKillSwitch(false)}>{t('unlockKillBtn')}</button></> : <>off. <button type="button" className="mini" style={{ marginLeft: 6, padding: '2px 6px' }} onClick={() => toggleKillSwitch(true)}>{t('engageKillBtn')}</button></>}</p>
     </div>
   );
 }

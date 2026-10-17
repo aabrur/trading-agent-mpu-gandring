@@ -43,8 +43,8 @@ const Provider = z.enum(['mock', 'local', 'xai', 'openai', 'anthropic', 'gemini'
 const Selection = z.object({ provider: Provider, model: z.string().min(1).max(200) }).strict();
 const ModelsBody = z.object({ defaultProvider: Provider, defaultModel: z.string().min(1).max(200), agents: z.object({ lead: Selection.optional(), market: Selection.optional(), research: Selection.optional(), strategist: Selection.optional(), risk: Selection.optional(), execution: Selection.optional() }).strict().optional(), keys: z.object({ xai: z.string().max(400).optional(), openai: z.string().max(400).optional(), anthropic: z.string().max(400).optional(), gemini: z.string().max(400).optional(), deepseek: z.string().max(400).optional(), openrouter: z.string().max(400).optional() }).strict().optional() }).strict();
 const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
-const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive(), leverage: z.number().positive().max(100).optional() }).strict();
-const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(8).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
+const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
+const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(2).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
 const AutoBody = z.object({ on: z.boolean().optional(), intervalMin: z.number().int().min(1).max(1440).optional(), symbols: z.array(z.string().min(2).max(20)).min(1).max(12).optional(), maxHoldHours: z.number().int().min(0).max(720).optional(), n: z.number().int().min(1).max(4).optional(), runNow: z.boolean().optional() }).strict();
 
 export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
@@ -90,9 +90,20 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   });
   app.post('/api/setup/restart', (req, res) => {
     if (!gate(req, res)) return;
-    if (process.env.MPU_MANAGED !== '1' || !process.send) return res.status(409).json({ ok: false, detail: 'Start the office with mpu to apply settings from the UI.' });
-    res.json({ ok: true, detail: 'Restarting the office...' });
-    setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
+    try {
+      const env = setupEnv(c.envFile);
+      c.desk.reloadRuntimeConfig?.(env);
+      if (c.auto && typeof env.AUTO_TRADING === 'string') {
+        c.auto.configure({ on: env.AUTO_TRADING === 'on' });
+      }
+      c.desk.emit('state', c.desk.snapshot());
+    } catch { /* ignore reload error */ }
+    if (process.env.MPU_MANAGED === '1' && process.send) {
+      res.json({ ok: true, detail: 'Restarting the office managed process...' });
+      setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
+      return;
+    }
+    res.json({ ok: true, detail: 'Office configuration reloaded and synchronized in-place.' });
   });
   app.get('/api/setup/local-agents', (req, res) => {
     if (!gate(req, res)) return;
@@ -184,7 +195,11 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     let entry = p.data.entry;
     if (!entry) { const t = c.desk.tickers[p.data.symbol.toUpperCase()]; entry = t ? Number((t as { last: number }).last) : undefined; }
     if (!entry) return res.status(400).json({ ok: false, text: 'no live price yet for that symbol: enter an entry price' });
-    const r = await sizeTicket(c.cfg, setupEnv(c.envFile), { balance: s.paper.balance, equity: s.paper.equity, safetyNet: s.paper.safetyNet, n: s.paper.n, open: s.paper.positions.length, used: s.paper.usedMargin, mode: s.mode }, { ...p.data, entry }, c.fetchImpl ?? fetch);
+    let stop = p.data.stop;
+    if (!stop && entry) {
+      stop = p.data.side === 'LONG' ? entry * (1 - 0.015) : entry * (1 + 0.015);
+    }
+    const r = await sizeTicket(c.cfg, setupEnv(c.envFile), { balance: s.paper.balance, equity: s.paper.equity, safetyNet: s.paper.safetyNet, n: s.paper.n, open: s.paper.positions.length, used: s.paper.usedMargin, mode: s.mode }, { ...p.data, entry, stop: stop! }, c.fetchImpl ?? fetch);
     res.json(r);
   });
   // Same single execution path as everything else: risk gate caps, money split, required stop, daily stop, kill switch.
@@ -203,7 +218,7 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
   app.get('/api/ops/lessons', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, lessons: c.desk.learnings.recent(30), standingRules: c.desk.learnings.standingRules(), refused: c.desk.learnings.refused }); });
   app.post('/api/ops/lessons', (req, res) => {
     if (!gate(req, res)) return;
-    const p = LessonBody.safeParse(req.body); if (!p.success) return res.status(400).json({ ok: false, error: 'role and a lesson of 8+ characters' });
+    const p = LessonBody.safeParse(req.body); if (!p.success) return res.status(400).json({ ok: false, error: 'role and a lesson of 2+ characters' });
     const r = c.desk.learn({ ...p.data, role: p.data.role as never, lesson: sanitizeUntrusted(p.data.lesson, 300).text, source: 'owner' });
     if (!r) return res.status(422).json({ ok: false, error: 'refused: empty, learning off, or it would loosen a guard' });
     res.json({ ok: true, lesson: r.lesson });
@@ -211,6 +226,33 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
   app.get('/api/ops/kill', (req, res) => {
     if (!gate(req, res)) return;
     res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, release: c.desk.killed ? `Only on this machine, in a terminal: ${UNKILL_COMMAND}, then restart the office.` : null, unkillCommand: UNKILL_COMMAND });
+  });
+  app.post('/api/ops/kill', async (req, res) => {
+    if (!gate(req, res)) return;
+    const on = typeof req.body?.on === 'boolean' ? req.body.on : (req.body?.action === 'release' ? false : !!req.body?.killed);
+    if (on) {
+      c.auto?.stop();
+      await c.desk.kill();
+    } else {
+      c.desk.unkill();
+    }
+    res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, unkillCommand: UNKILL_COMMAND });
+  });
+  app.post('/api/ops/restart', (req, res) => {
+    if (!gate(req, res)) return;
+    try {
+      const env = setupEnv(c.envFile);
+      c.desk.reloadRuntimeConfig?.(env);
+      if (c.auto && typeof env.AUTO_TRADING === 'string') {
+        c.auto.configure({ on: env.AUTO_TRADING === 'on' });
+      }
+      c.desk.emit('state', c.desk.snapshot());
+    } catch { /* ignore reload error */ }
+    if (process.env.MPU_MANAGED === '1' && process.send) {
+      setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
+      return res.json({ ok: true, detail: 'Restarting the office managed process...' });
+    }
+    return res.json({ ok: true, detail: 'Office configuration reloaded and synchronized in-place.' });
   });
   app.post('/api/ops/auto', (req, res) => {
     if (!gate(req, res)) return;
