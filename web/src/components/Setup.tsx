@@ -31,10 +31,10 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
 
   const load = () => fetch('/api/setup').then((r) => r.json()).then((d: SetupInfo) => { setInfo(d); if (d.ok) setVenue((v) => v || (d.status.exchange !== 'none' ? d.status.exchange : 'bybit')); }).catch(() => setInfo({ ok: false, error: 'office backend not reachable' } as SetupInfo));
   useEffect(() => { void load(); }, []);
-  useEffect(() => { if (!venue) return; setAt(0); setVals({}); setMsg(null); fetch(`/api/setup/guide/${venue}?network=${network}`).then((r) => r.json()).then(setGuide).catch(() => setGuide(null)); }, [venue, network]);
+  useEffect(() => { if (!venue) return; setAt(0); setVals({}); setMsg(null); fetch(`/api/setup/guide/${venue}?network=${network}`).then((r) => r.json()).then((g) => setGuide(Array.isArray(g?.steps) ? g : null)).catch(() => setGuide(null)); }, [venue, network]);
 
   if (!info) return null;
-  if (!info.ok) return <div className="setup-overlay"><div className="panel setup"><div className="panel-head"><h2>Setup</h2><button onClick={onClose}>Close</button></div><p className="wallet-msg bad">{info.error}</p><p>Same setup in a terminal: <code>npm run setup</code></p></div></div>;
+  if (!info.ok) return <div className="setup-overlay"><div className="panel setup"><div className="panel-head"><h2>Setup</h2><button onClick={onClose}>Close</button></div><p className="wallet-msg bad">{info.error === 'slow down' ? 'Too many requests for a moment. Close and open Setup again in a minute.' : info.error ?? 'Setup is not available here.'}</p><p>Same setup in a terminal: <code>npm run setup</code></p></div></div>;
   const v = info.venues.find((x) => x.venue === venue);
   const steps = guide?.steps ?? [];
   const cur = steps[at];

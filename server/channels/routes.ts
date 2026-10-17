@@ -94,13 +94,16 @@ export function createInboundApp(c: RouteCtx & { lead: DeskLead; onKill?: () => 
 
 /** Office Setup wizard routes for channels (main office server, localhost only). */
 export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx) {
-  const lim = c.limiter(30, 60_000);
+  const writeLim = c.limiter(30, 60_000);
+  // Reads (guides, status) get a roomier limit so clicking through the wizard never locks it; writes stay at the tight limit.
+  const readLim = c.limiter(300, 60_000);
+  const lim = (k: string, req?: { method?: string }) => (req?.method === 'GET' ? readLim(k) : writeLim(k));
   const local = (req: express.Request) => localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
   const keyEntry = (req: express.Request) => walletAccess({ appMode: c.cfg.appMode, host: c.cfg.host, remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
   const gate = (req: express.Request, res: express.Response, secrets = false) => {
     const a = secrets ? keyEntry(req) : local(req);
     if (!a.ok) { res.status(403).json({ ok: false, error: a.reason }); return false; }
-    if (!lim(req.socket.remoteAddress ?? '')) { res.status(429).json({ ok: false, error: 'slow down' }); return false; }
+    if (!lim(req.socket.remoteAddress ?? '', req)) { res.status(429).json({ ok: false, error: 'slow down' }); return false; }
     return true;
   };
   app.get('/api/setup/channels', (req, res) => {

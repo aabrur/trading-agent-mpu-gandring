@@ -38,13 +38,16 @@ const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LO
 const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(8).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
 
 export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
-  const lim = c.limiter(30, 60_000);
+  const writeLim = c.limiter(30, 60_000);
+  // Reads (guides, status) get a roomier limit so clicking through the wizard never locks it; writes stay at the tight limit.
+  const readLim = c.limiter(300, 60_000);
+  const lim = (k: string, req?: { method?: string }) => (req?.method === 'GET' ? readLim(k) : writeLim(k));
   const local = (req: express.Request) => localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
   const keyEntry = (req: express.Request) => walletAccess({ appMode: c.cfg.appMode, host: c.cfg.host, remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
   const gate = (req: express.Request, res: express.Response, keys = false) => {
     const a = keys ? keyEntry(req) : local(req);
     if (!a.ok) { res.status(403).json({ ok: false, error: a.reason }); return false; }
-    if (!lim(req.socket.remoteAddress ?? '')) { res.status(429).json({ ok: false, error: 'slow down' }); return false; }
+    if (!lim(req.socket.remoteAddress ?? '', req)) { res.status(429).json({ ok: false, error: 'slow down' }); return false; }
     return true;
   };
 
@@ -90,11 +93,14 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
 }
 
 export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
-  const lim = c.limiter(60, 60_000);
+  const writeLim = c.limiter(60, 60_000);
+  // Reads (guides, status) get a roomier limit so clicking through the wizard never locks it; writes stay at the tight limit.
+  const readLim = c.limiter(300, 60_000);
+  const lim = (k: string, req?: { method?: string }) => (req?.method === 'GET' ? readLim(k) : writeLim(k));
   const gate = (req: express.Request, res: express.Response) => {
     const a = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
     if (!a.ok) { res.status(403).json({ ok: false, error: a.reason }); return false; }
-    if (!lim(req.socket.remoteAddress ?? '')) { res.status(429).json({ ok: false, error: 'slow down' }); return false; }
+    if (!lim(req.socket.remoteAddress ?? '', req)) { res.status(429).json({ ok: false, error: 'slow down' }); return false; }
     return true;
   };
   app.post('/api/ops/size', async (req, res) => {
