@@ -20,7 +20,12 @@ export class BinanceAdapter implements ExchangeAdapter {
   }
   async ping() { const r = await this.req('GET', '/fapi/v2/balance'); return { ok: Array.isArray(r), detail: 'futures balance readable' }; }
   async permissions(): Promise<PermissionReport> {
-    if (this.network === 'testnet') return { ok: true, canWithdraw: null, canTrade: true, verified: false, detail: 'testnet keys cannot withdraw real funds; restriction API not available on testnet' };
+    if (this.network === 'testnet') {
+      // Demo Trading has no restriction API, but a signed read proves the key exists and is accepted (a bad key throws here).
+      const bal = await this.req('GET', '/fapi/v2/balance');
+      if (!Array.isArray(bal)) throw new Error('Demo Trading did not return a futures balance for this key');
+      return { ok: true, canWithdraw: null, canTrade: true, verified: false, detail: 'key accepted by Demo Trading (signed balance read); demo keys cannot withdraw real funds; restriction API not available on testnet' };
+    }
     const r = await this.req('GET', '/sapi/v1/account/apiRestrictions', {}, 'https://api.binance.com');
     const canWithdraw = !!r?.enableWithdrawals;
     return { ok: !canWithdraw, canWithdraw, canTrade: !!r?.enableFutures, verified: true, detail: `${canWithdraw ? 'key HAS withdraw permission' : 'no withdraw permission'}; futures ${r?.enableFutures ? 'enabled' : 'disabled'}; ip restrict ${r?.ipRestrict ? 'on' : 'off (recommended on)'}` };
