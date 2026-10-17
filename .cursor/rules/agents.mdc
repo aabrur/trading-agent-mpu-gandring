@@ -1,0 +1,6 @@
+---
+description: Trading Agent Mpu Gandring agent rules (setup protocol, safety, parity). Full text in AGENTS.md.
+alwaysApply: true
+---
+
+Read and follow AGENTS.md at the repo root before doing anything. Short version: start in PAPER; give the user one direct link per setup step (`npm run setup -- guide <venue>`); keys only into `.env` via `npm run setup` / the office Setup wizard or a secret store, never in chat; refuse main wallet private keys, seed phrases and withdraw-enabled keys; run `npm run doctor`; confirm the stop loss rests on the exchange; never loosen a guard; never release the kill switch for the user (`npm run unkill -- --yes` is theirs to run).

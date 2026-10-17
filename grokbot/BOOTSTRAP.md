@@ -42,7 +42,8 @@ Ask the owner, one question at a time, and show the default in brackets:
    - DEX (perp DEX, delegated trade-only keys): `hyperliquid`, `aster`, `dydx`, `paradex`, `orderly`
 
    Say that every venue except Bybit is experimental and unverified (never run on a real account), and needs `ALLOW_EXPERIMENTAL_LIVE=yes` for LIVE. For a DEX say plainly: only a delegated key that cannot withdraw (agent wallet, API trading key, subkey, Orderly key), never the main wallet private key or seed phrase. Stops always rest on the exchange. dYdX also needs `npm install @dydxprotocol/v4-client-js` in the app folder before TESTNET or LIVE. In Grok Bot mode the office Connect wallet button is off; keys come only through the secret card. Details: `docs/venues.md`.
-2. Network [PAPER]: PAPER, TESTNET or LIVE. For LIVE say plainly: the desk will trade real money on its own, losses are possible, not financial advice.
+2. Network [PAPER]: PAPER, TESTNET or LIVE. Recommend PAPER first, then TESTNET, LIVE last. For LIVE say plainly: the desk will trade real money on its own, losses are possible, not financial advice, and ask the owner to type "I understand LIVE trades real money" themselves; pass it as `--confirm-live "..."`.
+   For TESTNET or LIVE, walk the owner through the venue **one step and one direct link at a time**: run `npm run setup -- guide <venue> --network testnet` (or `--network mainnet`) and send each step (sign-up, test funds, key/agent/subkey page, permissions to tick) as its own message; wait for "done". The same text is in `docs/setup/<venue>.md`. Each owner uses their OWN account and keys.
 3. Exchange key (TESTNET or LIVE only): request it with the **secret request card**, named exactly as the app expects. Mainnet names below; for TESTNET insert `_TESTNET` after the prefix (for example `BYBIT_TESTNET_API_KEY`, `ASTER_TESTNET_SIGNER_PRIVATE_KEY`).
 
    | Venue | Secret card names |
@@ -71,7 +72,7 @@ npm run setup -- --yes --app-mode grokbot --generate-agent-secret \
   --auto on --report-interval 60
 ```
 
-Then write the remaining choices into `.env` (plain values, no secrets): `WATCHLIST=...`, `AUTO_SYMBOLS=...`, `MAX_LEVERAGE=...`, `MAX_LOSS_PER_TRADE_PCT=...`. Run `npm run doctor`. If setup exits with code 2 the key was refused (it can withdraw, cannot trade, is a main wallet key, or is missing): tell the owner why and stay in PAPER. Never work around a refusal.
+Then write the remaining choices into `.env` (plain values, no secrets): `WATCHLIST=...`, `AUTO_SYMBOLS=...`, `MAX_LEVERAGE=...`, `MAX_LOSS_PER_TRADE_PCT=...`. Run `npm run doctor` and tell the owner the result in plain words (it must say the key can trade and cannot withdraw). After the first TESTNET/LIVE order, check `npm run gb -- positions --json`: every position must have a stop, and the venue must show it as an open trigger order. Refuse main wallet private keys, seed phrases and withdraw-enabled keys, even if the owner insists. If setup exits with code 2 the key was refused (it can withdraw, cannot trade, is a main wallet key, or is missing): tell the owner why and stay in PAPER. Never work around a refusal.
 
 Start the office in the background and check it:
 

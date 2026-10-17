@@ -20,6 +20,7 @@ Tell your Grok Bot:
 
 - Venue: CEX Bybit (implemented), Binance, OKX; or DEX Hyperliquid, Aster, dYdX v4, Paradex, Orderly. All except Bybit are experimental and unverified. DEX venues take only a delegated trade-only key, never your main wallet key or seed.
 - Network: PAPER (default), TESTNET or LIVE.
+- Step-by-step venue links (sign-up, test funds, key page, permissions), one at a time. Same text as `docs/setup/<venue>.md`.
 - Exchange key: through the platform's secret request card only. Never paste it in chat. Create it with **trading permission only, withdrawals off**. A key that can withdraw is refused automatically.
 - Safety net (never traded), N (1 to 4 open positions), markets, max leverage, daily loss stop, report cadence (for example every 30, 60 or 240 minutes).
 
@@ -29,6 +30,10 @@ Tell your Grok Bot:
 - A trading loop every 15 minutes. Each cycle starts with the proaktif-agent scan and ends with the self-improving reflection, on its own.
 - Periodic reports with balance, safety net, Money Trade, N, allocation, positions, what was opened, closed and skipped, a per-role scorecard and lessons this period.
 - Optional: the office web view (`npm start`, port 8787) where you watch the agents talk and fight live.
+
+## Setting up on your own computer instead
+
+On your own computer (local mode) you can do the same setup in a terminal with `npm run setup` or in the office with the **Setup** button; see [docs/setup/README.md](../docs/setup/README.md) and the CLI/office table in [AGENTS.md](../AGENTS.md#cli-and-office-parity). Connect wallet (Hyperliquid, Aster) works there; in Grok Bot mode keys go only through the secret card.
 
 ## Show the office
 

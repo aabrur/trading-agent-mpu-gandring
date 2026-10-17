@@ -2,6 +2,44 @@
 
 You are setting up **Trading Agent Mpu Gandring** for a person on their own computer. Follow these steps in order. Keep the person informed in plain words.
 
+## 0. Setup protocol for any AI agent (Grok Bot, Claude Code, Codex, Cursor, Copilot and others)
+
+The person brings their **own** venue account and keys. Nothing from the maintainer is used or needed. Guide them simply:
+
+1. **Run the interview, one question at a time.** "Which venue?" (show the list from `docs/setup/README.md`; Bybit is the only non-experimental one). "Which mode?" Always start in **PAPER** (no key), then **TESTNET**, **LIVE** last and only when they ask for it.
+2. **Give one direct link per step, and wait.** Print the steps with `npm run setup -- guide <venue> --network testnet` (or `--network mainnet` for LIVE) and hand them over one at a time: sign-up, test funds, the key / API wallet / agent / subkey page, the permissions to tick. Say "sign in first" for pages that need it. Wait for "done" before the next step.
+3. **Keys go on the person's computer, never into the chat.** They type them into `npm run setup` (hidden prompts), the office Setup wizard (masked inputs, `http://localhost:5173/#setup`), or straight into `.env`. On platforms with a secret mechanism (Grok Bot secret request cards, your CI/secret store), use that, with the exact `.env` names from the guide. If a key appears in the chat anyway, tell them to revoke it and make a new one.
+4. **Refuse** main wallet private keys, seed phrases and any key that can withdraw or transfer. Only delegated trade-only keys: CEX API key with trading only, Hyperliquid / Aster agent wallet, dYdX API Trading Key, Paradex subkey, Orderly key (read,trading). The app refuses them too; never work around it.
+5. **Hyperliquid and Aster:** offer Connect wallet (MetaMask or Rabby, one signature approving a fresh trade-only agent made on their computer). It works in local mode with the office on 127.0.0.1.
+6. **Verify:** run `npm run doctor`. It must say the key can trade and cannot withdraw. Then switch mode (`--trading-mode testnet`; LIVE also needs `--confirm-live "I understand LIVE trades real money"` typed by the person), restart, and after the first order **confirm the stop loss is resting on the exchange** (an open trigger order on the venue; `npm run gb -- positions` shows the stop). If it is not there, the desk closes the position; tell the person.
+
+## CLI and office parity
+
+Everything can be done in the terminal or in the office, through the same code (`server/setup/*`, `server/sizing.ts`, the desk's single execution path):
+
+| Action | CLI | Office (web UI) |
+| --- | --- | --- |
+| Setup wizard: venue, network, mode | `npm run setup` | **Setup** button (top right), or open `http://localhost:5173/#setup` |
+| Direct links for a venue, step by step | `npm run setup -- guide <venue> [--network mainnet]` | Setup, step 3 (Back / Next step) |
+| Enter keys (hidden, written to `.env`, chmod 600) | `npm run setup` hidden prompts | Setup, step 4 (masked inputs) |
+| Connect wallet (Hyperliquid, Aster; one signature) | `npm run setup` offers it and opens the office | Setup, step 4, or the Venue keys panel |
+| Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup, step 5 **Run doctor** |
+| Switch mode (TESTNET, LIVE with typed confirmation) | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup, step 6 |
+| What is configured (secrets masked) | `npm run setup -- status` | Setup header and step 4 status lines |
+| Balance, equity, safety net, N, Money Trade | `npm run gb -- account`, `npm run gb -- split` | Portfolio panel; command bar `status`, `safety 200`, `n 3` |
+| Size a ticket (read only) | `npm run gb -- size <sym> <LONG\|SHORT> <entry> <stop>` | Desk ops, **Size** |
+| Open (stop required) | `npm run gb -- open <sym> <LONG\|SHORT> --stop P [--tp P]` | Desk ops, **Open with stop** |
+| Close one / all | `npm run gb -- close <sym\|all>` | Desk ops **Close**, Portfolio, command bar `close BTC` |
+| Pick orders (debate a symbol) | `npm run debate -- --symbol BTCUSDT`, `curl -X POST /api/debate` | **Start debate**, command bar `analyze BTCUSDT` |
+| Positions | `npm run gb -- positions` | Portfolio panel, chart lines |
+| Proaktif scan | `npm run gb -- scan` | Desk ops **Proaktif scan** |
+| Journal (verdicts, closed trades, log) | `npm run gb -- report`, `reports/` | Verdicts, Trade log, Reports panels |
+| Lessons | `npm run gb -- lessons list` / `lessons add ...` | Lessons panel; Desk ops **Add lesson** |
+| Reports | `npm run gb -- report` | Reports panel **Report now** |
+| Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill` (or tell the Desk Lead) | **Kill** in the command bar; status in Desk ops |
+| Release the kill switch | `npm run unkill -- --yes`, then restart | Not in the UI on purpose; the command is shown |
+
+
 ## Ground rules
 
 - PAPER is the default. You may run the full setup, including picking TESTNET or LIVE, when the person asks for it. Before LIVE, tell them plainly that the desk then trades real money on its own (full auto, no approval step), that they can lose it, and that this is not financial advice.
@@ -53,6 +91,7 @@ npm run setup -- --yes --app-mode local --default-provider mock --balance 1000 -
 #   --keys-from-env             (copies keys already in your secret-store environment)
 #   --auto on --debate-interval 15 --max-hold 0 --report-interval 60
 #   --trading-mode paper|testnet|live   (default paper; testnet/live need --exchange and keys)
+#   --confirm-live "I understand LIVE trades real money"   (LIVE only; the person types it, never you on your own)
 npm run setup -- status         # what is set, secrets masked
 npm run doctor                  # harmless read on every key, never prints a secret
 ```
@@ -106,14 +145,14 @@ npm run dev
 - Backend: http://localhost:8787/api/health should return `"mode":"PAPER"`.
 - Frontend: http://localhost:5173 should load the office.
 
-Give the person both links. If they want to open it from a phone, give them `http://<computer-ip>:5173`. If they use Tailscale, `tailscale ip -4` gives the address.
+Give the person both links. Both bind to 127.0.0.1 by default. To open the office from a phone, they set `HOST=0.0.0.0` (PAPER/TESTNET only) and use `http://<computer-ip>:5173` (with Tailscale, `tailscale ip -4` gives the address). Setup and Desk ops work only from the computer itself.
 
 ## 6b. Optional: TradingView, plugins, exchange testnet
 
 - TradingView widget and alert webhook: [docs/local-mode.md](docs/local-mode.md#tradingview). The passphrase is generated into `.env`. Alerts only start debates.
 - News plugin: optional, `NEWS_PROVIDER=cryptopanic` plus a key in `.env`.
 - Exchange: the person creates keys with trading permission only, withdrawals off. `npm run doctor` checks them. `npm run doctor --roundtrip` runs an optional testnet round trip (testnet funds only); it is recommended, not required.
-- TESTNET or LIVE: explain [docs/live-trading.md](docs/live-trading.md) first: full auto, automatic guards, the risk of losing money. Then `npm run setup -- --yes --exchange <name> --keys-from-env --trading-mode live` (or the interactive wizard). Experimental adapters also need `ALLOW_EXPERIMENTAL_LIVE=yes`; say clearly that they are unverified.
+- TESTNET or LIVE: explain [docs/live-trading.md](docs/live-trading.md) first: full auto, automatic guards, the risk of losing money. Then `npm run setup -- --yes --exchange <name> --keys-from-env --trading-mode live --confirm-live "I understand LIVE trades real money"` once the person has typed that sentence themselves (or the interactive wizard, or the office Setup wizard). Experimental adapters also need `ALLOW_EXPERIMENTAL_LIVE=yes`; say clearly that they are unverified.
 - Full auto and reports: `AUTO_TRADING=on` (setup default) runs a debate cycle per symbol every `DEBATE_INTERVAL_MIN`. Reports land in `reports/` and the Reports panel every `REPORT_INTERVAL_MIN`.
 
 ## 7. Optional: Grok Bot bridge
@@ -146,6 +185,8 @@ Tell the person:
 | `server/exchange/` | Exchange adapter interface and venues |
 | `server/live/` | Automatic key guard, optional testnet round trip, executor |
 | `server/auto.ts`, `server/reports.ts` | Full auto scheduler and periodic reports |
-| `cli/setup.ts`, `cli/doctor.ts` | Setup wizard and key checks |
+| `cli/setup.ts`, `cli/doctor.ts` | Setup wizard and key checks (CLI side) |
+| `server/setup/` | Shared setup: venue guide and links, key checks, mode gate, doctor, office routes |
+| `docs/setup/` | Per-venue guides generated from `server/setup/guide.ts` (`npm run docs:setup`) |
 | `skills/` | Role notes the desk follows |
 | `web/src/styles/tokens.css` | All colors, fonts and motion in one place |

@@ -61,6 +61,41 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Talk to the agents.** Click an agent to chat or give commands like `analyze ETHUSDT`, `be more cautious` or `close all`.
 - **Optional Grok Bot bridge.** Send verdicts and commands to a Grok Bot webhook routine from the server. Off by default.
 
+## Quick setup
+
+Bring your own venue account and keys; nothing from the maintainer is needed. Start in **PAPER** (no key), then **TESTNET**, **LIVE** last.
+
+- **By hand, in a terminal:** `npm install`, then `npm run setup`. It asks the venue and mode, shows the direct links one step at a time (sign-up, test funds, key page, permissions), reads keys with hidden input into `.env` (chmod 600), offers Connect wallet for Hyperliquid and Aster, and runs the doctor check.
+- **By hand, in the office:** `npm run dev`, open http://localhost:5173 and click **Setup** (top right). Same steps, same links, masked key inputs, doctor button, mode switch (LIVE needs a typed confirmation).
+- **With your own AI agent** (Grok Bot, Claude Code, Codex, Cursor, Copilot or another): point it at [AGENTS.md](AGENTS.md) (pointers in `CLAUDE.md`, `.cursor/rules/`, `.github/copilot-instructions.md`). It runs the interview, gives you one link per step and never asks for keys in chat. Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md).
+- **Per-venue guides** with testnet and mainnet sections: [docs/setup/](docs/setup/README.md) ([Bybit](docs/setup/bybit.md), [Binance](docs/setup/binance.md), [OKX](docs/setup/okx.md), [Hyperliquid](docs/setup/hyperliquid.md), [Aster](docs/setup/aster.md), [dYdX](docs/setup/dydx.md), [Paradex](docs/setup/paradex.md), [Orderly](docs/setup/orderly.md)). Print one in the terminal: `npm run setup -- guide bybit`.
+
+Refused everywhere: main wallet private keys, seed phrases, keys that can withdraw. Every TESTNET/LIVE start checks the key again.
+
+### CLI and office: same actions in both places
+
+| Action | CLI | Office (web UI) |
+| --- | --- | --- |
+| Setup wizard: venue, network, mode | `npm run setup` | **Setup** button (top right), or open `http://localhost:5173/#setup` |
+| Direct links for a venue, step by step | `npm run setup -- guide <venue> [--network mainnet]` | Setup, step 3 (Back / Next step) |
+| Enter keys (hidden, written to `.env`, chmod 600) | `npm run setup` hidden prompts | Setup, step 4 (masked inputs) |
+| Connect wallet (Hyperliquid, Aster; one signature) | `npm run setup` offers it and opens the office | Setup, step 4, or the Venue keys panel |
+| Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup, step 5 **Run doctor** |
+| Switch mode (TESTNET, LIVE with typed confirmation) | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup, step 6 |
+| What is configured (secrets masked) | `npm run setup -- status` | Setup header and step 4 status lines |
+| Balance, equity, safety net, N, Money Trade | `npm run gb -- account`, `npm run gb -- split` | Portfolio panel; command bar `status`, `safety 200`, `n 3` |
+| Size a ticket (read only) | `npm run gb -- size <sym> <LONG\|SHORT> <entry> <stop>` | Desk ops, **Size** |
+| Open (stop required) | `npm run gb -- open <sym> <LONG\|SHORT> --stop P [--tp P]` | Desk ops, **Open with stop** |
+| Close one / all | `npm run gb -- close <sym\|all>` | Desk ops **Close**, Portfolio, command bar `close BTC` |
+| Pick orders (debate a symbol) | `npm run debate -- --symbol BTCUSDT`, `curl -X POST /api/debate` | **Start debate**, command bar `analyze BTCUSDT` |
+| Positions | `npm run gb -- positions` | Portfolio panel, chart lines |
+| Proaktif scan | `npm run gb -- scan` | Desk ops **Proaktif scan** |
+| Journal (verdicts, closed trades, log) | `npm run gb -- report`, `reports/` | Verdicts, Trade log, Reports panels |
+| Lessons | `npm run gb -- lessons list` / `lessons add ...` | Lessons panel; Desk ops **Add lesson** |
+| Reports | `npm run gb -- report` | Reports panel **Report now** |
+| Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill` (or tell the Desk Lead) | **Kill** in the command bar; status in Desk ops |
+| Release the kill switch | `npm run unkill -- --yes`, then restart | Not in the UI on purpose; the command is shown |
+
 ## Quickstart
 
 You need [Node.js 20 or newer](https://nodejs.org) and git.
@@ -337,11 +372,11 @@ docs/              screenshots, money split, Grok Bot bridge and mode, local mod
 
 ## Setting it up with an agent
 
-If you use a coding agent or a Grok Bot, point it at [AGENTS.md](AGENTS.md). It has the exact steps, including how to ask you for keys without putting them in a chat.
+If you use a coding agent or a Grok Bot, point it at [AGENTS.md](AGENTS.md). It has the exact steps, including how to ask you for keys without putting them in a chat, the one-link-per-step venue guides and the CLI/office table. See [Quick setup](#quick-setup).
 
 ## Bahasa Indonesia: mulai cepat
 
-Proyek ini simulasi trading kertas (paper trading) secara default. Tujuh agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan dan tidak ada janji untung. Mode LIVE terkunci: harus lulus uji testnet, API key tanpa izin withdraw (dicek ke exchange), dan mengetik kalimat konfirmasi di CLI. Kalau dibuka, uang sungguhan bisa hilang.
+Proyek ini simulasi trading kertas (paper trading) secara default. Enam agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan dan tidak ada janji untung. Mode LIVE terkunci: harus lulus uji testnet, API key tanpa izin withdraw (dicek ke exchange), dan mengetik kalimat konfirmasi di CLI. Kalau dibuka, uang sungguhan bisa hilang.
 
 1. Pasang Node.js 20 atau lebih baru.
 2. Jalankan:
@@ -356,6 +391,9 @@ Proyek ini simulasi trading kertas (paper trading) secara default. Tujuh agen AI
 3. Buka **http://localhost:5173** lalu klik **Start debate**, atau ketik `analyze BTCUSDT`.
 4. Tanpa API key pun jalan, karena ada provider `mock`. Kalau mau pakai model sungguhan, isi key di file `.env` (jangan pernah tempel key di chat), misalnya `XAI_API_KEY=...` lalu `AGENT_LEAD_PROVIDER=xai`.
 5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order (1 sampai 4). Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss.
+
+6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `npm run setup` (atau tombol **Setup** di kanan atas office): pilih venue dan mode, ikuti link langsung satu per satu (daftar, dana tes, halaman pembuatan key, izin yang dicentang), lalu ketik key di input tersembunyi. Key masuk ke `.env` (chmod 600), tidak pernah ke chat. Izin: trade saja, withdraw/transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Hyperliquid dan Aster bisa lewat Connect wallet (satu tanda tangan). Setelah itu `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
+7. Pakai agen AI sendiri (Grok Bot, Claude Code, Codex, Cursor, Copilot)? Suruh dia membaca [AGENTS.md](AGENTS.md).
 
 Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `set n 3`, `set safety 150`, `close all`, `be more cautious`.
 

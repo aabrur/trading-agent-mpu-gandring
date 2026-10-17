@@ -2,6 +2,8 @@
 
 Trading Agent Mpu Gandring trades perpetual futures on one venue at a time, chosen with `EXCHANGE` (or `npm run setup`). Every venue sits behind the same adapter interface and the same guards. Not financial advice.
 
+Step-by-step setup with direct links for each venue (testnet and mainnet): [docs/setup/](setup/README.md).
+
 ## The list
 
 | Venue | Kind | `EXCHANGE` | Status | Key it takes | Stop on the exchange |
