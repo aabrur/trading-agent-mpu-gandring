@@ -65,6 +65,10 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     return j;
   };
   const state = () => call('GET', '/api/state');
+  // In local mode without AGENT_EVENT_SECRET the write commands use the office's own localhost-only routes (/api/ops/*),
+  // the same ones the Desk ops panel uses: same execution path, required stop, risk caps, kill switch. Grok Bot mode
+  // (secret set) keeps using the authenticated /api/gb/* routes.
+  const viaOps = !secret && (env.APP_MODE ?? '').trim().toLowerCase() !== 'grokbot';
   const ok = (data: unknown, text: string): GbResult => ({ ok: true, data, text });
   const fail = (text: string, data: unknown = null): GbResult => ({ ok: false, data, text });
 
@@ -122,14 +126,14 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
       if (!(num(flags.stop)! > 0)) return fail('no stop: open needs --stop P (the Strategist stop price). Not opening without one. usage: open <symbol> <LONG|SHORT> --stop P [--tp P] [--leverage L]');
       const body: Record<string, unknown> = { symbol: s, side };
       for (const k of ['stop', 'tp', 'leverage'] as const) if (num(flags[k]) !== undefined) body[k] = num(flags[k]);
-      if (flags.agent) body.agent = flags.agent;
-      if (flags.reason) body.reason = flags.reason;
-      const r = await call('POST', '/api/gb/open', body, true);
+      if (!viaOps && flags.agent) body.agent = flags.agent;
+      if (!viaOps && flags.reason) body.reason = flags.reason;
+      const r = viaOps ? await call('POST', '/api/ops/open', body) : await call('POST', '/api/gb/open', body, true);
       return { ok: !!r.ok, data: r, text: r.ok ? r.reply : `not opened: ${r.reply ?? r.error}` };
     }
     case 'close': {
       if (!args[0]) return fail('usage: close <symbol|all>');
-      const r = await call('POST', '/api/gb/close', { symbol: args[0], reason: flags.reason }, true);
+      const r = viaOps ? await call('POST', '/api/ops/close', { symbol: args[0] }) : await call('POST', '/api/gb/close', { symbol: args[0], reason: flags.reason }, true);
       return { ok: !!r.ok, data: r, text: r.reply ?? r.error };
     }
     case 'report': {
@@ -149,13 +153,13 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
       return { ok: !!r.ok, data: r, text: r.ok ? `${agent}: ${r.reply}` : `not shown: ${r.error ?? r.reply}` };
     }
     case 'scan': {
-      const r = await call('POST', '/api/gb/scan', {}, true);
+      const r = viaOps ? await call('POST', '/api/ops/scan', {}) : await call('POST', '/api/gb/scan', {}, true);
       return { ok: !!r.ok, data: r.findings, text: (r.findings ?? []).map((x: any) => `${x.level}: ${x.text}`).join('\n') || (r.error ?? '') };
     }
     case 'lessons': {
       const sub = args[0] ?? 'list';
       if (sub === 'list') {
-        const r = await call('GET', `/api/gb/lessons?n=${num(flags.n) ?? 30}`, undefined, true);
+        const r = viaOps ? await call('GET', '/api/ops/lessons') : await call('GET', `/api/gb/lessons?n=${num(flags.n) ?? 30}`, undefined, true);
         const rules = (r.standingRules ?? []).map((l: any) => `RULE ${l.role}: ${l.lesson}`);
         const lines = (r.lessons ?? []).map((l: any) => `[${l.status}${l.count > 1 ? ` x${l.count}` : ''}] ${l.role}: ${l.lesson}`);
         return { ok: !!r.ok, data: r, text: [...rules, ...lines].join('\n') || 'no lessons yet' };
@@ -166,9 +170,9 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
         const body: Record<string, unknown> = { role, lesson, kind: flags.kind ?? 'note' };
         if (flags.happened) body.happened = flags.happened;
         if (flags.cause) body.rootCause = flags.cause;
-        if (flags.symbol) body.symbol = normSymbol(flags.symbol);
-        const r = await call('POST', '/api/gb/lessons', body, true);
-        return { ok: !!r.ok, data: r, text: r.ok ? `lesson ${r.event}: ${r.lesson.lesson}` : r.error };
+        if (flags.symbol && !viaOps) body.symbol = normSymbol(flags.symbol);
+        const r = viaOps ? await call('POST', '/api/ops/lessons', body) : await call('POST', '/api/gb/lessons', body, true);
+        return { ok: !!r.ok, data: r, text: r.ok ? `lesson ${r.event ?? 'saved'}: ${r.lesson.lesson}` : r.error };
       }
       return fail('usage: lessons list | lessons add <role> <lesson>');
     }
