@@ -9,6 +9,7 @@ Trading Agent Mpu Gandring trades Aster perpetual futures with **your own** acco
 - **Permissions ON:** Pro API agent: perpetual trading
 - **Permissions OFF:** Withdraw; Spot trading (not needed); Never your main wallet key or seed phrase
 - **IP allowlist:** Optional IP allowlist when you create the API wallet by hand.
+- **Note:** Optional ASTER_AGENT_WITHDRAW_OFF_VERIFIED (off by default). Aster accounts report the ACCOUNT flag canWithdraw=true even when your agent cannot withdraw, so without this LIVE/TESTNET is refused. Withdraw permission is set per agent: create a trade-only Aster agent (perp on, canWithdraw false; Connect wallet does this for you), then set ASTER_AGENT_WITHDRAW_OFF_VERIFIED to YOUR OWN agent address (the address of your agent key, never your main wallet). On every start the app reads GET /fapi/v3/agent and accepts the key only if Aster lists that agent for your main address with canWithdraw false, canPerpTrade true and not expired, and the account says canTrade true. Docs: https://asterdex.github.io/aster-api-website/asterCode/endpoints/ (Get Agents) and docs/venues.md.
 
 ## Testnet (test money, do this first)
 
@@ -59,5 +60,6 @@ Then switch the mode (TESTNET, or LIVE with the typed confirmation) and restart.
 
 - [Aster API docs](https://github.com/asterdex/api-docs)
 - [Futures authentication](https://asterdex.github.io/aster-api-website/asterCode/authentication/)
+- [Agent endpoints (approveAgent, Get Agents: per-agent canWithdraw)](https://asterdex.github.io/aster-api-website/asterCode/endpoints/)
 
 Links checked 2026-10-17. Pages marked "sign in" need your login before they show the form. If a venue moves a page, tell us in an issue.

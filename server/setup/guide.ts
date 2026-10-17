@@ -107,7 +107,8 @@ export const VENUE_GUIDES: Record<ExchangeName, VenueGuide> = {
     permissionsOn: ['Pro API agent: perpetual trading'],
     permissionsOff: ['Withdraw', 'Spot trading (not needed)', 'Never your main wallet key or seed phrase'],
     ip: 'Optional IP allowlist when you create the API wallet by hand.',
-    docs: [L('Aster API docs', 'https://github.com/asterdex/api-docs'), L('Futures authentication', 'https://asterdex.github.io/aster-api-website/asterCode/authentication/')],
+    docs: [L('Aster API docs', 'https://github.com/asterdex/api-docs'), L('Futures authentication', 'https://asterdex.github.io/aster-api-website/asterCode/authentication/'), L('Agent endpoints (approveAgent, Get Agents: per-agent canWithdraw)', 'https://asterdex.github.io/aster-api-website/asterCode/endpoints/')],
+    extra: 'Optional ASTER_AGENT_WITHDRAW_OFF_VERIFIED (off by default). Aster accounts report the ACCOUNT flag canWithdraw=true even when your agent cannot withdraw, so without this LIVE/TESTNET is refused. Withdraw permission is set per agent: create a trade-only Aster agent (perp on, canWithdraw false; Connect wallet does this for you), then set ASTER_AGENT_WITHDRAW_OFF_VERIFIED to YOUR OWN agent address (the address of your agent key, never your main wallet). On every start the app reads GET /fapi/v3/agent and accepts the key only if Aster lists that agent for your main address with canWithdraw false, canPerpTrade true and not expired, and the account says canTrade true. Docs: https://asterdex.github.io/aster-api-website/asterCode/endpoints/ (Get Agents) and docs/venues.md.',
     networks: {
       testnet: { note: 'Aster may require a completed deposit before trading endpoints work.', steps: [
         step('signup', 'Connect your wallet on Aster testnet', 'Open the testnet site and connect MetaMask or Rabby.', L('Aster testnet', 'https://www.asterdex-testnet.com/', true), METAMASK, RABBY),
