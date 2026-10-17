@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, LineStyle, type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type MouseEventParams } from 'lightweight-charts';
 import type { CandleData, DeskState } from '../types';
+import { POPULAR_SYMBOLS } from '../types';
 import { TradingViewChart } from './TradingViewChart';
 import { fmt, fmtPx } from './format';
 
@@ -84,14 +85,45 @@ export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
           <h2>{symbol}</h2>
           <span className="chart-price">{tick ? fmtPx(tick.last) : data ? fmtPx(data.last) : '...'}</span>
           {tick && <span className={`chip-change ${tick.change24hPct >= 0 ? 'up' : 'down'}`}>{tick.change24hPct >= 0 ? '+' : ''}{fmt(tick.change24hPct)}% 24h</span>}
-          <span className="muted small">15m candles · {data ? (data.example ? 'sample data (EXAMPLE)' : data.source) : 'loading'}</span>
+          <span className="muted small">15m candles · {data ? (data.example ? 'sample data · EXAMPLE' : data.source) : 'loading'}</span>
         </div>
         {state.tradingview?.widget && <div className="seg">
           <button className={view === 'desk' ? 'on' : ''} onClick={() => setView('desk')}>desk chart</button>
           <button className={view === 'tv' ? 'on' : ''} onClick={() => setView('tv')}>TradingView</button>
         </div>}
-        <div className="seg">
+        <div className="seg chart-symbols-bar">
           {state.watchlist.map((s) => <button key={s} className={s === symbol ? 'on' : ''} onClick={() => onSymbol(s)}>{s.replace('USDT', '')}</button>)}
+          <select
+            className="chart-symbol-select"
+            aria-label="select token"
+            value={symbol}
+            onChange={(e) => {
+              if (e.target.value === '__custom__') {
+                const c = window.prompt('Enter token symbol, for example PEPEUSDT, DOGEUSDT, AVAXUSDT:');
+                if (c) onSymbol(c.trim().toUpperCase());
+              } else {
+                onSymbol(e.target.value);
+              }
+            }}
+          >
+            <optgroup label="Watchlist">
+              {state.watchlist.map((s) => <option key={s} value={s}>{s}</option>)}
+            </optgroup>
+            <optgroup label="Popular Perps">
+              {POPULAR_SYMBOLS.filter((s) => !state.watchlist.includes(s)).map((s) => <option key={s} value={s}>{s}</option>)}
+            </optgroup>
+            <option value="__custom__">+ Custom token...</option>
+          </select>
+          <button
+            className="chart-custom-btn"
+            title="Type any token to view on chart"
+            onClick={() => {
+              const c = window.prompt('Enter token symbol, for example PEPEUSDT, DOGEUSDT, AVAXUSDT:');
+              if (c) onSymbol(c.trim().toUpperCase());
+            }}
+          >
+            + Token
+          </button>
         </div>
       </div>
       {!tv && <div className="ohlc">

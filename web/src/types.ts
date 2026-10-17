@@ -52,3 +52,24 @@ export const AGENT_ORDER: AgentId[] = ['lead', 'market', 'research', 'strategist
 export type Reaction = 'cheer' | 'worried';
 export interface Candle { time: number; open: number; high: number; low: number; close: number }
 export interface CandleData { symbol: string; source: string; example: boolean; last: number; change24hPct: number; candles: Candle[] }
+
+export const POPULAR_SYMBOLS = [
+  'BTCUSDT',
+  'ETHUSDT',
+  'SOLUSDT',
+  'DOGEUSDT',
+  'XRPUSDT',
+  'SUIUSDT',
+  'PEPEUSDT',
+  'BNBUSDT',
+  'ADAUSDT',
+  'AVAXUSDT',
+  'LINKUSDT',
+  'NEARUSDT',
+  'APTUSDT',
+  'ARBUSDT',
+  'OPUSDT',
+  'TONUSDT',
+  'SHIBUSDT',
+  'WIFUSDT'
+] as const;

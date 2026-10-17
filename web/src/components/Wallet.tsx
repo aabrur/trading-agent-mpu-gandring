@@ -52,7 +52,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
 
   return (
     <div className={embedded ? 'wallet-panel' : 'panel wallet-panel'}>
-      <div className="panel-head">{!embedded && <h2>Venue keys</h2>}<span className="badge">experimental</span></div>
+      <div className="panel-head">{!embedded && <h2>Connect Wallet</h2>}<span className="badge">experimental</span></div>
       <div className="wallet-pick">
         <select value={venue} onChange={(e) => { setVenue(e.target.value); setMsg(null); setAgent(''); }} aria-label="venue">
           <optgroup label="DEX">{dex.map((x) => <option key={x.venue} value={x.venue}>{x.label}</option>)}</optgroup>
@@ -69,7 +69,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
           <div className="wallet-actions">
             {!address
               ? <button className="wallet-btn" onClick={connect}>Connect wallet</button>
-              : <><p className="wallet-addr">Main wallet <code>{address.slice(0, 6)}...{address.slice(-4)}</code> (display only)</p>
+              : <><p className="wallet-addr">Main wallet <code>{address.slice(0, 6)}...{address.slice(-4)}</code> display only</p>
                 <button className="wallet-btn" disabled={busy} onClick={approve}>{busy ? 'Waiting for your wallet...' : `Approve a trade-only agent on ${v.label}`}</button></>}
             {agent && <p className="wallet-addr">Agent address <code>{agent}</code></p>}
             <p className="wallet-note">Trade only, cannot withdraw. Your main wallet key and seed never leave your wallet. Revoke any time: <a href={v.revokeUrl ?? '#'} target="_blank" rel="noreferrer">{v.label} API wallets</a>.</p>

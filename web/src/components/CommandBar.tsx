@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { DeskState } from '../types';
+import { POPULAR_SYMBOLS } from '../types';
 
 export function CommandBar({ state, command }: { state: DeskState; command: (t: string) => Promise<{ ok: boolean; reply: string }> }) {
   const [text, setText] = useState('');
@@ -10,8 +11,25 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
     <div className="commandbar">
       <div className="cb-row">
         <div className="cb-debate">
-          <select value={symbol} onChange={(e) => setSymbol(e.target.value)} aria-label="symbol">
-            {state.watchlist.map((s) => <option key={s}>{s}</option>)}
+          <select
+            value={symbol}
+            onChange={(e) => {
+              if (e.target.value === '__custom__') {
+                const c = window.prompt('Enter token symbol to analyze, for example PEPEUSDT, DOGEUSDT:');
+                if (c) setSymbol(c.trim().toUpperCase());
+              } else {
+                setSymbol(e.target.value);
+              }
+            }}
+            aria-label="symbol"
+          >
+            <optgroup label="Watchlist">
+              {state.watchlist.map((s) => <option key={s} value={s}>{s}</option>)}
+            </optgroup>
+            <optgroup label="Popular Perps">
+              {POPULAR_SYMBOLS.filter((s) => !state.watchlist.includes(s)).map((s) => <option key={s} value={s}>{s}</option>)}
+            </optgroup>
+            <option value="__custom__">+ Custom token...</option>
           </select>
           <button className="primary" disabled={!!state.debate || state.paused} onClick={() => run(`analyze ${symbol}`)}>
             {state.debate ? `Debating ${state.debate.symbol}...` : 'Start debate'}

@@ -77,11 +77,11 @@ export default function App() {
         </aside>
       </main>
       {setup && <SetupWizard state={state} onClose={closeSetup} />}
-      {venueKeys && <div className="setup-overlay" role="dialog" aria-modal="true" aria-label="Venue keys" onKeyDown={(e) => {
+      {venueKeys && <div className="setup-overlay" role="dialog" aria-modal="true" aria-label="Connect Wallet" onKeyDown={(e) => {
         if (e.key === 'Escape') closeVenueKeys();
         if (e.key === 'Tab') { const elements = e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled),a[href]'); const first = elements[0], last = elements[elements.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } }
       }}>
-        <div className="panel setup"><div className="panel-head"><h2>Venue keys</h2><button autoFocus onClick={closeVenueKeys}>Close</button></div><WalletPanel state={state} embedded /></div>
+        <div className="panel setup"><div className="panel-head"><h2>Connect Wallet</h2><button autoFocus onClick={closeVenueKeys}>Close</button></div><WalletPanel state={state} embedded /></div>
       </div>}
       {selected && <AgentPanel state={state} id={selected} onClose={() => setSelected(null)} command={command} />}
       <footer className="footer">Paper trading simulation for learning. Not financial advice. No profit promised. Trading Agent Mpu Gandring, MIT license. Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a>.</footer>

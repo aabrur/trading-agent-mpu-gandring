@@ -2,6 +2,7 @@
 // Same backend paths as the CLI: shared sizing module and the desk's one execution path. Localhost only.
 import { useEffect, useState } from 'react';
 import type { DeskState } from '../types';
+import { POPULAR_SYMBOLS } from '../types';
 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const num = (s: string) => (s.trim() === '' ? undefined : Number(s));
@@ -30,7 +31,28 @@ export function DeskOps({ state }: { state: DeskState }) {
     <div className="panel desk-ops">
       <div className="panel-head"><h2>Desk ops</h2><span className="badge">same as npm run gb</span></div>
       <div className="ops-row">
-        <input aria-label="symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
+        <select
+          className="ops-symbol-select"
+          aria-label="select symbol"
+          value={symbol}
+          onChange={(e) => {
+            if (e.target.value === '__custom__') {
+              const c = window.prompt('Enter token symbol, for example PEPEUSDT, DOGEUSDT:');
+              if (c) setSymbol(c.trim().toUpperCase());
+            } else {
+              setSymbol(e.target.value);
+            }
+          }}
+        >
+          <optgroup label="Watchlist">
+            {state.watchlist.map((s) => <option key={s} value={s}>{s}</option>)}
+          </optgroup>
+          <optgroup label="Popular Perps">
+            {POPULAR_SYMBOLS.filter((s) => !state.watchlist.includes(s)).map((s) => <option key={s} value={s}>{s}</option>)}
+          </optgroup>
+          <option value="__custom__">+ Custom token...</option>
+        </select>
+        <input aria-label="symbol" title="Type or edit token symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
         <div className="seg" role="group" aria-label="side">{(['LONG', 'SHORT'] as const).map((s) => <button key={s} className={side === s ? 'on' : ''} onClick={() => setSide(s)}>{s}</button>)}</div>
       </div>
       <div className="ops-row">

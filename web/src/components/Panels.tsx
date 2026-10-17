@@ -22,7 +22,7 @@ export function TopBar({ state, connected, theme, onTheme, onSetup, onVenueKeys 
       </div>
       <div className="badges">
         {state?.mode === 'LIVE'
-          ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}{state.live?.experimental ? ' (experimental)' : ''}</span>
+          ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}{state.live?.experimental ? ' experimental' : ''}</span>
           : state?.mode === 'TESTNET'
             ? <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
             : <span className="badge paper" title="Simulated trades only">PAPER MODE</span>}
@@ -30,10 +30,10 @@ export function TopBar({ state, connected, theme, onTheme, onSetup, onVenueKeys 
         {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
         {state?.killed && <span className="badge warn">kill switch on</span>}
         {state?.dailyLoss?.hit && <span className="badge warn">daily loss stop</span>}
-        {state?.venue && <span className="badge venue-badge" title={`Venue: ${state.venue.label} (${state.venue.kind})${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' (exp)' : ''}</span>}
+        {state?.venue && <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' exp' : ''}</span>}
         {state && <span className="badge">data: {state.marketSource}</span>}
-        {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn" onClick={onVenueKeys}>Venue keys</button>}
-        {onSetup && <button className="badge setup-btn" onClick={onSetup} title="Setup wizard: venue, mode, keys, doctor (same as npm run setup)">Setup</button>}
+        {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title="Connect browser wallet for Hyperliquid and Aster">Connect Wallet</button>}
+        {onSetup && <button className="badge setup-btn" onClick={onSetup} title="Setup wizard: venue, mode, keys, doctor, same as npm run setup">Setup</button>}
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">paused</span>}
         <span className={`badge conn ${connected ? 'on' : 'off'}`}><i />{connected ? 'live' : 'reconnecting'}</span>
