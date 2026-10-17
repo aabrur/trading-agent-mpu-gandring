@@ -73,6 +73,8 @@ async function wizard() {
     for (const k of [...Object.values(KEY_VARS), 'CRYPTOPANIC_API_KEY', 'GROKBOT_WEBHOOK_URL', 'GROKBOT_WEBHOOK_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) if (process.env[k]) up[k] = process.env[k]!;
     for (const name of EXCHANGES) for (const net of ['testnet', 'mainnet'] as const) for (const k of Object.values(envNames(name, net))) if (process.env[k]) up[k] = process.env[k]!;
     console.log('  copied keys that were set in the current shell environment');
+  } else if (appMode === 'grokbot') {
+    console.log('\nGrok Bot mode: no model API keys needed. Your six Grok Bot agents are the brains.');
   } else if (!nonInteractive) {
     console.log('\nModel API keys. Enter skips a provider. Agents without a key use the offline mock.');
     for (const [p, k] of Object.entries(KEY_VARS)) { const v = await askSecret(`  ${p} key${env[k] ? ' (already set, Enter keeps it)' : ''}`); if (v) up[k] = v; }
@@ -83,7 +85,7 @@ async function wizard() {
   up.DEFAULT_PROVIDER = def;
   for (const m of many('agent')) { const [a, p] = m.split('='); if (!AGENT_IDS.includes(a as never) || !PROVIDERS.includes(p as never)) throw new Error(`--agent ${m}: use id=provider`); up[`AGENT_${a.toUpperCase()}_PROVIDER`] = p; }
   for (const m of many('model')) { const [a, ...rest] = m.split('='); if (!AGENT_IDS.includes(a as never)) throw new Error(`--model ${m}: use id=model`); up[`AGENT_${a.toUpperCase()}_MODEL`] = rest.join('='); }
-  if (!nonInteractive && await askYes('Give each agent its own provider?', false)) {
+  if (appMode !== 'grokbot' && !nonInteractive && await askYes('Give each of the six agents its own provider?', false)) {
     for (const a of AGENT_IDS) { const p = await choose(`  ${a}`, PROVIDERS, (env[`AGENT_${a.toUpperCase()}_PROVIDER`] as ProviderName) || (def as ProviderName)); up[`AGENT_${a.toUpperCase()}_PROVIDER`] = p; if (!have(p)) console.log(`    no ${p} key yet, ${a} will use mock until you add one`); }
   }
 

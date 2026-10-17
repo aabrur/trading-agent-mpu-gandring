@@ -22,6 +22,8 @@ The wizard asks, one section at a time:
 7. **Full auto and reports**: `AUTO_TRADING` (default on), minutes between debate cycles, optional max holding time, minutes between reports, and an optional Telegram bot for reports (experimental).
 8. **Trading mode**: PAPER (default, also when you just press Enter), TESTNET or LIVE. For TESTNET and LIVE the key is checked on the exchange first and refused if it can withdraw.
 
+Every auto cycle starts with the proaktif-agent scan (loss cap usage, missing stops, errors, stale data, safety net) and ends with the self-improving reflection, which writes lessons to `data/learnings.json` and promotes a lesson seen 3 times into a standing rule for that agent. Both are on by default (`LEARNING`, `PROACTIVE_SCAN`) and shown in the office Lessons panel. Lessons can never loosen a guard.
+
 After this one-time setup the desk runs on its own: it debates every interval, opens, closes and sizes positions without asking, and writes a report to `reports/` and the Reports panel. See [live-trading.md](live-trading.md) before choosing LIVE.
 
 ### Non-interactive (for coding agents)

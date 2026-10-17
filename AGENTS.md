@@ -119,6 +119,12 @@ Give the person both links. If they want to open it from a phone, give them `htt
 
 Only if the person asks. Follow [docs/grokbot-bridge.md](docs/grokbot-bridge.md). The webhook sender key goes into `.env` as `GROKBOT_WEBHOOK_KEY`, never into a chat.
 
+## 7b. Learning, Grok Bot install, agent CLI
+
+- The proaktif-agent scan and self-improving reflection run on their own in the auto loop (`LEARNING=on`, `PROACTIVE_SCAN=on` by default). Do not turn them off unless the person asks. Lessons live in `data/learnings.json`; never edit them to loosen a guard (the app refuses such lessons and drops them on load).
+- Installing inside Grok Bot: follow [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md). No model keys are needed in that mode. Exchange keys only through the platform secret request card, never with `--keys-from-env` into `.env` there.
+- Agents can trade and report through `npm run gb -- <cmd> --json` (see [docs/grokbot-mode.md](docs/grokbot-mode.md)). In the Grok Bot trading loop, run `gb scan` first and `gb lessons add` last, every cycle.
+
 ## 8. Hand over
 
 Tell the person:

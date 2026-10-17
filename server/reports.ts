@@ -5,6 +5,8 @@ import type { AppConfig } from './config.js';
 import { sendToGrokBot } from './bridge.js';
 import { safe, log } from './redact.js';
 import { round2 } from './money.js';
+import { scoreLine, type RoleScore } from './scorecard.js';
+import type { Finding } from './scan.js';
 
 export interface ReportPosition { symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }
 export interface Report {
@@ -12,6 +14,13 @@ export interface Report {
   balance: number; safetyNet: number; moneyTrade: number; n: number; perOrder: number; equity: number; unrealized: number; realized: number;
   dailyLoss: { limitPct: number; hit: boolean }; auto: { on: boolean; cycles: number; intervalMin: number };
   positions: ReportPosition[]; opened: Activity[]; closed: Activity[]; skipped: Activity[];
+  /** Desk Lead supervision */
+  scorecard: RoleScore[];
+  /** self-improving: lessons written or reinforced this period */
+  lessons: { role: string; kind: string; status: string; count: number; symbol?: string; happened: string; rootCause: string; lesson: string }[];
+  standingRules: string[];
+  /** proaktif-agent: latest scan */
+  scan: Finding[];
   text: string;
 }
 
@@ -26,7 +35,11 @@ export function buildReport(desk: Desk, since: number): Report {
     dailyLoss: { limitPct: desk.cfg.risk.dailyLossLimitPct, hit: desk.day.lossHit },
     auto: { on: desk.autoState.on, cycles: desk.autoState.cycles, intervalMin: desk.cfg.auto.intervalMin },
     positions: desk.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, mark: p.mark, pnl: p.unrealizedPnl, openedAt: p.openedAt })),
-    opened: acts.filter((a) => a.kind === 'opened'), closed: acts.filter((a) => a.kind === 'closed'), skipped: acts.filter((a) => a.kind === 'skipped')
+    opened: acts.filter((a) => a.kind === 'opened'), closed: acts.filter((a) => a.kind === 'closed'), skipped: acts.filter((a) => a.kind === 'skipped'),
+    scorecard: desk.scorecard.rows(),
+    lessons: desk.learnings.since(since + 1).slice(0, 20).map((l) => ({ role: l.role, kind: l.kind, status: l.status, count: l.count, symbol: l.symbol, happened: l.happened, rootCause: l.rootCause, lesson: l.lesson })),
+    standingRules: desk.learnings.standingRules().map((l) => `${l.role}: ${l.lesson}`).slice(-10),
+    scan: desk.lastScan?.findings ?? []
   };
   return { ...r, text: safe(renderText(r)) };
 }
@@ -48,6 +61,12 @@ function renderText(r: Omit<Report, 'text'>) {
     `Opened (${r.opened.length}):`, ...(r.opened.length ? r.opened.map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
     `Closed (${r.closed.length}):`, ...(r.closed.length ? r.closed.map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
     `Skipped (${r.skipped.length}):`, ...(r.skipped.length ? r.skipped.slice(-12).map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
+    '',
+    'Scorecard (Desk Lead):', ...r.scorecard.map((x) => `- ${scoreLine(x)}`),
+    '',
+    `Lessons this period (${r.lessons.length}):`, ...(r.lessons.length ? r.lessons.map((l) => `- [${l.status}${l.count > 1 ? ` x${l.count}` : ''}] ${l.role}${l.symbol ? ` ${l.symbol}` : ''}: ${l.lesson} (cause: ${l.rootCause})`) : ['- none']),
+    ...(r.standingRules.length ? ['Standing rules:', ...r.standingRules.map((x) => `- ${x}`)] : []),
+    ...(r.scan.length ? ['', 'Last scan:', ...r.scan.map((f) => `- ${f.level}: ${f.text}`)] : []),
     '',
     'Not financial advice.'
   ];

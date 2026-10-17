@@ -18,6 +18,10 @@ import { safe, log } from './redact.js';
 import type { LiveExecutor } from './live/executor.js';
 import type { ClosedTrade } from './types.js';
 import { getNewsFor } from './market/index.js';
+import { Learnings, type LessonInput } from './learnings.js';
+import { Scorecard } from './scorecard.js';
+import { proactiveScan, type Finding } from './scan.js';
+import { codeReview } from './providers/mock.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
@@ -31,7 +35,7 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'warn'; agent?: AgentId; text: string; example?: boolean }
 
-export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null }
+export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action }
@@ -53,6 +57,14 @@ export class Desk extends EventEmitter {
   signals: ExternalSignal[] = [];
   day = { key: '', startEquity: 0, lossHit: false };
   equityHistory: { t: number; equity: number; balance: number }[] = [];
+  /** self-improving: persistent lessons, promoted into standing rules */
+  learnings: Learnings;
+  /** Desk Lead supervision: per-role scorecard */
+  scorecard = new Scorecard();
+  /** proaktif-agent: latest proactive scan */
+  lastScan: { at: number; findings: Finding[] } | null = null;
+  /** API, exchange and agent errors, for the scan and the reflection step */
+  errors: { at: number; source: string; text: string }[] = [];
   private stopFlag = false;
   private liveBackoffUntil = 0;
   private timers: NodeJS.Timeout[] = [];
@@ -68,6 +80,75 @@ export class Desk extends EventEmitter {
       return [id, { id, name: r.name, title: r.title, color: r.color, desk: r.desk, provider: a.provider, model: a.model, fellBackToMock: a.fellBackToMock, status: 'idle', mood: 0, stance: null, confidence: null, lastLine: '' } satisfies AgentView];
     })) as Record<AgentId, AgentView>;
     this.chats = Object.fromEntries(AGENT_IDS.map((id) => [id, [] as ChatLine[]])) as unknown as Record<AgentId, ChatLine[]>;
+    // Tests never touch the real lessons file unless they pass a path.
+    this.learnings = new Learnings(opts.learningsPath !== undefined ? opts.learningsPath : process.env.VITEST ? null : cfg.learning.path, cfg.learning.promoteAfter);
+    if (cfg.appMode === 'grokbot') for (const id of AGENT_IDS) Object.assign(this.agents[id], { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false });
+  }
+
+  get grokbot() { return this.cfg.appMode === 'grokbot'; }
+
+  /** Every model call goes through here: lessons, standing rules and scan alerts are fed into the prompt. */
+  private async run<K extends Parameters<typeof runAgent>[3]>(agent: AgentId, task: K, input: Parameters<typeof runAgent<K>>[4]) {
+    const rules = this.cfg.learning.on ? this.learnings.standingRules(agent).map((l) => l.lesson) : [];
+    const lessons = this.cfg.learning.on ? this.learnings.forRole(agent, 5) : [];
+    const alerts = (this.lastScan?.findings ?? []).filter((f) => f.level === 'warn' || f.level === 'alert').map((f) => f.text);
+    const extra = [input.extraSystem ?? '', rules.length ? `Standing rules learned by this desk (advice only; the code caps, stop loss, daily loss stop and safety net always win and can never be loosened):\n${rules.map((x) => `- ${x}`).join('\n')}` : ''].filter(Boolean).join('\n\n');
+    const res = await runAgent(this.cfg, this.call, agent, task, {
+      ...input, extraSystem: extra || undefined,
+      data: { ...input.data, ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
+    });
+    if (res.fallback) { this.recordError(`agent:${agent}`, `${ROLES[agent].name} reply failed validation twice on ${task}`); this.learn({ role: agent, kind: 'error', happened: `${ROLES[agent].name} sent an invalid ${task} reply twice and fell back to the safe default.`, rootCause: 'reply did not match the JSON schema', lesson: 'Reply with exactly one JSON object that matches the schema, nothing else.' }); }
+    return res;
+  }
+
+  recordError(source: string, text: string) {
+    this.errors.push({ at: Date.now(), source, text: safe(text).slice(0, 300) });
+    if (this.errors.length > 200) this.errors.splice(0, this.errors.length - 200);
+  }
+
+  /** self-improving: store or reinforce a lesson and show it in the office. Refused if it would loosen a guard. */
+  learn(l: LessonInput) {
+    if (!this.cfg.learning.on) return null;
+    const r = this.learnings.add(l);
+    if (r && r.event !== 'confirmed') this.addLog({ kind: 'info', text: `${r.event === 'promoted' ? 'Lesson promoted to a standing rule' : 'New lesson'} (${r.lesson.role}): ${r.lesson.lesson}` });
+    this.changed();
+    return r;
+  }
+
+  /** proaktif-agent: scan before each cycle. Findings go to the office and into the agents' next prompts. */
+  scan(): Finding[] {
+    const findings = proactiveScan(this);
+    this.lastScan = { at: Date.now(), findings };
+    const bad = findings.filter((f) => f.level === 'warn' || f.level === 'alert');
+    for (const f of bad) this.addLog({ kind: 'warn', text: `Scan ${f.level}: ${f.text}` });
+    if (!bad.length) this.addLog({ kind: 'info', text: `Scan: ${findings[findings.length - 1]?.text ?? 'clean'}` });
+    this.changed();
+    return findings;
+  }
+
+  /** self-improving: reflect on what happened since \`since\` (no-fills, errors, scan alerts) and write lessons. */
+  reflect(since: number): number {
+    if (!this.cfg.learning.on) return 0;
+    let n = 0;
+    const add = (l: LessonInput) => { if (this.learn(l)) n++; };
+    for (const a of this.activity.filter((x) => x.at >= since && x.kind === 'skipped')) {
+      if (/Daily loss stop/i.test(a.detail)) add({ role: 'risk', kind: 'loss', symbol: a.symbol, happened: `New order blocked: ${a.detail}`, rootCause: 'losses reached the daily loss cap', lesson: 'After the daily loss stop, only manage open positions and wait for the next UTC day. Be more selective early in the day.' });
+      else if (/below|minimum|too small|nothing left/i.test(a.detail)) add({ role: 'execution', kind: 'error', symbol: a.symbol, happened: a.detail, rootCause: 'allocation per order too small for the exchange minimum', lesson: 'When the allocation per order is near the minimum, prefer HOLD over a ticket that cannot fill.' });
+      else if (/not filled|LIVE order/i.test(a.detail)) add({ role: 'execution', kind: 'error', symbol: a.symbol, happened: a.detail, rootCause: 'the exchange did not fill the order', lesson: 'Check the exchange record after a failed send and skip the symbol this cycle; one send per ticket.' });
+    }
+    const errs = this.errors.filter((e) => e.at >= since && !e.source.startsWith('agent:'));
+    if (errs.length) add({ role: 'desk', kind: 'error', happened: `${errs.length} API or exchange error(s), latest: ${errs[errs.length - 1].text.slice(0, 120)}`, rootCause: 'feed or exchange API failure', lesson: 'When the feed or exchange errors, trust only the exchange record and fresh data; HOLD on stale or sample data.' });
+    for (const f of (this.lastScan && this.lastScan.at >= since ? this.lastScan.findings : []).filter((x) => x.level === 'alert' || x.level === 'warn')) {
+      const map: Record<string, LessonInput> = {
+        daily_loss_usage: { role: 'risk', kind: 'scan', happened: f.text, rootCause: 'losses are using most of the daily loss cap', lesson: 'When the daily loss cap is mostly used, REDUCE size or REJECT marginal setups until the next UTC day.' },
+        no_stop: { role: 'execution', kind: 'scan', happened: f.text, rootCause: 'a position was found without a stop loss', lesson: 'Every position needs a stop on the exchange; close any position found without one.' },
+        stale_feed: { role: 'market', kind: 'scan', happened: f.text, rootCause: 'price data stopped updating', lesson: 'Do not take a stance on stale prices; say NEUTRAL until the feed is fresh.' },
+        sample_fallback: { role: 'market', kind: 'scan', happened: f.text, rootCause: 'live feed failed, sample data in use', lesson: 'Treat sample data as a demo only; no exchange order on sample data.' },
+        safety_net: { role: 'lead', kind: 'scan', happened: f.text, rootCause: 'balance is close to the safety net', lesson: 'Near the safety net, prefer HOLD and smaller tickets; the safety net is never traded.' }
+      };
+      const l = map[f.code]; if (l) add(l);
+    }
+    return n;
   }
 
   // ---------- state ----------
@@ -79,6 +160,7 @@ export class Desk extends EventEmitter {
       dailyLoss: { limitPct: this.cfg.risk.dailyLossLimitPct, startEquity: this.day.startEquity, hit: this.day.lossHit },
       tradingview: { widget: this.cfg.tradingview.widget, prefix: this.cfg.tradingview.prefix, webhook: this.cfg.tradingview.webhookEnabled },
       agentEvents: this.cfg.agentEvents.enabled, signals: this.signals.slice(0, 10),
+      lessons: this.learnings.recent(12), standingRules: this.learnings.standingRules().slice(-8).reverse(), lessonsRefused: this.learnings.refused, scan: this.lastScan, scorecard: this.scorecard.rows(), learning: { on: this.cfg.learning.on, scan: this.cfg.learning.scan, promoteAfter: this.cfg.learning.promoteAfter },
       auto: { ...this.autoState, symbols: this.cfg.auto.symbols, maxHoldHours: this.cfg.auto.maxHoldHours },
       reports: this.reports.slice(0, 12), reportIntervalMin: this.cfg.reports.intervalMin,
       marketSource: this.cfg.marketSource, bridgeEnabled: this.cfg.bridge.enabled, paused: this.paused,
@@ -150,6 +232,7 @@ export class Desk extends EventEmitter {
     await Promise.all(this.cfg.watchlist.map(async (s) => {
       const snap = await getSnapshot(s, live);
       if (snap.source !== 'sample') allSample = false;
+      else if (live !== 'sample' && snap.errors.length) this.recordError('market', `${s}: ${snap.errors.join('; ')}`);
       this.updateTicker(snap);
     }));
     if (live !== 'sample' && allSample) this.liveBackoffUntil = Date.now() + 5 * 60_000;
@@ -181,7 +264,7 @@ export class Desk extends EventEmitter {
         } else { p.qty = v.qty; p.unrealizedPnl = round2(v.unrealizedPnl); }
       }
       for (const v of venue) if (!this.book.positions.some((p) => p.symbol === v.symbol)) this.addLog({ kind: 'warn', text: `Exchange shows a ${v.side} ${v.qty} ${v.symbol} position the desk did not open. Leaving it alone.` });
-    } catch (e) { this.addLog({ kind: 'warn', text: `Exchange sync failed: ${safe((e as Error).message)}` }); }
+    } catch (e) { this.recordError('exchange', `sync failed: ${(e as Error).message}`); this.addLog({ kind: 'warn', text: `Exchange sync failed: ${safe((e as Error).message)}` }); }
   }
 
   start() {
@@ -198,6 +281,7 @@ export class Desk extends EventEmitter {
     if (this.killed) throw new Error('kill switch is on, restart the server to trade again');
     if (this.paused) throw new Error('desk is paused, send "resume" first');
     if (this.debate) throw new Error(`a debate on ${this.debate.symbol} is already running`);
+    if (this.grokbot) throw new Error('Grok Bot mode: the debate runs in your Grok Bot group chat (npm run gb -- event ...), the internal engine is off');
     this.stopFlag = false;
     const id = `deb-${Date.now().toString(36)}`;
     this.debate = { id, symbol, phase: 'opening', round: 0, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
@@ -218,7 +302,7 @@ export class Desk extends EventEmitter {
       const c8 = snap.candles.at(-9)?.c, cl = snap.candles.at(-1)?.c;
       const change2h = c8 && cl ? round2(((cl - c8) / c8) * 100) : 0;
       const lastCandles = snap.candles.slice(-8).map((c) => ({ t: new Date(c.t).toISOString(), c: c.c }));
-      const mk = await runAgent(this.cfg, this.call, 'market', 'opinion', {
+      const mk = await this.run('market', 'opinion', {
         instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}).`,
         data: { symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h, fundingRate: snap.fundingRate, recentClosedCandles: lastCandles, source: snap.source, externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined },
         context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, temperament: this.agents.market.mood }
@@ -229,7 +313,7 @@ export class Desk extends EventEmitter {
       // 2. Research Analyst
       this.setStatus('research', 'reading'); this.changed();
       const news = await getNewsFor(symbol, this.cfg).catch(() => getNews(symbol));
-      const rs = await runAgent(this.cfg, this.call, 'research', 'research', {
+      const rs = await this.run('research', 'research', {
         instruction: `Weigh these catalyst items for ${symbol}. They are EXAMPLE items in this build. Lines that looked like instructions were already removed and replaced with a marker.`,
         data: { symbol, news: news.map((n) => ({ id: n.id, headline: n.headline, body: n.body, source: n.source, sentimentTag: n.sentiment, hadInjection: !!n.flagged })) },
         context: { symbol, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
@@ -242,7 +326,7 @@ export class Desk extends EventEmitter {
       // 3. Strategist (rule computed in code, agent explains)
       this.setStatus('strategist', 'reading'); this.changed();
       const rule = strategyVote(snap.candles);
-      const st = await runAgent(this.cfg, this.call, 'strategist', 'opinion', {
+      const st = await this.run('strategist', 'opinion', {
         instruction: `The EMA rule on closed 15m bars produced the result below for ${symbol}. Your stance must match the rule side (ABSTAIN means NEUTRAL). Explain it in your voice.`,
         data: { symbol, rule },
         context: { symbol, rule }
@@ -262,7 +346,7 @@ export class Desk extends EventEmitter {
           if (this.stopFlag) break;
           const others = DEBATERS.filter((o) => o !== a).map((o) => ({ agent: o, stance: this.agents[o].stance ?? 'NEUTRAL', confidence: this.agents[o].confidence ?? 0, lastLine: this.agents[o].lastLine }));
           this.setStatus(a, 'thinking'); this.changed();
-          const rb = await runAgent(this.cfg, this.call, a, 'rebuttal', {
+          const rb = await this.run(a, 'rebuttal', {
             instruction: `Round ${round} of the ${symbol} debate. Answer the strongest view you disagree with. You may change your stance if the evidence is better.`,
             data: { symbol, round, you: { stance: this.agents[a].stance, confidence: this.agents[a].confidence }, others },
             context: { symbol, round, myStance: this.agents[a].stance, myConfidence: this.agents[a].confidence, others, temperament: this.agents[a].mood }
@@ -291,7 +375,7 @@ export class Desk extends EventEmitter {
       const pos = this.book.positions.find((p) => p.symbol === symbol);
       const cautious = this.agents.lead.mood < 0;
       this.setStatus('lead', 'thinking'); this.changed();
-      const ld = await runAgent(this.cfg, this.call, 'lead', 'lead', {
+      const ld = await this.run('lead', 'lead', {
         instruction: `Close the ${symbol} debate. Pick one action.`,
         data: { symbol, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop } : null, freeSlots: this.book.n - this.book.positions.length, journal },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false }
@@ -308,12 +392,14 @@ export class Desk extends EventEmitter {
       // 6. Risk gate
       this.setPhase('risk gate');
       this.setStatus('risk', 'thinking'); this.changed();
-      const rk = await runAgent(this.cfg, this.call, 'risk', 'risk', {
+      const rk = await this.run('risk', 'risk', {
         instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol}. Caps: max leverage ${this.cfg.risk.maxLeverage}x, stop at most ${this.cfg.risk.defaultStopPct}%, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance.`,
         data: { symbol, action, disagreement, researchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length },
         context: { action, disagreement, researchVote, strategySide: rule.side, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, temperament: this.agents.risk.mood }
       });
       const gate = applyRiskGate(rk.data, this.cfg.risk, this.agents.risk.mood);
+      this.scorecard.verdict();
+      if (action !== 'HOLD') this.scorecard.riskDecision(gate.decision);
       const riskLine = `${gate.decision}. ${rk.data.reason}${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`;
       await this.say('risk', riskLine, rk.example, 'idle'); note('Risk Manager', riskLine);
 
@@ -325,6 +411,7 @@ export class Desk extends EventEmitter {
           const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
           const price = roundPrice(side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
           const res = await this.executeOpen(symbol, side, price, gate, snap.example);
+          if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision });
           verdict.executed = res.ok;
           if (res.order) verdict.order = res.order;
           if (!res.ok) verdict.reason = res.reason;
@@ -351,9 +438,9 @@ export class Desk extends EventEmitter {
   }
 
   /** The only way an order is opened, paper or live. Risk gate result in, money split and caps applied here. */
-  async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
+  async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number; tp?: number | null }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
     const live = this.opts.executor;
-    const no = async (reason: string) => { this.note('skipped', symbol, `${side}: ${reason}`); await this.say('execution', `No fill. ${reason}`, false, 'idle'); return { ok: false, line: `No fill. ${reason}`, reason }; };
+    const no = async (reason: string) => { this.scorecard.fill(false); this.note('skipped', symbol, `${side}: ${reason}`); await this.say('execution', `No fill. ${reason}`, false, 'idle'); return { ok: false, line: `No fill. ${reason}`, reason }; };
     if (this.killed) return no('Kill switch is on.');
     if (this.checkDay()) return no(`Daily loss stop is on (${this.cfg.risk.dailyLossLimitPct}% for today).`);
     if (live && example) return no('Refusing an exchange order on sample data.');
@@ -362,18 +449,21 @@ export class Desk extends EventEmitter {
       price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage, stopPct: gate.stopPct, minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takeProfitR: this.cfg.risk.takeProfitR
     });
     if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
+    // A take profit from a Grok Bot agent is accepted only on the right side of the entry. The stop is never theirs to widen.
+    if (gate.tp && Number.isFinite(gate.tp) && (side === 'LONG' ? gate.tp > price : gate.tp < price)) plan.tp = roundPrice(gate.tp);
     this.setStatus('execution', 'executing'); this.changed();
     let entry = price, qty = plan.qty, tag = 'Paper fill';
     if (live) {
       const fill = await live.open({ symbol, side, qty: plan.qty, stop: plan.stop, tp: plan.tp, leverage: plan.leverage });
       this.addLog({ kind: 'trade', agent: 'execution', text: `LIVE ${symbol} ${side}: ${fill.note}` });
-      if (!fill.ok) return no(`LIVE order not filled. ${fill.note}`);
+      if (!fill.ok) { this.recordError('exchange', `${symbol} ${side} not filled: ${fill.note}`); return no(`LIVE order not filled. ${fill.note}`); }
       entry = roundPrice(fill.avgPrice ?? price); qty = fill.qty; tag = 'LIVE fill';
     }
     const p = this.book.open({ symbol, side, qty, entry, stop: plan.stop, tp: plan.tp, margin: plan.margin, leverage: plan.leverage });
     this.recordEquity();
     const line = `${tag}: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
     this.addLog({ kind: 'trade', agent: 'execution', text: line });
+    this.scorecard.fill(true);
     this.note('opened', symbol, `${side} ${p.qty} at ${p.entry}, SL ${p.stop}${p.tp ? `, TP ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x`);
     await this.say('execution', line, false, 'idle');
     return { ok: true, line, reason: '', order: { side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage } };
@@ -389,7 +479,7 @@ export class Desk extends EventEmitter {
       if (live) {
         const f = await live.close(symbol, p.side, p.qty);
         this.addLog({ kind: 'trade', agent: 'execution', text: `LIVE close ${symbol}: ${f.note}` });
-        if (!f.ok) continue;
+        if (!f.ok) { this.recordError('exchange', `${symbol} close not filled: ${f.note}`); continue; }
         px = f.avgPrice ?? price;
       }
       const t = this.book.close(p.id, px, reason);
@@ -462,19 +552,54 @@ export class Desk extends EventEmitter {
       const symbol = normSymbol(ev.symbol ?? '');
       if (!symbol || !ev.action) return { ok: false, reply: 'symbol and action are required' };
       if (ev.text) await this.say('lead', ev.text, false, 'idle');
-      const snap = await getSnapshot(symbol, this.cfg.marketSource);
-      this.updateTicker(snap);
-      if (ev.action === 'CLOSE') { const t = await this.executeClose(symbol, snap.last, 'Grok Bot Desk Lead CLOSE'); return { ok: t.length > 0, reply: t.length ? `closed ${t.length}` : 'nothing open' }; }
-      if (ev.action === 'HOLD') return { ok: true, reply: 'hold noted' };
-      if (this.book.positions.some((p) => p.symbol === symbol)) return { ok: false, reply: `already have a ${symbol} position` };
-      const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot proposal, code caps only', sizeFactor: 1, leverage: this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct } as never, this.cfg.risk, this.agents.risk.mood);
-      await this.say('risk', `${gate.decision}. Grok Bot proposal checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
-      if (gate.decision === 'REJECT') return { ok: false, reply: 'risk rejected' };
-      const side = ev.action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
-      const res = await this.executeOpen(symbol, side, roundPrice(side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last)), gate, snap.example);
-      return { ok: res.ok, reply: res.ok ? res.line : res.reason };
+      if (ev.action === 'HOLD') { this.note('skipped', symbol, `HOLD: ${ev.text ?? 'Grok Bot Desk Lead'}`); return { ok: true, reply: 'hold noted' }; }
+      if (ev.action === 'CLOSE') { const r = await this.gbClose(symbol, 'Grok Bot Desk Lead CLOSE'); return { ok: r.ok, reply: r.reply }; }
+      const r = await this.gbOpen({ symbol, side: ev.action === 'OPEN_LONG' ? 'LONG' : 'SHORT' });
+      return { ok: r.ok, reply: r.reply };
     }
     return { ok: false, reply: 'unknown event' };
+  }
+
+  /**
+   * Keyless agent path (npm run gb -- open, Grok Bot Desk Lead). Same single execution path as the
+   * internal debate: risk gate code caps, money split, stop loss, daily loss stop, kill switch.
+   * A stop wider than the cap is tightened; a missing stop uses the default; leverage is capped.
+   */
+  async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId }): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
+    const symbol = normSymbol(o.symbol);
+    if (!symbol) return { ok: false, reply: 'unknown symbol', notes: [] };
+    if (this.killed) return { ok: false, reply: 'kill switch is on', notes: [] };
+    if (this.paused) return { ok: false, reply: 'desk is paused', notes: [] };
+    if (this.book.positions.some((p) => p.symbol === symbol)) return { ok: false, reply: `already have a ${symbol} position`, notes: [] };
+    const snap = await getSnapshot(symbol, this.cfg.marketSource);
+    this.updateTicker(snap);
+    const price = roundPrice(o.side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
+    let stopPct = this.cfg.risk.defaultStopPct;
+    if (o.stop != null) {
+      if (!(o.stop > 0) || (o.side === 'LONG' ? o.stop >= price : o.stop <= price)) return { ok: false, reply: `stop ${o.stop} is on the wrong side of the entry ${price}`, notes: [] };
+      stopPct = (Math.abs(price - o.stop) / price) * 100;
+    }
+    const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot ticket, code caps only', sizeFactor: 1, leverage: o.leverage ?? this.cfg.risk.maxLeverage, stopPct } as never, this.cfg.risk, this.agents.risk.mood);
+    this.scorecard.verdict(); this.scorecard.riskDecision(gate.decision);
+    await this.say('risk', `${gate.decision}. Ticket ${o.side} ${symbol} checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
+    if (gate.decision === 'REJECT') { this.note('skipped', symbol, 'Risk rejected the ticket'); return { ok: false, reply: 'risk rejected', notes: gate.notes }; }
+    const res = await this.executeOpen(symbol, o.side, price, { ...gate, tp: o.tp ?? null }, snap.example);
+    if (res.ok) this.scorecard.opened(symbol, { side: o.side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision });
+    this.verdicts.unshift({ id: `gb-${Date.now().toString(36)}`, symbol, action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', riskDecision: gate.decision, executed: res.ok, reason: res.ok ? 'Grok Bot ticket' : res.reason, disagreement: this.score().disagreement, camps: this.score().camps, example: snap.example, at: Date.now(), ...(res.order ? { order: res.order } : {}) });
+    this.verdicts = this.verdicts.slice(0, 50);
+    this.changed();
+    return { ok: res.ok, reply: res.ok ? res.line : res.reason, order: res.order, notes: gate.notes };
+  }
+
+  async gbClose(target: string, reason = 'Grok Bot close'): Promise<{ ok: boolean; reply: string; closed: ClosedTrade[] }> {
+    const symbols = /^all$/i.test(target) ? [...new Set(this.book.positions.map((p) => p.symbol))] : [normSymbol(target)].filter(Boolean);
+    const closed: ClosedTrade[] = [];
+    for (const sym of symbols) {
+      const snap = await getSnapshot(sym, this.cfg.marketSource);
+      this.updateTicker(snap);
+      closed.push(...await this.executeClose(sym, snap.last, reason));
+    }
+    return { ok: closed.length > 0, reply: closed.length ? closed.map((t) => `Closed ${t.side} ${t.symbol} at ${t.exit}, PnL ${t.realizedPnl} USDT.`).join(' ') : 'nothing open', closed };
   }
 
   private invalidated(side: 'LONG' | 'SHORT', rule: ReturnType<typeof strategyVote>) {
@@ -507,15 +632,24 @@ export class Desk extends EventEmitter {
     return { weighted, disagreement, camps };
   }
 
+  /** Desk Lead journal: grade every closed trade, score the team, and learn from losses and stops. */
   private async review(t: import('./types.js').ClosedTrade) {
-    // The Desk Lead keeps the journal: grade every closed trade, one lesson.
     this.setStatus('lead', 'journaling'); this.changed();
-    const rv = await runAgent(this.cfg, this.call, 'lead', 'review', {
-      instruction: 'Grade this closed paper trade and write one lesson.',
-      data: { trade: t }, context: { trade: t }
-    });
-    await this.say('lead', `Journal: grade ${rv.data.grade}. ${rv.data.lesson}`, rv.example, 'idle');
-    this.journal({ at: Date.now(), trade: t, grade: rv.data.grade, lesson: rv.data.lesson });
+    let rv: { grade: string; lesson: string }, example = false;
+    if (this.grokbot) rv = codeReview({ trade: t }); // no model calls in Grok Bot mode
+    else { const r = await this.run('lead', 'review', { instruction: 'Grade this closed trade and write one lesson.', data: { trade: t }, context: { trade: t } }); rv = r.data; example = r.example; }
+    await this.say('lead', `Journal: grade ${rv.grade}. ${rv.lesson}`, example, 'idle');
+    this.scorecard.journaled();
+    this.journal({ at: Date.now(), trade: t, grade: rv.grade, lesson: rv.lesson });
+    const wrong = this.scorecard.closed(t.symbol, t.side, t.realizedPnl);
+    const stop = /stop/i.test(t.reason);
+    if (t.realizedPnl < 0 || stop) {
+      const kind = stop ? 'stop' : 'loss';
+      const happened = `${t.symbol} ${t.side} closed at ${t.exit} (${t.reason}), PnL ${t.realizedPnl} USDT.`;
+      this.learn({ role: 'lead', kind, symbol: t.symbol, happened, rootCause: stop ? 'price hit the stop loss' : 'the trade went against the desk', lesson: rv.lesson });
+      for (const role of wrong) this.learn({ role, kind, symbol: t.symbol, happened, rootCause: `${ROLES[role].name} backed the losing side at entry`, lesson: `On ${t.symbol}, my ${t.side === 'LONG' ? 'long' : 'short'} call lost; wait for stronger confirmation before backing that side again.` });
+    }
+    this.changed();
   }
 
   private writeReport(id: string, md: string) {
@@ -584,8 +718,14 @@ export class Desk extends EventEmitter {
         case 'help': reply = HELP; break;
         case 'chat': {
           const target = agent ?? 'lead';
+          // self-improving: an owner correction becomes a lesson (refused if it would loosen a guard)
+          if (/\b(wrong|salah|don'?t|do not|jangan|stop doing|bad call|mistake|keliru|should have|harusnya|never again)\b/i.test(cmd.text)) {
+            const l = this.learn({ role: target, kind: 'correction', happened: `Owner corrected ${ROLES[target].name}: "${cmd.text.slice(0, 160)}"`, rootCause: 'owner feedback from the office chat', lesson: cmd.text.slice(0, 200), source: 'owner' });
+            if (!l && this.cfg.learning.on) this.addLog({ kind: 'warn', text: `Correction for ${ROLES[target].name} not stored as a lesson: lessons can never loosen a guard.` });
+          }
+          if (this.grokbot) { reply = `I am played by your Grok Bot agent in the "Trading Agent Mpu Gandring" group chat. Talk to me there. This office only shows what we post.`; break; }
           this.setStatus(target, 'typing'); this.changed();
-          const res = await runAgent(this.cfg, this.call, target, 'chat', {
+          const res = await this.run(target, 'chat', {
             instruction: `The desk owner wrote to you directly (below). Answer briefly in character. Mode is ${this.cfg.tradingMode}. Orders only happen through a debate and the risk gate, never from chat. If they ask for something only a command can do, tell them the command.`,
             data: { ownerMessage: cmd.text.slice(0, 500), yourStance: this.agents[target].stance, paper: this.book.split(), commands: HELP },
             context: { message: cmd.text, paper: this.book.split(), maxLossPct: this.cfg.risk.maxLossPerTradePct, maxLeverage: this.cfg.risk.maxLeverage, openPositions: this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty })), stance: this.agents[target].stance, summary: this.agents[target].lastLine ? `Last thing I said: "${this.agents[target].lastLine.slice(0, 90)}"` : '' }

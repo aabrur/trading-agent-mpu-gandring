@@ -42,6 +42,12 @@ function ReportCard({ r, open, onToggle }: { r: Report; open: boolean; onToggle:
         </div>
         <h4>Open positions</h4>
         {r.positions.length ? <ul>{r.positions.map((p) => <li key={p.symbol + p.openedAt}><b className={p.side === 'LONG' ? 'up' : 'down'}>{p.side}</b> {p.qty} {p.symbol} · entry {fmtPx(p.entry)} · SL {fmtPx(p.stop)}{p.tp ? ` · TP ${fmtPx(p.tp)}` : ''} · <span className={p.pnl >= 0 ? 'up' : 'down'}>{p.pnl >= 0 ? '+' : ''}{fmt(p.pnl)}</span></li>)}</ul> : <p className="muted small">none</p>}
+        {r.scorecard && r.scorecard.length > 0 && <>
+          <h4>Scorecard (Desk Lead)</h4>
+          <ul>{r.scorecard.map((s) => { const n = s.right + s.wrong; return <li key={s.role}><b>{s.name}</b> {n ? `${s.right}/${n} right` : 'no scored calls'} <span className="muted">· {s.note}</span></li>; })}</ul>
+        </>}
+        <h4>Lessons this period ({r.lessons?.length ?? 0})</h4>
+        {r.lessons?.length ? <ul>{r.lessons.slice(0, 6).map((l, i) => <li key={i}><span className={`tag ${l.status}`}>{l.status}{l.count > 1 ? ` x${l.count}` : ''}</span> <b>{l.role}</b> {l.lesson}</li>)}</ul> : <p className="muted small">none</p>}
         {(['opened', 'closed', 'skipped'] as const).map((k) => (
           <div key={k}>
             <h4>{k[0].toUpperCase() + k.slice(1)} ({r[k].length})</h4>

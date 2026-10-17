@@ -422,3 +422,18 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .report-body li { margin: 2px 0; line-height: 1.35; }
 .report-body .up, .report-head .up { color: var(--long); }
 .report-body .down, .report-head .down { color: var(--short); }
+
+/* ---------- lessons panel ---------- */
+.panel.lessons .panel-head .muted { margin-left: auto; }
+.panel.lessons ul { margin: 0 0 8px; padding-left: 0; list-style: none; font-size: var(--fs-xs, 12px); }
+.panel.lessons li { margin: 3px 0; line-height: 1.35; }
+.scan, .rules { border: 1px solid var(--line, rgba(120, 90, 60, .18)); border-radius: 12px; padding: 6px 10px; margin-bottom: 8px; background: var(--card-2, rgba(255, 250, 240, .6)); }
+.scan-head { font-family: var(--font-head); font-size: 12px; font-weight: 800; margin-bottom: 3px; display: flex; gap: 6px; }
+.scan li b { text-transform: uppercase; font-size: 10px; letter-spacing: .05em; margin-right: 4px; }
+.scan .lv-alert b { color: var(--short); }
+.scan .lv-warn b { color: var(--brass, #c9973c); }
+.scan .lv-ok b { color: var(--long); }
+.scan .lv-info b { color: var(--text-muted, #7a6a58); }
+.tag.new, .tag.confirmed, .tag.promoted { font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 999px; color: #fff; background: var(--sage, #9db48f); }
+.tag.confirmed { background: var(--brass, #c9973c); }
+.tag.promoted { background: var(--teal, #3f9e97); }

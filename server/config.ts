@@ -27,6 +27,8 @@ export interface AppConfig {
   live: { exchange: ExchangeName; network: 'testnet' | 'mainnet'; experimental: boolean } | null;
   auto: { on: boolean; intervalMin: number; symbols: string[]; maxHoldHours: number };
   reports: { intervalMin: number; telegram: { token: string; chatId: string; enabled: boolean } };
+  /** proaktif-agent (scan before each cycle) and self-improving (reflect after) */
+  learning: { on: boolean; scan: boolean; reflectEveryCycles: number; promoteAfter: number; lossWarnPct: number; staleFeedMin: number; path: string | null };
   exchange: { name: ExchangeName | null; hasTestnetKeys: boolean; hasMainnetKeys: boolean };
   agentEvents: { secret: string; enabled: boolean };
   tradingview: { widget: boolean; passphrase: string; webhookEnabled: boolean; prefix: string };
@@ -154,6 +156,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       intervalMin: Math.max(0.1, num(env, 'DEBATE_INTERVAL_MIN', 15)),
       symbols: (env.AUTO_SYMBOLS || env.WATCHLIST || 'BTCUSDT,ETHUSDT,SOLUSDT').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
       maxHoldHours: Math.max(0, num(env, 'MAX_HOLD_HOURS', 0))
+    },
+    learning: {
+      on: !/^(0|off|no|false)$/i.test((env.LEARNING ?? 'on').trim()),
+      scan: !/^(0|off|no|false)$/i.test((env.PROACTIVE_SCAN ?? 'on').trim()),
+      reflectEveryCycles: Math.max(1, Math.round(num(env, 'REFLECT_EVERY_CYCLES', 1))),
+      promoteAfter: Math.min(10, Math.max(2, Math.round(num(env, 'PROMOTE_AFTER', 3)))),
+      lossWarnPct: Math.min(95, Math.max(50, num(env, 'LOSS_WARN_PCT', 70))),
+      staleFeedMin: Math.max(1, num(env, 'STALE_FEED_MIN', 10)),
+      path: /^(off|none)$/i.test((env.LEARNINGS_PATH ?? '').trim()) ? null : (env.LEARNINGS_PATH || 'data/learnings.json').trim()
     },
     reports: {
       intervalMin: Math.max(1, num(env, 'REPORT_INTERVAL_MIN', 60)),

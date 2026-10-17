@@ -131,3 +131,45 @@ export async function getNewsFor(symbol: string, cfg: { news: { provider: 'sampl
     return getNews(symbol);
   } finally { clearTimeout(t); }
 }
+
+// ---------- candles on other timeframes (npm run gb -- candles) ----------
+export const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
+export type Timeframe = typeof TIMEFRAMES[number];
+const TF_MS: Record<Timeframe, number> = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000 };
+const BYBIT_TF: Record<Timeframe, string> = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' };
+
+/** Closed candles for one timeframe. Public data only. Falls back to sample data (15m sample bars are aggregated). */
+export async function getCandles(symbol: string, tf: Timeframe, preferred: Source, limit = 100): Promise<{ symbol: string; tf: Timeframe; source: Source; example: boolean; candles: Candle[]; errors: string[] }> {
+  const n = Math.min(500, Math.max(10, limit));
+  const errors: string[] = [];
+  if (preferred !== 'sample') {
+    const chain = [preferred, ...ORDER.filter((s) => s !== preferred)] as Exclude<Source, 'sample'>[];
+    for (const src of chain) {
+      try {
+        let candles: Candle[] = [];
+        if (src === 'bybit') {
+          const kl = await getJson(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${BYBIT_TF[tf]}&limit=${n + 1}`);
+          candles = (kl?.result?.list ?? []).map((r: string[]) => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] })).reverse();
+        } else if (src === 'binance') {
+          const kl = await getJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${n + 1}`);
+          candles = kl.map((r: any[]) => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }));
+        } else {
+          const coin = symbol.replace(/USDT?$/, ''), end = Date.now();
+          const kl = await getJson('https://api.hyperliquid.xyz/info', { method: 'POST', body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval: tf, startTime: end - (n + 1) * TF_MS[tf], endTime: end } }) });
+          candles = kl.map((r: any) => ({ t: +r.t, o: +r.o, h: +r.h, l: +r.l, c: +r.c, v: +r.v }));
+        }
+        const closed = candles.filter((c) => c.t + TF_MS[tf] <= Date.now()).slice(-n);
+        if (closed.length >= 10) return { symbol, tf, source: src, example: false, candles: closed, errors };
+        errors.push(`${src}: not enough data`);
+      } catch (e) { errors.push(`${src}: ${(e as Error).message}`); }
+    }
+  }
+  const base = sampleSnapshot(symbol).candles;
+  const step = Math.max(1, Math.round(TF_MS[tf] / TF_MS['15m']));
+  const out: Candle[] = [];
+  for (let i = base.length % step; i + step <= base.length; i += step) {
+    const g = base.slice(i, i + step);
+    out.push({ t: g[0].t, o: g[0].o, h: Math.max(...g.map((x) => x.h)), l: Math.min(...g.map((x) => x.l)), c: g[g.length - 1].c, v: g.reduce((s, x) => s + x.v, 0) });
+  }
+  return { symbol, tf: step === 1 && TF_MS[tf] < TF_MS['15m'] ? '15m' : tf, source: 'sample', example: true, candles: out.slice(-n), errors };
+}

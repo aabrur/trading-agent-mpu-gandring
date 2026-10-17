@@ -54,8 +54,22 @@ const TradingViewSchema = z.object({
   note: z.string().max(500).optional()
 });
 
-export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null } = {}) {
-  const desk = new Desk(cfg, opts.caller ?? makeCaller(cfg), { reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null });
+/** Grok Bot mode has no model provider at all: the Grok Bot agents are the brains. */
+export const noModelCaller: ModelCaller = async () => { throw new Error('no model calls in Grok Bot mode'); };
+
+const GbOpenSchema = z.object({
+  symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']),
+  stop: z.number().positive().optional(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(),
+  agent: z.enum(AGENTS).optional(), reason: z.string().max(300).optional()
+}).strict();
+const GbLessonSchema = z.object({
+  role: z.enum([...AGENTS, 'desk']), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'),
+  symbol: z.string().max(20).optional(), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default(''), lesson: z.string().min(8).max(300)
+}).strict();
+
+export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null } = {}) {
+  const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
+  const desk = new Desk(cfg, caller, { reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath });
   const auto = new AutoTrader(desk);
   const reporter = new Reporter(desk, opts.reportsDir === undefined ? 'reports' : opts.reportsDir, opts.outboxPath);
   const app = express();
@@ -63,7 +77,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, app: 'trading-agent-mpu-gandring', mode: cfg.tradingMode, appMode: cfg.appMode, exchange: cfg.live?.exchange ?? cfg.exchange.name, killed: desk.killed, tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off', agentEvents: cfg.agentEvents.enabled ? 'on' : 'off', marketSource: cfg.marketSource, bridge: cfg.bridge.enabled ? 'on' : 'off',
-      agents: Object.fromEntries(AGENT_IDS.map((id) => [id, { provider: cfg.agents[id].provider, model: cfg.agents[id].model, fellBackToMock: cfg.agents[id].fellBackToMock }])) });
+      agents: Object.fromEntries(AGENT_IDS.map((id) => [id, cfg.appMode === 'grokbot' ? { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false } : { provider: cfg.agents[id].provider, model: cfg.agents[id].model, fellBackToMock: cfg.agents[id].fellBackToMock }])) });
   });
   app.get('/api/state', (_req, res) => res.json(desk.snapshot()));
   // Closed 15m candles for the price chart. Cached briefly so the UI cannot hammer public APIs.
@@ -117,6 +131,43 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     if (!parsed.success) return res.status(400).json({ ok: false, error: 'invalid event', issues: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 5) });
     const ev = { ...parsed.data, text: parsed.data.text ? sanitizeUntrusted(parsed.data.text, 600).text : undefined };
     res.json(await desk.onAgentEvent(ev as never));
+  });
+
+  // Keyless agent CLI (npm run gb). Needs AGENT_EVENT_SECRET as a Bearer token. Orders take the same
+  // single execution path as the desk: risk gate caps, money split, stop loss, daily stop, kill switch.
+  const gbLimit = limiter(60, 60_000);
+  const gbAuth = (req: express.Request, res: express.Response) => {
+    if (!cfg.agentEvents.secret) { res.status(404).json({ ok: false, error: 'set AGENT_EVENT_SECRET (npm run setup -- --yes --generate-agent-secret) to use npm run gb' }); return false; }
+    const auth = String(req.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+    if (!auth || !sameSecret(auth, cfg.agentEvents.secret)) { res.status(401).json({ ok: false, error: 'bad or missing secret' }); return false; }
+    if (!gbLimit('all')) { res.status(429).json({ ok: false, error: 'slow down' }); return false; }
+    return true;
+  };
+  app.post('/api/gb/open', async (req, res) => {
+    if (!gbAuth(req, res)) return;
+    const p = GbOpenSchema.safeParse(req.body);
+    if (!p.success) return res.status(400).json({ ok: false, error: 'invalid ticket', issues: p.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 5) });
+    if (p.data.reason) await desk.onAgentEvent({ agent: p.data.agent ?? 'lead', kind: 'say', text: sanitizeUntrusted(p.data.reason, 300).text } as never);
+    res.json(await desk.gbOpen(p.data));
+  });
+  app.post('/api/gb/close', async (req, res) => {
+    if (!gbAuth(req, res)) return;
+    const target = String(req.body?.symbol ?? '').slice(0, 20);
+    if (!target) return res.status(400).json({ ok: false, error: 'symbol or all' });
+    res.json(await desk.gbClose(target, String(req.body?.reason ?? 'Grok Bot close').slice(0, 120)));
+  });
+  app.post('/api/gb/scan', (req, res) => { if (!gbAuth(req, res)) return; res.json({ ok: true, findings: desk.scan() }); });
+  app.get('/api/gb/lessons', (req, res) => {
+    if (!gbAuth(req, res)) return;
+    res.json({ ok: true, lessons: desk.learnings.recent(Math.min(100, Number(req.query.n ?? 30) || 30)), standingRules: desk.learnings.standingRules(), refused: desk.learnings.refused });
+  });
+  app.post('/api/gb/lessons', (req, res) => {
+    if (!gbAuth(req, res)) return;
+    const p = GbLessonSchema.safeParse(req.body);
+    if (!p.success) return res.status(400).json({ ok: false, error: 'invalid lesson', issues: p.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 5) });
+    const r = desk.learn({ ...p.data, source: 'grokbot' });
+    if (!r) return res.status(422).json({ ok: false, error: cfg.learning.on ? 'refused: empty, or it would loosen a guard (lessons can never loosen guards)' : 'learning is off (LEARNING=off)' });
+    res.json({ ok: true, event: r.event, lesson: r.lesson });
   });
 
   // TradingView alert webhook. TradingView cannot send headers, so the passphrase is in the JSON body.

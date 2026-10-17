@@ -35,7 +35,9 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: ty
     try { const r = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(8000) }); add(r.ok, `${p} key`, r.ok ? 'model list readable' : `HTTP ${r.status}`); }
     catch (e) { add(false, `${p} key`, (e as Error).message); }
   }
-  for (const [id, a] of Object.entries(cfg.agents)) if (a.fellBackToMock) add(null, `agent ${id}`, 'provider has no key, using mock');
+  if (cfg.appMode === 'grokbot') add(true, 'agents', 'Grok Bot mode: six Grok Bot agents, no model keys needed, internal debate engine off');
+  else for (const [id, a] of Object.entries(cfg.agents)) if (a.fellBackToMock) add(null, `agent ${id}`, 'provider has no key, using mock');
+  add(cfg.learning.on ? true : null, 'learning', cfg.learning.on ? `self-improving on (promote after ${cfg.learning.promoteAfter}), proaktif-agent scan ${cfg.learning.scan ? 'on' : 'off'}, lessons in ${cfg.learning.path ?? 'memory only'}` : 'off (LEARNING=off)');
   if (env.AGENT_REVIEWER_PROVIDER || env.AGENT_REVIEWER_MODEL) add(null, 'agent reviewer', 'ignored: the desk has six agents now, the Desk Lead keeps the journal. Remove AGENT_REVIEWER_*.');
 
   let ex;

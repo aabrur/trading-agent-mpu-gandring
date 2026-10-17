@@ -24,6 +24,18 @@ Screenshots use the offline sample data (`MARKET_SOURCE=sample`), so prices are 
 
 Both modes share the office, the risk gate, the money split and the paper book.
 
+## Install in Grok Bot
+
+No model API keys needed: six Grok Bot agents are the employees and the brains, in one group chat named "Trading Agent Mpu Gandring". A template bot (or your own Grok Bot) follows [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md): it clones this repo, creates the six agents from [grokbot/roles/](grokbot/roles/), saves the [proaktif-agent](grokbot/skills/proaktif-agent.md) and [self-improving](grokbot/skills/self-improving.md) skills, asks you the one-time setup questions (exchange key only through the secret request card), and starts a 15 minute trading loop plus reports. Start here: [grokbot/INSTALL.md](grokbot/INSTALL.md).
+
+## The desk learns (on by default, both modes)
+
+- **proaktif-agent, before every cycle.** A scan flags loss cap usage at 70 percent and up (`LOSS_WARN_PCT`), positions without a stop, API and exchange errors, stale or sample data, and a balance close to the safety net. Findings go to the office log, the Lessons panel and into the agents' next prompts.
+- **self-improving, after every cycle and every event.** After each cycle, closed losing trade, stop hit, error, or owner correction in the office chat, the desk writes a lesson (what happened, root cause, lesson, status new, confirmed or promoted) to `data/learnings.json`. A lesson seen 3 times (`PROMOTE_AFTER`) becomes a standing rule injected into that role's prompt.
+- **Lessons can never loosen a guard.** Any lesson that reads like more leverage, bigger size, a wider or missing stop, skipping risk or touching the safety net is refused before it is stored or promoted, and the code caps apply whatever a prompt says. Tests cover it.
+- **The Desk Lead supervises.** Every report has a per-role scorecard and "Lessons this period".
+- In Grok Bot mode the trading loop routine runs proaktif-agent first and self-improving last, through `npm run gb -- scan` and `npm run gb -- lessons add|list`.
+
 ## What it does
 
 - **A real desk, not one bot.** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager and Execution Trader each have a job, a personality and their own model. The Desk Lead also keeps the trade journal: it grades every closed trade, writes one lesson and owns the periodic report.
@@ -97,6 +109,8 @@ npm run debate -- --symbol SOLUSDT --json     # machine readable verdict
 | `npm run setup` | Setup wizard, or `-- --yes [flags]` for agents. Also `-- check-key`, `-- paper`, `-- status` |
 | `npm run doctor` | Checks config and every key with a harmless read. Never prints a secret |
 | `npm run doctor --roundtrip` | Optional real round trip on the exchange testnet (testnet funds only) |
+| `npm run office` / `npm run office:status` | Start backend and UI together (same as dev, quiet output for background use) / check whether the office is up and on which ports |
+| `npm run gb -- <cmd> --json` | Keyless agent CLI for Grok Bot employees: market, candles, account, positions, split, size, open, close, report, event, scan, lessons. See [docs/grokbot-mode.md](docs/grokbot-mode.md) |
 | `npm run debate -- --symbol X` | One debate in the terminal |
 | `npm run screenshot` | Saves `docs/screenshot.png` (overview mid-debate) and `docs/screenshot-chat.png` (agent chat and chart) from a running dev server (needs Chrome) |
 
@@ -140,6 +154,11 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `MAX_HOLD_HOURS` | `0` | Close positions older than this. `0` is off. |
 | `REPORT_INTERVAL_MIN` | `60` | Minutes between reports |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | empty | Optional report channel (experimental, untested) |
+| `LEARNING` / `PROACTIVE_SCAN` | `on` / `on` | self-improving lessons and the proaktif-agent scan |
+| `REFLECT_EVERY_CYCLES` | `1` | Reflection cadence in auto cycles (closed trades, stops, errors and corrections always reflect at once) |
+| `PROMOTE_AFTER` | `3` | Sightings before a lesson becomes a standing rule (2 to 10) |
+| `LOSS_WARN_PCT` / `STALE_FEED_MIN` | `70` / `10` | Scan thresholds: daily loss cap usage warning, price age |
+| `LEARNINGS_PATH` | `data/learnings.json` | Lessons store (gitignored). `off` keeps lessons in memory only |
 | `GROKBOT_WEBHOOK_URL` / `GROKBOT_WEBHOOK_KEY` | empty | Optional bridge, see [docs/grokbot-bridge.md](docs/grokbot-bridge.md) |
 
 ### The money split
@@ -260,9 +279,14 @@ server/            Express + WebSocket backend
   live/            automatic key guard, optional testnet round trip, live executor (one send, reconcile)
   auto.ts          full auto scheduler
   reports.ts       periodic reports (files, UI, bridge, Telegram)
+  learnings.ts     self-improving lessons store and the guard-loosening block
+  scan.ts          proaktif-agent scan
+  scorecard.ts     Desk Lead per-role scorecard
 cli/debate.ts      headless debate
 cli/setup.ts       setup wizard (mode, keys, auto, reports)
 cli/doctor.ts      key checks with harmless reads
+cli/gb.ts          keyless agent CLI (npm run gb)
+grokbot/           Grok Bot install: INSTALL, BOOTSTRAP, six role prompts, two learning skills
 web/               Vite + React virtual office (tokens in web/src/styles/tokens.css)
 skills/            desk role notes for agents (market scan, research, strategy, risk, execution)
 data/sample/       sample news with a planted injection line

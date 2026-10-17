@@ -22,6 +22,8 @@ export interface DeskState {
   live: { exchange: string; network: string; experimental: boolean } | null; killed: boolean;
   auto: { on: boolean; intervalMin: number; nextAt: number; cycles: number; lastCycleAt: number; running: boolean; symbols: string[]; maxHoldHours: number };
   reports: Report[]; reportIntervalMin: number;
+  lessons: Lesson[]; standingRules: Lesson[]; lessonsRefused: number; scan: { at: number; findings: Finding[] } | null;
+  scorecard: RoleScore[]; learning: { on: boolean; scan: boolean; promoteAfter: number };
   dailyLoss: { limitPct: number; startEquity: number; hit: boolean };
   tradingview: { widget: boolean; prefix: string; webhook: boolean }; agentEvents: boolean;
   signals: { source: string; symbol: string; action: string; price: number | null; note: string; at: number }[];
@@ -31,6 +33,9 @@ export interface DeskState {
   equityHistory: { t: number; equity: number; balance: number }[];
   verdicts: Verdict[]; logs: LogLine[]; chats: Record<AgentId, ChatLine[]>; watchlist: string[]; fightThreshold: number;
 }
+export interface Lesson { id: string; role: string; kind: string; symbol?: string; happened: string; rootCause: string; lesson: string; status: 'new' | 'confirmed' | 'promoted'; count: number; firstAt: number; lastAt: number; source: string }
+export interface Finding { level: 'ok' | 'info' | 'warn' | 'alert'; code: string; text: string }
+export interface RoleScore { role: string; name: string; calls: number; right: number; wrong: number; note: string }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface Report {
   id: string; at: number; since: number; mode: string; exchange: string | null;
@@ -38,6 +43,7 @@ export interface Report {
   dailyLoss: { limitPct: number; hit: boolean }; auto: { on: boolean; cycles: number; intervalMin: number };
   positions: { symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }[];
   opened: Activity[]; closed: Activity[]; skipped: Activity[]; text: string;
+  scorecard?: RoleScore[]; lessons?: { role: string; kind: string; status: string; count: number; symbol?: string; lesson: string; rootCause: string }[]; standingRules?: string[]; scan?: Finding[];
 }
 export interface Speech { agent: AgentId; text: string; done: boolean; example: boolean; at: number }
 export interface Fight { id: number; from: AgentId; to: AgentId; intensity: number; punches: number; at: number }

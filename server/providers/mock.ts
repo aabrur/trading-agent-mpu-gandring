@@ -124,6 +124,8 @@ function risk(c: Ctx) {
   return { decision: 'APPROVE', sizeFactor: 1, leverage: lev, stopPct: stop, reason: 'Rule, tape and lead line up. Approved at standard size.' };
 }
 
+/** Deterministic post-trade review. Also used by the Desk Lead journal in Grok Bot mode (no model calls). */
+export function codeReview(c: Ctx): { lesson: string; grade: string } { return review(c); }
 function review(c: Ctx) {
   const t = c.trade ?? {};
   const pnl = Number(t.realizedPnl ?? 0);
