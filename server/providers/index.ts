@@ -2,6 +2,7 @@ import type { AppConfig, ProviderName } from '../config.js';
 import type { AgentId } from '../types.js';
 import type { TaskKind } from '../schemas.js';
 import { mockReply } from './mock.js';
+import { runLocalAgent } from './local.js';
 
 export interface ModelRequest {
   agent: AgentId;
@@ -31,14 +32,22 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
     switch (provider) {
       case 'mock':
         return mockReply(req);
+      case 'local':
+        return runLocalAgent(model, `${system}\n\n${user}`);
       case 'xai':
       case 'openai':
       case 'deepseek':
-      case 'openrouter': {
+      case 'openrouter':
+      case 'groq':
+      case 'mistral':
+      case 'together':
+      case 'fireworks': {
         const base = cfg.baseUrls[provider].replace(/\/$/, '');
         const extra: Record<string, string> = provider === 'openrouter' ? { 'HTTP-Referer': 'https://github.com/trading-agent-mpu-gandring', 'X-Title': 'Trading Agent Mpu Gandring' } : {};
+        // Reasoning models on OpenAI reject temperature and use the completion-token limit.
+        const generation = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model) ? { max_completion_tokens: 400, reasoning_effort: 'low' } : { temperature: 0.6, max_tokens: 400 };
         const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, {
-          model, temperature: 0.6, max_tokens: 400,
+          model, ...generation,
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
         });
         return String(data?.choices?.[0]?.message?.content ?? '');

@@ -5,11 +5,14 @@
   "license": "MIT",
   "author": "Abrur Alaina",
   "type": "module",
+  "bin": { "mpu": "bin/mpu.mjs" },
+  "files": ["bin", "dist", "cli", "server", "web", "docs", ".env.example", "tsconfig.server.json", "tsconfig.web.json", "vite.config.ts"],
   "private": false,
   "engines": {
     "node": ">=20"
   },
   "scripts": {
+    "prepack": "npm run build",
     "dev": "concurrently -k --kill-others-on-fail -n server,web -c yellow,cyan \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite",

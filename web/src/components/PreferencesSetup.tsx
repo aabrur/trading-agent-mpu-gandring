@@ -1,0 +1,42 @@
+import { useEffect, useState } from 'react';
+
+interface Preferences { appMode: 'local' | 'grokbot'; balance: number; safetyNet: number; n: number; dailyLoss: number; auto: boolean; debateInterval: number; reportInterval: number }
+export function PreferencesSetup() {
+  const [values, setValues] = useState<Preferences | null>(null);
+  const [canRestart, setCanRestart] = useState(false);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { fetch('/api/setup/preferences').then((r) => r.json()).then((d) => { if (d.ok) { setValues(d.values); setCanRestart(d.canRestart); } else setMessage('Settings unavailable.'); }).catch(() => setMessage('Office not reachable.')); }, []);
+  async function save() {
+    setBusy(true);
+    try { const r = await fetch('/api/setup/preferences', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(values) }); const d = await r.json(); setMessage(d.detail || d.error); }
+    catch { setMessage('Office not reachable. Try saving again.'); } finally { setBusy(false); }
+  }
+  async function restart() {
+    setBusy(true); setMessage('Applying saved settings...');
+    try {
+      const r = await fetch('/api/setup/restart', { method: 'POST' }); const d = await r.json();
+      if (!r.ok) { setMessage(d.detail); setBusy(false); return; }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      for (let i = 0; i < 30; i++) {
+        try { const health = await fetch('/api/health', { signal: AbortSignal.timeout(1500) }); if (health.ok) { window.location.reload(); return; } } catch { /* Wait for the managed server. */ }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      setMessage('Restart is taking longer than expected. Check the mpu terminal, then refresh.');
+    } catch { setMessage('Restart could not be confirmed. Check the mpu terminal.'); }
+    setBusy(false);
+  }
+  if (!values) return <p className="wallet-note">{message || 'Loading settings...'}</p>;
+  const numeric = (key: Exclude<keyof Preferences, 'appMode' | 'auto'>, label: string, min: number, max?: number) => <label>{label}<input type="number" min={min} max={max} step={key === 'balance' || key === 'safetyNet' || key === 'dailyLoss' ? '0.1' : '1'} required value={values[key]} onChange={(e) => setValues({ ...values, [key]: Number(e.target.value) })} /></label>;
+  return <section className="setup-preferences">
+    <form className="setup-keys" onChange={() => setMessage('')} onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      <label>Agent source<select value={values.appMode} onChange={(e) => setValues({ ...values, appMode: e.target.value as Preferences['appMode'] })}><option value="local">Models or signed-in agents on this computer</option><option value="grokbot">External Grok Bot team via signed bridge</option></select></label>
+      <div className="settings-grid">{numeric('balance', 'Paper balance in USDT', 0)}{numeric('safetyNet', 'Safety net in USDT', 0, values.balance)}{numeric('n', 'Maximum open orders', 1, 4)}{numeric('dailyLoss', 'Daily loss cap in %', 0.1, 100)}{numeric('debateInterval', 'Debate interval in minutes', 1, 1440)}{numeric('reportInterval', 'Report interval in minutes', 1, 1440)}</div>
+      <p className="wallet-note">Money Trade: {Math.max(0, values.balance - values.safetyNet).toFixed(2)} USDT. Per order: {((Math.max(0, values.balance - values.safetyNet)) / (values.n || 1)).toFixed(2)} USDT.</p>
+      <label className="setup-check"><input type="checkbox" checked={values.auto} onChange={(e) => setValues({ ...values, auto: e.target.checked })} /> Full auto: agents open, close and size trades on their own in the saved trading mode.</label>
+      <button disabled={busy} type="submit">Save desk settings</button>
+    </form>
+    <div className="setup-nav"><button disabled={busy || !canRestart} onClick={restart}>Apply saved settings and restart</button><small className="wallet-note">{canRestart ? 'Save each section before applying.' : 'Start with mpu to apply saved changes here.'}</small></div>
+    {message && <p className="wallet-note" role="status">{message}</p>}
+  </section>;
+}

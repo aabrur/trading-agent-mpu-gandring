@@ -9,7 +9,7 @@ interface WalletState { available: boolean; reason: string; appMode: string; cur
 interface Eip1193 { request(a: { method: string; params?: unknown[] }): Promise<any> }
 const eth = () => (window as unknown as { ethereum?: Eip1193 }).ethereum;
 
-export function WalletPanel({ state }: { state: DeskState }) {
+export function WalletPanel({ state, embedded = false }: { state: DeskState; embedded?: boolean }) {
   const [info, setInfo] = useState<WalletState | null>(null);
   const [venue, setVenue] = useState<string>('');
   const [network, setNetwork] = useState<'testnet' | 'mainnet'>('testnet');
@@ -51,8 +51,8 @@ export function WalletPanel({ state }: { state: DeskState }) {
   }
 
   return (
-    <div className="panel wallet-panel">
-      <div className="panel-head"><h2>Venue keys</h2><span className="badge">experimental</span></div>
+    <div className={embedded ? 'wallet-panel' : 'panel wallet-panel'}>
+      <div className="panel-head">{!embedded && <h2>Venue keys</h2>}<span className="badge">experimental</span></div>
       <div className="wallet-pick">
         <select value={venue} onChange={(e) => { setVenue(e.target.value); setMsg(null); setAgent(''); }} aria-label="venue">
           <optgroup label="DEX">{dex.map((x) => <option key={x.venue} value={x.venue}>{x.label}</option>)}</optgroup>

@@ -1,5 +1,9 @@
 # Trading Agent Mpu Gandring
 
+<p align="center">
+  <img src="web/public/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring" width="280" />
+</p>
+
 Six AI trading agents share one office. They read the market, argue about it, throw cartoon punches when they really disagree, and then a Risk Manager decides whether the Desk Lead's call is allowed to touch the paper book.
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
@@ -8,18 +12,18 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 ![Chatting with the Risk Manager while the ETH chart shows the paper SHORT with its entry, stop and take profit](docs/screenshot-chat.png)
 
-Screenshots use the offline sample data (`MARKET_SOURCE=sample`), so prices are tagged EXAMPLE.
+Screenshots use the offline sample data where `MARKET_SOURCE=sample`, so prices are tagged EXAMPLE.
 
-> **Risk warning. Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. If you choose TESTNET or LIVE in setup, the agents trade **on their own** (full auto, no approval step): they open, close, size and set stops without asking you. In LIVE that is real money and you can lose it, quickly. Automatic guards (no-withdraw key check, stop on every order, daily loss stop, safety net, max N, kill switch) limit damage; they do not prevent losses. Read [docs/live-trading.md](docs/live-trading.md) first.
+> **Risk warning. Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. If you choose TESTNET or LIVE in setup, the agents trade **on their own** in full auto with no approval step: they open, close, size and set stops without asking you. In LIVE that is real money and you can lose it, quickly. Automatic guards including the no-withdraw key check, stop on every order, daily loss stop, safety net, max N and kill switch limit damage; they do not prevent losses. Read [docs/live-trading.md](docs/live-trading.md) first.
 
 ## Two ways to run it
 
 | | Grok Bot mode | Local mode |
 | --- | --- | --- |
-| Who plays the agents | Your own Grok Bot trading team | Model APIs you pick, per agent |
-| How turns arrive | `POST /api/agent-event` with a shared secret | The server calls the models |
+| Who plays the agents | Your own Grok Bot trading team | Model APIs or local CLI agents you pick, per agent |
+| How turns arrive | `POST /api/agent-event` with a shared secret | The server calls the models or local CLIs |
 | Commands and verdicts out | Grok Bot webhook bridge | Optional, same bridge |
-| Setup | `npm run setup -- --yes --app-mode grokbot --generate-agent-secret` | `npm run setup` |
+| Setup | `npm run setup -- --yes --app-mode grokbot --generate-agent-secret` | `mpu setup` or `npm run setup` |
 | Guide | [docs/grokbot-mode.md](docs/grokbot-mode.md) | [docs/local-mode.md](docs/local-mode.md) |
 
 Both modes share the office, the risk gate, the money split and the paper book.
@@ -28,12 +32,12 @@ Both modes share the office, the risk gate, the money split and the paper book.
 
 **One click:** open the [Trading Agent Mpu Gandring template](https://x.ai/bot/fX91UALWOlFMk_Oj2LBjn) and add it to your Grok Bot. It creates the six employees and their group, then asks for the one-time setup.
 
-No model API keys needed: six Grok Bot agents are the employees and the brains, in one group chat named "Trading Agent Mpu Gandring". A template bot (or your own Grok Bot) follows [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md): it clones this repo, creates the six agents from [grokbot/roles/](grokbot/roles/), saves the [proaktif-agent](grokbot/skills/proaktif-agent.md) and [self-improving](grokbot/skills/self-improving.md) skills, asks you the one-time setup questions (exchange key only through the secret request card), and starts a 15 minute trading loop plus reports. Start here: [grokbot/INSTALL.md](grokbot/INSTALL.md).
+No model API keys needed: six Grok Bot agents are the employees and the brains, in one group chat named "Trading Agent Mpu Gandring". A template bot or your own Grok Bot follows [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md): it clones this repo, creates the six agents from [grokbot/roles/](grokbot/roles/), saves the [proaktif-agent](grokbot/skills/proaktif-agent.md) and [self-improving](grokbot/skills/self-improving.md) skills, asks you the one-time setup questions with the exchange key entered only through the secret request card, and starts a 15 minute trading loop plus reports. Start here: [grokbot/INSTALL.md](grokbot/INSTALL.md).
 
-## The desk learns (on by default, both modes)
+## The desk learns in both modes
 
-- **proaktif-agent, before every cycle.** A scan flags loss cap usage at 70 percent and up (`LOSS_WARN_PCT`), positions without a stop, API and exchange errors, stale or sample data, and a balance close to the safety net. Findings go to the office log, the Lessons panel and into the agents' next prompts.
-- **self-improving, after every cycle and every event.** After each cycle, closed losing trade, stop hit, error, or owner correction in the office chat, the desk writes a lesson (what happened, root cause, lesson, status new, confirmed or promoted) to `data/learnings.json`. A lesson seen 3 times (`PROMOTE_AFTER`) becomes a standing rule injected into that role's prompt.
+- **proaktif-agent, before every cycle.** A scan flags loss cap usage at 70 percent and up via `LOSS_WARN_PCT`, positions without a stop, API and exchange errors, stale or sample data, and a balance close to the safety net. Findings go to the office log, the Lessons panel and into the agents' next prompts.
+- **self-improving, after every cycle and every event.** After each cycle, closed losing trade, stop hit, error, or owner correction in the office chat, the desk writes a lesson with what happened, root cause, lesson and status to `data/learnings.json`. A lesson seen 3 times via `PROMOTE_AFTER` becomes a standing rule injected into that role's prompt.
 - **Lessons can never loosen a guard.** Any lesson that reads like more leverage, bigger size, a wider or missing stop, skipping risk or touching the safety net is refused before it is stored or promoted, and the code caps apply whatever a prompt says. Tests cover it.
 - **The Desk Lead supervises.** Every report has a per-role scorecard and "Lessons this period".
 - In Grok Bot mode the trading loop routine runs proaktif-agent first and self-improving last, through `npm run gb -- scan` and `npm run gb -- lessons add|list`.
@@ -41,18 +45,18 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 ## What it does
 
 - **A real desk, not one bot.** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager and Execution Trader each have a job, a personality and their own model. The Desk Lead also keeps the trade journal: it grades every closed trade, writes one lesson and owns the periodic report.
-- **Bring your own brains.** Every agent can run on a different provider: xAI, OpenAI, Anthropic, Gemini, DeepSeek or OpenRouter. Mix them so the arguments get interesting.
+- **Bring your own brains.** Every agent can run on a different provider across 10 API providers with 20 AI models each: xAI, OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Groq, Mistral, Together and Fireworks, or a signed-in local agent CLI on your computer: Codex, Claude Code, Pi, Kimi Code, Kilo, Cline and Grok Build. Mix them so the arguments get interesting, or use a single provider API key across all six agents with different models.
 - **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
 - **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
 - **Risk can only tighten.** The Risk Manager can approve, reduce or reject. Hard caps in code clip leverage, stop distance and loss per trade, whatever any model says.
-- **Boss's money split.** You set a total balance, a safety net and N open orders (1 to 4). Money Trade = balance minus safety net, and each order gets Money Trade / N. The safety net is never touched.
-- **Every paper order has a stop loss and a take profit.** No stop, no order. The take profit sits `TAKE_PROFIT_R` times the stop distance away (2R by default).
+- **Boss's money split.** You set a total balance, a safety net and N open orders from 1 to 4. Money Trade = balance minus safety net, and each order gets Money Trade / N. The safety net is never touched.
+- **Every paper order has a stop loss and a take profit.** No stop, no order. The take profit sits `TAKE_PROFIT_R` times the stop distance away, 2R by default.
 - **Live public market data.** Bybit, Binance, Hyperliquid, Aster, dYdX, Paradex and Orderly public endpoints, no key needed, with offline sample data as a fallback.
-- **TradingView.** An optional TradingView chart widget, and an alert webhook (`POST /api/tradingview`, passphrase) whose alerts are untrusted signals that start a debate. They never place an order by themselves.
-- **CEX and perp DEX venues behind one adapter.** Bybit is fully implemented. Binance, OKX, Hyperliquid, Aster, dYdX v4, Paradex and Orderly are experimental. DEX venues use delegated trade-only keys (agent wallet, API trading key, subkey), never the main wallet key. Stops always rest on the exchange. See the venue table below and [docs/venues.md](docs/venues.md).
+- **TradingView.** An optional TradingView chart widget, and an alert webhook at `POST /api/tradingview` secured by a passphrase whose alerts are untrusted signals that start a debate. They never place an order by themselves.
+- **CEX and perp DEX venues behind one adapter.** Bybit is fully implemented. Binance, OKX, Hyperliquid, Aster, dYdX v4, Paradex and Orderly are experimental. DEX venues use delegated trade-only keys such as an agent wallet, API trading key or subkey, never the main wallet key. Stops always rest on the exchange. See the venue table below and [docs/venues.md](docs/venues.md).
 - **Full auto after a one-time setup.** With `AUTO_TRADING=on` a scheduler runs a debate per symbol every `DEBATE_INTERVAL_MIN` and the verdicts execute by themselves: open, close on CLOSE or an opposite signal, stop or take profit, optional max holding time. No approval step, in both Grok Bot and local mode.
-- **Periodic reports.** Every `REPORT_INTERVAL_MIN` a report (balance, safety net, Money Trade, N, allocation, open positions with entry, stop, take profit and PnL, opened, closed and skipped with reasons) goes to `reports/`, the Reports panel, the Grok Bot bridge and optionally Telegram (experimental).
-- **Daily loss stop and kill switch.** No new orders after `DAILY_LOSS_LIMIT_PCT` of equity is lost in a day. The kill switch cancels, flattens and stops trading. It is saved to `data/kill-switch.json` and survives restarts (including autostart); only the owner releases it on the machine with `npm run unkill -- --yes`, then restarts.
+- **Periodic reports.** Every `REPORT_INTERVAL_MIN` a report with balance, safety net, Money Trade, N, allocation, open positions with entry, stop, take profit and PnL, plus opened, closed and skipped orders with reasons goes to `reports/`, the Reports panel, the Grok Bot bridge and optionally Telegram.
+- **Daily loss stop and kill switch.** No new orders after `DAILY_LOSS_LIMIT_PCT` of equity is lost in a day. The kill switch cancels, flattens and stops trading. It is saved to `data/kill-switch.json` and survives restarts including autostart; only the owner releases it on the machine with `npm run unkill -- --yes`, then restarts.
 - **Injection-aware.** News and posts are treated as untrusted data. The sample news even has a planted "ignore previous instructions" line, and a test proves the agents never see it.
 - **A cozy office.** Wood floors, a rug, sunset windows, a kopi corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. They walk to the table, type, point, punch, cheer when a trade fills and sweat when Risk says no.
 - **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for Money Trade / N, and every desk monitor shows a sparkline.
@@ -63,41 +67,56 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 
 ## Quick setup
 
-Bring your own venue account and keys; nothing from the maintainer is needed. Start in **PAPER** (no key), then **TESTNET**, **LIVE** last.
+Bring your own venue account and keys; nothing from the maintainer is needed. Start in **PAPER** with no key, then **TESTNET**, **LIVE** last.
 
-- **By hand, in a terminal:** `npm install`, then `npm run setup`. It asks the venue and mode, shows the direct links one step at a time (sign-up, test funds, key page, permissions), reads keys with hidden input into `.env` (chmod 600), offers Connect wallet for Hyperliquid and Aster, and runs the doctor check.
-- **By hand, in the office:** `npm run dev`, open http://localhost:5173 and click **Setup** (top right). Same steps, same links, masked key inputs, doctor button, mode switch (LIVE needs a typed confirmation).
-- **With your own AI agent** (Grok Bot, Claude Code, Codex, Cursor, Copilot or another): point it at [AGENTS.md](AGENTS.md) (pointers in `CLAUDE.md`, `.cursor/rules/`, `.github/copilot-instructions.md`). It runs the interview, gives you one link per step and never asks for keys in chat. Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md).
-- **Chat channel (optional):** the Desk Lead sends alerts and reports to Telegram, Discord, Slack or WhatsApp (official APIs only) and accepts only `status`, `report`, `positions`, `kill` from allowlisted ids. `npm run channels -- setup telegram` or Setup, section 7. Details: [docs/channels.md](docs/channels.md). MiChat has no official bot API, so it is not supported.
-- **Per-venue guides** with testnet and mainnet sections: [docs/setup/](docs/setup/README.md) ([Bybit](docs/setup/bybit.md), [Binance](docs/setup/binance.md), [OKX](docs/setup/okx.md), [Hyperliquid](docs/setup/hyperliquid.md), [Aster](docs/setup/aster.md), [dYdX](docs/setup/dydx.md), [Paradex](docs/setup/paradex.md), [Orderly](docs/setup/orderly.md)). Print one in the terminal: `npm run setup -- guide bybit`.
+From a cloned checkout, install and register the command once on Node 20+:
+
+```sh
+npm install
+npm link
+mpu
+```
+
+After that, type `mpu` from any terminal. It starts the desk and opens the web UI after the server is ready. First launch opens Setup in PAPER with full auto off. Saved mode and auto settings apply on later launches. `mpu setup` opens settings directly; Ctrl+C stops the desk.
+
+In Setup, choose the desk settings, then a provider and model across 10 providers with 20 models each. One provider API key can serve several agents with different models. Choose **Agent on this computer** to reuse a signed-in Codex, Claude Code, Pi, Kimi Code, Kilo, Cline or Grok Build CLI. **Connect an agent you already use** detects installations, opens their native sign-in and offers a connection test. Native sign-in tokens stay with the CLI. Some agents use their own configured model; Codex and Claude Code also have model choices in the desk. Connection tests use that account's model quota. See [local agent connections](docs/local-agents.md).
+
+Save each setup section, then **Apply saved settings and restart**. **Venue keys** is in the navigation immediately before **Setup**. Exchange setup and optional chat channels expand when needed.
+
+- **By hand, in a terminal:** `npm install`, then `npm run setup`. It asks the venue and mode, shows the direct links one step at a time for sign-up, test funds, key page and permissions, reads keys with hidden input into `.env` with chmod 600, offers Connect wallet for Hyperliquid and Aster, and runs the doctor check.
+- **By hand, in the office:** `npm run dev`, open http://localhost:5173 and click **Setup** at the top right. Same steps, same links, masked key inputs, doctor button, and mode switch where LIVE needs a typed confirmation.
+- **With your own AI agent** such as Grok Bot, Claude Code, Codex, Antigravity, Cursor or Copilot: point it at [AGENTS.md](AGENTS.md) with pointers in `CLAUDE.md`, `.cursor/rules/` and `.github/copilot-instructions.md`. It runs the interview, gives you one link per step and never asks for keys in chat. Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md).
+- **Chat channel:** the Desk Lead sends alerts and reports to Telegram, Discord, Slack or WhatsApp through official APIs only and accepts only `status`, `report`, `positions`, `kill` from allowlisted ids. Run `npm run channels -- setup telegram` or open Setup, section 7. Details: [docs/channels.md](docs/channels.md). MiChat has no official bot API, so it is not supported.
+- **Per-venue guides** with testnet and mainnet sections: [docs/setup/](docs/setup/README.md) covering [Bybit](docs/setup/bybit.md), [Binance](docs/setup/binance.md), [OKX](docs/setup/okx.md), [Hyperliquid](docs/setup/hyperliquid.md), [Aster](docs/setup/aster.md), [dYdX](docs/setup/dydx.md), [Paradex](docs/setup/paradex.md) and [Orderly](docs/setup/orderly.md). Print one in the terminal: `npm run setup -- guide bybit`.
 
 Refused everywhere: main wallet private keys, seed phrases, keys that can withdraw. Every TESTNET/LIVE start checks the key again.
 
 ### CLI and office: same actions in both places
 
-| Action | CLI | Office (web UI) |
+| Action | CLI | Office web UI |
 | --- | --- | --- |
-| Setup wizard: venue, network, mode | `npm run setup` | **Setup** button (top right), or open `http://localhost:5173/#setup` |
-| Direct links for a venue, step by step | `npm run setup -- guide <venue> [--network mainnet]` | Setup, step 3 (Back / Next step) |
-| Enter keys (hidden, written to `.env`, chmod 600) | `npm run setup` hidden prompts | Setup, step 4 (masked inputs) |
-| Connect wallet (Hyperliquid, Aster; one signature) | `npm run setup` offers it and opens the office | Setup, step 4, or the Venue keys panel |
+| Start the desk and open the web UI | `mpu` or `npm run mpu` | Opens automatically; `mpu setup` opens `#setup` |
+| Setup wizard: desk, models, local agents, venue, mode | `npm run setup` | **Setup** button at top right, or open `/#setup` |
+| Direct links for a venue, step by step | `npm run setup -- guide <venue> [--network mainnet]` | Setup, step 3 Back / Next step |
+| Enter keys into `.env` with chmod 600 | `npm run setup` hidden prompts | Setup, step 4 masked inputs |
+| Connect wallet for Hyperliquid and Aster | `npm run setup` offers it and opens the office | **Venue keys** button in top bar before Setup, or `/#venue-keys` |
 | Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup, step 5 **Run doctor** |
-| Switch mode (TESTNET, LIVE with typed confirmation) | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup, step 6 |
-| What is configured (secrets masked) | `npm run setup -- status` | Setup header and step 4 status lines |
+| Switch mode to TESTNET or LIVE | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup, step 6 |
+| What is configured with secrets masked | `npm run setup -- status` | Setup header and step 4 status lines |
 | Balance, equity, safety net, N, Money Trade | `npm run gb -- account`, `npm run gb -- split` | Portfolio panel; command bar `status`, `safety 200`, `n 3` |
-| Size a ticket (read only) | `npm run gb -- size <sym> <LONG\|SHORT> <entry> <stop>` | Desk ops, **Size** |
-| Open (stop required) | `npm run gb -- open <sym> <LONG\|SHORT> --stop P [--tp P]` | Desk ops, **Open with stop** |
+| Size a ticket read-only | `npm run gb -- size <sym> <LONG\|SHORT> <entry> <stop>` | Desk ops, **Size** |
+| Open with stop required | `npm run gb -- open <sym> <LONG\|SHORT> --stop P [--tp P]` | Desk ops, **Open with stop** |
 | Close one / all | `npm run gb -- close <sym\|all>` | Desk ops **Close**, Portfolio, command bar `close BTC` |
-| Pick orders (debate a symbol) | `npm run debate -- --symbol BTCUSDT`, `curl -X POST /api/debate` | **Start debate**, command bar `analyze BTCUSDT` |
+| Pick orders and debate a symbol | `npm run debate -- --symbol BTCUSDT`, `curl -X POST /api/debate` | **Start debate**, command bar `analyze BTCUSDT` |
 | Positions | `npm run gb -- positions` | Portfolio panel, chart lines |
 | Proaktif scan | `npm run gb -- scan` | Desk ops **Proaktif scan** |
-| Journal (verdicts, closed trades, log) | `npm run gb -- report`, `reports/` | Verdicts, Trade log, Reports panels |
+| Journal verdicts, closed trades and log | `npm run gb -- report`, `reports/` | Verdicts, Trade log, Reports panels |
 | Lessons | `npm run gb -- lessons list` / `lessons add ...` | Lessons panel; Desk ops **Add lesson** |
 | Reports | `npm run gb -- report` | Reports panel **Report now** |
 | Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill`, or `kill confirm` from an allowlisted chat | **Kill** in the command bar; status in Desk ops |
-| Chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp) | `npm run channels -- setup <channel>` (or in `npm run setup`) | Setup, section 7 |
+| Chat channel for the Desk Lead | `npm run channels -- setup <channel>` | Setup, section 7 |
 | Test a chat channel | `npm run channels -- test <channel>` | Setup, section 7 **Send test message** |
-| Chat channel status (secrets masked) | `npm run channels -- status` | Setup, section 7 status line |
+| Chat channel status with secrets masked | `npm run channels -- status` | Setup, section 7 status line |
 | Release the kill switch | `npm run unkill -- --yes`, then restart | Not in the UI on purpose; the command is shown |
 
 ## Quickstart
@@ -110,24 +129,21 @@ You need [Node.js 20 or newer](https://nodejs.org) and git.
 git clone https://github.com/<your-account>/trading-agent-mpu-gandring.git
 cd trading-agent-mpu-gandring
 npm install
-npm run setup             # optional wizard: writes .env (keys stay on your computer)
-npm run doctor            # optional: checks keys with harmless reads
-npm test
-npm run dev
+npm link                  # registers the `mpu` command
+mpu                       # starts the desk and opens the web UI
 ```
 
-### Windows (PowerShell)
+### Windows PowerShell
 
 ```powershell
 git clone https://github.com/<your-account>/trading-agent-mpu-gandring.git
 cd trading-agent-mpu-gandring
 npm install
-npm run setup
-npm test
-npm run dev
+npm link                  # registers the `mpu` command
+mpu                       # starts the desk and opens the web UI
 ```
 
-Then open **http://localhost:5173**. The backend (port 8787) and the office (port 5173) bind `127.0.0.1` by default, so only this computer can reach them. To open the office from a phone on the same network or your tailnet, set `HOST=0.0.0.0` (PAPER or TESTNET only) and open `http://<your-computer-ip>:5173`. In LIVE both always stay on `127.0.0.1`. Grok Bot mode is not affected: a tunnel (`tailscale funnel 8787`, Cloudflare Tunnel) connects to `127.0.0.1:8787`.
+Or run in dev mode with hot reload via `npm run dev` and open **http://localhost:5173**. The backend on port 8787 and the office on port 5173 bind `127.0.0.1` by default, so only this computer can reach them. To open the office from a phone on the same network or your tailnet, set `HOST=0.0.0.0` in PAPER or TESTNET only and open `http://<your-computer-ip>:5173`. In LIVE both always stay on `127.0.0.1`. Grok Bot mode is not affected: a tunnel such as `tailscale funnel 8787` or Cloudflare Tunnel connects to `127.0.0.1:8787`.
 
 Press the **Start debate** button, or type `analyze BTCUSDT` in the command bar.
 
@@ -143,19 +159,20 @@ npm run debate -- --symbol SOLUSDT --json     # machine readable verdict
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Backend (Express + WebSocket) and frontend (Vite + React) together |
+| `mpu` / `npm run mpu` | Builds if needed, starts the desk, and opens the web UI; `mpu setup` opens `#setup`, `mpu --no-open` skips opening the browser |
+| `npm run dev` | Backend Express + WebSocket and frontend Vite + React together |
 | `npm run build` | Compiles the server and builds the UI into `dist/` |
 | `npm start` | Runs the built server, which also serves the built UI on port 8787 |
-| `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, withdraw refusal, auto scheduler, daily stop, reports, no secrets in logs or reports, inbound endpoints, mocked DEX adapters, exchange-side stops, Connect wallet server side |
+| `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, withdraw refusal, auto scheduler, daily stop, reports, no secrets in logs or reports, inbound endpoints, mocked DEX adapters, exchange-side stops, Connect wallet server side, local agent runner and model setup |
 | `npm run setup` | Setup wizard, or `-- --yes [flags]` for agents. Also `-- check-key`, `-- paper`, `-- status` |
 | `npm run doctor` | Checks config and every key with a harmless read. Never prints a secret |
-| `npm run doctor --roundtrip` | Optional real round trip on the exchange testnet (testnet funds only) |
-| `npm run trade` | One command: builds once if needed, starts backend + office UI with full auto ON from your saved `.env` (local mode runs its own loop; Grok Bot mode just starts the office) and prints the office URL |
-| `npm run autostart:install` / `autostart:remove` / `autostart:status` | Optional: start `npm run trade` when you log in and restart it on crash (macOS launchd, Windows Task Scheduler, Linux systemd --user). No keys in the service file |
-| `npm run office` / `npm run office:status` | Start backend and UI together (same as dev, quiet output for background use) / check whether the office is up and on which ports |
+| `npm run doctor --roundtrip` | Optional real round trip on the exchange testnet using testnet funds only |
+| `npm run trade` | One command: builds once if needed, starts backend + office UI with full auto ON from your saved `.env` and prints the office URL |
+| `npm run autostart:install` / `autostart:remove` / `autostart:status` | Optional: start `npm run trade` when you log in and restart it on crash via macOS launchd, Windows Task Scheduler or Linux systemd --user. No keys in the service file |
+| `npm run office` / `npm run office:status` | Start backend and UI together or check whether the office is up and on which ports |
 | `npm run gb -- <cmd> --json` | Keyless agent CLI for Grok Bot employees: market, candles, account, positions, split, size, open, close, report, event, scan, lessons. See [docs/grokbot-mode.md](docs/grokbot-mode.md) |
 | `npm run debate -- --symbol X` | One debate in the terminal |
-| `npm run screenshot` | Saves `docs/screenshot.png` (overview mid-debate) and `docs/screenshot-chat.png` (agent chat and chart) from a running dev server (needs Chrome) |
+| `npm run screenshot` | Saves `docs/screenshot.png` and `docs/screenshot-chat.png` from a running dev server using Chrome |
 
 ## Configuration
 
@@ -165,18 +182,18 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | --- | --- | --- |
 | `TRADING_MODE` | `PAPER` | `PAPER`, `TESTNET` or `LIVE`. TESTNET and LIVE need an exchange key that can trade and cannot withdraw, checked on every start; otherwise exit code 2. |
 | `APP_MODE` | `local` | `local` or `grokbot` |
-| `AGENT_EVENT_SECRET` | empty | Grok Bot mode: secret for `POST /api/agent-event` (24+ chars) |
-| `HOST` | `127.0.0.1` | Bind address of the backend and the office. `0.0.0.0` opens them to your network (PAPER/TESTNET only). LIVE always binds `127.0.0.1`. |
+| `AGENT_EVENT_SECRET` | empty | Grok Bot mode: secret for `POST /api/agent-event`, 24+ chars |
+| `HOST` | `127.0.0.1` | Bind address of the backend and the office. `0.0.0.0` opens them to your network in PAPER or TESTNET only. LIVE always binds `127.0.0.1`. |
 | `TRADINGVIEW_WIDGET` / `TRADINGVIEW_EXCHANGE_PREFIX` | `off` / `BYBIT` | TradingView chart widget in the UI |
-| `TRADINGVIEW_PASSPHRASE` | empty | Turns on `POST /api/tradingview` (12+ chars) |
-| `NEWS_PROVIDER` / `CRYPTOPANIC_API_KEY` | `sample` | Optional news plugin (experimental) |
+| `TRADINGVIEW_PASSPHRASE` | empty | Turns on `POST /api/tradingview`, 12+ chars |
+| `NEWS_PROVIDER` / `CRYPTOPANIC_API_KEY` | `sample` | Optional experimental news plugin |
 | `EXCHANGE` | `none` | CEX: `bybit`, `binance`, `okx`. DEX: `hyperliquid`, `aster`, `dydx`, `paradex`, `orderly`. Env names per venue in the [venue table](#venues) and [docs/venues.md](docs/venues.md) |
 | `DAILY_LOSS_LIMIT_PCT` | `3` | Daily loss stop, percent of the day's starting equity, clamped to 0.5..20 |
-| `ALLOW_EXPERIMENTAL_LIVE` | `no` | Needed for LIVE on any venue except Bybit (unverified) |
+| `ALLOW_EXPERIMENTAL_LIVE` | `no` | Needed for LIVE on any unverified venue except Bybit |
 | `PROTECT_STOP_PCT` | `3` | Startup reconcile: stop distance for a venue position found without an exchange-side stop |
 | `PORT` / `WEB_PORT` | `8787` / `5173` | Backend and frontend ports |
-| `XAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` | empty | Model keys. All optional. |
-| `XAI_MODEL`, `OPENAI_MODEL`, ... | placeholders | Default model per provider. Model names change, so check your provider's list and edit. |
+| `XAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY` | empty | Model API keys across 10 providers. All optional. |
+| `XAI_MODEL`, `OPENAI_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, `DEEPSEEK_MODEL`, `OPENROUTER_MODEL`, `GROQ_MODEL`, `MISTRAL_MODEL`, `TOGETHER_MODEL`, `FIREWORKS_MODEL` | provider defaults | Default model per provider, with 20 curated AI models available per provider in Setup. |
 | `DEFAULT_PROVIDER` | `mock` | Provider for agents without their own mapping |
 | `AGENT_<ID>_PROVIDER` / `AGENT_<ID>_MODEL` | unset | Per-agent mapping. IDs: `LEAD`, `MARKET`, `RESEARCH`, `STRATEGIST`, `RISK`, `EXECUTION`. A provider without a key falls back to mock and the UI says so. |
 | `MARKET_SOURCE` | `bybit` | `bybit`, `binance`, `hyperliquid`, `aster`, `dydx`, `paradex`, `orderly` or `sample`. Falls through the others, then to sample data. |
@@ -189,28 +206,28 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `TAKE_PROFIT_R` | `2` | Take profit distance as a multiple of the stop distance. `0` turns take profit off. |
 | `MAX_LOSS_PER_TRADE_PCT` | `1` | A stop hit may lose at most this share of the balance |
 | `MIN_ORDER_USDT` | `5` | Below this the order is skipped. It is never rounded up. |
-| `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate (1 to 4) |
+| `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate, 1 to 4 |
 | `DEBATE_PACE_MS` | `700` | Speech pacing for the office. `0` is instant. |
 | `FIGHT_THRESHOLD` | `0.45` | Disagreement level where punches start |
-| `AUTO_TRADING` | `off` (setup asks; `--auto on` turns it on) | Full auto: debates and trades on a timer, no approval step |
+| `AUTO_TRADING` | `off` | Full auto: debates and trades on a timer, no approval step |
 | `DEBATE_INTERVAL_MIN` | `15` | Minutes between auto cycles |
 | `AUTO_SYMBOLS` | the watchlist | Symbols the auto loop trades |
 | `MAX_HOLD_HOURS` | `0` | Close positions older than this. `0` is off. |
 | `REPORT_INTERVAL_MIN` | `60` | Minutes between reports |
-| `TELEGRAM_*`, `DISCORD_*`, `SLACK_*`, `WHATSAPP_*` | empty | Chat channels for the Desk Lead's alerts and reports ([docs/channels.md](docs/channels.md)) |
-| `CHANNEL_COMMANDS` | `off` | `on` lets allowlisted chat ids send `status`, `report`, `positions`, `kill` (nothing else) |
+| `TELEGRAM_*`, `DISCORD_*`, `SLACK_*`, `WHATSAPP_*` | empty | Chat channels for the Desk Lead's alerts and reports, see [docs/channels.md](docs/channels.md) |
+| `CHANNEL_COMMANDS` | `off` | `on` lets allowlisted chat ids send `status`, `report`, `positions`, `kill` |
 | `LEARNING` / `PROACTIVE_SCAN` | `on` / `on` | self-improving lessons and the proaktif-agent scan |
-| `REFLECT_EVERY_CYCLES` | `1` | Reflection cadence in auto cycles (closed trades, stops, errors and corrections always reflect at once) |
-| `PROMOTE_AFTER` | `3` | Sightings before a lesson becomes a standing rule (2 to 10) |
+| `REFLECT_EVERY_CYCLES` | `1` | Reflection cadence in auto cycles |
+| `PROMOTE_AFTER` | `3` | Sightings before a lesson becomes a standing rule, 2 to 10 |
 | `LOSS_WARN_PCT` / `STALE_FEED_MIN` | `70` / `10` | Scan thresholds: daily loss cap usage warning, price age |
-| `LEARNINGS_PATH` | `data/learnings.json` | Lessons store (gitignored). `off` keeps lessons in memory only |
+| `LEARNINGS_PATH` | `data/learnings.json` | Lessons store. `off` keeps lessons in memory only |
 | `GROKBOT_WEBHOOK_URL` / `GROKBOT_WEBHOOK_KEY` | empty | Optional bridge, see [docs/grokbot-bridge.md](docs/grokbot-bridge.md) |
 
 ### The money split
 
 ```
 Money Trade          = total balance - safety net
-Allocation per order = Money Trade / N        (N = 1, 2, 3 or 4)
+Allocation per order = Money Trade / N        where N is 1, 2, 3 or 4
 ```
 
 Example: balance 100 USDT, safety net 20 USDT, N = 4 gives Money Trade 80 and 20 USDT per order.
@@ -219,8 +236,8 @@ Rules the code enforces:
 
 - Never more than N open positions.
 - Margin in use never goes past Money Trade, so the safety net stays whole.
-- Lot step, minimum quantity, tick and minimum notional come from the exchange (Aster `exchangeInfo`, cached 5 minutes). If the allowed size is under the minimum quantity, or its notional (qty x price) is under the minimum notional (`MIN_ORDER_USDT` when the venue publishes none), the order is skipped and the desk suggests a smaller N. Nothing is rounded up.
-- The loss at the stop includes the round-trip taker fee (the larger of `TAKER_FEE` and the venue fee).
+- Lot step, minimum quantity, tick and minimum notional come from the exchange. If the allowed size is under the minimum quantity, or its notional is under the minimum notional, the order is skipped and the desk suggests a smaller N. Nothing is rounded up.
+- The loss at the stop includes the round-trip taker fee.
 - When the balance is at or below the safety net, no new orders.
 - The allocation is recalculated from the current balance before every order.
 - Every order carries a stop loss, and a take profit unless `TAKE_PROFIT_R=0`. The paper book checks the stop first, then the take profit.
@@ -259,7 +276,7 @@ flowchart LR
       API[Express /api] --- WS[WebSocket /ws]
       API --> Desk[Desk orchestrator]
       Desk --> Agents[Agent runner<br/>JSON schema, 1 retry, safe HOLD]
-      Agents --> Prov[Providers<br/>mock, xAI, OpenAI, Anthropic,<br/>Gemini, DeepSeek, OpenRouter]
+      Agents --> Prov[Providers<br/>mock, local CLI, xAI, OpenAI, Anthropic,<br/>Gemini, DeepSeek, OpenRouter, Groq, Mistral, Together, Fireworks]
       Desk --> Mkt[Market data<br/>CEX and DEX public feeds, sample]
       Desk --> Book[Paper book]
       Desk --> Bridge[Grok Bot bridge]
@@ -268,7 +285,7 @@ flowchart LR
     UI --> API
 ```
 
-Each agent must answer with one JSON object that matches its schema (`server/schemas.ts`). A bad answer gets one retry. A second bad answer becomes the safe default: HOLD for the Desk Lead, REJECT for Risk, neutral for everyone else.
+Each agent must answer with one JSON object that matches its schema in `server/schemas.ts`. A bad answer gets one retry. A second bad answer becomes the safe default: HOLD for the Desk Lead, REJECT for Risk, neutral for everyone else.
 
 The Strategist's side comes from code, not from the model. If the model says something different, the rule wins.
 
@@ -278,31 +295,31 @@ Click an agent in the office or the roster under it. You get a chat panel. Plain
 
 | Command | Effect |
 | --- | --- |
-| `analyze ETHUSDT` (or `debate eth`, `cek sol`) | Starts a debate |
-| `pause` / `resume` (or `tahan` / `lanjut`) | Stops after the current speaker / allows debates again |
+| `analyze ETHUSDT`, `debate eth`, `cek sol` | Starts a debate |
+| `pause` / `resume`, `tahan` / `lanjut` | Stops after the current speaker / allows debates again |
 | `set n 3` | Max open orders |
 | `set safety 150` | Safety net in USDT |
 | `set balance 1000` | Resets the paper balance when nothing is open |
 | `close all`, `close BTC` | Closes paper positions at the last price |
-| `be more cautious`, `be more aggressive`, `calm down` | Changes the mood of one agent (in its panel) or the whole desk (in the command bar). Caps never loosen. |
+| `be more cautious`, `be more aggressive`, `calm down` | Changes the mood of one agent in its panel or the whole desk in the command bar. Caps never loosen. |
 | `status`, `help` | Quick summary |
 
 ## Venues
 
-| Venue | Kind | `EXCHANGE` | Status | Key (never a main wallet key) |
+| Venue | Kind | `EXCHANGE` | Status | Key |
 | --- | --- | --- | --- | --- |
 | Bybit | CEX | `bybit` | implemented | API key + secret, trade only, withdrawals off |
 | Binance | CEX | `binance` | experimental | API key + secret, futures on, withdrawals off |
 | OKX | CEX | `okx` | experimental | API key + secret + passphrase, trade only |
-| Hyperliquid | DEX | `hyperliquid` | experimental | `HYPERLIQUID_ACCOUNT_ADDRESS` + `HYPERLIQUID_AGENT_PRIVATE_KEY` (API agent wallet) |
-| Aster | DEX | `aster` | experimental | `ASTER_USER_ADDRESS` + `ASTER_SIGNER_PRIVATE_KEY` (Pro API agent, withdraw off). Optional `ASTER_AGENT_WITHDRAW_OFF_VERIFIED=<your agent address>` checks the agent's own withdraw flag on Aster, see [docs/venues.md](docs/venues.md) |
-| dYdX v4 | DEX | `dydx` | experimental, **SDK required** (`npm install @dydxprotocol/v4-client-js`, not bundled) | `DYDX_ADDRESS` + `DYDX_API_PRIVATE_KEY` + `DYDX_AUTHENTICATOR_ID` (API Trading Key, place/cancel only) |
-| Paradex | DEX | `paradex` | experimental | `PARADEX_ACCOUNT_ADDRESS` + `PARADEX_SUBKEY_PRIVATE_KEY` (subkey) |
-| Orderly | DEX | `orderly` | experimental | `ORDERLY_ACCOUNT_ID` + `ORDERLY_KEY_SECRET` (scope read,trading) |
+| Hyperliquid | DEX | `hyperliquid` | experimental | `HYPERLIQUID_ACCOUNT_ADDRESS` + `HYPERLIQUID_AGENT_PRIVATE_KEY` |
+| Aster | DEX | `aster` | experimental | `ASTER_USER_ADDRESS` + `ASTER_SIGNER_PRIVATE_KEY`, see [docs/venues.md](docs/venues.md) |
+| dYdX v4 | DEX | `dydx` | experimental, SDK `@dydxprotocol/v4-client-js` required | `DYDX_ADDRESS` + `DYDX_API_PRIVATE_KEY` + `DYDX_AUTHENTICATOR_ID` |
+| Paradex | DEX | `paradex` | experimental | `PARADEX_ACCOUNT_ADDRESS` + `PARADEX_SUBKEY_PRIVATE_KEY` |
+| Orderly | DEX | `orderly` | experimental | `ORDERLY_ACCOUNT_ID` + `ORDERLY_KEY_SECRET` |
 
-Testnet names add `_TESTNET` after the prefix. Every experimental venue needs `ALLOW_EXPERIMENTAL_LIVE=yes` for LIVE. Skipped venues (Lighter, ApeX Omni, edgeX, Drift) and why, official doc links and what is tested: [docs/venues.md](docs/venues.md). Real DEX accounts were never used in testing.
+Testnet names add `_TESTNET` after the prefix. Every experimental venue needs `ALLOW_EXPERIMENTAL_LIVE=yes` for LIVE. Official doc links and what is tested: [docs/venues.md](docs/venues.md). Real DEX accounts were never used in testing.
 
-**Stops on the exchange.** In TESTNET and LIVE every position's stop loss (and take profit if set) rests on the exchange itself (attached stop, reduce-only or closePosition trigger order, or a positional TP/SL), not only in the app. The executor checks the venue after each fill, re-places a missing stop once, and closes the position if it still is not there. On every start, open positions without an exchange-side stop get one (`PROTECT_STOP_PCT`, default 3%). So positions stay protected if your laptop shuts down.
+**Stops on the exchange.** In TESTNET and LIVE every position's stop loss and take profit rest on the exchange itself as an attached stop, reduce-only or closePosition trigger order, or a positional TP/SL, not only in the app. The executor checks the venue after each fill, re-places a missing stop once, and closes the position if it still is not there. On every start, open positions without an exchange-side stop get one at `PROTECT_STOP_PCT`, default 3%. So positions stay protected if your laptop shuts down.
 
 ### One command and autostart
 
@@ -315,15 +332,15 @@ npm run autostart:remove
 
 Local trading runs only while the laptop is on and awake. Grok Bot mode runs in the cloud with the laptop off. Details: [docs/local-mode.md](docs/local-mode.md).
 
-### Connect wallet (DEX, local mode, experimental)
+### Connect wallet
 
-The office has a **Venue keys** panel. For Hyperliquid and Aster it can connect your browser wallet (MetaMask, Rabby or any injected EIP-1193 wallet) to read your main address and sign one approval for a fresh trade-only agent key made on your computer. The main wallet key or seed is never requested, exported or stored. The agent key is saved to `.env` (chmod 600). Other DEXes show how to create their key by hand; CEXes show the setup steps. Only works when the office is bound to 127.0.0.1; off in Grok Bot mode (use the secret card there). Untested on real wallets.
+The office has a **Venue keys** button in the top bar before **Setup**. For Hyperliquid and Aster it can connect your browser wallet such as MetaMask, Rabby or any injected EIP-1193 wallet to read your main address and sign one approval for a fresh trade-only agent key made on your computer. The main wallet key or seed is never requested, exported or stored. The agent key is saved to `.env` with chmod 600. Other DEXes show how to create their key by hand; CEXes show the setup steps. Only works when the office is bound to 127.0.0.1; off in Grok Bot mode. Untested on real wallets.
 
 ## Safety notes
 
 - `TRADING_MODE` is `PAPER` by default. TESTNET and LIVE start only when the exchange confirms the key can trade and cannot withdraw. Otherwise the server exits with code 2, and there are tests for it.
-- There is no withdrawal or transfer code. Keys that can withdraw are refused, checked on the exchange. On DEX venues only delegated keys work (Hyperliquid or Aster agent wallet, dYdX API Trading Key, Paradex subkey, Orderly key), never the main wallet key or seed.
-- LIVE orders: one send, no blind retry, reconciled from the exchange's order record. Stop loss mandatory and resting on the exchange (fail closed). Daily loss stop and kill switch apply.
+- There is no withdrawal or transfer code. Keys that can withdraw are refused, checked on the exchange. On DEX venues only delegated keys work, never the main wallet key or seed.
+- LIVE orders: one send, no blind retry, reconciled from the exchange's order record. Stop loss mandatory and resting on the exchange. Daily loss stop and kill switch apply.
 - Inbound endpoints need their own secrets and are rate limited. TradingView alerts and Grok Bot texts are sanitized as untrusted.
 - API keys are read from `.env` on the server. They never go to the browser, and anything key-shaped is scrubbed from logs, reports, chat replies and bridge payloads.
 - News, posts and market text are wrapped as untrusted data. Lines that read like instructions are removed before any prompt is built.
@@ -333,10 +350,10 @@ The office has a **Venue keys** panel. For Hyperliquid and Aster it can connect 
 
 > Real money can be lost. Not financial advice. Most people should stay in PAPER.
 
-Pick TESTNET or LIVE in `npm run setup`. There is no confirmation phrase: after setup the desk trades on its own and you watch the office and read the reports. What protects you is automatic: the key is refused if it can withdraw (checked at setup and every start), every order has a stop loss, the daily loss stop pauses new orders until the next UTC day, the safety net is never traded, at most N (1 to 4) positions are open, orders are never blindly retried, the book is reconciled from the exchange, LIVE binds to 127.0.0.1, and the Kill switch flattens everything. Full guide and what is still experimental: [docs/live-trading.md](docs/live-trading.md).
+Pick TESTNET or LIVE in `npm run setup`. After setup the desk trades on its own and you watch the office and read the reports. What protects you is automatic: the key is refused if it can withdraw, every order has a stop loss, the daily loss stop pauses new orders until the next UTC day, the safety net is never traded, at most N positions from 1 to 4 are open, orders are never blindly retried, the book is reconciled from the exchange, LIVE binds to 127.0.0.1, and the Kill switch flattens everything. Full guide and what is still experimental: [docs/live-trading.md](docs/live-trading.md).
 
 ```bash
-npm run setup                  # choose PAPER, TESTNET or LIVE (default PAPER)
+npm run setup                  # choose PAPER, TESTNET or LIVE
 npm run doctor --roundtrip     # optional testnet round trip, not required
 npm run setup -- paper         # back to PAPER
 ```
@@ -344,35 +361,37 @@ npm run setup -- paper         # back to PAPER
 ## Repository layout
 
 ```
+bin/mpu.mjs        one-command launcher: mpu, mpu setup, mpu --no-open
 server/            Express + WebSocket backend
   agents/          roles, prompts, JSON-validated agent runner
-  providers/       mock plus OpenAI-compatible, Anthropic and Gemini callers
+  providers/       mock, OpenAI-compatible, Anthropic, Gemini, and local CLI agent callers
+  setup/           shared setup routes, venue guides, model catalog, local agent status, desk preferences
   market/          public market data and offline sample data
   desk.ts          debate orchestrator, commands, chat
   money.ts         money split and order planning
   risk.ts          code caps for the risk gate
   paper.ts         paper book
   bridge.ts        optional Grok Bot webhook
-  exchange/        adapter interface; Bybit (implemented); Binance, OKX, Hyperliquid, Aster, dYdX, Paradex, Orderly (experimental)
-  live/            automatic key guard, optional testnet round trip, live executor (one send, reconcile, exchange-side stops)
-  wallet.ts        Connect wallet: local agent key + one signed approval (Hyperliquid, Aster)
+  exchange/        adapter interface; Bybit implemented; Binance, OKX, Hyperliquid, Aster, dYdX, Paradex, Orderly experimental
+  live/            automatic key guard, optional testnet round trip, live executor
+  wallet.ts        Connect wallet: local agent key + one signed approval
   auto.ts          full auto scheduler
-  reports.ts       periodic reports (files, UI, bridge, Telegram)
+  reports.ts       periodic reports to files, UI, bridge and Telegram
   learnings.ts     self-improving lessons store and the guard-loosening block
   scan.ts          proaktif-agent scan
   scorecard.ts     Desk Lead per-role scorecard
 cli/debate.ts      headless debate
-cli/setup.ts       setup wizard (mode, keys, auto, reports)
+cli/setup.ts       setup wizard for mode, keys, models, local agents, auto and reports
 cli/doctor.ts      key checks with harmless reads
-cli/gb.ts          keyless agent CLI (npm run gb)
-cli/trade.ts       npm run trade (backend + office, full auto)
+cli/gb.ts          keyless agent CLI
+cli/trade.ts       npm run trade for backend + office with full auto
 cli/autostart.ts   npm run autostart:install|remove|status
 grokbot/           Grok Bot install: INSTALL, BOOTSTRAP, six role prompts, two learning skills
-web/               Vite + React virtual office (tokens in web/src/styles/tokens.css)
-skills/            desk role notes for agents (market scan, research, strategy, risk, execution)
+web/               Vite + React virtual office
+skills/            desk role notes for agents
 data/sample/       sample news with a planted injection line
 tests/             vitest suite
-docs/              screenshots, money split, Grok Bot bridge and mode, local mode, live trading, venues
+docs/              screenshots, money split, Grok Bot bridge and mode, local mode, local agents, live trading, venues
 ```
 
 ## Setting it up with an agent
@@ -381,25 +400,24 @@ If you use a coding agent or a Grok Bot, point it at [AGENTS.md](AGENTS.md). It 
 
 ## Bahasa Indonesia: mulai cepat
 
-Proyek ini simulasi trading kertas (paper trading) secara default. Enam agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan dan tidak ada janji untung. Mode LIVE terkunci: harus lulus uji testnet, API key tanpa izin withdraw (dicek ke exchange), dan mengetik kalimat konfirmasi di CLI. Kalau dibuka, uang sungguhan bisa hilang.
+Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan dan tidak ada janji untung. Mode LIVE terkunci: harus lulus uji testnet, API key tanpa izin withdraw yang dicek ke exchange, dan mengetik kalimat konfirmasi di CLI. Kalau dibuka, uang sungguhan bisa hilang.
 
 1. Pasang Node.js 20 atau lebih baru.
-2. Jalankan:
+2. Jalankan sekali untuk memasang dan mendaftarkan perintah `mpu`:
    ```bash
    git clone https://github.com/<akun-anda>/trading-agent-mpu-gandring.git
    cd trading-agent-mpu-gandring
    npm install
-   npm run setup
-   npm test
-   npm run dev
+   npm link
+   mpu
    ```
-3. Buka **http://localhost:5173** lalu klik **Start debate**, atau ketik `analyze BTCUSDT`.
-4. Tanpa API key pun jalan, karena ada provider `mock`. Kalau mau pakai model sungguhan, isi key di file `.env` (jangan pernah tempel key di chat), misalnya `XAI_API_KEY=...` lalu `AGENT_LEAD_PROVIDER=xai`.
-5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order (1 sampai 4). Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss.
+3. Ketik `mpu` kapan saja di terminal untuk langsung menjalankan desk dan membuka Web UI secara otomatis, atau `mpu setup` untuk langsung membuka menu pengaturan. Di halaman Setup, Anda bisa mengatur saldo paper, safety net, memilih model untuk setiap agent dari 10 provider yang masing-masing menyediakan 20 model AI sehingga 1 API key bisa dipakai untuk banyak model, atau langsung menghubungkan agent CLI yang sudah terpasang di laptop Anda seperti Codex, Claude Code, Pi, Kimi Code, Kilo, Cline dan Grok Build maupun supervisor eksternal seperti Antigravity dan Grok Bot.
+4. Tanpa API key pun jalan, karena ada provider `mock`. Tombol **Venue keys** tersedia langsung di navbar bagian atas sebelum tombol **Setup**.
+5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order dari 1 sampai 4. Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss.
 
-6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `npm run setup` (atau tombol **Setup** di kanan atas office): pilih venue dan mode, ikuti link langsung satu per satu (daftar, dana tes, halaman pembuatan key, izin yang dicentang), lalu ketik key di input tersembunyi. Key masuk ke `.env` (chmod 600), tidak pernah ke chat. Izin: trade saja, withdraw/transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Hyperliquid dan Aster bisa lewat Connect wallet (satu tanda tangan). Setelah itu `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
-7. Pakai agen AI sendiri (Grok Bot, Claude Code, Codex, Cursor, Copilot)? Suruh dia membaca [AGENTS.md](AGENTS.md).
-8. Mau notifikasi di chat? `npm run channels -- setup telegram` (atau Discord, Slack, WhatsApp Cloud API resmi), atau **Setup** bagian 7. Desk Lead mengirim peringatan dan laporan. Dari chat hanya bisa `status`, `report`, `positions`, `kill`; buka order, pindah ke LIVE, un-kill dan ganti key tidak bisa dari chat. MiChat tidak punya API bot resmi, jadi tidak didukung. Panduan: [docs/channels.md](docs/channels.md).
+6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `mpu setup` atau `npm run setup` atau klik tombol **Setup** di kanan atas office: pilih venue dan mode, ikuti link langsung satu per satu untuk daftar, dana tes, halaman pembuatan key dan izin yang dicentang, lalu ketik key di input tersembunyi. Key masuk ke `.env` dengan chmod 600, tidak pernah ke chat. Izin: trade saja, withdraw dan transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Hyperliquid dan Aster bisa lewat **Venue keys** / Connect wallet dengan satu tanda tangan. Setelah itu jalankan `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
+7. Pakai agen AI sendiri seperti Grok Bot, Claude Code, Codex, Antigravity, Cursor atau Copilot? Suruh dia membaca [AGENTS.md](AGENTS.md) dan [docs/local-agents.md](docs/local-agents.md).
+8. Mau notifikasi di chat? Jalankan `npm run channels -- setup telegram` atau Discord, Slack dan WhatsApp Cloud API resmi, atau buka **Setup** bagian 7. Desk Lead mengirim peringatan dan laporan. Dari chat hanya bisa `status`, `report`, `positions`, `kill`; buka order, pindah ke LIVE, un-kill dan ganti key tidak bisa dari chat. MiChat tidak punya API bot resmi, jadi tidak didukung. Panduan: [docs/channels.md](docs/channels.md).
 
 Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `set n 3`, `set safety 150`, `close all`, `be more cautious`.
 
@@ -409,7 +427,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY
 
 ## Credits
 
-Price charts use [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache 2.0). Fonts are Nunito, Fredoka, JetBrains Mono and Bangers from Google Fonts.
+Price charts use [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) under Apache 2.0. Fonts are Nunito, Fredoka, JetBrains Mono and Bangers from Google Fonts.
 
 ## License
 

@@ -5,8 +5,9 @@ import { exchangeSettings, exchangeSecrets, ADAPTER_STATUS, type ExchangeName } 
 import { channelConfig, CHANNEL_SECRET_ENV, type ChannelConfig } from './channels/config.js';
 import { checkTradingMode, type TradingMode } from './live/guard.js';
 
-export type ProviderName = 'mock' | 'xai' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter';
-export const PROVIDERS: ProviderName[] = ['mock', 'xai', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter'];
+export type ApiProviderName = 'xai' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter' | 'groq' | 'mistral' | 'together' | 'fireworks';
+export type ProviderName = 'mock' | 'local' | ApiProviderName;
+export const PROVIDERS: ProviderName[] = ['mock', 'local', 'xai', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter', 'groq', 'mistral', 'together', 'fireworks'];
 export const AGENT_IDS: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'];
 
 export class ConfigError extends Error {
@@ -36,8 +37,8 @@ export interface AppConfig {
   tradingview: { widget: boolean; passphrase: string; webhookEnabled: boolean; prefix: string };
   news: { provider: 'sample' | 'cryptopanic'; key: string; baseUrl: string };
   port: number;
-  keys: Record<Exclude<ProviderName, 'mock'>, string>;
-  baseUrls: Record<'xai' | 'openai' | 'deepseek' | 'openrouter', string>;
+  keys: Record<ApiProviderName, string>;
+  baseUrls: Record<'xai' | 'openai' | 'deepseek' | 'openrouter' | 'groq' | 'mistral' | 'together' | 'fireworks', string>;
   defaultModels: Record<ProviderName, string>;
   defaultProvider: ProviderName;
   agents: Record<AgentId, { provider: ProviderName; model: string; fellBackToMock: boolean }>;
@@ -75,17 +76,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (newsProvider !== 'sample' && newsProvider !== 'cryptopanic') throw new ConfigError('NEWS_PROVIDER must be sample or cryptopanic');
   const keys = {
     xai: env.XAI_API_KEY ?? '', openai: env.OPENAI_API_KEY ?? '', anthropic: env.ANTHROPIC_API_KEY ?? '',
-    gemini: env.GEMINI_API_KEY ?? '', deepseek: env.DEEPSEEK_API_KEY ?? '', openrouter: env.OPENROUTER_API_KEY ?? ''
+    gemini: env.GEMINI_API_KEY ?? '', deepseek: env.DEEPSEEK_API_KEY ?? '', openrouter: env.OPENROUTER_API_KEY ?? '',
+    groq: env.GROQ_API_KEY ?? '', mistral: env.MISTRAL_API_KEY ?? '', together: env.TOGETHER_API_KEY ?? '', fireworks: env.FIREWORKS_API_KEY ?? ''
   };
   registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, ...CHANNEL_SECRET_ENV.map((k) => env[k]), ...exchangeSecrets(env)]);
   const defaultModels: Record<ProviderName, string> = {
     mock: 'mock-desk-v1',
+    local: env.LOCAL_MODEL || 'codex:default',
     xai: env.XAI_MODEL || 'grok-3-mini',
     openai: env.OPENAI_MODEL || 'gpt-4o-mini',
     anthropic: env.ANTHROPIC_MODEL || 'claude-3-5-haiku-latest',
     gemini: env.GEMINI_MODEL || 'gemini-2.0-flash',
     deepseek: env.DEEPSEEK_MODEL || 'deepseek-chat',
-    openrouter: env.OPENROUTER_MODEL || 'openrouter/auto'
+    openrouter: env.OPENROUTER_MODEL || 'openrouter/auto',
+    groq: env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    mistral: env.MISTRAL_MODEL || 'mistral-large-latest',
+    together: env.TOGETHER_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    fireworks: env.FIREWORKS_MODEL || 'accounts/fireworks/models/llama-v3p3-70b-instruct'
   };
   const asProvider = (v: string | undefined, key: string): ProviderName | undefined => {
     if (!v) return undefined;
@@ -99,7 +106,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     const k = id.toUpperCase();
     let provider = asProvider(env[`AGENT_${k}_PROVIDER`], `AGENT_${k}_PROVIDER`) ?? defaultProvider;
     let fellBackToMock = false;
-    if (provider !== 'mock' && !keys[provider]) { provider = 'mock'; fellBackToMock = true; }
+    if (provider !== 'mock' && provider !== 'local' && !keys[provider]) { provider = 'mock'; fellBackToMock = true; }
     const model = provider === 'mock' ? defaultModels.mock : env[`AGENT_${k}_MODEL`] || defaultModels[provider];
     agents[id] = { provider, model, fellBackToMock };
   }
@@ -128,7 +135,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       xai: env.XAI_BASE_URL || 'https://api.x.ai/v1',
       openai: env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
       deepseek: env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
-      openrouter: env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'
+      openrouter: env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+      groq: env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+      mistral: env.MISTRAL_BASE_URL || 'https://api.mistral.ai/v1',
+      together: env.TOGETHER_BASE_URL || 'https://api.together.xyz/v1',
+      fireworks: env.FIREWORKS_BASE_URL || 'https://api.fireworks.ai/inference/v1'
     },
     defaultModels,
     defaultProvider,

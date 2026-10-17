@@ -15,6 +15,11 @@ import { sanitizeUntrusted } from '../untrusted.js';
 import { VENUE_GUIDES, guideSteps, envFields, MODES, MODE_INFO, LIVE_CONFIRM_PHRASE, LINKS_CHECKED_ON } from './guide.js';
 import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus } from './core.js';
 import { doctor } from './doctor.js';
+import { MODEL_KEY_ENV, modelSetupInfo, modelUpdates } from './models.js';
+import { setEnv } from '../../cli/envfile.js';
+import { localAgentStatus, openAgentLogin, runLocalAgent, localSelection } from '../providers/local.js';
+import { preferencesInfo, savePreferences } from './preferences.js';
+import { extractJson, SCHEMAS } from '../schemas.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const hostOk = (h: string) => /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(h);
@@ -33,6 +38,9 @@ export interface RouteCtx { cfg: AppConfig; desk: Desk; envFile: string; fetchIm
 const Venue = z.enum(EXCHANGES as unknown as [ExchangeName, ...ExchangeName[]]);
 const KeysBody = z.object({ venue: Venue, network: z.enum(['testnet', 'mainnet']), key: z.string().max(300), secret: z.string().max(400), third: z.string().max(300).optional() }).strict();
 const ModeBody = z.object({ mode: z.enum(MODES), confirm: z.string().max(100).optional() }).strict();
+const Provider = z.enum(['mock', 'local', 'xai', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter']);
+const Selection = z.object({ provider: Provider, model: z.string().min(1).max(200) }).strict();
+const ModelsBody = z.object({ defaultProvider: Provider, defaultModel: z.string().min(1).max(200), agents: z.object({ lead: Selection.optional(), market: Selection.optional(), research: Selection.optional(), strategist: Selection.optional(), risk: Selection.optional(), execution: Selection.optional() }).strict().optional(), keys: z.object({ xai: z.string().max(400).optional(), openai: z.string().max(400).optional(), anthropic: z.string().max(400).optional(), gemini: z.string().max(400).optional(), deepseek: z.string().max(400).optional(), openrouter: z.string().max(400).optional() }).strict().optional() }).strict();
 const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
 const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive(), leverage: z.number().positive().max(100).optional() }).strict();
 const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(8).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
@@ -64,6 +72,59 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     if (!v.success) return res.status(404).json({ ok: false, error: 'unknown venue' });
     const g = VENUE_GUIDES[v.data];
     res.json({ ok: true, venue: v.data, network: net, note: g.networks[net].note ?? null, steps: guideSteps(v.data, net, c.cfg.appMode === 'grokbot' ? 'grokbot' : 'local'), fields: envFields(v.data, net), permissionsOn: g.permissionsOn, permissionsOff: g.permissionsOff, ip: g.ip, docs: g.docs, connectWallet: g.connectWallet });
+  });
+  app.get('/api/setup/models', (req, res) => {
+    if (!gate(req, res)) return;
+    res.json({ ok: true, ...modelSetupInfo(setupEnv(c.envFile)) });
+  });
+  app.get('/api/setup/preferences', (req, res) => {
+    if (!gate(req, res)) return;
+    res.json({ ok: true, values: preferencesInfo(setupEnv(c.envFile)), canRestart: process.env.MPU_MANAGED === '1' && !!process.send });
+  });
+  app.post('/api/setup/preferences', (req, res) => {
+    if (!gate(req, res)) return;
+    try { const result = savePreferences(c.envFile, setupEnv(c.envFile), req.body); res.status(result.ok ? 200 : 400).json(result); }
+    catch { res.status(500).json({ ok: false, detail: 'Settings could not be saved. Check local file permissions.' }); }
+  });
+  app.post('/api/setup/restart', (req, res) => {
+    if (!gate(req, res)) return;
+    if (process.env.MPU_MANAGED !== '1' || !process.send) return res.status(409).json({ ok: false, detail: 'Start the office with mpu to apply settings from the UI.' });
+    res.json({ ok: true, detail: 'Restarting the office...' });
+    setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
+  });
+  app.get('/api/setup/local-agents', (req, res) => {
+    if (!gate(req, res)) return;
+    res.json({ ok: true, agents: localAgentStatus() });
+  });
+  app.post('/api/setup/local-agents/login', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    try { res.json({ ok: true, detail: await openAgentLogin(String(req.body?.id ?? '')) }); }
+    catch { res.status(400).json({ ok: false, detail: 'Install that agent on PATH first, then reopen Setup.' }); }
+  });
+  const testLim = c.limiter(3, 60_000);
+  app.post('/api/setup/local-agents/test', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    if (!testLim('local-test')) return res.status(429).json({ ok: false, detail: 'Wait a minute before testing again.' });
+    const model = String(req.body?.model ?? '');
+    try { localSelection(model); } catch { return res.status(400).json({ ok: false, detail: 'Choose a local agent first.' }); }
+    try {
+      const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.');
+      const result = SCHEMAS.chat.safeParse(extractJson(reply));
+      const ok = result.success && result.data.reply === 'connected';
+      res.json({ ok, detail: ok ? 'Connection verified: the agent returned a valid model reply.' : 'The agent ran, but its reply did not match the expected JSON. Check its model settings.' });
+    } catch (e) { res.status(400).json({ ok: false, detail: safe((e as Error).message) }); }
+  });
+  app.post('/api/setup/models', (req, res) => {
+    if (!gate(req, res, true)) return;
+    const p = ModelsBody.safeParse(req.body);
+    if (!p.success) return res.status(400).json({ ok: false, detail: 'Invalid provider, model or key input.' });
+    try {
+      const env = setupEnv(c.envFile);
+      const updates = modelUpdates(env, p.data);
+      setEnv(c.envFile, updates);
+      const missing = Object.entries(MODEL_KEY_ENV).filter(([provider, key]) => (provider === p.data.defaultProvider || Object.values(p.data.agents ?? {}).some((a) => a.provider === provider)) && !(updates[key] || env[key])).map(([provider]) => provider);
+      res.json({ ok: true, detail: `Provider and model choices saved. Restart the office to apply.${missing.length ? ` No key set for ${missing.join(', ')}; those agents will use mock.` : ''}` });
+    } catch { res.status(400).json({ ok: false, detail: 'Choose a model from the selected provider; keys must not contain whitespace.' }); }
   });
   // Masked inputs from the Setup wizard. The body is never logged or echoed; the answer names the saved variables only.
   app.post('/api/setup/keys', async (req, res) => {

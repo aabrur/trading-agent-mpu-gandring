@@ -1,5 +1,6 @@
 // Doctor: checks config and keys with harmless reads. Never prints a secret. Shared by npm run doctor and the office Setup wizard.
-import { loadConfig, ConfigError, type ProviderName } from '../config.js';
+import { loadConfig, ConfigError, type ApiProviderName } from '../config.js';
+import { localExecutable, localSelection } from '../providers/local.js';
 import { createRequire } from 'node:module';
 import { exchangeSettings, makeAdapter, ADAPTER_STATUS, VENUE_KIND, VENUE_LABEL, type Network } from '../exchange/index.js';
 import { checkTradingMode, type TradingMode } from '../live/guard.js';
@@ -20,19 +21,27 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: ty
     add(c.ok, 'trading mode', c.ok ? `${mode} ready (key permissions checked below)` : `${mode}: ${c.reasons.join('; ')}`);
   } else add(true, 'trading mode', 'PAPER');
 
-  const probes: Record<Exclude<ProviderName, 'mock'>, (k: string) => [string, RequestInit]> = {
+  const probes: Record<ApiProviderName, (k: string) => [string, RequestInit]> = {
     xai: (k) => [`${cfg.baseUrls.xai}/models`, { headers: { Authorization: `Bearer ${k}` } }],
     openai: (k) => [`${cfg.baseUrls.openai}/models`, { headers: { Authorization: `Bearer ${k}` } }],
     deepseek: (k) => [`${cfg.baseUrls.deepseek}/models`, { headers: { Authorization: `Bearer ${k}` } }],
     openrouter: (k) => [`${cfg.baseUrls.openrouter}/key`, { headers: { Authorization: `Bearer ${k}` } }],
+    groq: (k) => [`${cfg.baseUrls.groq}/models`, { headers: { Authorization: `Bearer ${k}` } }],
+    mistral: (k) => [`${cfg.baseUrls.mistral}/models`, { headers: { Authorization: `Bearer ${k}` } }],
+    together: (k) => [`${cfg.baseUrls.together}/models`, { headers: { Authorization: `Bearer ${k}` } }],
+    fireworks: (k) => [`${cfg.baseUrls.fireworks}/models`, { headers: { Authorization: `Bearer ${k}` } }],
     anthropic: (k) => ['https://api.anthropic.com/v1/models', { headers: { 'x-api-key': k, 'anthropic-version': '2023-06-01' } }],
     gemini: (k) => ['https://generativelanguage.googleapis.com/v1beta/models', { headers: { 'x-goog-api-key': k } }]
   };
-  for (const [p, key] of Object.entries(cfg.keys) as [Exclude<ProviderName, 'mock'>, string][]) {
+  for (const [p, key] of Object.entries(cfg.keys) as [ApiProviderName, string][]) {
     if (!key) continue;
     const [url, init] = probes[p](key);
     try { const r = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(8000) }); add(r.ok, `${p} key`, r.ok ? 'model list readable' : `HTTP ${r.status}`); }
     catch (e) { add(false, `${p} key`, (e as Error).message); }
+  }
+  for (const [id, a] of Object.entries(cfg.agents)) if (a.provider === 'local') {
+    try { const selection = localSelection(a.model); add(!!localExecutable(selection.id), `agent ${id}`, `${selection.id}: installation checked; use Setup to test sign-in and a model reply`); }
+    catch { add(false, `agent ${id}`, 'unknown local agent or model'); }
   }
   if (cfg.appMode === 'grokbot') add(true, 'agents', 'Grok Bot mode: six Grok Bot agents, no model keys needed, internal debate engine off');
   else for (const [id, a] of Object.entries(cfg.agents)) if (a.fellBackToMock) add(null, `agent ${id}`, 'provider has no key, using mock');

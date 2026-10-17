@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentId, DeskState, Verdict } from '../types';
 import { AGENT_ORDER } from '../types';
-import { KerisBlade, PamorPattern } from './Keris';
+import { PamorPattern } from './Keris';
 import { Bot } from './Bot';
 import { EquityChart, AllocationBars } from './MiniCharts';
 import { fmt, fmtPx } from './format';
@@ -10,11 +10,11 @@ const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', researc
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 void PamorPattern;
 
-export function TopBar({ state, connected, theme, onTheme, onSetup }: { state: DeskState | null; connected: boolean; theme?: string; onTheme?: () => void; onSetup?: () => void }) {
+export function TopBar({ state, connected, theme, onTheme, onSetup, onVenueKeys }: { state: DeskState | null; connected: boolean; theme?: string; onTheme?: () => void; onSetup?: () => void; onVenueKeys?: () => void }) {
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark"><KerisBlade size={40} /></div>
+        <div className="brand-mark"><img src="/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring logo" width={72} height={45} /></div>
         <div>
           <h1>Trading Agent <span>Mpu Gandring</span></h1>
           <p>six little bots, one book, plenty of arguing</p>
@@ -32,6 +32,7 @@ export function TopBar({ state, connected, theme, onTheme, onSetup }: { state: D
         {state?.dailyLoss?.hit && <span className="badge warn">daily loss stop</span>}
         {state?.venue && <span className="badge venue-badge" title={`Venue: ${state.venue.label} (${state.venue.kind})${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' (exp)' : ''}</span>}
         {state && <span className="badge">data: {state.marketSource}</span>}
+        {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn" onClick={onVenueKeys}>Venue keys</button>}
         {onSetup && <button className="badge setup-btn" onClick={onSetup} title="Setup wizard: venue, mode, keys, doctor (same as npm run setup)">Setup</button>}
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">paused</span>}
@@ -179,6 +180,7 @@ export function TradeLog({ state }: { state: DeskState }) {
         <div className="seg"><button className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>all</button><button className={filter === 'trades' ? 'on' : ''} onClick={() => setFilter('trades')}>trades</button></div>
       </div>
       <div className="log-body" ref={ref}>
+        {!lines.length && <p className="muted">{filter === 'trades' ? 'No trades yet. Completed trades and verdicts appear here.' : 'No desk activity yet. Agent updates and trades appear here.'}</p>}
         {lines.map((l, i) => (
           <div key={i} className={`line k-${l.kind}`}>
             <time>{time(l.at)}</time>

@@ -24,6 +24,7 @@ import { checkKeyInput, saveVenueKeys, checkMode, openUrlCommand } from '../serv
 import { doctor } from '../server/setup/doctor.js';
 import { registerSecrets } from '../server/redact.js';
 import { exchangeSecrets } from '../server/exchange/index.js';
+import { MODEL_KEY_ENV, MODEL_CATALOG_DATE, USAGE_SOURCE, modelChoices, defaultModel, modelSetupInfo, modelUpdates, type ModelSelection } from '../server/setup/models.js';
 
 // The shell environment as it was at start (dotenv/config never overrides it). --keys-from-env reads from here,
 // because currentEnv() loads the .env file with override and would blank values that are empty in .env.
@@ -35,7 +36,20 @@ const many = (name: string) => argv.flatMap((a, i) => (a === `--${name}` && argv
 const ENV_FILE = opt('dotenv') ?? '.env';
 const sub = argv[0] && !argv[0].startsWith('--') ? argv[0] : 'wizard';
 const secret = () => randomBytes(32).toString('base64url');
-const KEY_VARS: Record<Exclude<ProviderName, 'mock'>, string> = { xai: 'XAI_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY', deepseek: 'DEEPSEEK_API_KEY', openrouter: 'OPENROUTER_API_KEY' };
+const KEY_VARS = MODEL_KEY_ENV;
+
+async function pickModel(env: NodeJS.ProcessEnv, provider: ProviderName, current = defaultModel(env, provider)): Promise<string> {
+  const models = modelChoices(env, provider);
+  console.log(`\n  ${provider} models (curated ${MODEL_CATALOG_DATE}):`);
+  models.forEach((m, i) => console.log(`    ${i + 1}. ${m.label} [${m.tags.join(', ')}] (${m.id})`));
+  const index = Math.max(0, models.findIndex((m) => m.id === current));
+  for (;;) {
+    const value = await ask('  Choose model number', String(index + 1));
+    const choice = models[Number(value) - 1];
+    if (/^\d+$/.test(value) && choice) return choice.id;
+    console.log(`  Choose a number from 1 to ${models.length}.`);
+  }
+}
 
 function currentEnv() {
   ensureEnv(ENV_FILE);
@@ -88,19 +102,37 @@ async function wizard() {
     console.log('  copied keys that were set in the current shell environment');
   } else if (appMode === 'grokbot') {
     console.log('\nGrok Bot mode: no model API keys needed. Your six Grok Bot agents are the brains.');
-  } else if (!nonInteractive) {
-    console.log('\nModel API keys. Enter skips a provider. Agents without a key use the offline mock.');
-    for (const [p, k] of Object.entries(KEY_VARS)) { const v = await askSecret(`  ${p} key${env[k] ? ' (already set, Enter keeps it)' : ''}`); if (v) up[k] = v; }
   }
-  const have = (p: string) => p === 'mock' || !!(up[KEY_VARS[p as keyof typeof KEY_VARS]] ?? env[KEY_VARS[p as keyof typeof KEY_VARS]]);
+  const have = (p: string) => p === 'mock' || p === 'local' || !!(up[KEY_VARS[p as keyof typeof KEY_VARS]] ?? env[KEY_VARS[p as keyof typeof KEY_VARS]]);
   const def = opt('default-provider') ?? (nonInteractive ? env.DEFAULT_PROVIDER || 'mock' : await choose('Default provider for agents', PROVIDERS, (env.DEFAULT_PROVIDER as ProviderName) || 'mock'));
   if (!PROVIDERS.includes(def as ProviderName)) throw new Error(`unknown provider ${def}`);
   up.DEFAULT_PROVIDER = def;
+  if (appMode !== 'grokbot' && !nonInteractive) {
+    console.log(`\nFrontier shortlist, top token usage on OpenRouter, and up to six free models per provider. Source: OpenRouter (${USAGE_SOURCE.url}), as of ${USAGE_SOURCE.asOf}, trailing ${USAGE_SOURCE.period}.`);
+    console.log('Free tier models require an eligible account and quota; a paid account can still be billed. Other providers have no confirmed free API choices in this shortlist.');
+    const askedKeys = new Set<ProviderName>();
+    const select = async (p: ProviderName, current?: string): Promise<ModelSelection> => {
+      if (p !== 'mock' && p !== 'local' && !askedKeys.has(p)) {
+        askedKeys.add(p);
+        const key = KEY_VARS[p];
+        const value = await askSecret(`  ${p} API key${have(p) ? ' (already set, Enter keeps it)' : ''}`);
+        if (value) up[key] = value;
+        if (!have(p)) console.log(`  No ${p} key set; agents will use mock until you add one.`);
+      }
+      return { provider: p, model: await pickModel(env, p, current) };
+    };
+    const selection = await select(def as ProviderName);
+    const agents: Partial<Record<(typeof AGENT_IDS)[number], ModelSelection>> = {};
+    if (await askYes('Customize provider and model for each agent? (otherwise use the default for all)', modelSetupInfo(env).agents.some((a) => a.custom))) {
+      for (const a of modelSetupInfo(env).agents) {
+        const p = await choose(`  ${a.id} provider`, PROVIDERS, a.custom ? a.provider : selection.provider);
+        agents[a.id] = await select(p, p === a.provider && a.custom ? a.model : p === selection.provider ? selection.model : undefined);
+      }
+    }
+    Object.assign(up, modelUpdates(env, { defaultProvider: selection.provider, defaultModel: selection.model, agents }));
+  }
   for (const m of many('agent')) { const [a, p] = m.split('='); if (!AGENT_IDS.includes(a as never) || !PROVIDERS.includes(p as never)) throw new Error(`--agent ${m}: use id=provider`); up[`AGENT_${a.toUpperCase()}_PROVIDER`] = p; }
   for (const m of many('model')) { const [a, ...rest] = m.split('='); if (!AGENT_IDS.includes(a as never)) throw new Error(`--model ${m}: use id=model`); up[`AGENT_${a.toUpperCase()}_MODEL`] = rest.join('='); }
-  if (appMode !== 'grokbot' && !nonInteractive && await askYes('Give each of the six agents its own provider?', false)) {
-    for (const a of AGENT_IDS) { const p = await choose(`  ${a}`, PROVIDERS, (env[`AGENT_${a.toUpperCase()}_PROVIDER`] as ProviderName) || (def as ProviderName)); up[`AGENT_${a.toUpperCase()}_PROVIDER`] = p; if (!have(p)) console.log(`    no ${p} key yet, ${a} will use mock until you add one`); }
-  }
 
   // 3. TradingView
   const tvWidget = opt('tradingview-widget') ?? (nonInteractive ? env.TRADINGVIEW_WIDGET || 'off' : ((await askYes('Show a TradingView chart widget in the office? (loads tradingview.com in your browser)', env.TRADINGVIEW_WIDGET === 'on')) ? 'on' : 'off'));

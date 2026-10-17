@@ -5,6 +5,9 @@ import { useEffect, useState } from 'react';
 import type { DeskState } from '../types';
 import { WalletPanel } from './Wallet';
 import { ChannelsSetup } from './Channels';
+import { ModelsSetup } from './ModelsSetup';
+import { PreferencesSetup } from './PreferencesSetup';
+import { LocalAgentsSetup } from './LocalAgentsSetup';
 
 interface Link { label: string; url: string; login?: boolean; note?: string }
 interface Step { id: string; title: string; text: string; links: Link[] }
@@ -53,11 +56,18 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
   return (
     <div className="setup-overlay" role="dialog" aria-label="Setup">
       <div className="panel setup">
-        <div className="panel-head"><h2>Setup</h2><span className="badge">same as npm run setup</span><button onClick={onClose}>Close</button></div>
-        <p className="wallet-note">Running now: <b>{info.running.mode}</b> ({info.running.appMode} mode). Saved in .env: TRADING_MODE {info.status.tradingMode}, EXCHANGE {info.status.exchange}. Changes apply after a restart.</p>
+        <div className="panel-head"><div className="brand"><img src="/mpu-gandring-logo.webp" alt="Mpu Gandring" width={54} height={34} /><h2>Setup</h2></div><span className="badge">same as npm run setup</span><button onClick={onClose}>Close</button></div>
+        <p className="wallet-note">Running now: <b>{info.running.mode}</b> in {info.running.appMode} mode. Saved in .env: TRADING_MODE {info.status.tradingMode}, EXCHANGE {info.status.exchange}. Changes apply after a restart.</p>
         {info.status.forbidden.length > 0 && <p className="wallet-msg bad">Remove {info.status.forbidden.join(', ')} from your environment. Main wallet keys and seed phrases are never used.</p>}
         {state.killed && <p className="wallet-msg bad">Kill switch is ON. Release it only in a terminal on this computer: <code>{info.unkill}</code>, then restart.</p>}
 
+        <h3>Desk settings</h3>
+        <PreferencesSetup />
+        <h3>Model providers and models</h3>
+        <ModelsSetup available={info.keyEntry.available} appMode={info.running.appMode} />
+        <LocalAgentsSetup available={info.keyEntry.available} />
+
+        <details className="setup-section"><summary>Exchange, trading mode and safety checks</summary>
         <h3>1. Mode</h3>
         <ol className="wallet-steps">{info.modes.map((m) => <li key={m.mode}><b>{m.mode}</b>: {m.info}</li>)}</ol>
 
@@ -99,9 +109,11 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
         </div>
         <p className="wallet-note small">TESTNET and LIVE are saved only after the key check passes (trade on, withdraw off). LIVE needs the typed confirmation. Restart the office afterwards.</p>
         {msg && <p className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
+        </details>
 
-        <h3>7. Chat channel and Desk Lead (optional)</h3>
+        <details className="setup-section"><summary>Chat channel and Desk Lead (optional)</summary>
         <ChannelsSetup />
+        </details>
         <p className="wallet-note small">Links checked {info.linksCheckedOn}. Full guides: docs/setup/. Not financial advice.</p>
       </div>
     </div>
