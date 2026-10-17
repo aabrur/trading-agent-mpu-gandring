@@ -42,38 +42,42 @@ export function TopBar({
     <header className="topbar">
       <div className="brand">
         <div className="brand-mark"><img src="/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring logo" width={72} height={45} /></div>
-        <div>
-          <h1>Trading Agent <span>Mpu Gandring</span></h1>
-          <p>{t('subtitle')}</p>
+        <div className="brand-copy">
+          <div className="brand-title-row">
+            <h1>Trading Agent <span>Mpu Gandring</span></h1>
+            <p>{t('subtitle')}</p>
+          </div>
+          <div className="brand-meta">
+            {state?.mode === 'LIVE'
+              ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}{state.live?.experimental ? ' experimental' : ''}</span>
+              : state?.mode === 'TESTNET'
+                ? <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
+                : <span className="badge paper" title="Simulated trades only">{t('paperMode')}</span>}
+            {state?.auto?.on && <span className="badge auto-badge" title="Agents trade on their own, no approval step">AUTO · {state.auto.intervalMin}m</span>}
+            {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
+            {state?.killed && <span className="badge warn">{t('killSwitchOn')}</span>}
+            {state?.dailyLoss?.hit && <span className="badge warn">{t('dailyLossStop')}</span>}
+            {state?.venue && <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' exp' : ''}</span>}
+            {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
+            {onOpenUpdate && (
+              <button
+                className={`badge setup-btn version-btn ${hasUpdate ? 'update-avail-badge' : ''}`}
+                onClick={onOpenUpdate}
+                title={hasUpdate ? `${t('updateAvailable')}: v${updateInfo?.latestVersion}` : `v${ver} · ${t('upToDate')}`}
+              >
+                v{ver}{hasUpdate ? ` · ${t('updateAvailable')} ↑` : ''}
+              </button>
+            )}
+            <button className="badge setup-btn lang-toggle-btn" onClick={toggleLang} aria-label="switch language">
+              {lang === 'en' ? 'EN ▾ ID' : 'ID ▾ EN'}
+            </button>
+          </div>
         </div>
       </div>
       <div className="badges">
-        {state?.mode === 'LIVE'
-          ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}{state.live?.experimental ? ' experimental' : ''}</span>
-          : state?.mode === 'TESTNET'
-            ? <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
-            : <span className="badge paper" title="Simulated trades only">{t('paperMode')}</span>}
-        {state?.auto?.on && <span className="badge auto-badge" title="Agents trade on their own, no approval step">AUTO · {state.auto.intervalMin}m</span>}
-        {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
-        {state?.killed && <span className="badge warn">{t('killSwitchOn')}</span>}
-        {state?.dailyLoss?.hit && <span className="badge warn">{t('dailyLossStop')}</span>}
-        {state?.venue && <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' exp' : ''}</span>}
-        {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
         {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title="Connect browser wallet for DEX venues">{t('connectWallet')}</button>}
         {onSetup && <button id="setup-trigger" className="badge setup-btn" onClick={onSetup} title="Setup wizard: venue, mode, keys, doctor">{t('setup')}</button>}
         {onTour && <button className="badge setup-btn tour-trigger-btn" onClick={onTour} title="Interactive UI guide">? {t('tutorial')}</button>}
-        {onOpenUpdate && (
-          <button
-            className={`badge setup-btn version-btn ${hasUpdate ? 'update-avail-badge' : ''}`}
-            onClick={onOpenUpdate}
-            title={hasUpdate ? `${t('updateAvailable')}: v${updateInfo?.latestVersion}` : `v${ver} · ${t('upToDate')}`}
-          >
-            v{ver}{hasUpdate ? ` · ${t('updateAvailable')} ↑` : ''}
-          </button>
-        )}
-        <button className="badge setup-btn lang-toggle-btn" onClick={toggleLang} aria-label="switch language">
-          {lang === 'en' ? 'EN ▾ ID' : 'ID ▾ EN'}
-        </button>
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">{t('paused')}</span>}
         <span className={`badge conn ${connected ? 'on' : 'off'}`}><i />{connected ? t('liveConn') : t('reconnecting')}</span>
