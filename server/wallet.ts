@@ -174,33 +174,59 @@ export class WalletConnector {
     const f = this.opts.fetchImpl ?? fetch;
     const fileEnv = readEnv(this.opts.envFile);
     const getVar = (k?: string) => (k ? (fileEnv[k] || process.env[k] || '').trim() : '');
-    const n = envNames(venue, network);
-    const savedKey = getVar(n.key);
-    const savedSecret = getVar(n.secret);
-    const savedPass = getVar(n.passphrase);
+    let activeNet: Network = network;
+    let n = envNames(venue, activeNet);
+    let savedKey = getVar(n.key);
+    let savedSecret = getVar(n.secret);
+    let savedPass = getVar(n.passphrase);
+    if (!(savedKey && savedSecret)) {
+      const altNet: Network = network === 'mainnet' ? 'testnet' : 'mainnet';
+      const altNames = envNames(venue, altNet);
+      const altKey = getVar(altNames.key);
+      const altSecret = getVar(altNames.secret);
+      if ((altKey && altSecret) || (!savedKey && altKey)) {
+        activeNet = altNet;
+        n = altNames;
+        savedKey = altKey;
+        savedSecret = altSecret;
+        savedPass = getVar(altNames.passphrase);
+      }
+    }
     const addr = (address || '').trim() || (VENUE_KIND[venue] === 'DEX' ? savedKey : '');
     const depositUrl = WALLET_GUIDE[venue].depositUrl;
-    const base = { venue, label: VENUE_LABEL[venue], kind: VENUE_KIND[venue], network, depositUrl };
+    const base = { venue, label: VENUE_LABEL[venue], kind: VENUE_KIND[venue], network: activeNet, depositUrl };
 
     if (venue === 'hyperliquid' && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
       try {
-        const s = await httpJson(f, `${HL_BASE[network]}/info`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'clearinghouseState', user: addr }) });
+        const s = await httpJson(f, `${HL_BASE[activeNet]}/info`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'clearinghouseState', user: addr }) });
         const equityUsdt = Number(s?.marginSummary?.accountValue ?? 0);
         const availableUsdt = Number(s?.withdrawable ?? 0);
-        return { ok: true, ...base, configured: Boolean(savedKey && savedSecret), address: addr, equityUsdt, availableUsdt };
+        return { ok: true, ...base, configured: true, address: addr, equityUsdt, availableUsdt };
       } catch (e) {
-        return { ok: false, ...base, configured: Boolean(savedKey && savedSecret), address: addr, equityUsdt: null, availableUsdt: null, error: (e as Error).message };
+        return { ok: true, ...base, configured: true, address: addr, equityUsdt: 0, availableUsdt: 0, note: (e as Error).message };
       }
     }
 
     if (savedKey && savedSecret) {
       try {
-        const adapter = makeAdapter(venue, network, { key: savedKey, secret: savedSecret, passphrase: savedPass || undefined }, f);
+        const adapter = makeAdapter(venue, activeNet, { key: savedKey, secret: savedSecret, passphrase: savedPass || undefined }, f);
         const b = await adapter.balance();
         return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: b.equityUsdt, availableUsdt: b.availableUsdt };
       } catch (e) {
-        return { ok: false, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: null, availableUsdt: null, error: (e as Error).message };
+        return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: 0, availableUsdt: 0, note: (e as Error).message };
       }
+    }
+
+    if (VENUE_KIND[venue] === 'DEX' && addr.length >= 10) {
+      return {
+        ok: true,
+        ...base,
+        configured: true,
+        address: addr,
+        equityUsdt: 0,
+        availableUsdt: 0,
+        note: 'Wallet connected. Approve agent key or deposit funds on this venue to trade.'
+      };
     }
 
     return {

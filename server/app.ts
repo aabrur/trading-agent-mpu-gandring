@@ -129,11 +129,15 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const a = access(req); if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });
     if (!walletLimit(req.socket.remoteAddress ?? '')) return res.status(429).json({ ok: false, error: 'slow down' });
     const p = WalletApprove.safeParse(req.body); if (!p.success) return res.status(400).json({ ok: false, error: 'bad request (only an approval id and a signature are accepted)' });
-    try { res.json(await wallet.approve(p.data.id, p.data.signature)); }
-    catch (e) { res.status(400).json({ ok: false, error: safe((e as Error).message) }); }
+    try {
+      const out = await wallet.approve(p.data.id, p.data.signature);
+      cfg.exchange.name = out.venue;
+      desk.emit('state', desk.snapshot());
+      res.json(out);
+    } catch (e) { res.status(400).json({ ok: false, error: safe((e as Error).message) }); }
   });
   // Setup wizard and Desk ops panel (same shared modules as npm run setup / npm run gb). Localhost only.
-  const routeCtx = { cfg, desk, envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch, limiter };
+  const routeCtx = { cfg, desk, auto, envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch, limiter };
   mountSetupRoutes(app, routeCtx);
   mountOpsRoutes(app, routeCtx);
   // Desk Lead supervisor and chat channels. Inbound chat webhooks get their own server (see channels/routes.ts).

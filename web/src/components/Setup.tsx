@@ -51,7 +51,15 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
     setBusy(true); setMsg(null);
     const r = await post('/api/setup/keys', { venue, network, key: k, secret: s, ...(guide.fields[2] ? { third: t } : {}) }).catch(() => ({ ok: false, detail: 'office not reachable' }));
     setVals({}); // never keep secrets in the page after sending
-    setBusy(false); setMsg({ ok: r.ok, text: `${r.detail ?? r.error ?? ''}${r.warning ? ` ${r.warning}` : ''}` }); void load();
+    setBusy(false); setMsg({ ok: r.ok, text: `${r.detail ?? r.error ?? ''}${r.warning ? ` ${r.warning}` : ''}` });
+    if (r.ok) {
+      try {
+        localStorage.setItem('mg-wallet-venue', venue);
+        localStorage.setItem('mg-wallet-network', network);
+      } catch { /* ignore */ }
+      window.dispatchEvent(new Event('mg-wallet-updated'));
+    }
+    void load();
   }
   async function runDoctor() { setBusy(true); const r = await post('/api/setup/doctor', {}).catch(() => null); setBusy(false); setDoc(r?.lines ?? [{ ok: false, label: 'doctor', detail: r?.error ?? 'failed' }]); }
   async function saveMode() { setBusy(true); const r = await post('/api/setup/mode', { mode, ...(mode === 'LIVE' ? { confirm } : {}) }).catch(() => ({ ok: false, detail: 'office not reachable' })); setBusy(false); setConfirm(''); setMsg({ ok: r.ok, text: r.detail }); void load(); }

@@ -13,6 +13,38 @@ const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', researc
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 void PamorPattern;
 
+interface CurrencyOption {
+  code: string;
+  symbol: string;
+  rate: number;
+  decimals: number;
+  label: string;
+}
+
+const CURRENCIES: CurrencyOption[] = [
+  { code: 'USDT', symbol: 'USDT', rate: 1, decimals: 2, label: 'USDT ($)' },
+  { code: 'IDR', symbol: 'Rp', rate: 16250, decimals: 0, label: 'IDR (Rp)' },
+  { code: 'USD', symbol: '$', rate: 1, decimals: 2, label: 'USD ($)' },
+  { code: 'EUR', symbol: '€', rate: 0.92, decimals: 2, label: 'EUR (€)' },
+  { code: 'GBP', symbol: '£', rate: 0.79, decimals: 2, label: 'GBP (£)' },
+  { code: 'SGD', symbol: 'S$', rate: 1.34, decimals: 2, label: 'SGD (S$)' },
+  { code: 'MYR', symbol: 'RM', rate: 4.42, decimals: 2, label: 'MYR (RM)' },
+  { code: 'JPY', symbol: '¥', rate: 154, decimals: 0, label: 'JPY (¥)' },
+  { code: 'KRW', symbol: '₩', rate: 1380, decimals: 0, label: 'KRW (₩)' },
+  { code: 'CNY', symbol: '¥', rate: 7.24, decimals: 2, label: 'CNY (¥)' },
+  { code: 'INR', symbol: '₹', rate: 84.1, decimals: 2, label: 'INR (₹)' },
+  { code: 'AUD', symbol: 'A$', rate: 1.52, decimals: 2, label: 'AUD (A$)' }
+];
+
+function formatCurrencyValue(usdtAmount: number, cur: CurrencyOption): string {
+  const converted = usdtAmount * cur.rate;
+  const formatted = new Intl.NumberFormat(cur.code === 'IDR' ? 'id-ID' : 'en-US', {
+    minimumFractionDigits: cur.decimals,
+    maximumFractionDigits: cur.decimals
+  }).format(converted);
+  return cur.code === 'USDT' ? `${formatted} USDT` : `${cur.symbol} ${formatted}`;
+}
+
 export function TopBar({
   state,
   connected,
@@ -37,8 +69,81 @@ export function TopBar({
   onOpenTrakteer?: () => void;
 }) {
   const { lang, toggleLang, t } = useI18n();
-  const ver = updateInfo?.currentVersion ?? '0.0.0.2.1';
+  const ver = updateInfo?.currentVersion ?? '0.0.0.2.2';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
+  void onOpenTrakteer;
+
+  const [currencyCode, setCurrencyCode] = useState<string>(() => {
+    try {
+      return localStorage.getItem('mg-currency') || 'USDT';
+    } catch {
+      return 'USDT';
+    }
+  });
+  const [liveBal, setLiveBal] = useState<{ equityUsdt: number | null; venueLabel: string | null; configured: boolean } | null>(null);
+
+  const handleCurrencyChange = (code: string) => {
+    setCurrencyCode(code);
+    try { localStorage.setItem('mg-currency', code); } catch { /* ignore */ }
+    window.dispatchEvent(new Event('mg-currency-updated'));
+  };
+
+  useEffect(() => {
+    const syncCur = () => {
+      try { setCurrencyCode(localStorage.getItem('mg-currency') || 'USDT'); } catch { /* ignore */ }
+    };
+    window.addEventListener('mg-currency-updated', syncCur);
+    return () => window.removeEventListener('mg-currency-updated', syncCur);
+  }, []);
+
+  const activeVenue = state?.venue?.name ?? state?.live?.exchange ?? '';
+  const activeMode = state?.mode ?? 'PAPER';
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      let savedVenue = '';
+      let savedNet = '';
+      let savedAddr = '';
+      try {
+        savedVenue = localStorage.getItem('mg-wallet-venue') || '';
+        savedNet = localStorage.getItem('mg-wallet-network') || '';
+        savedAddr = localStorage.getItem('mg-wallet-address') || '';
+      } catch { /* ignore */ }
+      const targetVenue = savedVenue || activeVenue || 'bybit';
+      const net = savedNet === 'mainnet' || savedNet === 'testnet' ? savedNet : (activeMode === 'LIVE' ? 'mainnet' : 'testnet');
+      const qs = new URLSearchParams({ venue: targetVenue, network: net });
+      if (savedAddr) qs.set('address', savedAddr);
+      fetch(`/api/wallet/balance?${qs.toString()}`)
+        .then((r) => r.json())
+        .then((d: VenueBalance) => {
+          if (!alive) return;
+          if (d && (typeof d.equityUsdt === 'number' || d.configured)) {
+            setLiveBal({ equityUsdt: d.equityUsdt ?? 0, venueLabel: d.label || targetVenue.toUpperCase(), configured: Boolean(d.configured) });
+          } else {
+            setLiveBal(null);
+          }
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = window.setInterval(load, 20_000);
+    window.addEventListener('mg-wallet-updated', load);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener('mg-wallet-updated', load);
+    };
+  }, [activeVenue, activeMode]);
+
+  const curOpt = CURRENCIES.find((c) => c.code === currencyCode) ?? CURRENCIES[0];
+  const hasVenueLiveBal = Boolean(liveBal && (liveBal.configured || (liveBal.equityUsdt !== null && liveBal.equityUsdt > 0)));
+  const rawUsdt = hasVenueLiveBal && (liveBal?.equityUsdt ?? 0) > 0
+    ? (liveBal?.equityUsdt ?? 0)
+    : (state?.paper?.equity ?? 1000);
+  const balanceSourceTag = hasVenueLiveBal
+    ? (liveBal?.venueLabel ?? state?.venue?.label ?? activeVenue.toUpperCase())
+    : t('topPaperBadge');
 
   return (
     <header className="topbar">
@@ -63,11 +168,12 @@ export function TopBar({
             {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
             {onOpenUpdate && (
               <button
-                className={`badge setup-btn version-btn ${hasUpdate ? 'update-avail-badge' : ''}`}
+                className="badge setup-btn version-btn update-avail-badge"
                 onClick={onOpenUpdate}
-                title={hasUpdate ? `${t('updateAvailable')}: v${updateInfo?.latestVersion}` : `v${ver} · ${t('upToDate')}`}
+                title={hasUpdate ? `${t('updateAvailable')}: v${updateInfo?.latestVersion}` : `v${ver} · ${t('versionModalTitle')}`}
               >
-                v{ver}{hasUpdate ? ` · ${t('updateAvailable')} ↑` : ''}
+                <i className="update-notif-dot" aria-hidden="true" />
+                v{ver} · {hasUpdate ? `${t('updateAvailable')} ↑` : 'Update ↑'}
               </button>
             )}
             <button className="badge setup-btn lang-toggle-btn" onClick={toggleLang} aria-label="switch language">
@@ -93,6 +199,22 @@ export function TopBar({
             <span>{t('trakteerBtn')}</span>
           </span>
         </a>
+        {state && (
+          <div className={`topbar-balance-pill ${hasVenueLiveBal ? 'is-live-bal' : 'is-paper-bal'}`} title={`${t('topBalanceLabel')}: ${fmt(rawUsdt)} USDT`}>
+            <span className="tb-bal-tag">{balanceSourceTag}</span>
+            <strong className="tb-bal-val">{formatCurrencyValue(rawUsdt, curOpt)}</strong>
+            <select
+              className="tb-cur-select"
+              aria-label={t('topCurrencyLabel')}
+              value={currencyCode}
+              onChange={(e) => handleCurrencyChange(e.target.value)}
+            >
+              {CURRENCIES.map((c) => (
+                <option key={c.code} value={c.code}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
       <div className="badges">
         {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title="Connect browser wallet for DEX venues">{t('connectWallet')}</button>}
@@ -241,9 +363,26 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   const p = state.paper;
   const [safety, setSafety] = useState(String(p.safetyNet));
   const [balance, setBalance] = useState(String(p.balance));
-  const [selectedVenue, setSelectedVenue] = useState<string>(state.venue?.name ?? state.live?.exchange ?? 'bybit');
+  const [selectedVenue, setSelectedVenue] = useState<string>(() => {
+    try {
+      return localStorage.getItem('mg-wallet-venue') || state.venue?.name || state.live?.exchange || 'bybit';
+    } catch {
+      return state.venue?.name ?? state.live?.exchange ?? 'bybit';
+    }
+  });
   const [venueBal, setVenueBal] = useState<VenueBalance | null>(null);
   const [balBusy, setBalBusy] = useState(false);
+  const [currencyCode, setCurrencyCode] = useState<string>(() => {
+    try { return localStorage.getItem('mg-currency') || 'USDT'; } catch { return 'USDT'; }
+  });
+
+  useEffect(() => {
+    const syncCur = () => {
+      try { setCurrencyCode(localStorage.getItem('mg-currency') || 'USDT'); } catch { /* ignore */ }
+    };
+    window.addEventListener('mg-currency-updated', syncCur);
+    return () => window.removeEventListener('mg-currency-updated', syncCur);
+  }, []);
 
   useEffect(() => setSafety(String(p.safetyNet)), [p.safetyNet]);
   useEffect(() => setBalance(String(p.balance)), [p.balance]);
@@ -253,8 +392,16 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
 
   const fetchVenueBal = useCallback((vName: string) => {
     setBalBusy(true);
-    const net = state.mode === 'LIVE' ? 'mainnet' : 'testnet';
-    fetch(`/api/wallet/balance?venue=${encodeURIComponent(vName)}&network=${net}`)
+    let savedNet = '';
+    let savedAddr = '';
+    try {
+      savedNet = localStorage.getItem('mg-wallet-network') || '';
+      savedAddr = localStorage.getItem('mg-wallet-address') || '';
+    } catch { /* ignore */ }
+    const net = savedNet === 'mainnet' || savedNet === 'testnet' ? savedNet : (state.mode === 'LIVE' ? 'mainnet' : 'testnet');
+    const qs = new URLSearchParams({ venue: vName, network: net });
+    if (savedAddr) qs.set('address', savedAddr);
+    fetch(`/api/wallet/balance?${qs.toString()}`)
       .then((r) => r.json())
       .then((d: VenueBalance) => setVenueBal(d))
       .catch(() => {})
@@ -263,11 +410,23 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
 
   useEffect(() => {
     fetchVenueBal(selectedVenue);
+    const onWalletUpdate = () => {
+      let v = selectedVenue;
+      try {
+        const savedV = localStorage.getItem('mg-wallet-venue');
+        if (savedV) { v = savedV; setSelectedVenue(savedV); }
+      } catch { /* ignore */ }
+      fetchVenueBal(v);
+    };
+    window.addEventListener('mg-wallet-updated', onWalletUpdate);
+    return () => window.removeEventListener('mg-wallet-updated', onWalletUpdate);
   }, [selectedVenue, fetchVenueBal]);
 
+  const curOpt = CURRENCIES.find((c) => c.code === currencyCode) ?? CURRENCIES[0];
   const bookTitle = state.mode === 'PAPER' ? t('paperBook') : state.mode === 'LIVE' ? t('liveBook') : t('testnetBook');
   const currentVenue = ALL_VENUES.find((v) => v.venue === selectedVenue) ?? ALL_VENUES[0];
   const activeDepositUrl = venueBal?.depositUrl || currentVenue.depositUrl;
+  const isVenueConnected = Boolean(venueBal && (venueBal.equityUsdt !== null || venueBal.configured));
 
   return (
     <section className="panel portfolio">
@@ -275,12 +434,14 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
       <div className="stats">
         <label className="stat"><small>{t('totalBalance')}</small>
           <span className="inline-edit"><input value={balance} onChange={(e) => setBalance(e.target.value)} onBlur={() => balance !== String(p.balance) && command(`set balance ${balance}`)} inputMode="decimal" aria-label="paper balance" /> USDT</span>
+          {curOpt.code !== 'USDT' && <small className="stat-fiat">{formatCurrencyValue(p.balance, curOpt)}</small>}
         </label>
         <label className="stat"><small>{t('safetyNet')}</small>
           <span className="inline-edit"><input value={safety} onChange={(e) => setSafety(e.target.value)} onBlur={() => safety !== String(p.safetyNet) && command(`set safety ${safety}`)} inputMode="decimal" aria-label="safety net" /> USDT</span>
+          {curOpt.code !== 'USDT' && <small className="stat-fiat">{formatCurrencyValue(p.safetyNet, curOpt)}</small>}
         </label>
-        <div className="stat hi"><small>{t('moneyTrade')}</small><b>{fmt(p.moneyTrade)}</b></div>
-        <div className="stat"><small>{t('perOrder')}</small><b>{fmt(p.perOrder)}</b></div>
+        <div className="stat hi"><small>{t('moneyTrade')}</small><b>{fmt(p.moneyTrade)}</b>{curOpt.code !== 'USDT' && <small className="stat-fiat">{formatCurrencyValue(p.moneyTrade, curOpt)}</small>}</div>
+        <div className="stat"><small>{t('perOrder')}</small><b>{fmt(p.perOrder)}</b>{curOpt.code !== 'USDT' && <small className="stat-fiat">{formatCurrencyValue(p.perOrder, curOpt)}</small>}</div>
       </div>
 
       <div className="venue-balance-box">
@@ -289,7 +450,12 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
             className="venue-balance-select"
             aria-label="select venue balance"
             value={selectedVenue}
-            onChange={(e) => setSelectedVenue(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedVenue(v);
+              try { localStorage.setItem('mg-wallet-venue', v); } catch { /* ignore */ }
+              window.dispatchEvent(new Event('mg-wallet-updated'));
+            }}
           >
             {ALL_VENUES.map((v) => <option key={v.venue} value={v.venue}>{v.label}</option>)}
           </select>
@@ -306,12 +472,22 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
           <a className="badge deposit-link-btn" href={activeDepositUrl} target="_blank" rel="noreferrer">
             {t('depositOfficial')} ↗
           </a>
+          {isVenueConnected && venueBal && (
+            <span className="badge venue-conn-pill">
+              ● {venueBal.network.toUpperCase()} {venueBal.address ? `${venueBal.address.slice(0, 6)}...${venueBal.address.slice(-4)}` : 'Connected'}
+            </span>
+          )}
         </div>
         <div className="venue-balance-status-row">
-          {venueBal && venueBal.equityUsdt !== null ? (
+          {isVenueConnected && venueBal ? (
             <div className="venue-balance-stats">
-              <span>{t('equityUsdt')}: <b>{fmt(venueBal.equityUsdt)} USDT</b></span>
+              <span>{t('equityUsdt')}: <b>{fmt(venueBal.equityUsdt ?? 0)} USDT</b>{curOpt.code !== 'USDT' ? ` (${formatCurrencyValue(venueBal.equityUsdt ?? 0, curOpt)})` : ''}</span>
               <span>{t('availableUsdt')}: <b>{fmt(venueBal.availableUsdt ?? 0)} USDT</b></span>
+              {(venueBal.equityUsdt ?? 0) > 0 && Math.abs((venueBal.equityUsdt ?? 0) - p.balance) > 0.01 && (
+                <button type="button" className="mini" onClick={() => command(`set balance ${venueBal.equityUsdt}`)}>
+                  Sync to book
+                </button>
+              )}
             </div>
           ) : (
             <p className="wallet-note small">{venueBal?.error ? venueBal.error : t('notConnectedBalance')}</p>
@@ -407,7 +583,7 @@ export function Roster({ state, onSelect }: { state: DeskState; onSelect: (id: A
         const a = state.agents[id];
         return (
           <button key={id} className={`roster-item status-${a.status}`} style={{ ['--agent' as string]: a.color }} onClick={() => onSelect(id)}>
-            <Bot id={id} size={26} pose="idle" />
+            <Bot id={id} size={20} pose="idle" />
             <span>{a.name}</span>
             <small>{a.provider === 'mock' ? 'mock' : a.provider}</small>
           </button>

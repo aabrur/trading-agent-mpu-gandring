@@ -22,15 +22,7 @@ function initialTheme() {
 }
 
 function initialTourOpen() {
-  try {
-    const firstRun = localStorage.getItem('mpu_tour_done_v1') !== '1';
-    if (firstRun) {
-      localStorage.setItem('mpu_tour_done_v1', '1');
-    }
-    return firstRun;
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 function AppInner() {
@@ -69,6 +61,16 @@ function AppInner() {
     setTourOpen(false);
     try { localStorage.setItem('mpu_tour_done_v1', '1'); } catch { /* ignore */ }
   };
+
+  const anyModalOpen = Boolean(state) && (setup || venueKeys || updateOpen || tourOpen || trakteerOpen || Boolean(selected));
+  useEffect(() => {
+    document.documentElement.classList.toggle('modal-open', anyModalOpen);
+    document.body.classList.toggle('modal-open', anyModalOpen);
+    return () => {
+      document.documentElement.classList.remove('modal-open');
+      document.body.classList.remove('modal-open');
+    };
+  }, [anyModalOpen]);
 
   const refreshUpdate = useCallback(async () => {
     try {
@@ -137,9 +139,9 @@ function AppInner() {
         </section>
         <aside className="side">
           <FightMeter state={state} meter={meter} />
+          <DeskOps state={state} />
           <Verdicts state={state} />
           <Portfolio state={state} command={(cmd) => void command(cmd)} />
-          <DeskOps state={state} />
         </aside>
       </main>
       {setup && <SetupWizard state={state} onClose={closeSetup} />}

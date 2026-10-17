@@ -18,8 +18,9 @@ function market(c: Ctx) {
   const ch2 = Number(c.change2hPct ?? 0);
   const temper = Number(c.temperament ?? 0);
   const score = ch / 1.5 + ch2 / 0.4; // day trend plus the last two hours of closed bars
-  let stance: 'LONG' | 'SHORT' | 'NEUTRAL' = score > 0.6 ? 'LONG' : score < -0.6 ? 'SHORT' : 'NEUTRAL';
-  let confidence = clamp(0.35 + Math.min(Math.abs(score), 3) / 6 + temper * 0.08);
+  const thresh = c.liveFeed ? 0.12 : 0.6;
+  let stance: 'LONG' | 'SHORT' | 'NEUTRAL' = score > thresh ? 'LONG' : score < -thresh ? 'SHORT' : 'NEUTRAL';
+  let confidence = clamp(0.35 + Math.min(Math.abs(score), 3) / 6 + temper * 0.08 + (c.liveFeed ? 0.08 : 0));
   if (fund != null && Math.abs(fund) > 0.0003) {
     confidence = clamp(confidence - 0.1);
   }
@@ -97,12 +98,17 @@ function lead(c: Ctx) {
   const dis = Number(c.disagreement ?? 0);
   if (c.researchVote === 'VETO') return { action: c.hasPosition ? 'CLOSE' : 'HOLD', confidence: 0.85, reason: 'Research vetoed. We do not argue with a halt or an exploit.' };
   if (c.hasPosition) {
-    const against = (c.positionSide === 'LONG' && w < -0.2) || (c.positionSide === 'SHORT' && w > 0.2);
-    if (against || c.strategyInvalidated) return { action: 'CLOSE', confidence: 0.7, reason: `The room turned against our ${c.positionSide}. Close it and reset.` };
+    const closeBar = c.liveFeed ? 0.08 : 0.2;
+    const against = (c.positionSide === 'LONG' && w < -closeBar) || (c.positionSide === 'SHORT' && w > closeBar);
+    const takeProfitFade = c.liveFeed && Number(c.unrealizedPnl ?? 0) > 1.2 && Math.abs(w) < 0.06;
+    if (against || c.strategyInvalidated || takeProfitFade) {
+      return { action: 'CLOSE', confidence: 0.72, reason: takeProfitFade ? `Momentum faded on our ${c.positionSide} while in profit. Close it and lock the gain.` : `The room turned against our ${c.positionSide}. Close it and reset.` };
+    }
     return { action: 'HOLD', confidence: 0.6, reason: `Our ${c.positionSide} still has support. Hold and let the stop do its job.` };
   }
   if (!c.slotsFree) return { action: 'HOLD', confidence: 0.8, reason: 'All N order slots are taken. Nothing new today.' };
-  const bar = 0.15 + (c.cautious ? 0.12 : 0);
+  const baseBar = c.liveFeed ? 0.05 : 0.15;
+  const bar = baseBar + (c.cautious ? 0.12 : 0);
   if (dis > 0.75) return { action: 'HOLD', confidence: 0.55, reason: 'This room is split down the middle. A split desk does not get my money.' };
   if (w > bar) return { action: 'OPEN_LONG', confidence: r2(clamp(0.5 + w / 2)), reason: `Bulls carried it with a weighted score of ${w.toFixed(2)}. Long, with a stop.` };
   if (w < -bar) return { action: 'OPEN_SHORT', confidence: r2(clamp(0.5 + Math.abs(w) / 2)), reason: `Bears carried it with a weighted score of ${w.toFixed(2)}. Short, with a stop.` };

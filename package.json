@@ -1,7 +1,14 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.2.0",
-  "appVersion": "0.0.0.2.1",
+  "version": "0.2.2",
+  "appVersion": "0.0.0.2.2",
+  "changelog": [
+    "Instant live balance display in TopBar and Portfolio (Paper/Live Book) with multi-country currency converter after Connect Wallet or API Key setup",
+    "Autonomous agent execution (Buy/Long, Sell/Short, Close, Hold) with interactive Token Picker chips and Max Open Positions (N = 1..4) in Desk Ops Auto Trade",
+    "Side-by-side Connect an Agent and External Supervisor tabs in Setup with locked modal scroll",
+    "Mandatory interactive step-by-step tutorial on every fresh session or restart",
+    "Brutal cartoon smoke-cloud fight animation with flying fists, stars, and impact bursts"
+  ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",
   "author": "Abrur Alaina",

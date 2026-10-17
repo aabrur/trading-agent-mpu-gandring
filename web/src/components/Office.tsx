@@ -10,7 +10,8 @@ const SEATS: Record<AgentId, { x: number; y: number }> = {
   strategist: { x: 31, y: 84 }, risk: { x: 69, y: 84 }, execution: { x: 50, y: 94 }
 };
 const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'filling paper order', journaling: 'journaling' };
-const POW_WORDS = ['POW!', 'BAM!', 'BONK!', 'WHAM!', 'BUK!', 'PLAK!'];
+const POW_WORDS = ['GEBUK!', 'POW!', 'BONK!', 'DUAR!', 'PLAK!', 'BLETAK!', 'BAM!', 'AMPUN!', 'HAJAR!', 'JEDER!'];
+const BRAWL_PROPS = ['🥊', '👊', '💥', '⚡', '💫', '🩹', '👟', '🔥'];
 
 interface Props {
   state: DeskState;
@@ -23,9 +24,8 @@ interface Props {
   onSelect: (id: AgentId) => void;
 }
 
-// The puncher walks over and squares up beside the target, one arm's length away,
-// so the two never stack on top of each other.
-function approach(f: { x: number; y: number }, t: { x: number; y: number }, gap = 11) {
+// The puncher charges right into the target's space so both tumble inside the cartoon dust cloud.
+function approach(f: { x: number; y: number }, t: { x: number; y: number }, gap = 5.5) {
   const side = f.x > t.x ? 1 : -1;
   let x = t.x + side * gap;
   if (x < 6 || x > 94) x = t.x - side * gap;
@@ -42,7 +42,7 @@ function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | un
     case 'thinking': return { pose: 'think', face: 'normal' };
     case 'typing': case 'executing': case 'journaling': return { pose: 'type', face: 'normal' };
     case 'arguing': return { pose: 'argue', face: 'normal' };
-    case 'fighting': return { pose: 'argue', face: 'angry' };
+    case 'fighting': return { pose: 'punch', face: 'angry' };
     default: return { pose: inDebate ? 'idle' : 'idle', face: 'normal' };
   }
 }
@@ -74,10 +74,12 @@ function Agent({ a, pos, sp, fight, reaction, inDebate, selected, onSelect }: { 
   }
   else if (walk.on && walk.left) flip = true;
   const talking = !!sp && !sp.done;
+  const isPunching = fight?.from === a.id || a.status === 'fighting';
+  const isHit = fight?.to === a.id;
   return (
     <button
-      className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${fight?.to === a.id ? 'is-hit' : ''} ${!inDebate && pose === 'idle' ? 'at-desk' : ''}`}
-      style={{ left: `${pos.x}%`, top: `${pos.y}%`, zIndex: Math.round(pos.y * 10) + (sp ? 400 : 0), ['--agent' as string]: a.color }}
+      className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${isPunching ? 'is-punching' : ''} ${isHit ? 'is-hit' : ''} ${(isPunching || isHit) ? 'in-dust-brawl' : ''} ${!inDebate && pose === 'idle' ? 'at-desk' : ''}`}
+      style={{ left: `${pos.x}%`, top: `${pos.y}%`, zIndex: Math.round(pos.y * 10) + (sp ? 400 : 0) + (isPunching || isHit ? 250 : 0), ['--agent' as string]: a.color }}
       onClick={onSelect}
       aria-label={`${a.name}, ${STATUS_LABEL[a.status]}`}
     >
@@ -101,10 +103,28 @@ function Agent({ a, pos, sp, fight, reaction, inDebate, selected, onSelect }: { 
 
 export function Office({ state, speech, fights, reactions, disagreement, selected, spark, onSelect }: Props) {
   const inDebate = !!state.debate;
-  const activeFight = fights.at(-1);
   const heat = Math.min(1, disagreement);
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
   const visible = new Set((Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at).slice(0, 1).map((s) => s.agent));
+
+  const displayFights = useMemo<FightFX[]>(() => {
+    if (fights.length > 0) return fights;
+    if (!inDebate || (state.debate?.round ?? 0) < 1) return [];
+    const debaters: AgentId[] = ['market', 'research', 'strategist'];
+    const speaker = debaters.find((id) => state.agents[id].status === 'fighting' || state.agents[id].status === 'arguing' || visible.has(id)) ?? 'market';
+    const speakerStance = state.agents[speaker].stance;
+    const opponent = debaters.find((id) => id !== speaker && state.agents[id].stance !== speakerStance)
+      ?? debaters.find((id) => id !== speaker)
+      ?? 'research';
+    return [{
+      id: (state.debate?.round ?? 1) * 7 + debaters.indexOf(speaker) + 1,
+      from: speaker,
+      to: opponent,
+      intensity: Math.max(0.7, disagreement),
+      punches: 3
+    }];
+  }, [fights, inDebate, state.debate?.round, state.agents, visible, disagreement]);
+  const activeFight = displayFights.at(-1);
 
   const positions = useMemo(() => {
     const out = {} as Record<AgentId, { x: number; y: number }>;
@@ -121,7 +141,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
   }, [state.agents, inDebate, activeFight]);
 
   return (
-    <div className={`office ${inDebate ? 'is-debating' : ''} ${fights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
+    <div className={`office ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
       <svg className="office-scene" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden>
         <defs>
           <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--sky-top)" /><stop offset="1" stopColor="var(--sky-bottom)" /></linearGradient>
@@ -253,11 +273,33 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
         return <Agent key={id} a={state.agents[id]} pos={positions[id]} sp={visible.has(id) ? speech[id] : undefined} fight={inDebate ? f : undefined} reaction={reactions[id]} inDebate={inDebate} selected={selected === id} onSelect={() => onSelect(id)} />;
       })}
 
-      {fights.map((f) => {
+      {displayFights.map((f) => {
         const to = SEATS[f.to], from = approach(SEATS[f.from], to);
+        const cx = (from.x + to.x) / 2;
+        const cy = to.y - 12;
+        const word1 = POW_WORDS[f.id % POW_WORDS.length];
+        const word2 = POW_WORDS[(f.id + 3) % POW_WORDS.length];
         return (
-          <div key={f.id} className="pow" style={{ left: `${(from.x + to.x) / 2}%`, top: `${to.y - 18}%`, ['--i' as string]: f.intensity }}>
-            <span>{POW_WORDS[f.id % POW_WORDS.length]}</span>
+          <div key={f.id} className="brawl-zone" style={{ left: `${cx}%`, top: `${cy}%`, ['--i' as string]: f.intensity }}>
+            <div className="brawl-dust-cloud" aria-hidden="true">
+              <i className="smoke-puff p1" />
+              <i className="smoke-puff p2" />
+              <i className="smoke-puff p3" />
+              <i className="smoke-puff p4" />
+              <i className="smoke-puff p5" />
+              <i className="smoke-puff p6" />
+              <i className="smoke-swirl s1" />
+              <i className="smoke-swirl s2" />
+              {BRAWL_PROPS.map((prop, idx) => (
+                <span key={idx} className={`brawl-limb l-${idx + 1}`}>{prop}</span>
+              ))}
+            </div>
+            <div className="pow pow-main">
+              <span>{word1}</span>
+            </div>
+            <div className="pow pow-sub">
+              <span>{word2}</span>
+            </div>
           </div>
         );
       })}

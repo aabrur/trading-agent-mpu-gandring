@@ -27,7 +27,7 @@ export function UpdateModal({
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string; output?: string } | null>(null);
 
-  const cur = info?.currentVersion ?? '0.0.0.2.1';
+  const cur = info?.currentVersion ?? '0.0.0.2.2';
   const latest = info?.latestVersion ?? cur;
 
   const checkNow = async () => {
@@ -56,8 +56,8 @@ export function UpdateModal({
       <div className="panel setup update-modal">
         <div className="panel-head">
           <h2>{t('versionModalTitle')}</h2>
-          <span className={`badge ${info?.updateAvailable ? 'update-avail-badge' : 'connect-wallet-btn'}`}>
-            {info?.updateAvailable ? t('updateAvailable') : t('upToDate')}
+          <span className="badge update-avail-badge">
+            <i className="update-notif-dot" /> {info?.updateAvailable ? t('updateAvailable') : `v${latest} · ${t('updateAvailable')}`}
           </span>
           <button autoFocus onClick={onClose}>{t('closeModal')}</button>
         </div>

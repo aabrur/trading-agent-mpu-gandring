@@ -15,9 +15,18 @@ const eth = () => (window as unknown as { ethereum?: Eip1193 }).ethereum;
 export function WalletPanel({ state, embedded = false }: { state: DeskState; embedded?: boolean }) {
   const { t } = useI18n();
   const [info, setInfo] = useState<WalletState | null>(null);
-  const [venue, setVenue] = useState<string>('hyperliquid');
-  const [network, setNetwork] = useState<'testnet' | 'mainnet'>('testnet');
-  const [address, setAddress] = useState<string>('');
+  const [venue, setVenue] = useState<string>(() => {
+    try { return localStorage.getItem('mg-wallet-venue') || 'hyperliquid'; } catch { return 'hyperliquid'; }
+  });
+  const [network, setNetwork] = useState<'testnet' | 'mainnet'>(() => {
+    try {
+      const saved = localStorage.getItem('mg-wallet-network');
+      return saved === 'mainnet' || saved === 'testnet' ? saved : 'testnet';
+    } catch { return 'testnet'; }
+  });
+  const [address, setAddress] = useState<string>(() => {
+    try { return localStorage.getItem('mg-wallet-address') || ''; } catch { return ''; }
+  });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [agent, setAgent] = useState<string>('');
@@ -30,7 +39,12 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
       .then((d: WalletState) => {
         setInfo(d);
         const dexVenues = d.venues.filter((x) => x.kind === 'DEX');
-        const initialDex = dexVenues.find((x) => x.venue === d.current)?.venue ?? dexVenues[0]?.venue ?? 'hyperliquid';
+        let savedV = '';
+        try { savedV = localStorage.getItem('mg-wallet-venue') || ''; } catch { /* ignore */ }
+        const initialDex = dexVenues.find((x) => x.venue === savedV)?.venue
+          ?? dexVenues.find((x) => x.venue === d.current)?.venue
+          ?? dexVenues[0]?.venue
+          ?? 'hyperliquid';
         setVenue(initialDex);
       })
       .catch(() => {});
@@ -61,7 +75,16 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
     setMsg(null);
     const w = eth();
     if (!w) { setMsg({ ok: false, text: 'No browser wallet found. Install MetaMask or Rabby, or use the manual steps.' }); return; }
-    try { const [a] = await w.request({ method: 'eth_requestAccounts' }); setAddress(a); }
+    try {
+      const [a] = await w.request({ method: 'eth_requestAccounts' });
+      setAddress(a);
+      try {
+        localStorage.setItem('mg-wallet-address', a);
+        localStorage.setItem('mg-wallet-venue', v.venue);
+        localStorage.setItem('mg-wallet-network', network);
+      } catch { /* ignore */ }
+      window.dispatchEvent(new Event('mg-wallet-updated'));
+    }
     catch (e) { setMsg({ ok: false, text: `Wallet refused: ${(e as Error).message}` }); }
   }
   async function approve() {
@@ -80,6 +103,12 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
       const done = await fetch('/api/wallet/approve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: start.id, signature }) }).then((r) => r.json());
       if (!done.ok) throw new Error(done.error);
       setMsg({ ok: true, text: done.note });
+      try {
+        localStorage.setItem('mg-wallet-address', address);
+        localStorage.setItem('mg-wallet-venue', v.venue);
+        localStorage.setItem('mg-wallet-network', network);
+      } catch { /* ignore */ }
+      window.dispatchEvent(new Event('mg-wallet-updated'));
       loadBalance(v.venue, network, address);
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
     finally { setBusy(false); }

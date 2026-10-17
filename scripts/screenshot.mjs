@@ -15,9 +15,17 @@ const api = (p, body) => fetch(new URL(p, url), { method: 'POST', headers: { 'co
 const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1600, height: 1280 }, deviceScaleFactor: 1.5 });
 if (process.env.SHOT_THEME) await page.addInitScript((t) => localStorage.setItem('mg-theme', t), process.env.SHOT_THEME);
-await page.addInitScript(() => localStorage.setItem('mpu_tour_done_v1', '1'));
+await page.addInitScript(() => {
+  localStorage.setItem('mpu_tour_done_v1', '1');
+  localStorage.setItem('mg-wallet-address', '0x71C59E9A6811223344556677889900AaBbCcDdEe');
+  localStorage.setItem('mg-wallet-venue', 'hyperliquid');
+  localStorage.setItem('mg-wallet-network', 'testnet');
+  localStorage.setItem('mg-currency', 'IDR');
+});
 await page.goto(url, { waitUntil: 'networkidle' });
 await page.waitForSelector('.office');
+await page.waitForTimeout(900);
+await page.click('.tour-skip-btn', { timeout: 3000 }).catch(() => {});
 await page.click('.trakteer-close-x', { timeout: 3000 }).catch(() => {});
 
 // one debate so the verdict panel, chart lines and paper book have something in them

@@ -6,6 +6,7 @@ import type express from 'express';
 import { z } from 'zod';
 import type { AppConfig } from '../config.js';
 import type { Desk } from '../desk.js';
+import type { AutoTrader } from '../auto.js';
 import { AGENT_IDS } from '../config.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from '../exchange/index.js';
 import { walletAccess } from '../wallet.js';
@@ -33,7 +34,7 @@ export function localClient(o: { remoteAddress?: string | null; hostHeader?: str
 
 export const UNKILL_COMMAND = 'npm run unkill -- --yes';
 type Limiter = (k: string) => boolean;
-export interface RouteCtx { cfg: AppConfig; desk: Desk; envFile: string; fetchImpl?: typeof fetch; limiter: (n: number, ms: number) => Limiter }
+export interface RouteCtx { cfg: AppConfig; desk: Desk; auto?: AutoTrader; envFile: string; fetchImpl?: typeof fetch; limiter: (n: number, ms: number) => Limiter }
 
 const Venue = z.enum(EXCHANGES as unknown as [ExchangeName, ...ExchangeName[]]);
 const KeysBody = z.object({ venue: Venue, network: z.enum(['testnet', 'mainnet']), key: z.string().max(300), secret: z.string().max(400), third: z.string().max(300).optional() }).strict();
@@ -44,6 +45,7 @@ const ModelsBody = z.object({ defaultProvider: Provider, defaultModel: z.string(
 const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
 const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive(), leverage: z.number().positive().max(100).optional() }).strict();
 const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(8).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
+const AutoBody = z.object({ on: z.boolean().optional(), intervalMin: z.number().int().min(1).max(1440).optional(), symbols: z.array(z.string().min(2).max(20)).min(1).max(12).optional(), maxHoldHours: z.number().int().min(0).max(720).optional(), n: z.number().int().min(1).max(4).optional(), runNow: z.boolean().optional() }).strict();
 
 export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   const writeLim = c.limiter(30, 60_000);
@@ -131,13 +133,24 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     if (!gate(req, res, true)) return;
     const p = KeysBody.safeParse(req.body);
     if (!p.success) return res.status(400).json({ ok: false, error: 'bad request: venue, network, key, secret (and third for OKX/dYdX)' });
-    try { const r = await saveVenueKeys(c.envFile, p.data.venue, p.data.network, p.data, { fetchImpl: c.fetchImpl }); res.status(r.ok ? 200 : 400).json(r); }
-    catch (e) { res.status(400).json({ ok: false, detail: safe((e as Error).message) }); }
+    try {
+      const r = await saveVenueKeys(c.envFile, p.data.venue, p.data.network, p.data, { fetchImpl: c.fetchImpl });
+      if (r.ok) {
+        c.cfg.exchange.name = p.data.venue;
+        c.desk.emit('state', c.desk.snapshot());
+      }
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) { res.status(400).json({ ok: false, detail: safe((e as Error).message) }); }
   });
   app.post('/api/setup/venue', (req, res) => {
     if (!gate(req, res, true)) return;
     const v = String(req.body?.venue ?? '');
-    const r = setVenue(c.envFile, v); res.status(r.ok ? 200 : 400).json(r);
+    const r = setVenue(c.envFile, v);
+    if (r.ok && EXCHANGES.includes(v as ExchangeName)) {
+      c.cfg.exchange.name = v as ExchangeName;
+      c.desk.emit('state', c.desk.snapshot());
+    }
+    res.status(r.ok ? 200 : 400).json(r);
   });
   app.post('/api/setup/mode', async (req, res) => {
     if (!gate(req, res, true)) return;
@@ -198,5 +211,36 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
   app.get('/api/ops/kill', (req, res) => {
     if (!gate(req, res)) return;
     res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, release: c.desk.killed ? `Only on this machine, in a terminal: ${UNKILL_COMMAND}, then restart the office.` : null, unkillCommand: UNKILL_COMMAND });
+  });
+  app.post('/api/ops/auto', (req, res) => {
+    if (!gate(req, res)) return;
+    const p = AutoBody.safeParse(req.body);
+    if (!p.success) return res.status(400).json({ ok: false, error: 'invalid auto trading settings' });
+    if (c.desk.killed && p.data.on) return res.status(409).json({ ok: false, error: 'Kill switch is ON. Release it first before enabling Auto Trade.' });
+    const envUpd: Record<string, string> = {};
+    if (typeof p.data.on === 'boolean') envUpd.AUTO_TRADING = p.data.on ? 'on' : 'off';
+    if (typeof p.data.intervalMin === 'number') envUpd.DEBATE_INTERVAL_MIN = String(p.data.intervalMin);
+    if (Array.isArray(p.data.symbols)) envUpd.AUTO_SYMBOLS = p.data.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean).join(',');
+    if (typeof p.data.maxHoldHours === 'number') envUpd.MAX_HOLD_HOURS = String(p.data.maxHoldHours);
+    if (typeof p.data.n === 'number') envUpd.OPEN_ORDERS_N = String(p.data.n);
+    if (Object.keys(envUpd).length > 0) setEnv(c.envFile, envUpd);
+    const autoSnap = c.auto
+      ? c.auto.configure(p.data)
+      : (() => {
+          if (typeof p.data.on === 'boolean') { c.cfg.auto.on = p.data.on; c.desk.autoState.on = p.data.on; }
+          if (typeof p.data.intervalMin === 'number') { c.cfg.auto.intervalMin = p.data.intervalMin; c.desk.autoState.intervalMin = p.data.intervalMin; }
+          if (Array.isArray(p.data.symbols)) c.cfg.auto.symbols = p.data.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean);
+          if (typeof p.data.maxHoldHours === 'number') c.cfg.auto.maxHoldHours = p.data.maxHoldHours;
+          if (typeof p.data.n === 'number' && [1, 2, 3, 4].includes(p.data.n)) {
+            c.desk.book.n = p.data.n as 1 | 2 | 3 | 4;
+            c.cfg.paper.n = p.data.n as 1 | 2 | 3 | 4;
+          }
+          c.desk.emit('state', c.desk.snapshot());
+          return c.desk.snapshot().auto;
+        })();
+    if (p.data.runNow && !c.desk.killed && c.auto) {
+      void c.auto.cycle();
+    }
+    res.json({ ok: true, auto: autoSnap, n: c.desk.book.n });
   });
 }

@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
+import { useI18n } from '../i18n';
 
 interface LocalAgent { id: string; label: string; installed: boolean; docs: string; loginCommand: string; hint: string }
 export function LocalAgentsSetup({ available }: { available: boolean }) {
+  const { t } = useI18n();
+  const [tab, setTab] = useState<'connect' | 'supervisor'>('connect');
   const [agents, setAgents] = useState<LocalAgent[]>([]);
   const [message, setMessage] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -15,15 +18,61 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
       const d = await r.json(); setMessage((old) => ({ ...old, [agent.id]: d.detail || d.error })); if (type === 'test') setVerified((old) => ({ ...old, [agent.id]: r.ok && d.ok }));
     } catch { setMessage((old) => ({ ...old, [agent.id]: 'Office not reachable. Try again.' })); } finally { setBusy(null); }
   }
-  return <details className="local-agents"><summary>Connect an agent you already use</summary>
-    <p className="wallet-note">Sign in through the agent’s own login. The desk reuses that account without copying its tokens. After testing, choose “Agent on this computer” in the provider selector above.</p>
-    <button type="button" onClick={() => void load()}>Refresh installed agents</button>
-    {message.load && <p role="status">{message.load}</p>}
-    <div className="local-agent-list">{agents.map((a) => <section key={a.id} className="local-agent-row">
-      <div><b>{a.label}</b> <span className="badge">{verified[a.id] ? 'Connection verified this session' : a.installed ? 'Installed · not yet tested' : 'Not found on PATH'}</span><p className="wallet-note small">{a.hint} <a href={a.docs} target="_blank" rel="noreferrer">Install / docs</a></p><code>{a.loginCommand}</code></div>
-      <div className="setup-nav"><button type="button" disabled={!available || !a.installed || !!busy} onClick={() => void action(a, 'login')}>Open sign-in</button><button type="button" disabled={!available || !a.installed || !!busy} onClick={() => void action(a, 'test')}>{busy === a.id ? 'Working...' : 'Test connection'}</button></div>
-      {message[a.id] && <p className="wallet-note" role="status">{message[a.id]}</p>}
-    </section>)}</div>
-    <details><summary>Antigravity, Grok Bot, or another external supervisor</summary><p className="wallet-note">Agents with terminal access can supervise this desk through its shell commands. Grok Bot teams can use the signed bridge; select that source in desk settings, save, and apply.</p><p className="wallet-note">For Antigravity or another desktop agent, give it this instruction on the desk computer:</p><pre className="supervisor-instructions">Supervise Trading Agent Mpu Gandring. Read http://127.0.0.1:8787/api/health, /api/state and /api/reports. Report missing stops, loss caps, stale prices and errors. Do not open, close or resize orders; change modes or guards; read keys; or release the kill switch. Follow AGENTS.md in the project for the full supervisor protocol.</pre></details>
-  </details>;
+  return (
+    <div className="local-agents">
+      <div className="local-agents-tabs" role="tablist" aria-label="Agent connection options">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'connect'}
+          className={`local-agent-tab-btn ${tab === 'connect' ? 'active' : ''}`}
+          onClick={() => setTab('connect')}
+        >
+          {t('connectAgentTab')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'supervisor'}
+          className={`local-agent-tab-btn ${tab === 'supervisor' ? 'active' : ''}`}
+          onClick={() => setTab('supervisor')}
+        >
+          {t('externalSupervisorTab')}
+        </button>
+      </div>
+
+      {tab === 'connect' ? (
+        <div className="local-agent-pane" role="tabpanel">
+          <div className="local-agent-pane-head">
+            <p className="wallet-note">Sign in through the agent’s own login. The desk reuses that account without copying its tokens. After testing, choose “Agent on this computer” in the provider selector above.</p>
+            <button type="button" onClick={() => void load()}>Refresh installed agents</button>
+          </div>
+          {message.load && <p role="status">{message.load}</p>}
+          <div className="local-agent-list">
+            {agents.map((a) => (
+              <section key={a.id} className="local-agent-row">
+                <div>
+                  <b>{a.label}</b>{' '}
+                  <span className="badge">{verified[a.id] ? 'Connection verified this session' : a.installed ? 'Installed · not yet tested' : 'Not found on PATH'}</span>
+                  <p className="wallet-note small">{a.hint} <a href={a.docs} target="_blank" rel="noreferrer">Install / docs</a></p>
+                  <code>{a.loginCommand}</code>
+                </div>
+                <div className="setup-nav">
+                  <button type="button" disabled={!available || !a.installed || !!busy} onClick={() => void action(a, 'login')}>Open sign-in</button>
+                  <button type="button" disabled={!available || !a.installed || !!busy} onClick={() => void action(a, 'test')}>{busy === a.id ? 'Working...' : 'Test connection'}</button>
+                </div>
+                {message[a.id] && <p className="wallet-note" role="status">{message[a.id]}</p>}
+              </section>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="local-agent-pane" role="tabpanel">
+          <p className="wallet-note">Agents with terminal access can supervise this desk through its shell commands. Grok Bot teams can use the signed bridge; select that source in desk settings, save, and apply.</p>
+          <p className="wallet-note">For Antigravity or another desktop agent, give it this instruction on the desk computer:</p>
+          <pre className="supervisor-instructions">Supervise Trading Agent Mpu Gandring. Read http://127.0.0.1:8787/api/health, /api/state and /api/reports. Report missing stops, loss caps, stale prices and errors. Do not open, close or resize orders; change modes or guards; read keys; or release the kill switch. Follow AGENTS.md in the project for the full supervisor protocol.</pre>
+        </div>
+      )}
+    </div>
+  );
 }

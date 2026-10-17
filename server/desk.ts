@@ -76,6 +76,7 @@ export class Desk extends EventEmitter {
   constructor(public cfg: AppConfig, private call: ModelCaller, private opts: DeskOptions = {}) {
     super();
     this.setMaxListeners(50);
+    this.autoState.intervalMin = cfg.auto.intervalMin;
     this.book = new PaperBook(cfg.paper.balance, cfg.paper.safetyNet, cfg.paper.n, cfg.risk.takerFee);
     // A kill switch pressed before a restart stays on until the owner runs `npm run unkill -- --yes`.
     const k = readKill(opts.killFile);
@@ -314,7 +315,7 @@ export class Desk extends EventEmitter {
       const mk = await this.run('market', 'opinion', {
         instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}).`,
         data: { symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h, fundingRate: snap.fundingRate, recentClosedCandles: lastCandles, source: snap.source, externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined },
-        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, temperament: this.agents.market.mood }
+        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, temperament: this.agents.market.mood, liveFeed: !snap.example }
       });
       this.setOpinion('market', mk.data.stance, mk.data.confidence);
       await this.say('market', mk.data.argument, mk.example); note('Market Analyst', mk.data.argument);
@@ -386,8 +387,8 @@ export class Desk extends EventEmitter {
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await this.run('lead', 'lead', {
         instruction: `Close the ${symbol} debate. Pick one action.`,
-        data: { symbol, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop } : null, freeSlots: this.book.n - this.book.positions.length, journal },
-        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false }
+        data: { symbol, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal },
+        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       });
       let action: Action = ld.data.action;
       let flipNote = '';

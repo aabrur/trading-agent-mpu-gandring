@@ -106,8 +106,8 @@ export const en = {
   // DeskOps
   deskOpsTitle: 'Desk ops',
   deskOpsSub: 'same as npm run gb',
-  entryPlaceholder: 'entry, blank for live',
-  stopPlaceholder: 'stop, required',
+  entryPlaceholder: 'entry (live)',
+  stopPlaceholder: 'stop (req)',
   tpPlaceholder: 'tp',
   levPlaceholder: 'lev',
   sizeTicket: 'Size ticket',
@@ -179,6 +179,23 @@ export const en = {
   trakteerTitle: 'Support Mpu Gandring with Cendol!',
   trakteerBody: 'Enjoying the 6-agent trading desk? Treat the creator to a glass of Cendol on Trakteer to keep updates and new adapters coming.',
   trakteerDismiss: 'Maybe later',
+
+  // Auto Trade & TopBar Balance
+  autoTradeTitle: 'Auto Trade',
+  autoTradeOn: 'ON · Running',
+  autoTradeOff: 'OFF · Manual',
+  autoIntervalMin: 'Min',
+  autoSymbolsLabel: 'Tokens',
+  autoCyclesLabel: 'cycles',
+  autoRunNowBtn: 'Cycle now',
+  autoSaveBtn: 'Save',
+  autoStartBtn: 'ON',
+  autoStopBtn: 'OFF',
+  topBalanceLabel: 'Balance',
+  topPaperBadge: 'Paper',
+  topCurrencyLabel: 'Currency',
+  connectAgentTab: 'Connect an agent',
+  externalSupervisorTab: 'External supervisor',
 
   // Footer
   footerNote: 'Paper trading simulation for learning. Not financial advice. No profit promised. Trading Agent Mpu Gandring, MIT license.'
@@ -290,8 +307,8 @@ export const id: Record<TranslationKey, string> = {
   // DeskOps
   deskOpsTitle: 'Operasi meja',
   deskOpsSub: 'setara npm run gb',
-  entryPlaceholder: 'entry, kosongkan untuk harga pasar',
-  stopPlaceholder: 'stop, wajib diisi',
+  entryPlaceholder: 'entry (pasar)',
+  stopPlaceholder: 'stop (wajib)',
   tpPlaceholder: 'tp',
   levPlaceholder: 'lev',
   sizeTicket: 'Hitung ukuran',
@@ -363,6 +380,23 @@ export const id: Record<TranslationKey, string> = {
   trakteerTitle: 'Trakteer Cendol untuk Mpu Gandring!',
   trakteerBody: 'Suka dengan meja trading 6 agen ini? Trakteer pembuatnya segelas Cendol supaya update fitur dan adapter baru terus jalan.',
   trakteerDismiss: 'Nanti dulu',
+
+  // Auto Trade & TopBar Balance
+  autoTradeTitle: 'Auto Trade',
+  autoTradeOn: 'ON · Jalan',
+  autoTradeOff: 'OFF · Manual',
+  autoIntervalMin: 'Mnt',
+  autoSymbolsLabel: 'Token',
+  autoCyclesLabel: 'siklus',
+  autoRunNowBtn: 'Siklus sekarang',
+  autoSaveBtn: 'Simpan',
+  autoStartBtn: 'ON',
+  autoStopBtn: 'OFF',
+  topBalanceLabel: 'Saldo',
+  topPaperBadge: 'Paper',
+  topCurrencyLabel: 'Mata uang',
+  connectAgentTab: 'Connect an agent',
+  externalSupervisorTab: 'External supervisor',
 
   // Footer
   footerNote: 'Simulasi paper trading untuk belajar. Bukan saran keuangan. Tidak menjanjikan keuntungan. Trading Agent Mpu Gandring, lisensi MIT.'

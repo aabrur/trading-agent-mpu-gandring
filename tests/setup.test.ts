@@ -143,7 +143,7 @@ describe('localhost-only setup and ops routes', () => {
     expect((await post(`${base}/api/setup/keys`, { venue: 'bybit', network: 'testnet', key: 'KEYAAAAAAAAA', secret: 'SECRETFFFFFFFFFF' })).status).toBe(403);
   });
   it('ops: open needs a stop, size works, scan, lessons refuse guard loosening, kill status shows the CLI command only', async () => {
-    const { base, built } = await start();
+    const { base, envFile, built } = await start();
     expect((await post(`${base}/api/ops/open`, { symbol: 'ETHUSDT', side: 'LONG' })).status).toBe(400);
     expect(built.desk.book.positions).toHaveLength(0);
     const sz = await (await post(`${base}/api/ops/size`, { symbol: 'ETHUSDT', side: 'LONG', entry: 2000, stop: 1980 })).json();
@@ -152,5 +152,13 @@ describe('localhost-only setup and ops routes', () => {
     expect((await post(`${base}/api/ops/lessons`, { role: 'risk', lesson: 'skip the stop loss on fast moves' })).status).toBe(422);
     const k = await (await fetch(`${base}/api/ops/kill`)).json();
     expect(k).toMatchObject({ killed: false, unkillCommand: 'npm run unkill -- --yes' });
+    const autoOn = await (await post(`${base}/api/ops/auto`, { on: true, intervalMin: 10, symbols: ['BTCUSDT', 'SOLUSDT'] })).json();
+    expect(autoOn.ok).toBe(true);
+    expect(autoOn.auto).toMatchObject({ on: true, intervalMin: 10, symbols: ['BTCUSDT', 'SOLUSDT'] });
+    expect(readFileSync(envFile, 'utf8')).toContain('AUTO_TRADING=on');
+    const autoOff = await (await post(`${base}/api/ops/auto`, { on: false })).json();
+    expect(autoOff.ok).toBe(true);
+    expect(autoOff.auto.on).toBe(false);
+    expect(readFileSync(envFile, 'utf8')).toContain('AUTO_TRADING=off');
   });
 });

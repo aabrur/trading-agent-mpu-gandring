@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const APP_VERSION = '0.0.0.2.1';
+export const APP_VERSION = '0.0.0.2.2';
 export const REPO_RAW_PKG_URL = 'https://raw.githubusercontent.com/aabrur/trading-agent-mpu-gandring/main/package.json';
 export const REPO_URL = 'https://github.com/aabrur/trading-agent-mpu-gandring';
 
@@ -54,17 +54,18 @@ export async function checkUpdate(fetchImpl: typeof fetch = fetch, cwd = process
   const currentVersion = readLocalVersion(cwd);
   const commit = getLocalCommit(cwd);
   const defaultNotes = [
-    'DEX-only Connect Wallet with live DEX and CEX balance reader',
-    'Official deposit page links for all supported DEX and CEX venues',
-    'Interactive step-by-step onboarding tour with directional pointers',
-    'Full English and Indonesian dual-language UI mode',
-    'In-app version checker and one-click update adapter'
+    'Instant live balance display in TopBar and Portfolio (Paper/Live Book) with multi-country currency converter after Connect Wallet or API Key setup',
+    'Autonomous agent execution (Buy/Long, Sell/Short, Close, Hold) with interactive Token Picker chips and Max Open Positions (N = 1..4) in Desk Ops Auto Trade',
+    'Side-by-side Connect an Agent and External Supervisor tabs in Setup with locked modal scroll',
+    'Mandatory interactive step-by-step tutorial on every fresh session or restart',
+    'Brutal cartoon smoke-cloud fight animation with flying fists, stars, and impact bursts'
   ];
 
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4500);
-    const res = await fetchImpl(REPO_RAW_PKG_URL, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+    const sep = REPO_RAW_PKG_URL.includes('?') ? '&' : '?';
+    const res = await fetchImpl(`${REPO_RAW_PKG_URL}${sep}t=${Date.now()}`, { signal: ctrl.signal, headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
     clearTimeout(timer);
     if (!res.ok) {
       return {
@@ -81,13 +82,14 @@ export async function checkUpdate(fetchImpl: typeof fetch = fetch, cwd = process
     const pkg = (await res.json()) as { appVersion?: string; version?: string; changelog?: string[] };
     const rawRemote = String(pkg.appVersion || (pkg.version === '0.1.0' ? '0.0.0.1.0' : pkg.version) || currentVersion).replace(/^v/i, '');
     const updateAvailable = compareVersions(rawRemote, currentVersion) > 0;
+    const latestVersion = updateAvailable ? rawRemote : currentVersion;
     return {
       ok: true,
       currentVersion,
-      latestVersion: updateAvailable ? rawRemote : currentVersion,
+      latestVersion,
       updateAvailable,
       commit,
-      releaseUrl: REPO_URL,
+      releaseUrl: `${REPO_URL}/releases/tag/v${latestVersion}`,
       checkedAt: Date.now(),
       notes: Array.isArray(pkg.changelog) && pkg.changelog.length > 0 ? pkg.changelog : defaultNotes
     };
