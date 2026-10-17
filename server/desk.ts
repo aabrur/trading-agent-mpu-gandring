@@ -1,4 +1,5 @@
 import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS } from './exchange/types.js';
+import { adapterRules, publicRules, type InstrumentRules } from './exchange/rules.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
@@ -440,19 +441,31 @@ export class Desk extends EventEmitter {
   }
 
   /** The only way an order is opened, paper or live. Risk gate result in, money split and caps applied here. */
-  async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number; tp?: number | null }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
+  async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number; tp?: number | null; stop?: number | null }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
     const live = this.opts.executor;
     const no = async (reason: string) => { this.scorecard.fill(false); this.note('skipped', symbol, `${side}: ${reason}`); await this.say('execution', `No fill. ${reason}`, false, 'idle'); return { ok: false, line: `No fill. ${reason}`, reason }; };
     if (this.killed) return no('Kill switch is on.');
     if (this.checkDay()) return no(`Daily loss stop is on (${this.cfg.risk.dailyLossLimitPct}% for today).`);
     if (live && example) return no('Refusing an exchange order on sample data.');
+    // Lot step, min qty, tick, min notional and taker fee come from the exchange (LIVE/TESTNET: the adapter, cached 5 min).
+    let rules: InstrumentRules | null = null;
+    try {
+      rules = live ? await adapterRules(live.adapter, symbol) : await publicRules(this.cfg.marketSource, symbol, 'mainnet');
+    } catch (e) {
+      if (live) return no(`Could not read the exchange instrument rules for ${symbol} (${safe((e as Error).message)}). Not sizing on guesses.`);
+      rules = null; // paper: guessed lot step, the plan says so
+    }
+    if (live && rules?.status && rules.status !== 'TRADING') return no(`${symbol} is ${rules.status} on the exchange, not TRADING.`);
     const plan = planOrder({
-      balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
-      price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage, stopPct: gate.stopPct, minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takeProfitR: this.cfg.risk.takeProfitR
+      balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
+      price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage,
+      // A given stop (Strategist / Grok Bot ticket) is used exactly. Only the internal debate falls back to stopPct.
+      stop: gate.stop ?? null, stopPct: gate.stopPct, minStopPct: this.cfg.risk.minStopPct,
+      minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takerFee: this.cfg.risk.takerFee, rules, takeProfitR: this.cfg.risk.takeProfitR
     });
     if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
-    // A take profit from a Grok Bot agent is accepted only on the right side of the entry. The stop is never theirs to widen.
-    if (gate.tp && Number.isFinite(gate.tp) && (side === 'LONG' ? gate.tp > price : gate.tp < price)) plan.tp = roundPrice(gate.tp);
+    // A take profit from a Grok Bot agent is accepted only on the right side of the entry (the adapter rounds it to the tick). The stop is never theirs to widen.
+    if (gate.tp && Number.isFinite(gate.tp) && (side === 'LONG' ? gate.tp > price : gate.tp < price)) plan.tp = rules?.tickSize ? gate.tp : roundPrice(gate.tp);
     this.setStatus('execution', 'executing'); this.changed();
     let entry = price, qty = plan.qty, tag = 'Paper fill';
     if (live) {
@@ -565,7 +578,8 @@ export class Desk extends EventEmitter {
   /**
    * Keyless agent path (npm run gb -- open, Grok Bot Desk Lead). Same single execution path as the
    * internal debate: risk gate code caps, money split, stop loss, daily loss stop, kill switch.
-   * A stop wider than the cap is tightened; a missing stop uses the default; leverage is capped.
+   * A given stop is used exactly (tick-rounded toward the entry) and never moved: qty shrinks to fit the
+   * loss cap including round-trip fees, or the ticket is refused. A missing stop uses the default; leverage is capped.
    */
   async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId }): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
     const symbol = normSymbol(o.symbol);
@@ -575,17 +589,16 @@ export class Desk extends EventEmitter {
     if (this.book.positions.some((p) => p.symbol === symbol)) return { ok: false, reply: `already have a ${symbol} position`, notes: [] };
     const snap = await getSnapshot(symbol, this.cfg.marketSource);
     this.updateTicker(snap);
-    const price = roundPrice(o.side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
-    let stopPct = this.cfg.risk.defaultStopPct;
-    if (o.stop != null) {
-      if (!(o.stop > 0) || (o.side === 'LONG' ? o.stop >= price : o.stop <= price)) return { ok: false, reply: `stop ${o.stop} is on the wrong side of the entry ${price}`, notes: [] };
-      stopPct = (Math.abs(price - o.stop) / price) * 100;
-    }
-    const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot ticket, code caps only', sizeFactor: 1, leverage: o.leverage ?? this.cfg.risk.maxLeverage, stopPct } as never, this.cfg.risk, this.agents.risk.mood);
+    // Entry is the live ask (LONG) or bid (SHORT), not rounded: the stop distance and size are measured from it.
+    const price = o.side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last);
+    if (o.stop != null && (!(o.stop > 0) || (o.side === 'LONG' ? o.stop >= price : o.stop <= price))) return { ok: false, reply: `stop ${o.stop} is on the wrong side of the entry ${price}`, notes: [] };
+    // The gate caps leverage and size factor. The given stop is NOT clamped: it goes to the planner exactly,
+    // which shrinks qty to fit the loss cap (fees included) or refuses. No stop given: DEFAULT_STOP_PCT.
+    const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot ticket, code caps only', sizeFactor: 1, leverage: o.leverage ?? this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct } as never, this.cfg.risk, this.agents.risk.mood);
     this.scorecard.verdict(); this.scorecard.riskDecision(gate.decision);
     await this.say('risk', `${gate.decision}. Ticket ${o.side} ${symbol} checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
     if (gate.decision === 'REJECT') { this.note('skipped', symbol, 'Risk rejected the ticket'); return { ok: false, reply: 'risk rejected', notes: gate.notes }; }
-    const res = await this.executeOpen(symbol, o.side, price, { ...gate, tp: o.tp ?? null }, snap.example);
+    const res = await this.executeOpen(symbol, o.side, price, { ...gate, tp: o.tp ?? null, stop: o.stop ?? null }, snap.example);
     if (res.ok) this.scorecard.opened(symbol, { side: o.side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision });
     this.verdicts.unshift({ id: `gb-${Date.now().toString(36)}`, symbol, action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', riskDecision: gate.decision, executed: res.ok, reason: res.ok ? 'Grok Bot ticket' : res.reason, disagreement: this.score().disagreement, camps: this.score().camps, example: snap.example, at: Date.now(), ...(res.order ? { order: res.order } : {}) });
     this.verdicts = this.verdicts.slice(0, 50);

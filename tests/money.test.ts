@@ -39,7 +39,7 @@ describe('order planning', () => {
     expect(planOrder({ ...base, stopPct: 0 }).ok).toBe(false);
   });
   it('does not round up below the minimum and suggests a smaller N', () => {
-    const p = planOrder({ ...base, balance: 30, safetyNet: 20, n: 4 }); // 2.5 per order
+    const p = planOrder({ ...base, balance: 30, safetyNet: 20, n: 4, leverage: 1 }); // 2.5 per order, notional 2.5 < 5
     expect(p.ok).toBe(false);
     if (!p.ok) expect(p.suggestion).toMatch(/smaller N/);
   });

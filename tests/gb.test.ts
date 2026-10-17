@@ -49,10 +49,11 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(r.ok).toBe(true);
     const notes = (r.data as { notes: string[] }).notes.join(' ');
     expect(notes).toMatch(/capped to 3x/);
-    expect(notes).toMatch(/wider than/);
     expect(adapter.placed).toHaveLength(1);
     expect(adapter.placed[0].leverage).toBeLessThanOrEqual(3);
-    expect(adapter.placed[0].stop).toBeGreaterThan(0);
+    // The given stop is never moved or clamped; a wide stop shrinks the size instead.
+    expect(adapter.placed[0].stop).toBe(3600);
+    expect(r.text).toMatch(/Size cut so a stop hit \(with fees\)/);
     const pos = await run('positions');
     expect((pos.data as unknown[]).length).toBe(1);
     const acc = await run('account');

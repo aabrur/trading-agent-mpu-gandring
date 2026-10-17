@@ -9,7 +9,7 @@ import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, AGENT_IDS } from '../server/config.js';
 import { getSnapshot, getCandles, TIMEFRAMES, MARKET_SOURCES, type Timeframe } from '../server/market/index.js';
-import { EXCHANGES, VENUE_KIND, VENUE_LABEL, VENUE_KEY_HINT, ADAPTER_STATUS, envNames } from '../server/exchange/index.js';
+import { EXCHANGES, VENUE_KIND, VENUE_LABEL, VENUE_KEY_HINT, ADAPTER_STATUS, envNames, publicRules } from '../server/exchange/index.js';
 import { moneySplit, planOrder, round2 } from '../server/money.js';
 import { normSymbol } from '../server/commands.js';
 import { safe } from '../server/redact.js';
@@ -113,17 +113,22 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
       const s = normSymbol(args[0] ?? ''); const side = String(args[1] ?? '').toUpperCase(); const entry = Number(args[2]), stop = Number(args[3]);
       if (!s || (side !== 'LONG' && side !== 'SHORT') || !(entry > 0) || !(stop > 0)) return fail('usage: size <symbol> <LONG|SHORT> <entry> <stop>');
       if (side === 'LONG' ? stop >= entry : stop <= entry) return fail(`stop ${stop} is on the wrong side of entry ${entry}`);
-      let book = { balance: cfg.paper.balance, safetyNet: cfg.paper.safetyNet, n: cfg.paper.n, open: 0, used: 0 };
-      try { const st = await state(); book = { balance: st.paper.balance, safetyNet: st.paper.safetyNet, n: st.paper.n, open: st.paper.positions.length, used: st.paper.usedMargin }; } catch { /* offline: config values */ }
-      const rawStopPct = (Math.abs(entry - stop) / entry) * 100;
-      const stopPct = Math.min(cfg.risk.defaultStopPct, Math.max(cfg.risk.minStopPct, rawStopPct));
+      let book = { balance: cfg.paper.balance, equity: cfg.paper.balance, safetyNet: cfg.paper.safetyNet, n: cfg.paper.n, open: 0, used: 0, mode: 'offline' };
+      try { const st = await state(); book = { balance: st.paper.balance, equity: st.paper.equity ?? st.paper.balance, safetyNet: st.paper.safetyNet, n: st.paper.n, open: st.paper.positions.length, used: st.paper.usedMargin, mode: st.mode }; } catch { /* offline: config values */ }
       const leverage = Math.max(1, Math.min(cfg.risk.maxLeverage, Math.floor(num(flags.leverage) ?? cfg.risk.maxLeverage)));
-      const plan = planOrder({ balance: book.balance, safetyNet: book.safetyNet, n: book.n, openPositions: book.open, usedMargin: book.used, price: entry, side: side as 'LONG', sizeFactor: 1, leverage, stopPct, minOrderUsdt: cfg.risk.minOrderUsdt, maxLossPerTradePct: cfg.risk.maxLossPerTradePct, takeProfitR: cfg.risk.takeProfitR });
-      const notes = [rawStopPct !== stopPct ? `stop distance ${round2(rawStopPct)}% clamped to ${round2(stopPct)}% by the caps` : '', (num(flags.leverage) ?? 0) > cfg.risk.maxLeverage ? `leverage capped to ${cfg.risk.maxLeverage}x` : ''].filter(Boolean);
-      if (!plan.ok) return fail(`no ticket: ${plan.reason}`, { ok: false, reason: plan.reason, split: plan.split, notes });
-      const riskAtStop = round2(Math.abs(entry - plan.stop) * plan.qty);
-      const d = { symbol: s, side, entry, qty: plan.qty, margin: plan.margin, notional: plan.notional, leverage: plan.leverage, stop: plan.stop, tp: plan.tp, riskAtStop, split: plan.split, notes: [...notes, ...plan.notes] };
-      return ok(d, `${side} ${plan.qty} ${s} at ${entry}: margin ${plan.margin} at ${plan.leverage}x, SL ${plan.stop}${plan.tp ? `, TP ${plan.tp}` : ''}, risk at stop ${riskAtStop} USDT.${d.notes.length ? ' ' + d.notes.join('. ') : ''}`);
+      // Lot step, tick, min notional and fee come from the venue's own instrument rules, never guessed from price.
+      const venue = (env.EXCHANGE ?? '').trim().toLowerCase() || cfg.marketSource;
+      const network = String(env.TRADING_MODE ?? '').toUpperCase() === 'TESTNET' ? 'testnet' : 'mainnet';
+      let rules: Awaited<ReturnType<typeof publicRules>> = null;
+      try { rules = await publicRules(venue, s, network, f); }
+      catch (e) { return fail(`no ticket: could not read ${venue} instrument rules for ${s} (${safe((e as Error).message)}). Not sizing on guessed lot sizes.`); }
+      if (rules?.status && rules.status !== 'TRADING') return fail(`no ticket: ${s} status on ${venue} is ${rules.status}, not TRADING`);
+      const notes = [(num(flags.leverage) ?? 0) > cfg.risk.maxLeverage ? `leverage capped to ${cfg.risk.maxLeverage}x` : '', rules ? '' : `no public instrument reader for ${venue}; lot step guessed here, the office re-sizes with the exchange rules before any order`].filter(Boolean);
+      const plan = planOrder({ balance: book.balance, equity: book.equity, safetyNet: book.safetyNet, n: book.n, openPositions: book.open, usedMargin: book.used, price: entry, side: side as 'LONG', sizeFactor: 1, leverage, stop, minStopPct: cfg.risk.minStopPct, minOrderUsdt: cfg.risk.minOrderUsdt, maxLossPerTradePct: cfg.risk.maxLossPerTradePct, takerFee: cfg.risk.takerFee, rules, takeProfitR: cfg.risk.takeProfitR });
+      if (!plan.ok) return fail(`no ticket: ${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`, { ok: false, reason: plan.reason, suggestion: plan.suggestion, split: plan.split, rules, notes });
+      const maxLoss = round2((book.equity * cfg.risk.maxLossPerTradePct) / 100);
+      const d = { symbol: s, side, entry, qty: plan.qty, margin: plan.margin, notional: plan.notional, leverage: plan.leverage, stop: plan.stop, stopGiven: stop, stopPct: plan.stopPct, tp: plan.tp, riskAtStop: plan.lossAtStop, fees: plan.fees, takerFee: plan.takerFee, maxLoss, equity: book.equity, book: book.mode, rules: plan.rules, split: plan.split, notes: [...notes, ...plan.notes] };
+      return ok(d, `${side} ${plan.qty} ${s} at ${entry}: notional ${plan.notional}, margin ${plan.margin} at ${plan.leverage}x (allocation ${plan.split.perOrder}), SL ${plan.stop}${plan.tp ? `, TP ${plan.tp}` : ''}, loss at stop incl. fees ${plan.lossAtStop} USDT (cap ${maxLoss}). Rules: step ${plan.rules.qtyStep}, min qty ${plan.rules.minQty}, tick ${plan.rules.tickSize}, min notional ${plan.rules.minNotional} from ${plan.rules.source ?? 'n/a'}.${d.notes.length ? ' ' + d.notes.join('. ') : ''}`);
     }
     case 'open': {
       const s = normSymbol(args[0] ?? ''); const side = String(args[1] ?? '').toUpperCase();

@@ -1,6 +1,7 @@
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Hex } from 'viem';
 import { ExchangeError, httpJson, floorStep, roundTick, pickProtection, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
+import { asterRules, type InstrumentRules, type RulesCache } from './rules.js';
 
 // EXPERIMENTAL, UNTESTED against a real account. Aster perpetual futures, API v3, one-way mode.
 // Docs: https://github.com/asterdex/api-docs (V3 Futures), https://asterdex.github.io/aster-api-website/asterCode/authentication/
@@ -64,13 +65,12 @@ export class AsterAdapter implements ExchangeAdapter {
     return { ok: canWithdraw === false, canWithdraw, canTrade, verified: canWithdraw === false, detail: canWithdraw === false ? detail : `${detail}. Refusing unless Aster reports canWithdraw false for this signer.` };
   }
   async balance() { const r = await this.req('GET', '/fapi/v3/account'); return { equityUsdt: Number(r?.totalMarginBalance ?? 0), availableUsdt: Number(r?.availableBalance ?? 0) }; }
+  private rulesCache: RulesCache = new Map();
+  /** Lot step, min qty, tick, min notional and taker fee straight from Aster exchangeInfo, cached 5 min. */
+  instrumentRules(symbol: string): Promise<InstrumentRules> { return asterRules(symbol, this.network, this.fetchImpl, this.base, this.rulesCache); }
   async instrument(symbol: string) {
-    const r = await this.pub('/fapi/v3/exchangeInfo');
-    const s = r?.symbols?.find((x: any) => x.symbol === symbol);
-    if (!s) throw new ExchangeError(`aster: unknown symbol ${symbol}`);
-    const lot = s.filters.find((f: any) => f.filterType === 'MARKET_LOT_SIZE') ?? s.filters.find((f: any) => f.filterType === 'LOT_SIZE');
-    const px = s.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
-    return { symbol, qtyStep: Number(lot.stepSize), minQty: Number(lot.minQty), tickSize: Number(px.tickSize) };
+    const r = await this.instrumentRules(symbol).catch((e) => { throw new ExchangeError(`aster: ${(e as Error).message}`); });
+    return { symbol, qtyStep: r.qtyStep, minQty: r.minQty, tickSize: r.tickSize };
   }
   async ticker(symbol: string) { const r = await this.pub(`/fapi/v3/ticker/price?symbol=${symbol}`); const px = Number(r?.price); if (!px) throw new ExchangeError('aster: no price'); return px; }
   async funding(symbol: string) { const r = await this.pub(`/fapi/v3/premiumIndex?symbol=${symbol}`); return Number(r?.lastFundingRate ?? NaN); }

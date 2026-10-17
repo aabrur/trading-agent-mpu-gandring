@@ -1,4 +1,5 @@
 import { safe } from '../redact.js';
+import type { InstrumentRules } from './rules.js';
 
 // One interface for every venue. The desk never talks to an exchange directly,
 // it talks to an ExchangeAdapter, and only through the LiveExecutor.
@@ -59,6 +60,8 @@ export interface ExchangeAdapter {
   permissions(): Promise<PermissionReport>;
   balance(): Promise<Balance>;
   instrument(symbol: string): Promise<Instrument>;
+  /** Full exchange rules for sizing (lot, tick, min notional, taker fee), cached briefly. Optional; see adapterRules(). */
+  instrumentRules?(symbol: string): Promise<InstrumentRules>;
   /** Last traded or mid price, public read. */
   ticker(symbol: string): Promise<number>;
   /** One send. Market entry with the stop loss (and take profit) attached. Never retried by the adapter. */

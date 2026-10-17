@@ -9,6 +9,7 @@ import { OrderlyAdapter } from './orderly.js';
 import { EXCHANGES, ExchangeError, type ExchangeAdapter, type ExchangeName, type FetchLike, type Network } from './types.js';
 
 export * from './types.js';
+export * from './rules.js';
 
 export interface ExchangeCreds { key: string; secret: string; passphrase?: string }
 export interface ExchangeSettings { name: ExchangeName | null; creds: Record<Network, ExchangeCreds | null> }
