@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, LineStyle, type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type MouseEventParams } from 'lightweight-charts';
 import type { CandleData, DeskState } from '../types';
+import { TradingViewChart } from './TradingViewChart';
 import { fmt, fmtPx } from './format';
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -10,6 +11,8 @@ const localDay = (sec: number) => new Date(sec * 1000).toLocaleDateString([], { 
 interface Props { state: DeskState; symbol: string; onSymbol: (s: string) => void; data: CandleData | null; theme: string }
 
 export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
+  const [view, setView] = useState<'desk' | 'tv'>('desk');
+  const tv = !!state.tradingview?.widget && view === 'tv';
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -83,20 +86,25 @@ export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
           {tick && <span className={`chip-change ${tick.change24hPct >= 0 ? 'up' : 'down'}`}>{tick.change24hPct >= 0 ? '+' : ''}{fmt(tick.change24hPct)}% 24h</span>}
           <span className="muted small">15m candles · {data ? (data.example ? 'sample data (EXAMPLE)' : data.source) : 'loading'}</span>
         </div>
+        {state.tradingview?.widget && <div className="seg">
+          <button className={view === 'desk' ? 'on' : ''} onClick={() => setView('desk')}>desk chart</button>
+          <button className={view === 'tv' ? 'on' : ''} onClick={() => setView('tv')}>TradingView</button>
+        </div>}
         <div className="seg">
           {state.watchlist.map((s) => <button key={s} className={s === symbol ? 'on' : ''} onClick={() => onSymbol(s)}>{s.replace('USDT', '')}</button>)}
         </div>
       </div>
-      <div className="ohlc">
+      {!tv && <div className="ohlc">
         {shown && <>
           <span>{localDay(shown.t)} {localTime(shown.t)}</span>
           <span>O <b>{fmtPx(shown.o)}</b></span><span>H <b>{fmtPx(shown.h)}</b></span><span>L <b>{fmtPx(shown.l)}</b></span>
           <span>C <b className={shown.c >= shown.o ? 'up' : 'down'}>{fmtPx(shown.c)}</b></span>
         </>}
         <span className="legend"><i className="lg entry" />entry <i className="lg stop" />stop <i className="lg tp" />take profit <i className="lg now" />last price</span>
-      </div>
-      <div className="chart-box" ref={box} />
-      {positions.length === 0 && <p className="chart-note">No open paper position on {symbol}. Entry, stop and take profit lines show up here when one opens.</p>}
+      </div>}
+      <div className="chart-box" ref={box} style={tv ? { display: 'none' } : undefined} />
+      {tv && <TradingViewChart symbol={symbol} prefix={state.tradingview.prefix} theme={theme} />}
+      {!tv && positions.length === 0 && <p className="chart-note">No open {state.mode === 'LIVE' ? 'LIVE' : 'paper'} position on {symbol}. Entry, stop and take profit lines show up here when one opens.</p>}
     </section>
   );
 }

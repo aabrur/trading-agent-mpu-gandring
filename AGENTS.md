@@ -4,7 +4,9 @@ You are setting up **Trading Agent Mpu Gandring** for a person on their own comp
 
 ## Ground rules
 
-- This is a paper trading simulation. Do not add live order, wallet, or withdrawal code. Do not change `TRADING_MODE` to anything but `PAPER`.
+- PAPER is the default. Never set `TRADING_MODE=LIVE` or `LIVE_CONFIRMED` yourself, never run `npm run setup -- unlock-live` for the person, and never weaken the unlock checks. Only the person, typing in a terminal, can unlock LIVE. You may run the testnet step if they ask.
+- Never add withdrawal, transfer, or wallet-key code. On Hyperliquid only an API agent wallet key is allowed, never the main wallet's private key.
+- Never pass keys as command line flags. Use `--keys-from-env` with your platform's secret store, or let the person type them into the wizard (hidden input) or into `.env`.
 - Never ask the person to paste an API key into a chat, an issue, a commit, or a log. Keys go only into the local `.env` file, typed by the person or written through your platform's secret store.
 - Never print `.env`, never commit it, and never echo a key back to confirm it. Confirm with "a key is set for X" instead.
 - Use only the project name "Trading Agent Mpu Gandring" in anything you write for this repo.
@@ -25,8 +27,32 @@ If Node is older than 20, tell the person and point them to https://nodejs.org (
 ```bash
 cd trading-agent-mpu-gandring
 npm install
-cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 ```
+
+## 2b. Which mode?
+
+Ask: "Should the agents be your Grok Bot team (Grok Bot mode) or models running from this computer (local mode)?"
+
+- Grok Bot mode: follow [docs/grokbot-mode.md](docs/grokbot-mode.md). Run `npm run setup -- --yes --app-mode grokbot --generate-agent-secret`, then tell the person the secret is in `.env` as `AGENT_EVENT_SECRET` and that they copy it into their Grok Bot secret store themselves.
+- Local mode: continue below.
+
+## 2c. Run the setup CLI
+
+If the person is at a terminal, the simplest path is `npm run setup` (interactive, hidden key input). If you drive it yourself, use flags:
+
+```bash
+npm run setup -- --yes --app-mode local --default-provider mock --balance 1000 --safety-net 200 --n 4 --daily-loss 3
+# add, as the person chooses:
+#   --default-provider xai --agent risk=anthropic --model risk=<model name>
+#   --tradingview-widget on --tradingview-webhook on
+#   --news cryptopanic          (key goes in .env as CRYPTOPANIC_API_KEY)
+#   --exchange bybit            (keys go in .env, trading only, withdrawals off)
+#   --keys-from-env             (copies keys already in your secret-store environment)
+npm run setup -- status         # what is set, secrets masked
+npm run doctor                  # harmless read on every key, never prints a secret
+```
+
+Setup always writes `TRADING_MODE=PAPER`. The manual steps below do the same thing by hand if you prefer.
 
 ## 3. Ask about model keys, safely
 
@@ -58,7 +84,7 @@ Show them the result: Money Trade = balance minus safety net, and per order = Mo
 npm test
 ```
 
-All tests must pass. If one fails, show the failing test name and the error, fix only what is needed, and run again. Do not delete or weaken the safety tests (paper-only exit code, injection, risk caps, money split).
+All tests must pass. If one fails, show the failing test name and the error, fix only what is needed, and run again. Do not delete or weaken the safety tests (LIVE lock and exit code, withdraw refusal, no secrets in logs, injection, risk caps, money split).
 
 Optional offline smoke test:
 
@@ -77,6 +103,13 @@ npm run dev
 
 Give the person both links. If they want to open it from a phone, give them `http://<computer-ip>:5173`. If they use Tailscale, `tailscale ip -4` gives the address.
 
+## 6b. Optional: TradingView, plugins, exchange testnet
+
+- TradingView widget and alert webhook: [docs/local-mode.md](docs/local-mode.md#tradingview). The passphrase is generated into `.env`. Alerts only start debates.
+- News plugin: optional, `NEWS_PROVIDER=cryptopanic` plus a key in `.env`.
+- Exchange: the person creates keys with trading permission only, withdrawals off. Testnet keys first. `npm run doctor` checks them. `npm run setup -- testnet` runs the testnet round trip if the person asks for it.
+- LIVE: explain [docs/live-trading.md](docs/live-trading.md) and the risk of losing money, then stop. The person runs `npm run setup -- check-key` and `npm run setup -- unlock-live` themselves.
+
 ## 7. Optional: Grok Bot bridge
 
 Only if the person asks. Follow [docs/grokbot-bridge.md](docs/grokbot-bridge.md). The webhook sender key goes into `.env` as `GROKBOT_WEBHOOK_KEY`, never into a chat.
@@ -87,7 +120,7 @@ Tell the person:
 
 - How to start a debate (button, or `analyze ETHUSDT`).
 - That they can click any agent to chat or give commands.
-- That this is a paper simulation, not financial advice, with no profit promised.
+- That it runs in PAPER, is not financial advice, and promises no profit. LIVE is locked and can lose real money.
 
 ## Useful files
 
@@ -98,5 +131,8 @@ Tell the person:
 | `server/schemas.ts` | JSON schema for each agent reply |
 | `server/money.ts` | Money split and order planning |
 | `server/risk.ts` | Code caps on the risk gate |
+| `server/exchange/` | Exchange adapter interface and venues |
+| `server/live/` | LIVE unlock state, testnet round trip, executor |
+| `cli/setup.ts`, `cli/doctor.ts` | Setup wizard and key checks |
 | `skills/` | Role notes the desk follows |
 | `web/src/styles/tokens.css` | All colors, fonts and motion in one place |

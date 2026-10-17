@@ -8,6 +8,8 @@ const id = (p: string) => `${p}-${Date.now().toString(36)}-${(++seq).toString(36
 export class PaperBook {
   positions: Position[] = [];
   closed: ClosedTrade[] = [];
+  /** false in LIVE: the exchange holds the real stop and take profit. */
+  autoExit = true;
   constructor(public balance: number, public safetyNet: number, public n: number, public takerFee: number) {}
 
   get usedMargin() { return round2(this.positions.reduce((s, p) => s + p.margin, 0)); }
@@ -37,6 +39,7 @@ export class PaperBook {
       p.unrealizedPnl = this.pnl(p, price);
       const stopped = p.side === 'LONG' ? price <= p.stop : price >= p.stop;
       const target = p.tp != null && (p.side === 'LONG' ? price >= p.tp : price <= p.tp);
+      if (!this.autoExit) continue;
       if (stopped) hits.push(this.close(p.id, p.stop, 'stop loss hit')!);
       else if (target) hits.push(this.close(p.id, p.tp!, 'take profit hit')!);
     }

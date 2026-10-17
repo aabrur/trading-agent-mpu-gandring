@@ -15,6 +15,9 @@ import { PaperBook } from './paper.js';
 import { parseCommand, HELP, normSymbol, type Command } from './commands.js';
 import { sendToGrokBot } from './bridge.js';
 import { safe, log } from './redact.js';
+import type { LiveExecutor } from './live/executor.js';
+import type { ClosedTrade } from './types.js';
+import { getNewsFor } from './market/index.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist', 'reviewer'];
@@ -28,7 +31,9 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'warn'; agent?: AgentId; text: string; example?: boolean }
 
-export interface DeskOptions { reportsDir?: string | null; outboxPath?: string }
+export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null }
+export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
+export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action }
 
 export class Desk extends EventEmitter {
   agents: Record<AgentId, AgentView>;
@@ -39,6 +44,9 @@ export class Desk extends EventEmitter {
   chats: Record<AgentId, ChatLine[]>;
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
   paused = false;
+  killed = false;
+  signals: ExternalSignal[] = [];
+  day = { key: '', startEquity: 0, lossHit: false };
   equityHistory: { t: number; equity: number; balance: number }[] = [];
   private stopFlag = false;
   private liveBackoffUntil = 0;
@@ -48,6 +56,8 @@ export class Desk extends EventEmitter {
     super();
     this.setMaxListeners(50);
     this.book = new PaperBook(cfg.paper.balance, cfg.paper.safetyNet, cfg.paper.n, cfg.risk.takerFee);
+    // In LIVE the exchange owns stop and take profit. The local book is a mirror and never exits on its own.
+    if (opts.executor) this.book.autoExit = false;
     this.agents = Object.fromEntries(AGENT_IDS.map((id) => {
       const r = ROLES[id]; const a = cfg.agents[id];
       return [id, { id, name: r.name, title: r.title, color: r.color, desk: r.desk, provider: a.provider, model: a.model, fellBackToMock: a.fellBackToMock, status: 'idle', mood: 0, stance: null, confidence: null, lastLine: '' } satisfies AgentView];
@@ -59,7 +69,11 @@ export class Desk extends EventEmitter {
   snapshot() {
     const split = this.book.split();
     return {
-      app: 'Trading Agent Mpu Gandring', mode: 'PAPER' as const,
+      app: 'Trading Agent Mpu Gandring', mode: this.cfg.tradingMode, appMode: this.cfg.appMode,
+      live: this.cfg.live, killed: this.killed,
+      dailyLoss: { limitPct: this.cfg.risk.dailyLossLimitPct, startEquity: this.day.startEquity, hit: this.day.lossHit },
+      tradingview: { widget: this.cfg.tradingview.widget, prefix: this.cfg.tradingview.prefix, webhook: this.cfg.tradingview.webhookEnabled },
+      agentEvents: this.cfg.agentEvents.enabled, signals: this.signals.slice(0, 10),
       marketSource: this.cfg.marketSource, bridgeEnabled: this.cfg.bridge.enabled, paused: this.paused,
       agents: this.agents, tickers: this.tickers, debate: this.debate,
       paper: {
@@ -72,7 +86,20 @@ export class Desk extends EventEmitter {
       watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold
     };
   }
+  /** Daily loss stop: once equity falls DAILY_LOSS_LIMIT_PCT below the day's start, no new orders until tomorrow (UTC). */
+  checkDay() {
+    const equity = round2(this.book.balance + this.book.unrealized);
+    const key = new Date().toISOString().slice(0, 10);
+    if (this.day.key !== key) this.day = { key, startEquity: equity, lossHit: false };
+    const lim = this.cfg.risk.dailyLossLimitPct;
+    if (!this.day.lossHit && lim > 0 && this.day.startEquity > 0 && ((this.day.startEquity - equity) / this.day.startEquity) * 100 >= lim) {
+      this.day.lossHit = true;
+      this.addLog({ kind: 'warn', text: `Daily loss stop: equity ${equity} is ${lim}% or more below today's start ${this.day.startEquity}. No new orders until tomorrow (UTC).` });
+    }
+    return this.day.lossHit;
+  }
   recordEquity() {
+    this.checkDay();
     this.equityHistory.push({ t: Date.now(), equity: round2(this.book.balance + this.book.unrealized), balance: this.book.balance });
     if (this.equityHistory.length > 600) this.equityHistory.splice(0, this.equityHistory.length - 600);
   }
@@ -121,12 +148,32 @@ export class Desk extends EventEmitter {
   private updateTicker(snap: MarketSnapshot) {
     this.tickers[snap.symbol] = { symbol: snap.symbol, last: snap.last, change24hPct: snap.change24hPct, source: snap.source, example: snap.example, at: snap.fetchedAt };
     for (const t of this.book.mark(snap.symbol, snap.last)) {
-      this.addLog({ kind: 'trade', text: `STOP: ${t.symbol} ${t.side} closed at ${t.exit}, PnL ${t.realizedPnl} USDT` });
+      this.addLog({ kind: 'trade', text: `${t.reason}: ${t.symbol} ${t.side} closed at ${t.exit}, PnL ${t.realizedPnl} USDT` });
       void this.review(t);
     }
   }
 
+  /** LIVE: pull balance and positions from the exchange. Positions gone on the venue were closed there (stop, take profit or by hand). */
+  async syncLive() {
+    const ex = this.opts.executor;
+    if (!ex) return;
+    try {
+      const [bal, venue] = await Promise.all([ex.adapter.balance(), ex.adapter.positions()]);
+      const venueUpnl = venue.reduce((sum, p) => sum + p.unrealizedPnl, 0);
+      this.book.balance = round2(bal.equityUsdt - venueUpnl);
+      for (const p of [...this.book.positions]) {
+        const v = venue.find((x) => x.symbol === p.symbol && x.side === p.side);
+        if (!v) {
+          const t = this.book.close(p.id, this.tickers[p.symbol]?.last ?? p.mark, 'closed on the exchange (stop, take profit or manual)');
+          if (t) { this.addLog({ kind: 'trade', text: `${t.symbol} ${t.side} is flat on the exchange. Local PnL estimate ${t.realizedPnl} USDT.` }); void this.review(t); }
+        } else { p.qty = v.qty; p.unrealizedPnl = round2(v.unrealizedPnl); }
+      }
+      for (const v of venue) if (!this.book.positions.some((p) => p.symbol === v.symbol)) this.addLog({ kind: 'warn', text: `Exchange shows a ${v.side} ${v.qty} ${v.symbol} position the desk did not open. Leaving it alone.` });
+    } catch (e) { this.addLog({ kind: 'warn', text: `Exchange sync failed: ${safe((e as Error).message)}` }); }
+  }
+
   start() {
+    if (this.opts.executor) { void this.syncLive().then(() => this.checkDay()); this.timers.push(setInterval(() => void this.syncLive(), 30_000)); }
     void this.refreshTickers();
     this.timers.push(setInterval(() => void this.refreshTickers(), this.cfg.tickerRefreshSeconds * 1000));
     if (this.cfg.debate.autoMinutes > 0) {
@@ -141,21 +188,22 @@ export class Desk extends EventEmitter {
   stop() { this.timers.forEach(clearInterval); this.timers = []; }
 
   // ---------- debate ----------
-  async runDebate(symbolIn: string): Promise<Verdict> {
+  async runDebate(symbolIn: string, signal?: ExternalSignal): Promise<Verdict> {
     const symbol = normSymbol(symbolIn);
     if (!symbol) throw new Error('no symbol');
+    if (this.killed) throw new Error('kill switch is on, restart the server to trade again');
     if (this.paused) throw new Error('desk is paused, send "resume" first');
     if (this.debate) throw new Error(`a debate on ${this.debate.symbol} is already running`);
     this.stopFlag = false;
     const id = `deb-${Date.now().toString(36)}`;
     this.debate = { id, symbol, phase: 'opening', round: 0, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
     this.emit('debate', { id, symbol, phase: 'opening' });
-    const transcript: string[] = [`# Debate ${id} on ${symbol}`, `Mode: PAPER. Started ${new Date().toISOString()}`];
+    const transcript: string[] = [`# Debate ${id} on ${symbol}`, `Mode: ${this.cfg.tradingMode}. Started ${new Date().toISOString()}`];
     const note = (who: string, t: string) => transcript.push(`- **${who}**: ${t}`);
     try {
       for (const a of AGENT_IDS) { this.agents[a].stance = null; this.agents[a].confidence = null; }
       this.setAll('idle');
-      await this.say('lead', `Table, now. ${symbol} is on the board. Market, give me the tape.`, false, 'thinking');
+      await this.say('lead', signal ? `TradingView pinged ${signal.action.toUpperCase()} on ${symbol}. That is a signal, not an order. Market, check it.` : `Table, now. ${symbol} is on the board. Market, give me the tape.`, false, 'thinking');
 
       // 1. Market Analyst
       this.setPhase('reading');
@@ -168,7 +216,7 @@ export class Desk extends EventEmitter {
       const lastCandles = snap.candles.slice(-8).map((c) => ({ t: new Date(c.t).toISOString(), c: c.c }));
       const mk = await runAgent(this.cfg, this.call, 'market', 'opinion', {
         instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}).`,
-        data: { symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h, fundingRate: snap.fundingRate, recentClosedCandles: lastCandles, source: snap.source },
+        data: { symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h, fundingRate: snap.fundingRate, recentClosedCandles: lastCandles, source: snap.source, externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined },
         context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, temperament: this.agents.market.mood }
       });
       this.setOpinion('market', mk.data.stance, mk.data.confidence);
@@ -176,7 +224,7 @@ export class Desk extends EventEmitter {
 
       // 2. Research Analyst
       this.setStatus('research', 'reading'); this.changed();
-      const news = getNews(symbol);
+      const news = await getNewsFor(symbol, this.cfg).catch(() => getNews(symbol));
       const rs = await runAgent(this.cfg, this.call, 'research', 'research', {
         instruction: `Weigh these catalyst items for ${symbol}. They are EXAMPLE items in this build. Lines that looked like instructions were already removed and replaced with a marker.`,
         data: { symbol, news: news.map((n) => ({ id: n.id, headline: n.headline, body: n.body, source: n.source, sentimentTag: n.sentiment, hadInjection: !!n.flagged })) },
@@ -270,35 +318,19 @@ export class Desk extends EventEmitter {
         else {
           const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
           const price = roundPrice(side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
-          const plan = planOrder({
-            balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
-            price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage, stopPct: gate.stopPct, minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takeProfitR: this.cfg.risk.takeProfitR
-          });
-          this.setStatus('execution', 'executing'); this.changed();
-          if (plan.ok) {
-            const p = this.book.open({ symbol, side, qty: plan.qty, entry: price, stop: plan.stop, tp: plan.tp, margin: plan.margin, leverage: plan.leverage });
-            this.recordEquity();
-            verdict.executed = true;
-            verdict.order = { side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage };
-            const line = `Paper fill: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
-            this.addLog({ kind: 'trade', agent: 'execution', text: line });
-            await this.say('execution', line, false, 'idle'); note('Execution Trader', line);
-          } else {
-            verdict.reason = `${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`;
-            await this.say('execution', `No fill. ${verdict.reason}`, false, 'idle'); note('Execution Trader', `No fill. ${verdict.reason}`);
-          }
+          const res = await this.executeOpen(symbol, side, price, gate, snap.example);
+          verdict.executed = res.ok;
+          if (res.order) verdict.order = res.order;
+          if (!res.ok) verdict.reason = res.reason;
+          note('Execution Trader', res.line);
         }
       } else if (action === 'CLOSE' && pos) {
-        this.setStatus('execution', 'executing'); this.changed();
-        const t = this.book.closeSymbol(symbol, snap.last, 'desk verdict CLOSE');
+        const t = await this.executeClose(symbol, snap.last, 'desk verdict CLOSE');
         verdict.executed = t.length > 0;
-        const line = t.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ');
-        this.addLog({ kind: 'trade', agent: 'execution', text: line });
-        await this.say('execution', line, false, 'idle'); note('Execution Trader', line);
-        for (const x of t) await this.review(x);
+        note('Execution Trader', t.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ') || 'nothing closed');
       }
       this.verdicts.unshift(verdict); this.verdicts = this.verdicts.slice(0, 50);
-      this.addLog({ kind: 'verdict', text: `VERDICT ${symbol}: ${action} (risk ${verdict.riskDecision}, disagreement ${disagreement.toFixed(2)})${verdict.executed ? ', paper filled' : ''}`, example: verdict.example });
+      this.addLog({ kind: 'verdict', text: `VERDICT ${symbol}: ${action} (risk ${verdict.riskDecision}, disagreement ${disagreement.toFixed(2)})${verdict.executed ? (this.opts.executor ? ', LIVE filled' : ', paper filled') : ''}`, example: verdict.example });
       this.emit('verdict', verdict);
       transcript.push('', `**Verdict:** ${action}, risk ${verdict.riskDecision}, executed ${verdict.executed}. ${verdict.reason}`);
       this.writeReport(id, transcript.join('\n'));
@@ -309,6 +341,122 @@ export class Desk extends EventEmitter {
       this.setAll('idle');
       this.emit('debate', { id, symbol, phase: 'done' });
     }
+  }
+
+  /** The only way an order is opened, paper or live. Risk gate result in, money split and caps applied here. */
+  async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
+    const live = this.opts.executor;
+    const no = async (reason: string) => { await this.say('execution', `No fill. ${reason}`, false, 'idle'); return { ok: false, line: `No fill. ${reason}`, reason }; };
+    if (this.killed) return no('Kill switch is on.');
+    if (this.checkDay()) return no(`Daily loss stop is on (${this.cfg.risk.dailyLossLimitPct}% for today).`);
+    if (live && example) return no('Refusing a LIVE order on sample data.');
+    const plan = planOrder({
+      balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
+      price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage, stopPct: gate.stopPct, minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takeProfitR: this.cfg.risk.takeProfitR
+    });
+    if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
+    this.setStatus('execution', 'executing'); this.changed();
+    let entry = price, qty = plan.qty, tag = 'Paper fill';
+    if (live) {
+      const fill = await live.open({ symbol, side, qty: plan.qty, stop: plan.stop, tp: plan.tp, leverage: plan.leverage });
+      this.addLog({ kind: 'trade', agent: 'execution', text: `LIVE ${symbol} ${side}: ${fill.note}` });
+      if (!fill.ok) return no(`LIVE order not filled. ${fill.note}`);
+      entry = roundPrice(fill.avgPrice ?? price); qty = fill.qty; tag = 'LIVE fill';
+    }
+    const p = this.book.open({ symbol, side, qty, entry, stop: plan.stop, tp: plan.tp, margin: plan.margin, leverage: plan.leverage });
+    this.recordEquity();
+    const line = `${tag}: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
+    this.addLog({ kind: 'trade', agent: 'execution', text: line });
+    await this.say('execution', line, false, 'idle');
+    return { ok: true, line, reason: '', order: { side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage } };
+  }
+
+  /** Closes every position on a symbol. LIVE: one reduce-only send each, reconciled from the exchange record. */
+  async executeClose(symbol: string, price: number, reason: string): Promise<ClosedTrade[]> {
+    const live = this.opts.executor;
+    this.setStatus('execution', 'executing'); this.changed();
+    const out: ClosedTrade[] = [];
+    for (const p of this.book.positions.filter((x) => x.symbol === symbol)) {
+      let px = price;
+      if (live) {
+        const f = await live.close(symbol, p.side, p.qty);
+        this.addLog({ kind: 'trade', agent: 'execution', text: `LIVE close ${symbol}: ${f.note}` });
+        if (!f.ok) continue;
+        px = f.avgPrice ?? price;
+      }
+      const t = this.book.close(p.id, px, reason);
+      if (t) out.push(t);
+    }
+    const line = out.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ');
+    if (line) { this.addLog({ kind: 'trade', agent: 'execution', text: line }); await this.say('execution', line, false, 'idle'); }
+    this.setStatus('execution', 'idle');
+    this.recordEquity();
+    for (const x of out) void this.review(x);
+    this.changed();
+    return out;
+  }
+
+  /** Kill switch: stop debating, cancel and flatten everything, stay stopped until restart. */
+  async kill(): Promise<string[]> {
+    this.killed = true; this.paused = true; this.stopFlag = true;
+    let notes: string[] = [];
+    if (this.opts.executor) {
+      notes = await this.opts.executor.killAll(this.book.positions.map((p) => p.symbol));
+      const prices = Object.fromEntries(Object.values(this.tickers).map((t) => [t.symbol, t.last]));
+      this.book.closeAll(prices, 'kill switch');
+    } else {
+      const prices = Object.fromEntries(Object.values(this.tickers).map((t) => [t.symbol, t.last]));
+      notes = this.book.closeAll(prices, 'kill switch').map((c) => `${c.symbol} closed, ${c.realizedPnl} USDT`);
+    }
+    this.addLog({ kind: 'warn', text: `KILL SWITCH. ${notes.join('; ') || 'nothing open'}. Restart the server to trade again.` });
+    void sendToGrokBot(this.cfg, 'command', { command: 'kill', notes }, this.opts.outboxPath);
+    this.changed();
+    return notes;
+  }
+
+  /** TradingView alert. Treated as an untrusted hint: it only starts a normal debate, and Risk still gates. */
+  async onSignal(sig: ExternalSignal): Promise<{ ok: boolean; reply: string }> {
+    this.signals.unshift(sig); this.signals = this.signals.slice(0, 20);
+    this.addLog({ kind: 'info', text: `TradingView alert on ${sig.symbol}: ${sig.action}${sig.price ? ` @ ${sig.price}` : ''}. Sent to the table for debate, not executed.` });
+    this.changed();
+    if (this.killed || this.paused) return { ok: false, reply: 'desk is paused or killed, alert logged only' };
+    if (this.debate) return { ok: false, reply: `busy with ${this.debate.symbol}, alert logged only` };
+    void this.runDebate(sig.symbol, sig).catch((e) => this.addLog({ kind: 'warn', text: `Debate failed: ${safe((e as Error).message)}` }));
+    return { ok: true, reply: `debate started on ${sig.symbol}` };
+  }
+
+  /** Grok Bot mode: an agent's turn arrives from the user's own Grok Bot team. */
+  async onAgentEvent(ev: AgentEvent): Promise<{ ok: boolean; reply: string }> {
+    const a = ev.agent;
+    if (ev.kind === 'status' && ev.status) { this.setStatus(a, ev.status); this.changed(); return { ok: true, reply: 'status set' }; }
+    if (ev.kind === 'say') {
+      if (ev.stance) this.setOpinion(a, ev.stance, ev.confidence ?? 0.5);
+      const { disagreement } = this.score();
+      const t = ev.target && ev.target !== a ? ev.target : null;
+      const fight = !!t && !!ev.stance && !!this.agents[t].stance && val(this.agents[t].stance!) * val(ev.stance) < 0 && disagreement >= this.cfg.debate.fightThreshold;
+      if (fight && t) { this.setStatus(a, 'fighting'); this.emit('fight', { from: a, to: t, intensity: Math.min(1, disagreement), punches: 2 }); }
+      await this.say(a, ev.text ?? '', false, fight ? 'fighting' : 'arguing');
+      return { ok: true, reply: 'said' };
+    }
+    if (ev.kind === 'proposal') {
+      // A Grok Bot Desk Lead can propose; the code caps, money split, daily stop and kill switch still decide.
+      if (a !== 'lead') return { ok: false, reply: 'only the Desk Lead can send a proposal' };
+      const symbol = normSymbol(ev.symbol ?? '');
+      if (!symbol || !ev.action) return { ok: false, reply: 'symbol and action are required' };
+      if (ev.text) await this.say('lead', ev.text, false, 'idle');
+      const snap = await getSnapshot(symbol, this.cfg.marketSource);
+      this.updateTicker(snap);
+      if (ev.action === 'CLOSE') { const t = await this.executeClose(symbol, snap.last, 'Grok Bot Desk Lead CLOSE'); return { ok: t.length > 0, reply: t.length ? `closed ${t.length}` : 'nothing open' }; }
+      if (ev.action === 'HOLD') return { ok: true, reply: 'hold noted' };
+      if (this.book.positions.some((p) => p.symbol === symbol)) return { ok: false, reply: `already have a ${symbol} position` };
+      const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot proposal, code caps only', sizeFactor: 1, leverage: this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct } as never, this.cfg.risk, this.agents.risk.mood);
+      await this.say('risk', `${gate.decision}. Grok Bot proposal checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
+      if (gate.decision === 'REJECT') return { ok: false, reply: 'risk rejected' };
+      const side = ev.action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
+      const res = await this.executeOpen(symbol, side, roundPrice(side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last)), gate, snap.example);
+      return { ok: res.ok, reply: res.ok ? res.line : res.reason };
+    }
+    return { ok: false, reply: 'unknown event' };
   }
 
   private invalidated(side: 'LONG' | 'SHORT', rule: ReturnType<typeof strategyVote>) {
@@ -392,17 +540,17 @@ export class Desk extends EventEmitter {
           if (this.book.positions.length) { ok = false; reply = 'Close open paper positions before resetting the balance.'; break; }
           this.book.balance = cmd.value; reply = `Paper balance set to ${cmd.value} USDT. ${this.book.split().note}.`; break;
         case 'close_all': {
-          const prices = Object.fromEntries(Object.values(this.tickers).map((t) => [t.symbol, t.last]));
-          const closed = this.book.closeAll(prices, 'owner command: close all');
-          reply = closed.length ? `Closed ${closed.length} paper position(s): ${closed.map((c) => `${c.symbol} ${c.realizedPnl} USDT`).join(', ')}.` : 'Nothing open.';
-          for (const c of closed) void this.review(c);
+          const closed: ClosedTrade[] = [];
+          for (const sym of [...new Set(this.book.positions.map((p) => p.symbol))]) {
+            closed.push(...await this.executeClose(sym, this.tickers[sym]?.last ?? this.book.positions.find((p) => p.symbol === sym)!.mark, 'owner command: close all'));
+          }
+          reply = closed.length ? `Closed ${closed.length} position(s): ${closed.map((c) => `${c.symbol} ${c.realizedPnl} USDT`).join(', ')}.` : 'Nothing open.';
           break;
         }
         case 'close': {
           const px = this.tickers[cmd.symbol]?.last ?? this.book.positions.find((p) => p.symbol === cmd.symbol)?.mark;
-          const closed = px ? this.book.closeSymbol(cmd.symbol, px, 'owner command') : [];
+          const closed = px ? await this.executeClose(cmd.symbol, px, 'owner command') : [];
           reply = closed.length ? `Closed ${cmd.symbol}: ${closed.map((c) => `${c.realizedPnl} USDT`).join(', ')}.` : `No open ${cmd.symbol} position.`;
-          for (const c of closed) void this.review(c);
           break;
         }
         case 'mood': {
@@ -418,7 +566,7 @@ export class Desk extends EventEmitter {
           const target = agent ?? 'lead';
           this.setStatus(target, 'typing'); this.changed();
           const res = await runAgent(this.cfg, this.call, target, 'chat', {
-            instruction: 'The desk owner wrote to you directly (below). Answer briefly in character. You cannot place real trades. If they ask for something only a command can do, tell them the command.',
+            instruction: `The desk owner wrote to you directly (below). Answer briefly in character. Mode is ${this.cfg.tradingMode}. Orders only happen through a debate and the risk gate, never from chat. If they ask for something only a command can do, tell them the command.`,
             data: { ownerMessage: cmd.text.slice(0, 500), yourStance: this.agents[target].stance, paper: this.book.split(), commands: HELP },
             context: { message: cmd.text, paper: this.book.split(), maxLossPct: this.cfg.risk.maxLossPerTradePct, maxLeverage: this.cfg.risk.maxLeverage, openPositions: this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty })), stance: this.agents[target].stance, summary: this.agents[target].lastLine ? `Last thing I said: "${this.agents[target].lastLine.slice(0, 90)}"` : '' }
           });

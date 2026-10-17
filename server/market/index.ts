@@ -101,3 +101,33 @@ export function getNews(symbol: string): NewsItem[] {
 export function getRawNewsForTest(): NewsItem[] {
   return JSON.parse(readFileSync(findSample('news.json'), 'utf8'));
 }
+
+// Optional news plugin (EXPERIMENTAL). CryptoPanic posts, cached 5 minutes per coin.
+// Headlines are untrusted text: sanitized like the sample feed, and falls back to samples on any error.
+const newsCache = new Map<string, { at: number; items: NewsItem[] }>();
+export async function getNewsFor(symbol: string, cfg: { news: { provider: 'sample' | 'cryptopanic'; key: string; baseUrl: string } }, fetchImpl: typeof fetch = fetch): Promise<NewsItem[]> {
+  if (cfg.news.provider !== 'cryptopanic' || !cfg.news.key) return getNews(symbol);
+  const coin = symbol.replace(/USDT?$/, '');
+  const hit = newsCache.get(coin);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.items;
+  const url = `${cfg.news.baseUrl}?auth_token=${encodeURIComponent(cfg.news.key)}&currencies=${encodeURIComponent(coin)}&public=true`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const res = await fetchImpl(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`news HTTP ${res.status}`);
+    const body: any = await res.json();
+    const items: NewsItem[] = (body?.results ?? []).slice(0, 8).map((p: any, i: number) => {
+      const h = sanitizeUntrusted(String(p.title ?? ''), 200);
+      const b = sanitizeUntrusted(String(p.description ?? p.title ?? ''), 400);
+      const votes = p.votes ?? {};
+      const sentiment = (votes.positive ?? 0) > (votes.negative ?? 0) ? 'bullish' : (votes.negative ?? 0) > (votes.positive ?? 0) ? 'bearish' : 'neutral';
+      return { id: `cp-${p.id ?? i}`, symbol: coin, headline: h.text, body: b.text, source: String(p.source?.title ?? p.domain ?? 'cryptopanic').slice(0, 60), sentiment, flagged: h.flagged || b.flagged, example: false } as NewsItem;
+    });
+    if (!items.length) return getNews(symbol);
+    newsCache.set(coin, { at: Date.now(), items });
+    return items;
+  } catch {
+    return getNews(symbol);
+  } finally { clearTimeout(t); }
+}

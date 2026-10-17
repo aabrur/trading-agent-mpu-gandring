@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import type { AgentId } from './types.js';
 import { registerSecrets } from './redact.js';
+import { exchangeSettings, exchangeSecrets, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
+import { checkLiveUnlock, stateDir } from './live/state.js';
 
 export type ProviderName = 'mock' | 'xai' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter';
 export const PROVIDERS: ProviderName[] = ['mock', 'xai', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter'];
@@ -19,7 +21,14 @@ const num = (env: NodeJS.ProcessEnv, key: string, def: number) => {
 };
 
 export interface AppConfig {
-  tradingMode: 'PAPER';
+  tradingMode: 'PAPER' | 'LIVE';
+  appMode: 'local' | 'grokbot';
+  host: string;
+  live: { exchange: ExchangeName; experimental: boolean } | null;
+  exchange: { name: ExchangeName | null; hasTestnetKeys: boolean; hasMainnetKeys: boolean };
+  agentEvents: { secret: string; enabled: boolean };
+  tradingview: { widget: boolean; passphrase: string; webhookEnabled: boolean; prefix: string };
+  news: { provider: 'sample' | 'cryptopanic'; key: string; baseUrl: string };
   port: number;
   keys: Record<Exclude<ProviderName, 'mock'>, string>;
   baseUrls: Record<'xai' | 'openai' | 'deepseek' | 'openrouter', string>;
@@ -30,21 +39,39 @@ export interface AppConfig {
   watchlist: string[];
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
-  risk: { maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number };
+  risk: { maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number; dailyLossLimitPct: number };
   debate: { rounds: number; paceMs: number; fightThreshold: number; autoMinutes: number };
   bridge: { url: string; key: string; enabled: boolean };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const mode = (env.TRADING_MODE ?? 'PAPER').trim().toUpperCase();
-  if (mode !== 'PAPER') {
-    throw new ConfigError(`TRADING_MODE is "${mode}". This version only runs in PAPER mode. There is no live order code here. Refusing to start.`, 2);
+  if (mode !== 'PAPER' && mode !== 'LIVE') {
+    throw new ConfigError(`TRADING_MODE is "${mode}". Use PAPER (default) or LIVE after unlocking with npm run setup. Refusing to start.`, 2);
   }
+  let live: AppConfig['live'] = null;
+  if (mode === 'LIVE') {
+    const check = checkLiveUnlock(env, stateDir(env));
+    if (!check.ok) {
+      throw new ConfigError(`TRADING_MODE=LIVE is locked, refusing to start. Run in PAPER, or finish the unlock steps in npm run setup:\n  - ${check.reasons.join('\n  - ')}`, 2);
+    }
+    live = { exchange: check.exchange!, experimental: ADAPTER_STATUS[check.exchange!] === 'experimental' };
+  }
+  let ex: ReturnType<typeof exchangeSettings>;
+  try { ex = exchangeSettings(env); } catch (e) { throw new ConfigError((e as Error).message); }
+  const appMode = (env.APP_MODE || 'local').trim().toLowerCase();
+  if (appMode !== 'local' && appMode !== 'grokbot') throw new ConfigError('APP_MODE must be local or grokbot');
+  const agentEventSecret = (env.AGENT_EVENT_SECRET ?? '').trim();
+  if (agentEventSecret && agentEventSecret.length < 24) throw new ConfigError('AGENT_EVENT_SECRET must be at least 24 characters (npm run setup can generate one)');
+  const tvPass = (env.TRADINGVIEW_PASSPHRASE ?? '').trim();
+  if (tvPass && tvPass.length < 12) throw new ConfigError('TRADINGVIEW_PASSPHRASE must be at least 12 characters');
+  const newsProvider = (env.NEWS_PROVIDER || 'sample').trim().toLowerCase();
+  if (newsProvider !== 'sample' && newsProvider !== 'cryptopanic') throw new ConfigError('NEWS_PROVIDER must be sample or cryptopanic');
   const keys = {
     xai: env.XAI_API_KEY ?? '', openai: env.OPENAI_API_KEY ?? '', anthropic: env.ANTHROPIC_API_KEY ?? '',
     gemini: env.GEMINI_API_KEY ?? '', deepseek: env.DEEPSEEK_API_KEY ?? '', openrouter: env.OPENROUTER_API_KEY ?? ''
   };
-  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY]);
+  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, env.LIVE_CONFIRMED, ...exchangeSecrets(env)]);
   const defaultModels: Record<ProviderName, string> = {
     mock: 'mock-desk-v1',
     xai: env.XAI_MODEL || 'grok-3-mini',
@@ -80,7 +107,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const url = (env.GROKBOT_WEBHOOK_URL ?? '').trim();
   const key = (env.GROKBOT_WEBHOOK_KEY ?? '').trim();
   return {
-    tradingMode: 'PAPER',
+    tradingMode: mode as AppConfig['tradingMode'],
+    appMode: appMode as AppConfig['appMode'],
+    // LIVE stays on this computer unless you set HOST yourself.
+    host: (env.HOST || (mode === 'LIVE' ? '127.0.0.1' : '0.0.0.0')).trim(),
+    live,
+    exchange: { name: ex.name, hasTestnetKeys: !!ex.creds.testnet, hasMainnetKeys: !!ex.creds.mainnet },
+    agentEvents: { secret: agentEventSecret, enabled: appMode === 'grokbot' && !!agentEventSecret },
+    tradingview: { widget: /^(1|on|yes|true)$/i.test(env.TRADINGVIEW_WIDGET ?? ''), passphrase: tvPass, webhookEnabled: !!tvPass, prefix: (env.TRADINGVIEW_EXCHANGE_PREFIX || 'BYBIT').trim().toUpperCase() },
+    news: { provider: newsProvider as AppConfig['news']['provider'], key: (env.CRYPTOPANIC_API_KEY ?? '').trim(), baseUrl: (env.CRYPTOPANIC_BASE_URL || 'https://cryptopanic.com/api/developer/v2/posts/').trim() },
     port: num(env, 'PORT', 8787),
     keys,
     baseUrls: {
@@ -103,7 +138,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', 1),
       minOrderUsdt: num(env, 'MIN_ORDER_USDT', 5),
       takerFee: num(env, 'TAKER_FEE', 0.00055),
-      takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 2))
+      takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 2)),
+      dailyLossLimitPct: Math.max(0, num(env, 'DAILY_LOSS_LIMIT_PCT', 3))
     },
     debate: {
       rounds: Math.min(4, Math.max(1, num(env, 'DEBATE_ROUNDS', 2))),

@@ -388,3 +388,14 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- LIVE mode and kill switch ---------- */
+.badge.live-badge { background: var(--short); color: #fff; border-color: transparent; font-size: 15px; font-weight: 800; letter-spacing: .08em; padding: 6px 16px; animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(214, 90, 70, .55); } 50% { box-shadow: 0 0 0 8px rgba(214, 90, 70, 0); } }
+.commandbar button.kill { background: transparent; color: var(--short); border: 2px solid var(--short); font-weight: 800; }
+.commandbar button.kill.is-live { background: var(--short); color: #fff; }
+.commandbar button.kill:disabled { opacity: .55; cursor: not-allowed; }
+/* the widget script forces height:100% on its container, so the fixed height lives on a wrapper */
+.tv-wrap { height: 460px; border-radius: var(--radius-md, 12px); overflow: hidden; }
+.tv-box, .tv-box iframe { height: 100% !important; width: 100% !important; }
+@media (prefers-reduced-motion: reduce) { .badge.live-badge { animation: none; } }

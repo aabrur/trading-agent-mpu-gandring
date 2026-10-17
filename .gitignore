@@ -10,3 +10,6 @@ reports/
 .DS_Store
 coverage/
 test-results/
+
+# live unlock state (install key, signed records)
+.mpu-gandring/

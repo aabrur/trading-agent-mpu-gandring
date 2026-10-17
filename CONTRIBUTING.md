@@ -19,7 +19,8 @@ Thanks for wanting to help with Trading Agent Mpu Gandring.
 
 ## What we will not merge
 
-- Live order, wallet, transfer or withdrawal code in the main app. A live adapter, if it ever happens, belongs in a separate, reviewed module with human approval per order.
+- Withdrawal, transfer or wallet-key handling code. Changes that weaken the LIVE unlock, skip the risk gate, or retry live orders blindly.
+- New exchange adapters without tests against mocked HTTP. Mark them experimental in `server/exchange/types.ts` until someone has run the testnet round trip.
 - Anything that loosens the code caps in `server/risk.ts` or `server/money.ts` by default.
 - Code that sends API keys to the browser or prints them in logs.
 - Profit claims in docs or UI copy.

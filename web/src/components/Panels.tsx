@@ -21,7 +21,12 @@ export function TopBar({ state, connected, theme, onTheme }: { state: DeskState 
         </div>
       </div>
       <div className="badges">
-        <span className="badge paper" title="This build only simulates trades">PAPER MODE</span>
+        {state?.mode === 'LIVE'
+          ? <span className="badge live-badge" title="Real orders on the exchange">LIVE · {state.live?.exchange}{state.live?.experimental ? ' (experimental)' : ''}</span>
+          : <span className="badge paper" title="Simulated trades only">PAPER MODE</span>}
+        {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
+        {state?.killed && <span className="badge warn">kill switch on</span>}
+        {state?.dailyLoss?.hit && <span className="badge warn">daily loss stop</span>}
         {state && <span className="badge">data: {state.marketSource}</span>}
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">paused</span>}
@@ -93,7 +98,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   useEffect(() => setBalance(String(p.balance)), [p.balance]);
   return (
     <section className="panel portfolio">
-      <div className="panel-head"><h2>Paper book</h2><span className={`pnl ${p.unrealized >= 0 ? 'up' : 'down'}`}>uPnL {p.unrealized >= 0 ? '+' : ''}{fmt(p.unrealized)}</span></div>
+      <div className="panel-head"><h2>{state.mode === 'LIVE' ? 'Live book (exchange mirror)' : 'Paper book'}</h2><span className={`pnl ${p.unrealized >= 0 ? 'up' : 'down'}`}>uPnL {p.unrealized >= 0 ? '+' : ''}{fmt(p.unrealized)}</span></div>
       <div className="stats">
         <label className="stat"><small>Total balance</small>
           <span className="inline-edit"><input value={balance} onChange={(e) => setBalance(e.target.value)} onBlur={() => balance !== String(p.balance) && command(`set balance ${balance}`)} inputMode="decimal" aria-label="paper balance" /> USDT</span>

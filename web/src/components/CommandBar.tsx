@@ -18,6 +18,12 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
           </button>
           <button onClick={() => run(state.paused ? 'resume' : 'pause')}>{state.paused ? 'Resume' : 'Pause'}</button>
           <button className="danger" onClick={() => run('close all')}>Close all</button>
+          <button className={`kill ${state.mode === 'LIVE' ? 'is-live' : ''}`} disabled={state.killed} title="Cancel everything, flatten every position, pause the desk until restart"
+            onClick={async () => {
+              if (!window.confirm(`Kill switch: cancel all orders, close every ${state.mode === 'LIVE' ? 'LIVE' : 'paper'} position and stop the desk until restart?`)) return;
+              const r = await fetch('/api/kill', { method: 'POST' }).then((x) => x.json()).catch(() => null);
+              setReply({ ok: !!r?.ok, reply: r?.ok ? `Kill switch on. ${(r.notes ?? []).join('; ') || 'Nothing was open.'}` : 'Kill switch request failed' });
+            }}>{state.killed ? 'Killed' : 'Kill switch'}</button>
         </div>
         <form className="cb-input" onSubmit={(e) => { e.preventDefault(); void run(text); setText(''); }}>
           <span className="prompt">&gt;</span>

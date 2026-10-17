@@ -10,7 +10,19 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use the offline sample data (`MARKET_SOURCE=sample`), so prices are tagged EXAMPLE.
 
-> **Paper trading only.** This is an educational project about how multi-agent decision making works. It is not financial advice, it does not promise profit, and this version has no code that can place a real order, touch a wallet, or withdraw anything.
+> **Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. LIVE trading exists but is locked: it needs a passed testnet round trip, an exchange key without withdraw permission (checked on the exchange), and a typed confirmation in the CLI. If you unlock it you can lose real money. Read [docs/live-trading.md](docs/live-trading.md) first.
+
+## Two ways to run it
+
+| | Grok Bot mode | Local mode |
+| --- | --- | --- |
+| Who plays the agents | Your own Grok Bot trading team | Model APIs you pick, per agent |
+| How turns arrive | `POST /api/agent-event` with a shared secret | The server calls the models |
+| Commands and verdicts out | Grok Bot webhook bridge | Optional, same bridge |
+| Setup | `npm run setup -- --yes --app-mode grokbot --generate-agent-secret` | `npm run setup` |
+| Guide | [docs/grokbot-mode.md](docs/grokbot-mode.md) | [docs/local-mode.md](docs/local-mode.md) |
+
+Both modes share the office, the risk gate, the money split and the paper book.
 
 ## What it does
 
@@ -22,6 +34,9 @@ Screenshots use the offline sample data (`MARKET_SOURCE=sample`), so prices are 
 - **Boss's money split.** You set a total balance, a safety net and N open orders (1 to 4). Money Trade = balance minus safety net, and each order gets Money Trade / N. The safety net is never touched.
 - **Every paper order has a stop loss and a take profit.** No stop, no order. The take profit sits `TAKE_PROFIT_R` times the stop distance away (2R by default).
 - **Live public market data.** Bybit, Binance and Hyperliquid public endpoints, no key needed, with offline sample data as a fallback.
+- **TradingView.** An optional TradingView chart widget, and an alert webhook (`POST /api/tradingview`, passphrase) whose alerts are untrusted signals that start a debate. They never place an order by themselves.
+- **Exchanges behind one adapter.** Bybit is fully implemented. Binance, OKX and Hyperliquid (API agent wallet only) are experimental. Exchange keys are used only for `npm run doctor`, the testnet round trip and LIVE.
+- **Daily loss stop and kill switch.** No new orders after `DAILY_LOSS_LIMIT_PCT` of equity is lost in a day. The kill switch cancels, flattens and pauses until restart.
 - **Injection-aware.** News and posts are treated as untrusted data. The sample news even has a planted "ignore previous instructions" line, and a test proves the agents never see it.
 - **A cozy office.** Wood floors, a rug, sunset windows, a kopi corner and seven round little bots with mitten hands. Each role has its own color and prop: tie and keris pin for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk, cap and stopwatch for Execution, clipboard and monocle for the Reviewer. They walk to the table, type, point, punch, cheer when a trade fills and sweat when Risk says no.
 - **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for Money Trade / N, and every desk monitor shows a sparkline.
@@ -39,8 +54,9 @@ You need [Node.js 20 or newer](https://nodejs.org) and git.
 ```bash
 git clone https://github.com/<your-account>/trading-agent-mpu-gandring.git
 cd trading-agent-mpu-gandring
-cp .env.example .env      # optional: add API keys in .env, never in a chat
 npm install
+npm run setup             # optional wizard: writes .env (keys stay on your computer)
+npm run doctor            # optional: checks keys with harmless reads
 npm test
 npm run dev
 ```
@@ -50,8 +66,8 @@ npm run dev
 ```powershell
 git clone https://github.com/<your-account>/trading-agent-mpu-gandring.git
 cd trading-agent-mpu-gandring
-Copy-Item .env.example .env
 npm install
+npm run setup
 npm test
 npm run dev
 ```
@@ -75,7 +91,9 @@ npm run debate -- --symbol SOLUSDT --json     # machine readable verdict
 | `npm run dev` | Backend (Express + WebSocket) and frontend (Vite + React) together |
 | `npm run build` | Compiles the server and builds the UI into `dist/` |
 | `npm start` | Runs the built server, which also serves the built UI on port 8787 |
-| `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, paper-only switch |
+| `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, LIVE unlock, withdraw refusal, no secrets in logs, inbound endpoints |
+| `npm run setup` | Setup wizard, or `-- --yes [flags]` for agents. Also `-- testnet`, `-- check-key`, `-- unlock-live`, `-- lock`, `-- status` |
+| `npm run doctor` | Checks config and every key with a harmless read. Never prints a secret |
 | `npm run debate -- --symbol X` | One debate in the terminal |
 | `npm run screenshot` | Saves `docs/screenshot.png` (overview mid-debate) and `docs/screenshot-chat.png` (agent chat and chart) from a running dev server (needs Chrome) |
 
@@ -85,7 +103,15 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TRADING_MODE` | `PAPER` | Must be `PAPER`. Anything else and the server exits with code 2. |
+| `TRADING_MODE` | `PAPER` | `PAPER`, or `LIVE` only after the CLI unlock (it writes `LIVE_CONFIRMED`). LIVE without a valid unlock exits with code 2. |
+| `APP_MODE` | `local` | `local` or `grokbot` |
+| `AGENT_EVENT_SECRET` | empty | Grok Bot mode: secret for `POST /api/agent-event` (24+ chars) |
+| `HOST` | `0.0.0.0` (PAPER), `127.0.0.1` (LIVE) | Bind address |
+| `TRADINGVIEW_WIDGET` / `TRADINGVIEW_EXCHANGE_PREFIX` | `off` / `BYBIT` | TradingView chart widget in the UI |
+| `TRADINGVIEW_PASSPHRASE` | empty | Turns on `POST /api/tradingview` (12+ chars) |
+| `NEWS_PROVIDER` / `CRYPTOPANIC_API_KEY` | `sample` | Optional news plugin (experimental) |
+| `EXCHANGE` | `none` | `bybit`, `binance`, `okx` or `hyperliquid`, plus `<VENUE>_[TESTNET_]API_KEY` / `_API_SECRET`. See [docs/local-mode.md](docs/local-mode.md) |
+| `DAILY_LOSS_LIMIT_PCT` | `3` | Daily loss stop, percent of the day's starting equity. `0` is off |
 | `PORT` / `WEB_PORT` | `8787` / `5173` | Backend and frontend ports |
 | `XAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` | empty | Model keys. All optional. |
 | `XAI_MODEL`, `OPENAI_MODEL`, ... | placeholders | Default model per provider. Model names change, so check your provider's list and edit. |
@@ -189,15 +215,26 @@ Click an agent in the office or the roster under it. You get a chat panel. Plain
 
 ## Safety notes
 
-- `TRADING_MODE` must be `PAPER`. The server refuses to start otherwise (exit code 2), and there is a test for it.
-- There is no exchange order code, no wallet code and no withdrawal code in this repository.
+- `TRADING_MODE` is `PAPER` unless the signed LIVE unlock is valid. Otherwise the server exits with code 2, and there are tests for it, including a hand-edited `.env` and a tampered state file.
+- There is no withdrawal or transfer code. Keys that can withdraw are refused, checked on the exchange. On Hyperliquid only an approved API agent wallet works, never the main key.
+- LIVE orders: one send, no blind retry, reconciled from the exchange's order record. Stop loss mandatory. Daily loss stop and kill switch apply.
+- Inbound endpoints need their own secrets and are rate limited. TradingView alerts and Grok Bot texts are sanitized as untrusted.
 - API keys are read from `.env` on the server. They never go to the browser, and anything key-shaped is scrubbed from logs, reports, chat replies and bridge payloads.
 - News, posts and market text are wrapped as untrusted data. Lines that read like instructions are removed before any prompt is built.
 - Agreement between agents is not evidence. HOLD is a normal answer.
 
-## Going live later
+## Going live
 
-This version will not trade real money, on purpose. If you want to go live one day, write a separate live adapter as its own module, get it reviewed by someone who did not write it, start on testnet, and require a human to approve every order (or at least the switch to automatic mode). Keep withdrawal permission off on any key you create. The skill notes in `skills/` describe how such a desk should behave, but they are guidance, not code in this build.
+> Real money can be lost. Not financial advice. Most people should stay in PAPER.
+
+LIVE is locked until three CLI steps pass: a testnet round trip, a no-withdraw check of the mainnet key on the exchange, and a typed confirmation. Full guide and the list of what is still experimental: [docs/live-trading.md](docs/live-trading.md).
+
+```bash
+npm run setup -- testnet       # testnet funds only
+npm run setup -- check-key     # refuses keys that can withdraw
+npm run setup -- unlock-live   # type: I UNDERSTAND LIVE TRADING CAN LOSE MONEY
+npm run setup -- lock          # back to PAPER
+```
 
 ## Repository layout
 
@@ -211,12 +248,16 @@ server/            Express + WebSocket backend
   risk.ts          code caps for the risk gate
   paper.ts         paper book
   bridge.ts        optional Grok Bot webhook
+  exchange/        adapter interface; Bybit (implemented), Binance, OKX, Hyperliquid (experimental)
+  live/            signed LIVE unlock state, testnet round trip, live executor (one send, reconcile)
 cli/debate.ts      headless debate
+cli/setup.ts       setup wizard and LIVE unlock steps
+cli/doctor.ts      key checks with harmless reads
 web/               Vite + React virtual office (tokens in web/src/styles/tokens.css)
 skills/            desk role notes for agents (market scan, research, strategy, risk, execution)
 data/sample/       sample news with a planted injection line
 tests/             vitest suite
-docs/              screenshot, money split, Grok Bot bridge
+docs/              screenshots, money split, Grok Bot bridge and mode, local mode, live trading
 ```
 
 ## Setting it up with an agent
@@ -225,15 +266,15 @@ If you use a coding agent or a Grok Bot, point it at [AGENTS.md](AGENTS.md). It 
 
 ## Bahasa Indonesia: mulai cepat
 
-Proyek ini simulasi trading kertas (paper trading). Tujuh agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan, tidak ada janji untung, dan tidak ada kode untuk order sungguhan.
+Proyek ini simulasi trading kertas (paper trading) secara default. Tujuh agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan dan tidak ada janji untung. Mode LIVE terkunci: harus lulus uji testnet, API key tanpa izin withdraw (dicek ke exchange), dan mengetik kalimat konfirmasi di CLI. Kalau dibuka, uang sungguhan bisa hilang.
 
 1. Pasang Node.js 20 atau lebih baru.
 2. Jalankan:
    ```bash
    git clone https://github.com/<akun-anda>/trading-agent-mpu-gandring.git
    cd trading-agent-mpu-gandring
-   cp .env.example .env
    npm install
+   npm run setup
    npm test
    npm run dev
    ```
