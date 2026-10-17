@@ -3,6 +3,7 @@
 // npm run setup -- check-key         re-run the automatic withdraw-permission check
 // npm run setup -- paper             back to PAPER (alias: lock)
 // npm run setup -- status            what is configured, secrets masked
+// npm run setup -- channel <telegram|discord|slack|whatsapp>   chat channel for the Desk Lead (same as npm run channels -- setup)
 // npm run setup -- guide <venue> [--network testnet|mainnet]   the direct links for that venue, step by step
 // The venue guide, key checks, mode checks and doctor are shared with the office Setup wizard (server/setup/*).
 import 'dotenv/config';
@@ -10,6 +11,9 @@ import { randomBytes } from 'node:crypto';
 import { config as loadDotenv } from 'dotenv';
 import { readEnv, setEnv, ensureEnv, mask } from './envfile.js';
 import { ask, askSecret, askYes, choose, isInteractive } from './prompt.js';
+import { channelWizard } from './channels.js';
+import { CHANNELS } from '../server/channels/config.js';
+import { isChannel } from '../server/channels/setup.js';
 import { PROVIDERS, AGENT_IDS, type ProviderName } from '../server/config.js';
 import { EXCHANGES, envNames, ADAPTER_STATUS, VENUE_KIND, VENUE_LABEL, VENUE_KEY_HINT, PUBLIC_KEY_FIELD, PUBLIC_THIRD_FIELD, type ExchangeName } from '../server/exchange/index.js';
 import { checkTradingMode, networkFor, type TradingMode } from '../server/live/guard.js';
@@ -163,10 +167,9 @@ async function wizard() {
   await num('DEBATE_INTERVAL_MIN', 'debate-interval', 'Minutes between debate cycles', '15');
   await num('MAX_HOLD_HOURS', 'max-hold', 'Close positions after this many hours (0 = no limit)', '0');
   await num('REPORT_INTERVAL_MIN', 'report-interval', 'Report every how many minutes (e.g. 30, 60, 240)', '60');
-  if (!nonInteractive && await askYes('Also send reports to Telegram? (experimental)', !!env.TELEGRAM_BOT_TOKEN)) {
-    const t = await askSecret('  Telegram bot token'); if (t) up.TELEGRAM_BOT_TOKEN = t;
-    const c = await ask('  Telegram chat id', env.TELEGRAM_CHAT_ID || ''); if (c) up.TELEGRAM_CHAT_ID = c;
-  }
+  // chat channel for the Desk Lead (alerts, reports, safe commands). Saved by the shared channel module.
+  let channelPick: string | undefined = opt('channel');
+  if (!channelPick && !nonInteractive) channelPick = await choose('Chat channel for Desk Lead alerts and reports', ['none', ...CHANNELS] as const, env.TELEGRAM_BOT_TOKEN ? 'telegram' : 'none');
 
   // 8. trading mode, last, with the automatic key check
   let mode = (opt('trading-mode') ?? (nonInteractive ? 'PAPER' : (await choose('Trading mode', ['paper', 'testnet', 'live'] as const, 'paper')))).toUpperCase() as TradingMode;
@@ -186,6 +189,7 @@ async function wizard() {
 
   setEnv(ENV_FILE, up);
   console.log(`\nSaved ${ENV_FILE}. TRADING_MODE=${mode}.`);
+  if (channelPick && channelPick !== 'none') { if (isChannel(channelPick) && !nonInteractive) await channelWizard(channelPick, ENV_FILE); else console.log(`  Chat channel: run npm run channels -- setup ${channelPick} (interactive, secrets hidden).`); }
   status();
   if (!flag('no-doctor')) await runDoctor();
   console.log('Next: npm run dev (office at http://localhost:5173, Setup button top right). The same setup is in the office Setup wizard.');
@@ -232,6 +236,7 @@ async function main() {
     case 'wizard': return wizard();
     case 'status': return status();
     case 'guide': return guide();
+    case 'channel': { const ch = argv[1]; if (!isChannel(ch)) { console.error(`usage: npm run setup -- channel <${CHANNELS.join('|')}>`); process.exitCode = 1; return; } await channelWizard(ch, ENV_FILE); return; }
     case 'paper': case 'lock': setEnv(ENV_FILE, { TRADING_MODE: 'PAPER', LIVE_CONFIRMED: null }); console.log('Back to PAPER.'); return;
     case 'check-key': {
       const net = (opt('network') ?? 'mainnet') as 'mainnet' | 'testnet';

@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import type { DeskState } from '../types';
 import { WalletPanel } from './Wallet';
+import { ChannelsSetup } from './Channels';
 
 interface Link { label: string; url: string; login?: boolean; note?: string }
 interface Step { id: string; title: string; text: string; links: Link[] }
@@ -98,6 +99,9 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
         </div>
         <p className="wallet-note small">TESTNET and LIVE are saved only after the key check passes (trade on, withdraw off). LIVE needs the typed confirmation. Restart the office afterwards.</p>
         {msg && <p className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
+
+        <h3>7. Chat channel and Desk Lead (optional)</h3>
+        <ChannelsSetup />
         <p className="wallet-note small">Links checked {info.linksCheckedOn}. Full guides: docs/setup/. Not financial advice.</p>
       </div>
     </div>
