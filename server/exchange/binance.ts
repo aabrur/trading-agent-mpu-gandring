@@ -1,10 +1,12 @@
 import { createHmac } from 'node:crypto';
-import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side } from './types.js';
+import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest, pickProtection } from './types.js';
 
 // EXPERIMENTAL, UNTESTED against a real account. Binance USD-M futures, one-way mode.
 // The stop is a separate STOP_MARKET order. If it cannot be placed, the entry is closed at once.
 export class BinanceAdapter implements ExchangeAdapter {
   readonly name = 'binance' as const;
+  /** Stop and take profit are STOP_MARKET / TAKE_PROFIT_MARKET closePosition orders resting on Binance. */
+  readonly exchangeStops = true;
   private base: string;
   constructor(public readonly network: Network, private key: string, private secret: string, private fetchImpl: FetchLike = fetch, testnetBase = process.env.BINANCE_TESTNET_BASE_URL) {
     if (!key || !secret) throw new ExchangeError('Binance key and secret are required');
@@ -65,4 +67,17 @@ export class BinanceAdapter implements ExchangeAdapter {
     return { orderId: r?.orderId != null ? String(r.orderId) : null };
   }
   async cancelAll(symbol: string) { await this.req('DELETE', '/fapi/v1/allOpenOrders', { symbol }); }
+  async protection(symbol: string, side: Side): Promise<Protection> {
+    const open: any[] = await this.req('GET', '/fapi/v1/openOrders', { symbol });
+    return pickProtection(side, (open ?? []).map((o) => ({
+      price: Number(o.stopPrice), kind: /^STOP/.test(o.type) ? 'stop' as const : /^TAKE_PROFIT/.test(o.type) ? 'tp' as const : 'unknown' as const,
+      closes: (o.side === 'SELL' ? 'LONG' : 'SHORT') as Side
+    })).filter((t) => t.kind !== 'unknown'));
+  }
+  async protect(p: ProtectRequest) {
+    const ins = await this.instrument(p.symbol);
+    const exit = p.side === 'LONG' ? 'SELL' : 'BUY';
+    if (p.stop) await this.req('POST', '/fapi/v1/order', { symbol: p.symbol, side: exit, type: 'STOP_MARKET', stopPrice: roundTick(p.stop, ins.tickSize), closePosition: true, workingType: 'MARK_PRICE', newClientOrderId: `${p.clientId}s` });
+    if (p.tp) await this.req('POST', '/fapi/v1/order', { symbol: p.symbol, side: exit, type: 'TAKE_PROFIT_MARKET', stopPrice: roundTick(p.tp, ins.tickSize), closePosition: true, workingType: 'MARK_PRICE', newClientOrderId: `${p.clientId}t` });
+  }
 }

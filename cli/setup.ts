@@ -9,12 +9,15 @@ import { config as loadDotenv } from 'dotenv';
 import { readEnv, setEnv, ensureEnv, mask } from './envfile.js';
 import { ask, askSecret, askYes, choose, isInteractive } from './prompt.js';
 import { PROVIDERS, AGENT_IDS, type ProviderName } from '../server/config.js';
-import { EXCHANGES, envNames, ADAPTER_STATUS, type ExchangeName } from '../server/exchange/index.js';
+import { EXCHANGES, envNames, ADAPTER_STATUS, VENUE_KIND, VENUE_LABEL, VENUE_KEY_HINT, PUBLIC_KEY_FIELD, PUBLIC_THIRD_FIELD, type ExchangeName } from '../server/exchange/index.js';
 import { checkTradingMode, networkFor, type TradingMode } from '../server/live/guard.js';
-import { checkKeyStep, hyperliquidMainKeyCheck } from '../server/live/steps.js';
+import { checkKeyStep, localKeyCheck } from '../server/live/steps.js';
 import { registerSecrets } from '../server/redact.js';
 import { exchangeSecrets } from '../server/exchange/index.js';
 
+// The shell environment as it was at start (dotenv/config never overrides it). --keys-from-env reads from here,
+// because currentEnv() loads the .env file with override and would blank values that are empty in .env.
+const shellEnv: NodeJS.ProcessEnv = { ...process.env };
 const argv = process.argv.slice(2);
 const flag = (name: string) => argv.includes(`--${name}`);
 const opt = (name: string) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : undefined; };
@@ -44,7 +47,7 @@ function status() {
   console.log(`  TradingView       widget ${env.TRADINGVIEW_WIDGET || 'off'}, webhook ${env.TRADINGVIEW_PASSPHRASE ? 'on' : 'off'}`);
   console.log(`  news plugin       ${env.NEWS_PROVIDER || 'sample'}${env.CRYPTOPANIC_API_KEY ? ' (key set)' : ''}`);
   console.log(`  exchange          ${ex}${ex !== 'none' ? ` (${ADAPTER_STATUS[ex]})` : ''}`);
-  if (ex !== 'none') for (const net of ['testnet', 'mainnet'] as const) { const n = envNames(ex, net); console.log(`    ${net.padEnd(8)} ${n.key} ${ex === 'hyperliquid' ? env[n.key] || '(empty)' : mask(env[n.key])}, ${n.secret} ${mask(env[n.secret])}`); }
+  if (ex !== 'none') for (const net of ['testnet', 'mainnet'] as const) { const n = envNames(ex, net); console.log(`    ${net.padEnd(8)} ${n.key} ${PUBLIC_KEY_FIELD.has(ex) ? env[n.key] || '(empty)' : mask(env[n.key])}, ${n.secret} ${mask(env[n.secret])}${n.passphrase ? `, ${n.passphrase} ${PUBLIC_THIRD_FIELD.has(ex) ? env[n.passphrase] || '(empty)' : mask(env[n.passphrase])}` : ''}`); }
   console.log(`  auto trading      ${env.AUTO_TRADING || 'off'}, debate every ${env.DEBATE_INTERVAL_MIN || 15} min, max hold ${env.MAX_HOLD_HOURS || 0}h (0 = off)`);
   console.log(`  reports           every ${env.REPORT_INTERVAL_MIN || 60} min${env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID ? ', Telegram on' : ''}${env.GROKBOT_WEBHOOK_URL ? ', Grok Bot bridge on' : ''}`);
   console.log(`  safety net        ${env.SAFETY_NET || 200} USDT, N ${env.OPEN_ORDERS_N || 4}, daily loss stop ${env.DAILY_LOSS_LIMIT_PCT || 3}%`);
@@ -70,8 +73,8 @@ async function wizard() {
 
   // 2. model keys and per-agent mapping
   if (flag('keys-from-env')) {
-    for (const k of [...Object.values(KEY_VARS), 'CRYPTOPANIC_API_KEY', 'GROKBOT_WEBHOOK_URL', 'GROKBOT_WEBHOOK_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) if (process.env[k]) up[k] = process.env[k]!;
-    for (const name of EXCHANGES) for (const net of ['testnet', 'mainnet'] as const) for (const k of Object.values(envNames(name, net))) if (process.env[k]) up[k] = process.env[k]!;
+    for (const k of [...Object.values(KEY_VARS), 'CRYPTOPANIC_API_KEY', 'GROKBOT_WEBHOOK_URL', 'GROKBOT_WEBHOOK_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) if (shellEnv[k]) up[k] = shellEnv[k]!;
+    for (const name of EXCHANGES) for (const net of ['testnet', 'mainnet'] as const) for (const k of Object.values(envNames(name, net))) if (shellEnv[k]) up[k] = shellEnv[k]!;
     console.log('  copied keys that were set in the current shell environment');
   } else if (appMode === 'grokbot') {
     console.log('\nGrok Bot mode: no model API keys needed. Your six Grok Bot agents are the brains.');
@@ -102,22 +105,35 @@ async function wizard() {
   if (news === 'cryptopanic' && !nonInteractive) { const k = await askSecret('  CryptoPanic API key'); if (k) up.CRYPTOPANIC_API_KEY = k; }
 
   // 5. exchange
-  const exName = (opt('exchange') ?? (nonInteractive ? env.EXCHANGE || 'none' : await choose('Exchange for testnet and (later) live', ['none', ...EXCHANGES] as const, (env.EXCHANGE as 'none') || 'none'))) as ExchangeName | 'none';
+  const cex = EXCHANGES.filter((x) => VENUE_KIND[x] === 'CEX'), dex = EXCHANGES.filter((x) => VENUE_KIND[x] === 'DEX');
+  if (!nonInteractive && !opt('exchange')) {
+    console.log('\nVenues (perpetual futures). Pick by the short name.');
+    console.log(`  CEX (centralized): ${cex.map((x) => `${x} (${VENUE_LABEL[x]}${ADAPTER_STATUS[x] === 'experimental' ? ', experimental' : ''})`).join(', ')}`);
+    console.log(`  DEX (perp DEX, delegated trade-only keys): ${dex.map((x) => `${x} (${VENUE_LABEL[x]}, experimental)`).join(', ')}`);
+  }
+  const exName = (opt('exchange') ?? (nonInteractive ? env.EXCHANGE || 'none' : await choose('Venue for testnet and (later) live', ['none', ...cex, ...dex] as const, (env.EXCHANGE as 'none') || 'none'))) as ExchangeName | 'none';
   if (exName !== 'none' && !EXCHANGES.includes(exName)) throw new Error(`unknown exchange ${exName}`);
   up.EXCHANGE = exName;
+  if (exName !== 'none' && flag('keys-from-env')) for (const net of ['testnet', 'mainnet'] as const) {
+    const n = envNames(exName, net), k = up[n.key] ?? '', sct = up[n.secret] ?? '';
+    const bad = k && sct ? localKeyCheck(exName, k, sct, n.passphrase ? up[n.passphrase] ?? undefined : undefined) : null;
+    if (bad) { console.log(`  REFUSED ${net} keys from the environment: ${bad}`); up[n.key] = null; up[n.secret] = null; if (n.passphrase) up[n.passphrase] = null; }
+  }
   if (exName !== 'none') {
     if (ADAPTER_STATUS[exName] === 'experimental') console.log(`  note: the ${exName} adapter is EXPERIMENTAL and untested against a real account`);
     if (!nonInteractive) {
-      console.log(exName === 'hyperliquid'
-        ? '  Hyperliquid: give the MAIN account address (public) and the private key of an API AGENT wallet. Never the main wallet key.'
+      console.log(`  ${VENUE_LABEL[exName]}: ${VENUE_KEY_HINT[exName]}.`);
+      console.log(VENUE_KIND[exName] === 'DEX'
+        ? '  Never the main wallet private key or seed phrase. Only a delegated trading key that cannot withdraw. See docs/venues.md.'
         : '  Create keys with trading permission only. Withdrawals OFF. An IP whitelist is a good idea.');
+      if (exName === 'dydx') console.log('  dYdX trading also needs the official SDK on this computer: npm install @dydxprotocol/v4-client-js');
       for (const net of ['testnet', 'mainnet'] as const) {
         const n = envNames(exName, net);
         if (!(await askYes(`  Enter ${net} keys now?`, net === 'testnet'))) continue;
-        const k = exName === 'hyperliquid' ? await ask(`    ${n.key}`, env[n.key] || '') : await askSecret(`    ${n.key}`);
+        const k = PUBLIC_KEY_FIELD.has(exName) ? await ask(`    ${n.key}`, env[n.key] || '') : await askSecret(`    ${n.key}`);
         const sct = await askSecret(`    ${n.secret}`);
-        const pp = n.passphrase ? await askSecret(`    ${n.passphrase}`) : '';
-        if (exName === 'hyperliquid' && k && sct) { const bad = hyperliquidMainKeyCheck(k, sct); if (bad) { console.log(`    REFUSED: ${bad}`); continue; } }
+        const pp = n.passphrase ? (PUBLIC_THIRD_FIELD.has(exName) ? await ask(`    ${n.passphrase}`, env[n.passphrase] || '') : await askSecret(`    ${n.passphrase}`)) : '';
+        if (k && sct) { const bad = localKeyCheck(exName, k, sct, pp || undefined); if (bad) { console.log(`    REFUSED: ${bad}`); continue; } }
         if (k) up[n.key] = k; if (sct) up[n.secret] = sct; if (n.passphrase && pp) up[n.passphrase] = pp;
       }
     }

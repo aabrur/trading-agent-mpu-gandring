@@ -39,7 +39,7 @@ export interface AppConfig {
   defaultModels: Record<ProviderName, string>;
   defaultProvider: ProviderName;
   agents: Record<AgentId, { provider: ProviderName; model: string; fellBackToMock: boolean }>;
-  marketSource: 'bybit' | 'binance' | 'hyperliquid' | 'sample';
+  marketSource: 'bybit' | 'binance' | 'hyperliquid' | 'aster' | 'dydx' | 'paradex' | 'orderly' | 'sample';
   watchlist: string[];
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
@@ -107,7 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const safetyNet = num(env, 'SAFETY_NET', 200);
   if (balance < 0 || safetyNet < 0) throw new ConfigError('PAPER_BALANCE and SAFETY_NET must be zero or more');
   const src = (env.MARKET_SOURCE || 'bybit').toLowerCase();
-  if (!['bybit', 'binance', 'hyperliquid', 'sample'].includes(src)) throw new ConfigError('MARKET_SOURCE must be bybit, binance, hyperliquid or sample');
+  if (!['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly', 'sample'].includes(src)) throw new ConfigError('MARKET_SOURCE must be bybit, binance, hyperliquid, aster, dydx, paradex, orderly or sample');
   const url = (env.GROKBOT_WEBHOOK_URL ?? '').trim();
   const key = (env.GROKBOT_WEBHOOK_KEY ?? '').trim();
   return {

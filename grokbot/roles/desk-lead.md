@@ -19,7 +19,7 @@ Each report carries a per-role scorecard (calls right and wrong, risk decisions,
 Money Trade = balance - safety net. Allocation per order = Money Trade / N, N from 1 to 4. The safety net is never traded.
 
 ## Guards (automatic, never loosen, never ask the owner to)
-Exchange key without withdrawal permission, stop loss on every order, daily loss stop until the next UTC day, safety net untouched, max N positions, no blind retries, reconcile from the exchange, kill switch.
+Exchange key without withdrawal permission (on a DEX only a delegated agent key, API trading key, subkey or Orderly key, never the main wallet key), stop loss on every order resting on the exchange, daily loss stop until the next UTC day, safety net untouched, max N positions, no blind retries, reconcile from the exchange, kill switch.
 
 ## Reports
 At the chosen cadence run `gb report` and post it to the owner: balance, safety net, Money Trade, N, allocation, positions with entry, stop, take profit, PnL, opened, closed, skipped and why, scorecard, lessons this period. No profit promises. Not financial advice.

@@ -2,9 +2,10 @@
 // npm run doctor --roundtrip (or: npm run doctor -- --roundtrip): also runs an optional testnet round trip.
 import 'dotenv/config';
 import { loadConfig, ConfigError, type ProviderName } from '../server/config.js';
-import { exchangeSettings, makeAdapter, ADAPTER_STATUS, type Network } from '../server/exchange/index.js';
+import { createRequire } from 'node:module';
+import { exchangeSettings, makeAdapter, ADAPTER_STATUS, VENUE_KIND, VENUE_LABEL, type Network } from '../server/exchange/index.js';
 import { checkTradingMode, type TradingMode } from '../server/live/guard.js';
-import { roundTripCheck } from '../server/live/steps.js';
+import { roundTripCheck, localKeyCheck } from '../server/live/steps.js';
 import { safe } from '../server/redact.js';
 
 type Line = { ok: boolean | null; label: string; detail: string };
@@ -43,10 +44,18 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: ty
   let ex;
   try { ex = exchangeSettings(env); } catch (e) { add(false, 'exchange', (e as Error).message); return out; }
   if (ex.name) {
-    if (env.HYPERLIQUID_PRIVATE_KEY || env.HYPERLIQUID_MAIN_PRIVATE_KEY) add(false, 'hyperliquid', 'a main wallet private key variable is set. Remove it. Only an API agent wallet key belongs here.');
+    const mainVars = Object.keys(env).filter((k) => /(^|_)(MAIN_PRIVATE_KEY|MAIN_WALLET_KEY|SEED|SEED_PHRASE|MNEMONIC)$/.test(k) || k === 'HYPERLIQUID_PRIVATE_KEY');
+    if (mainVars.length) add(false, 'main wallet keys', `${mainVars.join(', ')} set. Remove ${mainVars.length > 1 ? 'them' : 'it'}. Only delegated trading keys belong here, never a main wallet key or seed.`);
+    add(null, `${ex.name} venue`, `${VENUE_LABEL[ex.name]} (${VENUE_KIND[ex.name]}), stops placed on the exchange: yes`);
+    if (ex.name === 'dydx') {
+      let sdk = false; try { createRequire(import.meta.url).resolve('@dydxprotocol/v4-client-js'); sdk = true; } catch { /* missing */ }
+      add(sdk ? true : null, 'dydx SDK', sdk ? '@dydxprotocol/v4-client-js installed (needed to place orders)' : 'not installed. Reads work; to trade run: npm install @dydxprotocol/v4-client-js');
+    }
     for (const net of ['testnet', 'mainnet'] as Network[]) {
       const c = ex.creds[net];
       if (!c) { add(null, `${ex.name} ${net}`, 'no keys'); continue; }
+      const bad = localKeyCheck(ex.name, c.key, c.secret, c.passphrase);
+      if (bad) { add(false, `${ex.name} ${net} key`, `REFUSED: ${bad}`); continue; }
       try {
         const a = makeAdapter(ex.name, net, c, fetchImpl);
         const ping = await a.ping();

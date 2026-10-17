@@ -1,9 +1,11 @@
 import { createHmac } from 'node:crypto';
-import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side } from './types.js';
+import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
 
 // Bybit v5, USDT linear perpetuals, one-way mode. Docs: https://bybit-exchange.github.io/docs/v5/intro
 export class BybitAdapter implements ExchangeAdapter {
   readonly name = 'bybit' as const;
+  /** The stop is attached to the position on Bybit's side (stopLoss on the order, tpslMode Full). */
+  readonly exchangeStops = true;
   private base: string;
   private recvWindow = '5000';
   constructor(public readonly network: Network, private key: string, private secret: string, private fetchImpl: FetchLike = fetch) {
@@ -102,5 +104,21 @@ export class BybitAdapter implements ExchangeAdapter {
 
   async cancelAll(symbol: string) {
     await this.req('POST', '/v5/order/cancel-all', { category: 'linear', symbol });
+  }
+
+  async protection(symbol: string, side: Side): Promise<Protection> {
+    const p = (await this.positions(symbol)).find((x) => x.side === side);
+    return { stop: p?.stop ?? null, tp: p?.tp ?? null };
+  }
+
+  /** Sets the position stop loss / take profit on Bybit itself. */
+  async protect(p: ProtectRequest) {
+    if (!p.stop && !p.tp) return;
+    const ins = await this.instrument(p.symbol);
+    await this.req('POST', '/v5/position/trading-stop', {
+      category: 'linear', symbol: p.symbol, tpslMode: 'Full', positionIdx: 0,
+      stopLoss: p.stop ? String(roundTick(p.stop, ins.tickSize)) : undefined, slTriggerBy: p.stop ? 'MarkPrice' : undefined,
+      takeProfit: p.tp ? String(roundTick(p.tp, ins.tickSize)) : undefined, tpTriggerBy: p.tp ? 'MarkPrice' : undefined
+    });
   }
 }

@@ -18,7 +18,7 @@ Tell your Grok Bot:
 
 ## What you will be asked (once)
 
-- Venue: Bybit (implemented), or Binance, OKX, Hyperliquid (experimental, unverified).
+- Venue: CEX Bybit (implemented), Binance, OKX; or DEX Hyperliquid, Aster, dYdX v4, Paradex, Orderly. All except Bybit are experimental and unverified. DEX venues take only a delegated trade-only key, never your main wallet key or seed.
 - Network: PAPER (default), TESTNET or LIVE.
 - Exchange key: through the platform's secret request card only. Never paste it in chat. Create it with **trading permission only, withdrawals off**. A key that can withdraw is refused automatically.
 - Safety net (never traded), N (1 to 4 open positions), markets, max leverage, daily loss stop, report cadence (for example every 30, 60 or 240 minutes).

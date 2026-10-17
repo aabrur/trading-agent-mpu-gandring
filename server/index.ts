@@ -27,6 +27,9 @@ if (net) {
     }
     executor = new LiveExecutor(adapter);
     log(`${cfg.tradingMode} on ${ex.name}${cfg.live?.experimental ? ' (EXPERIMENTAL adapter)' : ''}: ${v.detail}`);
+    // Every open position must have its stop resting ON THE EXCHANGE, so it stays protected while this computer is off.
+    const pct = Math.min(20, Math.max(0.5, Number(process.env.PROTECT_STOP_PCT ?? 3) || 3));
+    for (const n of await executor.ensureProtection({}, pct)) log(`[startup protection] ${n}`);
   } catch (e) {
     console.error(`[trading-agent-mpu-gandring] ${cfg.tradingMode} refused at startup: ${safe((e as Error).message)}`);
     process.exit(2);

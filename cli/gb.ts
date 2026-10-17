@@ -8,7 +8,8 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, AGENT_IDS } from '../server/config.js';
-import { getSnapshot, getCandles, TIMEFRAMES, type Timeframe } from '../server/market/index.js';
+import { getSnapshot, getCandles, TIMEFRAMES, MARKET_SOURCES, type Timeframe } from '../server/market/index.js';
+import { EXCHANGES, VENUE_KIND, VENUE_LABEL, VENUE_KEY_HINT, ADAPTER_STATUS, envNames } from '../server/exchange/index.js';
 import { moneySplit, planOrder, round2 } from '../server/money.js';
 import { normSymbol } from '../server/commands.js';
 import { safe } from '../server/redact.js';
@@ -17,8 +18,9 @@ export interface GbResult { ok: boolean; data: unknown; text: string }
 interface Deps { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; baseUrl?: string }
 
 const HELP = `Trading Agent Mpu Gandring agent CLI (no model keys needed)
-  npm run gb -- market <symbol>                      price, 24h change, funding
-  npm run gb -- candles <symbol> [tf] [--limit 100]  closed candles, tf: ${TIMEFRAMES.join(' ')}
+  npm run gb -- market <symbol> [--source venue]     price, 24h change, funding
+  npm run gb -- candles <symbol> [tf] [--limit 100] [--source venue]  closed candles, tf: ${TIMEFRAMES.join(' ')}
+  npm run gb -- venues                               venues (CEX and DEX), key type, env names, status
   npm run gb -- account                              mode, balance, equity, daily loss stop
   npm run gb -- positions                            open positions with entry, stop, take profit, PnL
   npm run gb -- split [--balance B --safety S --n N] Money Trade = balance - safety net, per order = Money Trade / N
@@ -67,16 +69,23 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
 
   switch (cmd) {
     case undefined: case 'help': case '--help': return ok({ help: HELP }, HELP);
+    case 'venues': {
+      const rows = EXCHANGES.map((v) => ({ venue: v, label: VENUE_LABEL[v], kind: VENUE_KIND[v], status: ADAPTER_STATUS[v], key: VENUE_KEY_HINT[v], env: Object.values(envNames(v, 'mainnet')), testnetEnv: Object.values(envNames(v, 'testnet')), exchangeSideStops: true, selected: (env.EXCHANGE ?? '').toLowerCase() === v }));
+      const line = (r: typeof rows[number]) => `  ${r.selected ? '*' : ' '} ${r.venue.padEnd(12)} ${r.label.padEnd(12)} ${r.status.padEnd(12)} ${r.env.join(', ')}`;
+      return ok(rows, `CEX\n${rows.filter((r) => r.kind === 'CEX').map(line).join('\n')}\nDEX (delegated trade-only keys, never the main wallet key)\n${rows.filter((r) => r.kind === 'DEX').map(line).join('\n')}\nAll venues place the stop loss on the exchange. Not financial advice.`);
+    }
     case 'market': {
       const s = normSymbol(args[0] ?? ''); if (!s) return fail('usage: market <symbol>');
-      const snap = await getSnapshot(s, cfg.marketSource);
+      if (flags.source && !MARKET_SOURCES.includes(flags.source as never)) return fail(`--source must be one of ${MARKET_SOURCES.join(', ')}`);
+      const snap = await getSnapshot(s, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource);
       const d = { symbol: s, last: snap.last, bid: snap.bid, ask: snap.ask, change24hPct: round2(snap.change24hPct), fundingRate: snap.fundingRate, source: snap.source, example: snap.example, at: snap.fetchedAt };
       return ok(d, `${s} ${d.last} (${d.change24hPct}% 24h) funding ${d.fundingRate ?? 'n/a'} from ${d.source}${d.example ? ' (SAMPLE, not live)' : ''}`);
     }
     case 'candles': {
       const s = normSymbol(args[0] ?? ''); const tf = (args[1] ?? '15m') as Timeframe;
       if (!s || !TIMEFRAMES.includes(tf)) return fail(`usage: candles <symbol> [${TIMEFRAMES.join('|')}]`);
-      const r = await getCandles(s, tf, cfg.marketSource, num(flags.limit) ?? 100);
+      if (flags.source && !MARKET_SOURCES.includes(flags.source as never)) return fail(`--source must be one of ${MARKET_SOURCES.join(', ')}`);
+      const r = await getCandles(s, tf, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, num(flags.limit) ?? 100);
       const d = { symbol: s, tf: r.tf, source: r.source, example: r.example, candles: r.candles.map((c) => ({ t: c.t, o: c.o, h: c.h, l: c.l, c: c.c, v: round2(c.v) })) };
       const last = d.candles.at(-1);
       return ok(d, `${s} ${r.tf}: ${d.candles.length} closed candles from ${r.source}${r.example ? ' (SAMPLE)' : ''}. Last close ${last?.c ?? 'n/a'}.`);

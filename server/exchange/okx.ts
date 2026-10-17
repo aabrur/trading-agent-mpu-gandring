@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side } from './types.js';
+import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest, pickProtection } from './types.js';
 
 // EXPERIMENTAL, UNTESTED against a real account. OKX USDT swaps, net mode, cross margin.
 // Testnet means OKX demo trading (same host, x-simulated-trading header, demo keys).
@@ -7,6 +7,8 @@ const instId = (symbol: string) => `${symbol.replace(/USDT$/, '')}-USDT-SWAP`;
 
 export class OkxAdapter implements ExchangeAdapter {
   readonly name = 'okx' as const;
+  /** Stop and take profit are attached algo orders (attachAlgoOrds) or conditional algo orders resting on OKX. */
+  readonly exchangeStops = true;
   private ctVal = new Map<string, number>();
   constructor(public readonly network: Network, private key: string, private secret: string, private passphrase: string, private fetchImpl: FetchLike = fetch) {
     if (!key || !secret || !passphrase) throw new ExchangeError('OKX key, secret and passphrase are required');
@@ -86,5 +88,26 @@ export class OkxAdapter implements ExchangeAdapter {
   async cancelAll(symbol: string) {
     const open = await this.req('GET', '/api/v5/trade/orders-pending', { instId: instId(symbol) });
     if (open?.length) await this.req('POST', '/api/v5/trade/cancel-batch-orders', open.map((o: any) => ({ instId: o.instId, ordId: o.ordId })));
+    for (const ordType of ['conditional', 'oco']) {
+      const algos = await this.req('GET', '/api/v5/trade/orders-algo-pending', { ordType, instId: instId(symbol) });
+      if (algos?.length) await this.req('POST', '/api/v5/trade/cancel-algos', algos.map((a: any) => ({ instId: a.instId, algoId: a.algoId })));
+    }
+  }
+  async protection(symbol: string, side: Side): Promise<Protection> {
+    const rows: any[] = [];
+    for (const ordType of ['conditional', 'oco']) rows.push(...((await this.req('GET', '/api/v5/trade/orders-algo-pending', { ordType, instId: instId(symbol) })) ?? []));
+    const triggers: { price: number; kind: 'stop' | 'tp' | 'unknown'; closes: Side | null }[] = [];
+    for (const a of rows) {
+      const closes: Side = a.side === 'sell' ? 'LONG' : 'SHORT';
+      if (Number(a.slTriggerPx) > 0) triggers.push({ price: Number(a.slTriggerPx), kind: 'stop', closes });
+      if (Number(a.tpTriggerPx) > 0) triggers.push({ price: Number(a.tpTriggerPx), kind: 'tp', closes });
+    }
+    return pickProtection(side, triggers);
+  }
+  async protect(p: ProtectRequest) {
+    const ins = await this.instrument(p.symbol);
+    const base = { instId: instId(p.symbol), tdMode: 'cross', side: p.side === 'LONG' ? 'sell' : 'buy', ordType: 'conditional', closeFraction: '1', reduceOnly: true };
+    if (p.stop) await this.req('POST', '/api/v5/trade/order-algo', { ...base, slTriggerPx: String(roundTick(p.stop, ins.tickSize)), slOrdPx: '-1', slTriggerPxType: 'mark' });
+    if (p.tp) await this.req('POST', '/api/v5/trade/order-algo', { ...base, tpTriggerPx: String(roundTick(p.tp, ins.tickSize)), tpOrdPx: '-1', tpTriggerPxType: 'mark' });
   }
 }

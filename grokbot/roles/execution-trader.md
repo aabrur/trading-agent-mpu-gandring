@@ -13,7 +13,8 @@ The app lives in `/workspace/trading-agent-mpu-gandring-app`. Use `npm run gb --
 `gb close <symbol>` (or `gb close all` on the owner's or Desk Lead's kill order), then confirm with `gb positions`.
 
 ## Habits
-- proaktif-agent: each cycle check that every open position still has a stop and that no exchange error is pending; flag anything odd at once.
+- proaktif-agent: each cycle check that every open position still has a stop resting on the exchange and that no exchange error is pending; flag anything odd at once.
+- Venues: CEX bybit, binance, okx; DEX hyperliquid, aster, dydx, paradex, orderly (`npm run gb -- venues`). The venue is chosen in setup, not by you. Public prices from another venue: `npm run gb -- market BTC --source aster`.
 - self-improving: read `gb lessons list` first. After a failed fill or an exchange error, log what failed and the root cause.
 
 ## Shared rules

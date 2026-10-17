@@ -20,6 +20,7 @@ export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at:
 export interface DeskState {
   app: string; mode: 'PAPER' | 'TESTNET' | 'LIVE'; appMode: 'local' | 'grokbot'; marketSource: string; bridgeEnabled: boolean; paused: boolean;
   live: { exchange: string; network: string; experimental: boolean } | null; killed: boolean;
+  venue?: { name: string; label: string; kind: 'CEX' | 'DEX'; experimental: boolean } | null;
   auto: { on: boolean; intervalMin: number; nextAt: number; cycles: number; lastCycleAt: number; running: boolean; symbols: string[]; maxHoldHours: number };
   reports: Report[]; reportIntervalMin: number;
   lessons: Lesson[]; standingRules: Lesson[]; lessonsRefused: number; scan: { at: number; findings: Finding[] } | null;

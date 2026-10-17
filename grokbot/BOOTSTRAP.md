@@ -37,9 +37,26 @@ Then create one group chat named **Trading Agent Mpu Gandring** with all six (th
 
 Ask the owner, one question at a time, and show the default in brackets:
 
-1. Venue [bybit]: bybit, binance, okx, hyperliquid. Say that Binance, OKX and Hyperliquid are experimental and unverified, and need `ALLOW_EXPERIMENTAL_LIVE=yes` for LIVE.
+1. Venue [bybit], shown in two groups:
+   - CEX: `bybit` (implemented), `binance`, `okx`
+   - DEX (perp DEX, delegated trade-only keys): `hyperliquid`, `aster`, `dydx`, `paradex`, `orderly`
+
+   Say that every venue except Bybit is experimental and unverified (never run on a real account), and needs `ALLOW_EXPERIMENTAL_LIVE=yes` for LIVE. For a DEX say plainly: only a delegated key that cannot withdraw (agent wallet, API trading key, subkey, Orderly key), never the main wallet private key or seed phrase. Stops always rest on the exchange. dYdX also needs `npm install @dydxprotocol/v4-client-js` in the app folder before TESTNET or LIVE. In Grok Bot mode the office Connect wallet button is off; keys come only through the secret card. Details: `docs/venues.md`.
 2. Network [PAPER]: PAPER, TESTNET or LIVE. For LIVE say plainly: the desk will trade real money on its own, losses are possible, not financial advice.
-3. Exchange key (TESTNET or LIVE only): request it with the **secret request card**, named exactly as the app expects, for example `BYBIT_API_KEY` and `BYBIT_API_SECRET` (mainnet) or `BYBIT_TESTNET_API_KEY` and `BYBIT_TESTNET_API_SECRET`. OKX also needs `OKX_API_PASSPHRASE`. Hyperliquid needs `HYPERLIQUID_ACCOUNT_ADDRESS` and `HYPERLIQUID_AGENT_PRIVATE_KEY` of an approved API agent wallet, never the main wallet key. Remind the owner: trading permission only, withdrawals off.
+3. Exchange key (TESTNET or LIVE only): request it with the **secret request card**, named exactly as the app expects. Mainnet names below; for TESTNET insert `_TESTNET` after the prefix (for example `BYBIT_TESTNET_API_KEY`, `ASTER_TESTNET_SIGNER_PRIVATE_KEY`).
+
+   | Venue | Secret card names |
+   | --- | --- |
+   | bybit | `BYBIT_API_KEY`, `BYBIT_API_SECRET` |
+   | binance | `BINANCE_API_KEY`, `BINANCE_API_SECRET` |
+   | okx | `OKX_API_KEY`, `OKX_API_SECRET`, `OKX_API_PASSPHRASE` |
+   | hyperliquid | `HYPERLIQUID_ACCOUNT_ADDRESS` (main address, public), `HYPERLIQUID_AGENT_PRIVATE_KEY` (approved API agent wallet) |
+   | aster | `ASTER_USER_ADDRESS` (main address, public), `ASTER_SIGNER_PRIVATE_KEY` (Pro API agent, perp trading on, withdraw off) |
+   | dydx | `DYDX_ADDRESS` (dydx1..., public), `DYDX_API_PRIVATE_KEY` (API Trading Key), `DYDX_AUTHENTICATOR_ID` (number) |
+   | paradex | `PARADEX_ACCOUNT_ADDRESS` (public), `PARADEX_SUBKEY_PRIVATE_KEY` (registered subkey) |
+   | orderly | `ORDERLY_ACCOUNT_ID` (public), `ORDERLY_KEY_SECRET` (Orderly key, scope read,trading) |
+
+   Remind the owner: trading permission only, withdrawals off, never the main wallet key or seed. The app refuses anything else at setup and at every start.
 4. Starting paper balance [1000] (PAPER only; other modes read the exchange balance), safety net [200], N open positions 1 to 4 [4].
 5. Markets [BTCUSDT,ETHUSDT,SOLUSDT], max leverage [3], daily loss stop percent [3], max loss per trade percent [1].
 6. Report cadence in minutes [60].
@@ -54,7 +71,7 @@ npm run setup -- --yes --app-mode grokbot --generate-agent-secret \
   --auto on --report-interval 60
 ```
 
-Then write the remaining choices into `.env` (plain values, no secrets): `WATCHLIST=...`, `AUTO_SYMBOLS=...`, `MAX_LEVERAGE=...`, `MAX_LOSS_PER_TRADE_PCT=...`. Run `npm run doctor`. If setup exits with code 2 the key was refused (it can withdraw, cannot trade, or is missing): tell the owner why and stay in PAPER. Never work around a refusal.
+Then write the remaining choices into `.env` (plain values, no secrets): `WATCHLIST=...`, `AUTO_SYMBOLS=...`, `MAX_LEVERAGE=...`, `MAX_LOSS_PER_TRADE_PCT=...`. Run `npm run doctor`. If setup exits with code 2 the key was refused (it can withdraw, cannot trade, is a main wallet key, or is missing): tell the owner why and stay in PAPER. Never work around a refusal.
 
 Start the office in the background and check it:
 

@@ -20,6 +20,8 @@ import { sanitizeUntrusted } from './untrusted.js';
 import type { LiveExecutor } from './live/executor.js';
 import { AutoTrader } from './auto.js';
 import { Reporter } from './reports.js';
+import { WalletConnector, walletAccess, walletInfo, findSecretLike } from './wallet.js';
+import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
 
 const sameSecret = (given: string, want: string) => {
   const a = Buffer.from(given), b = Buffer.from(want);
@@ -67,7 +69,7 @@ const GbLessonSchema = z.object({
   symbol: z.string().max(20).optional(), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default(''), lesson: z.string().min(8).max(300)
 }).strict();
 
-export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null } = {}) {
+export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; envFile?: string; wallet?: WalletConnector } = {}) {
   const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
   const desk = new Desk(cfg, caller, { reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath });
   const auto = new AutoTrader(desk);
@@ -80,6 +82,33 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
       agents: Object.fromEntries(AGENT_IDS.map((id) => [id, cfg.appMode === 'grokbot' ? { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false } : { provider: cfg.agents[id].provider, model: cfg.agents[id].model, fellBackToMock: cfg.agents[id].fellBackToMock }])) });
   });
   app.get('/api/state', (_req, res) => res.json(desk.snapshot()));
+
+  // Connect wallet (EXPERIMENTAL). Local mode, office on 127.0.0.1, loopback clients only. Never accepts a private key or seed.
+  const wallet = opts.wallet ?? new WalletConnector({ envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env' });
+  const walletLimit = limiter(20, 60_000);
+  const access = (req: express.Request) => walletAccess({ appMode: cfg.appMode, host: cfg.host, remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
+  const WalletStart = z.object({ venue: z.enum(EXCHANGES as unknown as [ExchangeName, ...ExchangeName[]]), network: z.enum(['testnet', 'mainnet']), mainAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/), chainId: z.number().int().positive().max(2 ** 40) }).strict();
+  const WalletApprove = z.object({ id: z.string().regex(/^[0-9a-f]{32}$/), signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/) }).strict();
+  app.get('/api/wallet', (req, res) => {
+    const a = access(req);
+    res.json({ available: a.ok, reason: a.reason, appMode: cfg.appMode, current: cfg.exchange.name, experimental: true,
+      venues: EXCHANGES.map((v) => ({ ...walletInfo(v), status: ADAPTER_STATUS[v] })) });
+  });
+  app.post('/api/wallet/start', (req, res) => {
+    const a = access(req); if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });
+    if (!walletLimit(req.socket.remoteAddress ?? '')) return res.status(429).json({ ok: false, error: 'slow down' });
+    const bad = findSecretLike(req.body); if (bad) return res.status(400).json({ ok: false, error: `refused: the request contains ${bad}. Never paste a private key or seed phrase here.` });
+    const p = WalletStart.safeParse(req.body); if (!p.success) return res.status(400).json({ ok: false, error: 'bad request' });
+    try { res.json({ ok: true, ...wallet.start(p.data.venue, p.data.network, p.data.mainAddress, p.data.chainId) }); }
+    catch (e) { res.status(400).json({ ok: false, error: safe((e as Error).message) }); }
+  });
+  app.post('/api/wallet/approve', async (req, res) => {
+    const a = access(req); if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });
+    if (!walletLimit(req.socket.remoteAddress ?? '')) return res.status(429).json({ ok: false, error: 'slow down' });
+    const p = WalletApprove.safeParse(req.body); if (!p.success) return res.status(400).json({ ok: false, error: 'bad request (only an approval id and a signature are accepted)' });
+    try { res.json(await wallet.approve(p.data.id, p.data.signature)); }
+    catch (e) { res.status(400).json({ ok: false, error: safe((e as Error).message) }); }
+  });
   // Closed 15m candles for the price chart. Cached briefly so the UI cannot hammer public APIs.
   const candleCache = new Map<string, { at: number; body: unknown }>();
   app.get('/api/candles', async (req, res) => {

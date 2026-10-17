@@ -2,7 +2,7 @@ import { encode } from '@msgpack/msgpack';
 import { keccak256, concat, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createHash } from 'node:crypto';
-import { ExchangeError, httpJson, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side } from './types.js';
+import { ExchangeError, httpJson, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest, pickProtection } from './types.js';
 
 // EXPERIMENTAL, UNTESTED against a real account. Hyperliquid perps through an API agent wallet.
 // The agent wallet can trade for the account but cannot withdraw. The main wallet's private key
@@ -31,6 +31,8 @@ export function cloidFor(clientId: string): Hex { return `0x${createHash('sha256
 
 export class HyperliquidAdapter implements ExchangeAdapter {
   readonly name = 'hyperliquid' as const;
+  /** Stop and take profit are reduce-only trigger orders resting on Hyperliquid (tpsl sl / tp). */
+  readonly exchangeStops = true;
   private base: string;
   private account: ReturnType<typeof privateKeyToAccount>;
   private meta: { universe: { name: string; szDecimals: number }[] } | null = null;
@@ -136,5 +138,21 @@ export class HyperliquidAdapter implements ExchangeAdapter {
     const open: any[] = await this.info({ type: 'openOrders', user: this.user });
     const cancels = (open ?? []).filter((o) => o.coin === a.coin).map((o) => ({ a: a.idx, o: o.oid }));
     if (cancels.length) await this.exchange({ type: 'cancel', cancels });
+  }
+  async protection(symbol: string, side: Side): Promise<Protection> {
+    const a = await this.asset(symbol);
+    const open: any[] = await this.info({ type: 'frontendOpenOrders', user: this.user });
+    return pickProtection(side, (open ?? []).filter((o) => o.coin === a.coin && o.isTrigger).map((o) => ({
+      price: Number(o.triggerPx), kind: /stop/i.test(String(o.orderType)) ? 'stop' as const : /take profit/i.test(String(o.orderType)) ? 'tp' as const : 'unknown' as const,
+      closes: (o.side === 'A' ? 'LONG' : 'SHORT') as Side
+    })));
+  }
+  async protect(p: ProtectRequest) {
+    const a = await this.asset(p.symbol);
+    const sz = floatToWire(Number(p.qty.toFixed(a.szDecimals)));
+    const buy = p.side === 'SHORT';
+    const leg = (px: number, tpsl: 'sl' | 'tp') => ({ a: a.idx, b: buy, p: floatToWire(hlPrice(buy ? px * (1 + SLIPPAGE) : px * (1 - SLIPPAGE), a.szDecimals)), s: sz, r: true, t: { trigger: { isMarket: true, triggerPx: floatToWire(hlPrice(px, a.szDecimals)), tpsl } } });
+    const orders = [...(p.stop ? [leg(p.stop, 'sl')] : []), ...(p.tp ? [leg(p.tp, 'tp')] : [])];
+    if (orders.length) await this.exchange({ type: 'order', orders, grouping: 'na' });
   }
 }

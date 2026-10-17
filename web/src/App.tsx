@@ -7,6 +7,7 @@ import { CommandBar } from './components/CommandBar';
 import { PriceChart } from './components/PriceChart';
 import { Reports } from './components/Reports';
 import { Lessons } from './components/Lessons';
+import { WalletPanel } from './components/Wallet';
 import { TopBar, TickerStrip, FightMeter, Portfolio, Verdicts, TradeLog, Roster } from './components/Panels';
 
 function initialTheme() {
@@ -64,6 +65,7 @@ export default function App() {
           <Portfolio state={state} command={(t) => void command(t)} />
           <Reports state={state} />
           <Lessons state={state} />
+          <WalletPanel state={state} />
         </aside>
         <section className="bottom">
           <TradeLog state={state} />

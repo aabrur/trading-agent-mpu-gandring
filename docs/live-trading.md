@@ -18,8 +18,10 @@ Agents and scripts can pick the mode too: `npm run setup -- --yes --exchange byb
 
 ## Automatic guards (no human input, cannot be configured to zero)
 
-- **No withdraw permission.** The key is checked on the exchange at setup and again on every start. A key that can withdraw, cannot trade, or whose permissions cannot be read is refused, and the server does not start (exit code 2). Bybit: `/v5/user/query-api`. Binance: `apiRestrictions`. OKX: `account/config`. Hyperliquid: the key must be an approved API agent wallet of your account, never the main wallet key.
-- **Stop loss on every order**, attached on the exchange (Bybit, OKX, Hyperliquid) or placed right after the fill (Binance, which closes the entry if the stop fails). An order without a stop is refused in code.
+- **No withdraw permission.** The key is checked on the exchange at setup and again on every start. A key that can withdraw, cannot trade, or whose permissions cannot be read is refused, and the server does not start (exit code 2). Bybit: `/v5/user/query-api`. Binance: `apiRestrictions`. OKX: `account/config`. Hyperliquid: the key must be an approved API agent wallet of your account, never the main wallet key. Aster: a Pro API agent, and the account must report `canWithdraw: false`. dYdX: an API Trading Key whose authenticator allows only place and cancel order messages. Paradex: a registered subkey. Orderly: an ACTIVE Orderly key with scope read,trading only. Main wallet keys and seed phrases are refused everywhere. See [venues.md](venues.md).
+- **Stop loss on every order, resting on the exchange.** Attached to the position (Bybit), attached or conditional algo (OKX), closePosition `STOP_MARKET` (Binance, Aster), reduce-only trigger order (Hyperliquid, dYdX, Paradex) or positional TP/SL (Orderly). An order without a stop is refused in code, and an adapter that cannot place an exchange-side stop cannot open at all.
+- **Verified after every fill (fail closed).** The executor reads the venue's open trigger orders. A missing stop (or take profit) is placed once; if the stop is still not there, the position is closed at once. A missing take profit is reported but never a reason to drop the stop.
+- **Startup reconcile.** On every TESTNET/LIVE start, each open position on the venue must have an exchange-side stop. If one is missing, a stop is placed `PROTECT_STOP_PCT` (default 3, 0.5..20) away from the worse of entry and mark price; if that fails, the position is closed. This covers any position on that account, so keep manual trading on a separate (sub)account. Because stops rest on the exchange, positions stay protected while your laptop is off.
 - **Daily loss stop.** Once equity is `DAILY_LOSS_LIMIT_PCT` (default 3, clamped to 0.5..20) below the start of the UTC day, no new orders until the next UTC day. Debates keep running so open positions can still close.
 - **Safety net is never touched.** Money Trade = balance minus `SAFETY_NET`. `SAFETY_NET` must be above 0 in TESTNET and LIVE.
 - **Max N open positions** (`OPEN_ORDERS_N`, 1 to 4). Allocation per order = (balance minus safety net) / N, recalculated from the exchange balance.
@@ -27,8 +29,8 @@ Agents and scripts can pick the mode too: `npm run setup -- --yes --exchange byb
 - **Reconcile from the exchange.** Fills use the exchange average price and size. Positions are re-read every 30 seconds; anything gone on the exchange (stop, take profit, closed by hand) is closed in the local mirror.
 - **Kill switch** in the UI (or `POST /api/kill`): stops the auto loop, cancels all orders, flattens every position, stays stopped until restart.
 - **Local only.** In LIVE the server always binds to `127.0.0.1`, whatever `HOST` says.
-- **Experimental adapters** (Binance, OKX, Hyperliquid) also need `ALLOW_EXPERIMENTAL_LIVE=yes`, because nobody has verified them on a real account. Bybit does not need it.
-- No exchange order on sample data. The desk never touches a position it did not open.
+- **Experimental adapters** (Binance, OKX, Hyperliquid, Aster, dYdX v4, Paradex, Orderly) also need `ALLOW_EXPERIMENTAL_LIVE=yes`, because nobody has verified them on a real account. Bybit does not need it.
+- No exchange order on sample data. The desk does not trade positions it did not open, except the startup reconcile above, which only adds a missing stop (or closes if that is impossible).
 
 ## The auto loop
 
@@ -58,7 +60,9 @@ The optional round trip places a small market entry with the stop attached on th
 
 ## What is not done
 
-- Bybit is tested against a mocked API only. Binance, OKX and Hyperliquid adapters have never run against a real account. Watch the first trades closely.
+- Bybit is tested against a mocked API only. Binance, OKX, Hyperliquid, Aster, dYdX v4, Paradex and Orderly adapters have never run against a real account (mocked API tests only). Connect wallet was never tried with a real wallet. Watch the first trades closely.
+- dYdX order signing depends on the optional official SDK (`npm install @dydxprotocol/v4-client-js`) and was only exercised through a mocked chain interface.
+- The desk book is in memory: after a restart it does not remember the stop it chose for a position. The exchange-side stop keeps protecting it, and the startup reconcile adds one where it is missing.
 - Partial fills are mirrored at the filled size; there is no smart re-entry.
 - No websocket order stream; the desk polls.
 - The Telegram report channel is untested.

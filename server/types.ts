@@ -7,7 +7,7 @@ export interface Candle { t: number; o: number; h: number; l: number; c: number;
 
 export interface MarketSnapshot {
   symbol: string;
-  source: 'bybit' | 'binance' | 'hyperliquid' | 'sample';
+  source: 'bybit' | 'binance' | 'hyperliquid' | 'aster' | 'dydx' | 'paradex' | 'orderly' | 'sample';
   example: boolean;
   last: number;
   change24hPct: number;

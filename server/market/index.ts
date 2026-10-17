@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 type Source = MarketSnapshot['source'];
-const ORDER: Source[] = ['bybit', 'binance', 'hyperliquid'];
+const ORDER: Source[] = ['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly'];
+export const MARKET_SOURCES = ['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly', 'sample'] as const;
 
 async function getJson(url: string, init?: RequestInit, timeoutMs = 6000): Promise<any> {
   const ctrl = new AbortController();
@@ -59,7 +60,65 @@ async function fromHyperliquid(symbol: string): Promise<MarketSnapshot> {
   };
 }
 
-const FETCHERS: Record<Exclude<Source, 'sample'>, (s: string) => Promise<MarketSnapshot>> = { bybit: fromBybit, binance: fromBinance, hyperliquid: fromHyperliquid };
+// ---------- perp DEX public feeds (no keys, public endpoints only) ----------
+const DEX_TF: Record<'dydx' | 'paradex' | 'orderly', Record<string, string>> = {
+  dydx: { '1m': '1MIN', '5m': '5MINS', '15m': '15MINS', '1h': '1HOUR', '4h': '4HOURS', '1d': '1DAY' },
+  paradex: { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': '1440' },
+  orderly: { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': '1D' }
+};
+const TF_MS_ALL: Record<string, number> = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000 };
+const coinOf = (symbol: string) => symbol.replace(/USDT?$|USDC$/, '');
+const fix = (c: Candle): Candle => ({ ...c, h: Math.max(c.o, c.h, c.l, c.c), l: Math.min(c.o, c.h, c.l, c.c) });
+
+async function dexCandles(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: string, tf: string, n: number): Promise<Candle[]> {
+  const coin = coinOf(symbol), end = Date.now(), start = end - (n + 1) * TF_MS_ALL[tf];
+  if (src === 'aster') {
+    const kl = await getJson(`${process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com'}/fapi/v3/klines?symbol=${coin}USDT&interval=${tf}&limit=${Math.min(1500, n + 1)}`);
+    return kl.map((r: any[]) => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }));
+  }
+  if (src === 'dydx') {
+    const kl = await getJson(`https://indexer.dydx.trade/v4/candles/perpetualMarkets/${coin}-USD?resolution=${DEX_TF.dydx[tf]}&limit=${Math.min(1000, n + 1)}`);
+    return (kl?.candles ?? []).map((r: any) => ({ t: Date.parse(r.startedAt), o: +r.open, h: +r.high, l: +r.low, c: +r.close, v: +r.baseTokenVolume })).reverse();
+  }
+  if (src === 'paradex') {
+    const kl = await getJson(`https://api.prod.paradex.trade/v1/markets/klines?symbol=${coin}-USD-PERP&resolution=${DEX_TF.paradex[tf]}&start_at=${start}&end_at=${end}`);
+    return (kl?.results ?? []).map((r: number[]) => fix({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }));
+  }
+  const kl = await getJson(`https://api.orderly.org/v1/tv/history?symbol=PERP_${coin}_USDC&resolution=${DEX_TF.orderly[tf]}&from=${Math.floor(start / 1000)}&to=${Math.floor(end / 1000)}`);
+  if (kl?.s !== 'ok') throw new Error('orderly: no candles');
+  return (kl.t as number[]).map((t, i) => ({ t: t * 1000, o: +kl.o[i], h: +kl.h[i], l: +kl.l[i], c: +kl.c[i], v: +kl.v[i] }));
+}
+
+async function fromDex(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: string): Promise<MarketSnapshot> {
+  const coin = coinOf(symbol);
+  let last = 0, change = 0, funding: number | null = null, bid: number | null = null, ask: number | null = null;
+  if (src === 'aster') {
+    const base = process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com';
+    const tk = await getJson(`${base}/fapi/v3/ticker/24hr?symbol=${coin}USDT`);
+    last = +tk.lastPrice; change = +tk.priceChangePercent;
+    try { funding = +(await getJson(`${base}/fapi/v3/premiumIndex?symbol=${coin}USDT`)).lastFundingRate; } catch { funding = null; }
+  } else if (src === 'dydx') {
+    const m = (await getJson(`https://indexer.dydx.trade/v4/perpetualMarkets?ticker=${coin}-USD`))?.markets?.[`${coin}-USD`];
+    if (!m) throw new Error('dydx: unknown market');
+    last = +m.oraclePrice; const prev = last - +m.priceChange24H; change = prev ? ((last - prev) / prev) * 100 : 0; funding = +m.nextFundingRate;
+  } else if (src === 'paradex') {
+    const m = (await getJson(`https://api.prod.paradex.trade/v1/markets/summary?market=${coin}-USD-PERP`))?.results?.[0];
+    if (!m) throw new Error('paradex: unknown market');
+    last = +m.last_traded_price || +m.mark_price; change = +m.price_change_rate_24h * 100; funding = +m.funding_rate; bid = +m.bid || null; ask = +m.ask || null;
+  } else {
+    const d = (await getJson(`https://api.orderly.org/v1/public/futures/PERP_${coin}_USDC`))?.data;
+    if (!d) throw new Error('orderly: unknown market');
+    last = +d.mark_price; change = d['24h_open'] ? ((+d['24h_close'] - +d['24h_open']) / +d['24h_open']) * 100 : 0; funding = +d.est_funding_rate;
+  }
+  if (!(last > 0)) throw new Error(`${src}: no price`);
+  const candles = await dexCandles(src, symbol, '15m', 301);
+  return { symbol, source: src, example: false, last, change24hPct: change, fundingRate: Number.isFinite(funding) ? funding : null, bid, ask, candles: closedOnly(candles), fetchedAt: Date.now() };
+}
+
+const FETCHERS: Record<Exclude<Source, 'sample'>, (s: string) => Promise<MarketSnapshot>> = {
+  bybit: fromBybit, binance: fromBinance, hyperliquid: fromHyperliquid,
+  aster: (s) => fromDex('aster', s), dydx: (s) => fromDex('dydx', s), paradex: (s) => fromDex('paradex', s), orderly: (s) => fromDex('orderly', s)
+};
 
 export async function getSnapshot(symbol: string, preferred: Source): Promise<MarketSnapshot & { errors: string[] }> {
   const errors: string[] = [];
@@ -153,6 +212,8 @@ export async function getCandles(symbol: string, tf: Timeframe, preferred: Sourc
         } else if (src === 'binance') {
           const kl = await getJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${n + 1}`);
           candles = kl.map((r: any[]) => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }));
+        } else if (src !== 'hyperliquid') {
+          candles = await dexCandles(src, symbol, tf, n);
         } else {
           const coin = symbol.replace(/USDT?$/, ''), end = Date.now();
           const kl = await getJson('https://api.hyperliquid.xyz/info', { method: 'POST', body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval: tf, startTime: end - (n + 1) * TF_MS[tf], endTime: end } }) });

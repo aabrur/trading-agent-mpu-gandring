@@ -1,3 +1,4 @@
+import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS } from './exchange/types.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
@@ -157,6 +158,7 @@ export class Desk extends EventEmitter {
     return {
       app: 'Trading Agent Mpu Gandring', mode: this.cfg.tradingMode, appMode: this.cfg.appMode,
       live: this.cfg.live, killed: this.killed,
+      venue: this.cfg.exchange.name ? { name: this.cfg.exchange.name, label: VENUE_LABEL[this.cfg.exchange.name], kind: VENUE_KIND[this.cfg.exchange.name], experimental: ADAPTER_STATUS[this.cfg.exchange.name] === 'experimental' } : null,
       dailyLoss: { limitPct: this.cfg.risk.dailyLossLimitPct, startEquity: this.day.startEquity, hit: this.day.lossHit },
       tradingview: { widget: this.cfg.tradingview.widget, prefix: this.cfg.tradingview.prefix, webhook: this.cfg.tradingview.webhookEnabled },
       agentEvents: this.cfg.agentEvents.enabled, signals: this.signals.slice(0, 10),
