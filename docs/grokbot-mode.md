@@ -12,7 +12,7 @@ npm run gb -- candles ETHUSDT 1h --json
 npm run gb -- account --json               # mode, balance, daily loss stop
 npm run gb -- split --json                 # Money Trade and allocation per order
 npm run gb -- size ETHUSDT SHORT 3100 3140 --json
-npm run gb -- open ETHUSDT SHORT --stop 3140 --tp 3020 --json   # risk gate caps, money split, guards
+npm run gb -- open ETHUSDT SHORT --stop 3140 --tp 3020 --json   # --stop is required; risk gate caps, money split, guards
 npm run gb -- close all --json
 npm run gb -- event market "Tape is heavy" --stance SHORT --confidence 0.6   # shows in the office
 npm run gb -- scan --json                  # proaktif-agent scan
@@ -73,11 +73,11 @@ Bodies (validated with a strict schema, text is capped at 600 characters and san
 { "agent": "market", "kind": "say", "text": "Bids keep stacking under 3,080.", "stance": "LONG", "confidence": 0.7 }
 { "agent": "research", "kind": "say", "text": "That is one whale, not a trend.", "stance": "SHORT", "confidence": 0.6, "target": "market" }
 { "agent": "risk", "kind": "status", "status": "thinking" }
-{ "agent": "lead", "kind": "proposal", "symbol": "ETHUSDT", "action": "OPEN_SHORT", "text": "Short it, small." }
+{ "agent": "lead", "kind": "proposal", "symbol": "ETHUSDT", "action": "OPEN_SHORT", "stop": 2470, "text": "Short it, small." }
 ```
 
 - `agent`: `lead`, `market`, `research`, `strategist`, `risk`, `execution`
-- `kind`: `say` (speech bubble, stance moves the fight meter, a `target` with the opposite stance can start a cartoon punch), `status`, `proposal` (Desk Lead only: `OPEN_LONG`, `OPEN_SHORT`, `CLOSE`, `HOLD`)
+- `kind`: `say` (speech bubble, stance moves the fight meter, a `target` with the opposite stance can start a cartoon punch), `status`, `proposal` (Desk Lead only: `OPEN_LONG`, `OPEN_SHORT`, `CLOSE`, `HOLD`; an open needs `stop`, the Strategist stop price, or it is refused)
 
 Answers: `401` wrong or missing secret, `400` invalid body, `429` more than 120 events a minute, `404` when Grok Bot mode is off.
 

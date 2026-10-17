@@ -135,6 +135,7 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     case 'open': {
       const s = normSymbol(args[0] ?? ''); const side = String(args[1] ?? '').toUpperCase();
       if (!s || (side !== 'LONG' && side !== 'SHORT')) return fail('usage: open <symbol> <LONG|SHORT> --stop P [--tp P] [--leverage L]');
+      if (!(num(flags.stop)! > 0)) return fail('no stop: open needs --stop P (the Strategist stop price). Not opening without one. usage: open <symbol> <LONG|SHORT> --stop P [--tp P] [--leverage L]');
       const body: Record<string, unknown> = { symbol: s, side };
       for (const k of ['stop', 'tp', 'leverage'] as const) if (num(flags[k]) !== undefined) body[k] = num(flags[k]);
       if (flags.agent) body.agent = flags.agent;

@@ -46,7 +46,8 @@ const AgentEventSchema = z.object({
   status: z.enum(['idle', 'reading', 'thinking', 'typing', 'arguing', 'fighting', 'executing', 'journaling']).optional(),
   target: z.enum(AGENTS).optional(),
   symbol: z.string().max(20).optional(),
-  action: z.enum(['OPEN_LONG', 'OPEN_SHORT', 'CLOSE', 'HOLD']).optional()
+  action: z.enum(['OPEN_LONG', 'OPEN_SHORT', 'CLOSE', 'HOLD']).optional(),
+  stop: z.number().positive().optional(), tp: z.number().positive().optional()
 }).strict();
 const TradingViewSchema = z.object({
   passphrase: z.string().max(200),
@@ -61,7 +62,7 @@ export const noModelCaller: ModelCaller = async () => { throw new Error('no mode
 
 const GbOpenSchema = z.object({
   symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']),
-  stop: z.number().positive().optional(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(),
+  stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(),
   agent: z.enum(AGENTS).optional(), reason: z.string().max(300).optional()
 }).strict();
 const GbLessonSchema = z.object({

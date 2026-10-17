@@ -41,7 +41,7 @@ export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verd
 export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
-export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action }
+export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action; stop?: number; tp?: number }
 
 export class Desk extends EventEmitter {
   agents: Record<AgentId, AgentView>;
@@ -213,7 +213,8 @@ export class Desk extends EventEmitter {
   private setStatus(id: AgentId, status: AgentStatus) { this.agents[id].status = status; this.emit('status', { agent: id, status }); }
   private setAll(status: AgentStatus) { for (const id of AGENT_IDS) this.agents[id].status = status; this.changed(); }
 
-  private async say(agent: AgentId, text: string, example: boolean, after: AgentStatus = 'arguing') {
+  /** Speech bubble in the office. log=false when the same line was already logged as a trade (no duplicate log line). */
+  private async say(agent: AgentId, text: string, example: boolean, after: AgentStatus = 'arguing', log = true) {
     const clean = safe(text);
     const pace = this.cfg.debate.paceMs;
     this.setStatus(agent, 'typing');
@@ -228,7 +229,7 @@ export class Desk extends EventEmitter {
     this.emit('speech', { agent, text: clean, done: true, example });
     this.agents[agent].lastLine = clean;
     this.setStatus(agent, after);
-    this.addLog({ kind: 'speech', agent, text: clean, example });
+    if (log) this.addLog({ kind: 'speech', agent, text: clean, example });
     this.changed();
     if (pace) await sleep(pace / 2);
   }
@@ -485,7 +486,7 @@ export class Desk extends EventEmitter {
     this.addLog({ kind: 'trade', agent: 'execution', text: line });
     this.scorecard.fill(true);
     this.note('opened', symbol, `${side} ${p.qty} at ${p.entry}, SL ${p.stop}${p.tp ? `, TP ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x`);
-    await this.say('execution', line, false, 'idle');
+    await this.say('execution', line, false, 'idle', false); // already logged above as a trade line
     return { ok: true, line, reason: '', order: { side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage } };
   }
 
@@ -506,7 +507,7 @@ export class Desk extends EventEmitter {
       if (t) { out.push(t); this.note('closed', t.symbol, `${t.side} at ${t.exit}, PnL ${t.realizedPnl} USDT (${reason})`); }
     }
     const line = out.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ');
-    if (line) { this.addLog({ kind: 'trade', agent: 'execution', text: line }); await this.say('execution', line, false, 'idle'); }
+    if (line) { this.addLog({ kind: 'trade', agent: 'execution', text: line }); await this.say('execution', line, false, 'idle', false); }
     this.setStatus('execution', 'idle');
     this.recordEquity();
     for (const x of out) void this.review(x);
@@ -576,7 +577,8 @@ export class Desk extends EventEmitter {
       if (ev.text) await this.say('lead', ev.text, false, 'idle');
       if (ev.action === 'HOLD') { this.note('skipped', symbol, `HOLD: ${ev.text ?? 'Grok Bot Desk Lead'}`); return { ok: true, reply: 'hold noted' }; }
       if (ev.action === 'CLOSE') { const r = await this.gbClose(symbol, 'Grok Bot Desk Lead CLOSE'); return { ok: r.ok, reply: r.reply }; }
-      const r = await this.gbOpen({ symbol, side: ev.action === 'OPEN_LONG' ? 'LONG' : 'SHORT' });
+      // An open proposal needs the Strategist stop price; gbOpen refuses it without one.
+      const r = await this.gbOpen({ symbol, side: ev.action === 'OPEN_LONG' ? 'LONG' : 'SHORT', stop: ev.stop ?? null, tp: ev.tp ?? null });
       return { ok: r.ok, reply: r.reply };
     }
     return { ok: false, reply: 'unknown event' };
@@ -586,13 +588,15 @@ export class Desk extends EventEmitter {
    * Keyless agent path (npm run gb -- open, Grok Bot Desk Lead). Same single execution path as the
    * internal debate: risk gate code caps, money split, stop loss, daily loss stop, kill switch.
    * A given stop is used exactly (tick-rounded toward the entry) and never moved. A stop wider than DEFAULT_STOP_PCT
-   * or closer than MIN_STOP_PCT is refused; otherwise qty shrinks to fit the loss cap including round-trip fees, or the ticket is refused. A missing stop uses the default; leverage is capped.
+   * or closer than MIN_STOP_PCT is refused; otherwise qty shrinks to fit the loss cap including round-trip fees, or the ticket is refused.
+   * A ticket without a stop price is refused (the Strategist's stop is required); leverage is capped.
    */
   async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId }): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
     const symbol = normSymbol(o.symbol);
     if (!symbol) return { ok: false, reply: 'unknown symbol', notes: [] };
     if (this.killed) return { ok: false, reply: 'kill switch is on', notes: [] };
     if (this.paused) return { ok: false, reply: 'desk is paused', notes: [] };
+    if (o.stop == null || !Number.isFinite(o.stop) || !(o.stop > 0)) return { ok: false, reply: 'no stop: every ticket needs the Strategist stop price (--stop P). Not opening without one.', notes: [] };
     if (this.book.positions.some((p) => p.symbol === symbol)) return { ok: false, reply: `already have a ${symbol} position`, notes: [] };
     const snap = await getSnapshot(symbol, this.cfg.marketSource);
     this.updateTicker(snap);
@@ -601,7 +605,7 @@ export class Desk extends EventEmitter {
     if (o.stop != null && (!(o.stop > 0) || (o.side === 'LONG' ? o.stop >= price : o.stop <= price))) return { ok: false, reply: `stop ${o.stop} is on the wrong side of the entry ${price}`, notes: [] };
     // The gate caps leverage and size factor. The given stop is NOT moved: it goes to the planner exactly,
     // which refuses it if it is wider than DEFAULT_STOP_PCT or closer than MIN_STOP_PCT, and otherwise shrinks
-    // qty to fit the loss cap (fees included) or refuses. No stop given: DEFAULT_STOP_PCT.
+    // qty to fit the loss cap (fees included) or refuses. A missing stop was refused above.
     const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot ticket, code caps only', sizeFactor: 1, leverage: o.leverage ?? this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct } as never, this.cfg.risk, this.agents.risk.mood);
     this.scorecard.verdict(); this.scorecard.riskDecision(gate.decision);
     await this.say('risk', `${gate.decision}. Ticket ${o.side} ${symbol} checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
