@@ -32,7 +32,7 @@ export async function verifyKey(adapter: ExchangeAdapter): Promise<{ ok: boolean
   let perm: PermissionReport;
   try { perm = await adapter.permissions(); } catch (e) { return { ok: false, detail: `could not read key permissions: ${safe((e as Error).message)}`, perm: null }; }
   const detail = safe(perm.detail);
-  if (perm.canWithdraw === true || !perm.ok) return { ok: false, detail: `REFUSED: ${detail}. Use a key with trading only, withdrawals off.`, perm };
+  if (perm.canWithdraw === true || !perm.ok) return { ok: false, detail: `REFUSED: ${detail.replace(/[.\s]+$/, '')}. Use a key with trading only, withdrawals off.`, perm };
   if (adapter.network === 'mainnet' && (!perm.verified || perm.canWithdraw !== false)) return { ok: false, detail: `could not verify that the key cannot withdraw: ${detail}`, perm };
   if (!perm.canTrade) return { ok: false, detail: `key cannot trade: ${detail}`, perm };
   return { ok: true, detail, perm };

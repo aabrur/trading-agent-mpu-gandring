@@ -70,7 +70,7 @@ async function wizard() {
   // LIVE_CONFIRMED (old unlock) and AGENT_REVIEWER_* (old 7th agent, now part of the Desk Lead) are cleaned up.
   const up: Record<string, string | null> = { LIVE_CONFIRMED: null, AGENT_REVIEWER_PROVIDER: null, AGENT_REVIEWER_MODEL: null };
   console.log('\nTrading Agent Mpu Gandring setup. Everything goes into .env on this computer. Keys are only sent to their own provider to check them.');
-  console.log('After setup the desk trades on its own (full auto). PAPER is the default. LIVE uses real money and can lose it. Not financial advice.\n');
+  console.log('With full auto on (you choose below) the desk trades on its own. PAPER is the default. LIVE uses real money and can lose it. Not financial advice.\n');
 
   // 1. app mode
   const appMode = (opt('app-mode') ?? (nonInteractive ? env.APP_MODE || 'local' : await choose('Who drives the agents? local = models on this computer, grokbot = your Grok Bot team', ['local', 'grokbot'] as const, (env.APP_MODE as 'local') || 'local'))) as string;

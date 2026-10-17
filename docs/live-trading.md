@@ -35,7 +35,7 @@ Agents and scripts can pick the mode too: `npm run setup -- --yes --exchange byb
 
 ## The auto loop
 
-With `AUTO_TRADING=on` (setup default) the scheduler starts with the server:
+With `AUTO_TRADING=on` (off by default; setup asks, or pass `--auto on`) the scheduler starts with the server:
 
 - every `DEBATE_INTERVAL_MIN` (default 15) it runs one debate per symbol in `AUTO_SYMBOLS` (default: the watchlist)
 - the verdict executes on its own: open LONG or SHORT, CLOSE, or HOLD

@@ -159,7 +159,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.post('/api/reports/now', async (_req, res) => res.json({ ok: true, report: await reporter.generate() }));
   app.post('/api/auto/cycle', async (_req, res) => res.json({ ok: true, ...(await auto.cycle()) }));
 
-  // Kill switch: pause, cancel, flatten. Stays stopped until the server restarts.
+  // Kill switch: pause, cancel, flatten. Persisted: stays on across restarts until `npm run unkill -- --yes` (CLI only).
   app.post('/api/kill', async (_req, res) => { auto.stop(); res.json({ ok: true, notes: await desk.kill() }); });
 
   // Grok Bot mode: agent turns from the user's own Grok Bot team. Off unless APP_MODE=grokbot and AGENT_EVENT_SECRET is set.

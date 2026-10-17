@@ -70,7 +70,8 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: ty
   } else add(null, 'exchange', 'none (paper only)');
   add(cfg.tradingview.webhookEnabled ? true : null, 'TradingView webhook', cfg.tradingview.webhookEnabled ? 'on, POST /api/tradingview' : 'off');
   add(cfg.agentEvents.enabled ? true : null, 'Grok Bot agent events', cfg.agentEvents.enabled ? 'on, POST /api/agent-event' : 'off');
-  add(cfg.reports.telegram.enabled ? true : null, 'Telegram reports', cfg.reports.telegram.enabled ? 'on (experimental)' : 'off');
+  const ch = cfg.channels; const chOn = (['telegram', 'discord', 'slack', 'whatsapp'] as const).filter((n) => ch[n].enabled);
+  add(chOn.length ? true : null, 'chat channels', chOn.length ? `${chOn.join(', ')}; Desk Lead ${ch.supervisor.on ? 'on' : 'off'}; chat commands ${ch.commands ? 'on (allowlisted ids only)' : 'off'}` : 'none (npm run channels -- setup <channel>)');
   add(cfg.news.provider === 'sample' ? null : !!cfg.news.key, 'news plugin', cfg.news.provider === 'sample' ? 'sample news' : cfg.news.key ? 'cryptopanic key set' : 'cryptopanic selected but no key');
   return out;
 }

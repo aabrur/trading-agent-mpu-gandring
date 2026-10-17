@@ -193,7 +193,7 @@ Give the person both links. Both bind to 127.0.0.1 by default. To open the offic
 - News plugin: optional, `NEWS_PROVIDER=cryptopanic` plus a key in `.env`.
 - Exchange: the person creates keys with trading permission only, withdrawals off. `npm run doctor` checks them. `npm run doctor --roundtrip` runs an optional testnet round trip (testnet funds only); it is recommended, not required.
 - TESTNET or LIVE: explain [docs/live-trading.md](docs/live-trading.md) first: full auto, automatic guards, the risk of losing money. Then `npm run setup -- --yes --exchange <name> --keys-from-env --trading-mode live --confirm-live "I understand LIVE trades real money"` once the person has typed that sentence themselves (or the interactive wizard, or the office Setup wizard). Experimental adapters also need `ALLOW_EXPERIMENTAL_LIVE=yes`; say clearly that they are unverified.
-- Full auto and reports: `AUTO_TRADING=on` (setup default) runs a debate cycle per symbol every `DEBATE_INTERVAL_MIN`. Reports land in `reports/` and the Reports panel every `REPORT_INTERVAL_MIN`.
+- Full auto and reports: `AUTO_TRADING=on` (off unless the person picks it in setup, or `--auto on`) runs a debate cycle per symbol every `DEBATE_INTERVAL_MIN`. Reports land in `reports/` and the Reports panel every `REPORT_INTERVAL_MIN`.
 
 ## 7. Optional: Grok Bot bridge
 

@@ -21,7 +21,7 @@ The wizard asks, one section at a time:
 4. **Plugins**: an optional news feed.
 5. **Venue**, grouped: CEX (Bybit, Binance, OKX) or DEX (Hyperliquid, Aster, dYdX v4, Paradex, Orderly), or none. Then testnet keys and (optionally) mainnet keys. Public addresses are shown as you type; secrets are hidden. A main wallet key or a seed phrase is refused on the spot where it can be detected locally, and again by the venue check.
 6. **Money**: paper balance, safety net, N (1 to 4), daily loss stop.
-7. **Full auto and reports**: `AUTO_TRADING` (default on), minutes between debate cycles, optional max holding time, minutes between reports, and an optional Telegram bot for reports (experimental).
+7. **Full auto and reports**: `AUTO_TRADING` (off by default; answer yes or pass `--auto on`), minutes between debate cycles, optional max holding time, minutes between reports, and an optional chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp; see [channels.md](channels.md)).
 8. **Trading mode**: PAPER (default, also when you just press Enter), TESTNET or LIVE. For TESTNET and LIVE the key is checked on the exchange first and refused if it can withdraw.
 
 Every auto cycle starts with the proaktif-agent scan (loss cap usage, missing stops, errors, stale data, safety net) and ends with the self-improving reflection, which writes lessons to `data/learnings.json` and promotes a lesson seen 3 times into a standing rule for that agent. Both are on by default (`LEARNING`, `PROACTIVE_SCAN`) and shown in the office Lessons panel. Lessons can never loosen a guard.

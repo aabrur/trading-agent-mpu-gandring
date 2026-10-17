@@ -192,7 +192,7 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate (1 to 4) |
 | `DEBATE_PACE_MS` | `700` | Speech pacing for the office. `0` is instant. |
 | `FIGHT_THRESHOLD` | `0.45` | Disagreement level where punches start |
-| `AUTO_TRADING` | `off` (setup writes `on`) | Full auto: debates and trades on a timer, no approval step |
+| `AUTO_TRADING` | `off` (setup asks; `--auto on` turns it on) | Full auto: debates and trades on a timer, no approval step |
 | `DEBATE_INTERVAL_MIN` | `15` | Minutes between auto cycles |
 | `AUTO_SYMBOLS` | the watchlist | Symbols the auto loop trades |
 | `MAX_HOLD_HOURS` | `0` | Close positions older than this. `0` is off. |
