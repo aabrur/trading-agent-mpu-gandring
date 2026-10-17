@@ -13,11 +13,16 @@ import { createApp } from '../server/app.js';
 const dir = mkdtempSync(path.join(tmpdir(), 'mg-wallet-'));
 const mainWallet = privateKeyToAccount(generatePrivateKey()); // stands in for MetaMask / Rabby
 const sign = (td: any, who = mainWallet) => who.signTypedData(td);
-function fakeVenue() {
+/** Fake venue. agentWorks=false: the venue says "success" to the approval but the new agent key then fails every signed read. */
+function fakeVenue(agentWorks = true) {
   const calls: { url: string; body: string }[] = [];
+  let approved = '';
   const fetchImpl = (async (url: string, init: RequestInit = {}) => {
     calls.push({ url, body: String(init.body) });
-    if (url.endsWith('/exchange')) return new Response(JSON.stringify({ status: 'ok', response: { type: 'default' } }));
+    if (url.endsWith('/exchange')) { approved = JSON.parse(String(init.body)).action.agentAddress; return new Response(JSON.stringify({ status: 'ok', response: { type: 'default' } })); }
+    if (url.endsWith('/info')) return new Response(JSON.stringify(agentWorks ? [{ address: approved, name: 'mpugandring', validUntil: null }] : []));
+    if (url.includes('/registerAndApproveAgent')) return new Response(JSON.stringify({ code: 200, msg: 'success' }));
+    if (url.includes('/fapi/v3/balance')) return agentWorks ? new Response(JSON.stringify([{ asset: 'USDT', balance: '0' }])) : new Response(JSON.stringify({ code: -1000, msg: 'No agent found' }), { status: 400 });
     return new Response(JSON.stringify({ code: 200, msg: 'success' }));
   }) as unknown as typeof fetch;
   return { fetchImpl, calls };
@@ -71,6 +76,15 @@ describe('Hyperliquid approveAgent', () => {
     if (process.platform !== 'win32') expect(statSync(envFile).mode & 0o777).toBe(0o600);
     await expect(w.approve(s.id, await sign(s.typedData))).rejects.toThrow(/expired or unknown/); // one use
   });
+  it('venue says ok but the agent is not in the approved list: nothing saved, not reported ok', async () => {
+    const envFile = path.join(dir, 'hl-dead.env'); writeFileSync(envFile, 'TRADING_MODE=PAPER\n');
+    const v = fakeVenue(false);
+    const w = new WalletConnector({ envFile, fetchImpl: v.fetchImpl, sleep: async () => {} });
+    const s = w.start('hyperliquid', 'testnet', mainWallet.address, 421614);
+    await expect(w.approve(s.id, await sign(s.typedData))).rejects.toThrow(/does not work yet.*Nothing was saved/);
+    expect(readFileSync(envFile, 'utf8')).not.toMatch(/HYPERLIQUID_TESTNET_AGENT_PRIVATE_KEY/);
+    expect(v.calls.filter((c) => c.url.endsWith('/info')).length).toBe(3); // retried, then gave up
+  });
   it('refuses a signature from a different wallet and never submits it', async () => {
     const v = fakeVenue();
     const w = new WalletConnector({ envFile: path.join(dir, 'x.env'), fetchImpl: v.fetchImpl });
@@ -98,6 +112,14 @@ describe('Aster registerAndApproveAgent', () => {
     expect(form.get('agentAddress')).toBe(s.agentAddress);
     expect(form.get('signature')).toMatch(/^0x[0-9a-f]{130}$/);
     expect(readFileSync(envFile, 'utf8')).toMatch(/ASTER_SIGNER_PRIVATE_KEY=0x[0-9a-f]{64}/);
+    expect(v.calls.some((c) => c.url.includes('/fapi/v3/balance') && c.url.includes(`signer=${s.agentAddress}`))).toBe(true); // signed read with the NEW agent
+  });
+  it('Aster answers {"code":200,"msg":"success"} but then "No agent found": nothing saved, error says so', async () => {
+    const envFile = path.join(dir, 'aster-dead.env'); writeFileSync(envFile, 'TRADING_MODE=PAPER\n');
+    const w = new WalletConnector({ envFile, fetchImpl: fakeVenue(false).fetchImpl, sleep: async () => {} });
+    const s = w.start('aster', 'testnet', mainWallet.address, 56);
+    await expect(w.approve(s.id, await sign(s.typedData))).rejects.toThrow(/No agent found.*Nothing was saved/);
+    expect(readFileSync(envFile, 'utf8')).not.toMatch(/ASTER_TESTNET_SIGNER_PRIVATE_KEY/);
   });
   it('manual venues and CEXes have no signature flow', () => {
     const w = new WalletConnector({ envFile: path.join(dir, 'm.env') });

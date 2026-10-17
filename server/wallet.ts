@@ -13,6 +13,8 @@ import { envNames, VENUE_KIND, VENUE_LABEL, httpJson, type ExchangeName, type Fe
 import { setEnv } from '../cli/envfile.js';
 import { registerSecrets } from './redact.js';
 import { looksLikeSeed } from './live/steps.js';
+import { HyperliquidAdapter } from './exchange/hyperliquid.js';
+import { AsterAdapter } from './exchange/aster.js';
 
 export type WalletSupport = 'signature' | 'manual' | 'cex';
 export interface VenueWalletInfo { venue: ExchangeName; label: string; kind: 'CEX' | 'DEX'; support: WalletSupport; steps: string[]; revokeUrl: string | null; docsUrl: string }
@@ -95,7 +97,7 @@ const ASTER_BASE: Record<Network, string> = { mainnet: 'https://fapi.asterdex.co
 
 export class WalletConnector {
   private pending = new Map<string, Pending>();
-  constructor(private opts: { envFile: string; fetchImpl?: FetchLike; now?: () => number } = { envFile: '.env' }) {}
+  constructor(private opts: { envFile: string; fetchImpl?: FetchLike; now?: () => number; sleep?: (ms: number) => Promise<void>; verifyTries?: number } = { envFile: '.env' }) {}
   private now() { return this.opts.now?.() ?? Date.now(); }
 
   /** Step 1: fresh agent key on this computer, typed data for the wallet to sign. The agent key never leaves the server. */
@@ -136,11 +138,36 @@ export class WalletConnector {
       const r = await httpJson(f, `${process.env[p.network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'] || ASTER_BASE[p.network]}/fapi/v3/registerAndApproveAgent`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
       if (r && typeof r.code === 'number' && r.code < 0) throw new Error(`Aster refused the approval: ${r.msg ?? r.code}`);
     }
+    // The venue saying "success" is not enough: prove the new agent key works with a signed read before saving anything.
+    const check = await this.verifyAgent(p, f);
+    if (!check.ok) throw new Error(`the venue accepted the approval, but the new agent key does not work yet (${check.detail}). Nothing was saved. Make sure the main account exists and has a deposit on ${p.network}, then try again.`);
     const n = envNames(p.venue, p.network);
     registerSecrets([p.agentKey]);
     setEnv(this.opts.envFile, { [n.key]: p.main, [n.secret]: p.agentKey, EXCHANGE: p.venue });
     this.pending.delete(id);
     return { ok: true, venue: p.venue, network: p.network, agentAddress: p.agentAddress, mainAddress: p.main, saved: [n.key, n.secret, 'EXCHANGE'], note: `Saved to ${this.opts.envFile} (chmod 600). Restart the office (or npm run trade) to use it. Revoke any time: ${WALLET_GUIDE[p.venue].revokeUrl}` };
+  }
+  /** Signed read with the NEW agent key (Hyperliquid: approved agent list; Aster: signed balance read, then the withdraw flag). */
+  private async verifyAgent(p: Pending, f: FetchLike): Promise<{ ok: boolean; detail: string; guard?: string }> {
+    const tries = Math.max(1, this.opts.verifyTries ?? 3);
+    const sleep = this.opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    let last = 'not checked';
+    for (let i = 0; i < tries; i++) {
+      if (i) await sleep(1000);
+      try {
+        if (p.venue === 'hyperliquid') {
+          const perm = await new HyperliquidAdapter(p.network, p.main, p.agentKey, f).permissions();
+          if (perm.ok) return { ok: true, detail: perm.detail };
+          last = perm.detail;
+        } else {
+          const a = new AsterAdapter(p.network, p.main, p.agentKey, f, process.env[p.network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL']);
+          const ping = await a.ping();
+          if (ping.ok) return { ok: true, detail: ping.detail };
+          last = ping.detail;
+        }
+      } catch (e) { last = (e as Error).message; }
+    }
+    return { ok: false, detail: last.slice(0, 160) };
   }
   /** For tests only. */
   peek(id: string) { const p = this.pending.get(id); return p ? { agentAddress: p.agentAddress, main: p.main, typedData: p.typedData, submit: p.submit } : null; }
