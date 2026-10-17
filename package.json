@@ -21,6 +21,7 @@
     "screenshot": "node scripts/screenshot.mjs",
     "setup": "tsx cli/setup.ts",
     "doctor": "tsx cli/doctor.ts",
+    "docs:setup": "tsx scripts/gen-setup-docs.ts",
     "gb": "tsx cli/gb.ts",
     "unkill": "tsx cli/unkill.ts",
     "office": "concurrently -k --raw -n server,web \"npm:dev:server\" \"npm:dev:web\"",

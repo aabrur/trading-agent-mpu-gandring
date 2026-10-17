@@ -3,6 +3,8 @@
 // npm run setup -- check-key         re-run the automatic withdraw-permission check
 // npm run setup -- paper             back to PAPER (alias: lock)
 // npm run setup -- status            what is configured, secrets masked
+// npm run setup -- guide <venue> [--network testnet|mainnet]   the direct links for that venue, step by step
+// The venue guide, key checks, mode checks and doctor are shared with the office Setup wizard (server/setup/*).
 import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
 import { config as loadDotenv } from 'dotenv';
@@ -11,7 +13,11 @@ import { ask, askSecret, askYes, choose, isInteractive } from './prompt.js';
 import { PROVIDERS, AGENT_IDS, type ProviderName } from '../server/config.js';
 import { EXCHANGES, envNames, ADAPTER_STATUS, VENUE_KIND, VENUE_LABEL, VENUE_KEY_HINT, PUBLIC_KEY_FIELD, PUBLIC_THIRD_FIELD, type ExchangeName } from '../server/exchange/index.js';
 import { checkTradingMode, networkFor, type TradingMode } from '../server/live/guard.js';
-import { checkKeyStep, localKeyCheck } from '../server/live/steps.js';
+import { checkKeyStep } from '../server/live/steps.js';
+import { spawn } from 'node:child_process';
+import { guideSteps, VENUE_GUIDES, LIVE_CONFIRM_PHRASE, type GuideStep } from '../server/setup/guide.js';
+import { checkKeyInput, saveVenueKeys, checkMode, openUrlCommand } from '../server/setup/core.js';
+import { doctor } from '../server/setup/doctor.js';
 import { registerSecrets } from '../server/redact.js';
 import { exchangeSecrets } from '../server/exchange/index.js';
 
@@ -116,25 +122,28 @@ async function wizard() {
   up.EXCHANGE = exName;
   if (exName !== 'none' && flag('keys-from-env')) for (const net of ['testnet', 'mainnet'] as const) {
     const n = envNames(exName, net), k = up[n.key] ?? '', sct = up[n.secret] ?? '';
-    const bad = k && sct ? localKeyCheck(exName, k, sct, n.passphrase ? up[n.passphrase] ?? undefined : undefined) : null;
+    const bad = k && sct ? checkKeyInput(exName, net, { key: k, secret: sct, third: n.passphrase ? up[n.passphrase] ?? undefined : undefined }) : null;
     if (bad) { console.log(`  REFUSED ${net} keys from the environment: ${bad}`); up[n.key] = null; up[n.secret] = null; if (n.passphrase) up[n.passphrase] = null; }
   }
   if (exName !== 'none') {
     if (ADAPTER_STATUS[exName] === 'experimental') console.log(`  note: the ${exName} adapter is EXPERIMENTAL and untested against a real account`);
     if (!nonInteractive) {
       console.log(`  ${VENUE_LABEL[exName]}: ${VENUE_KEY_HINT[exName]}.`);
-      console.log(VENUE_KIND[exName] === 'DEX'
-        ? '  Never the main wallet private key or seed phrase. Only a delegated trading key that cannot withdraw. See docs/venues.md.'
-        : '  Create keys with trading permission only. Withdrawals OFF. An IP whitelist is a good idea.');
-      if (exName === 'dydx') console.log('  dYdX trading also needs the official SDK on this computer: npm install @dydxprotocol/v4-client-js');
+      console.log(`  Sign-in: ${VENUE_GUIDES[exName].login}`);
+      if (VENUE_GUIDES[exName].extra) console.log(`  ${VENUE_GUIDES[exName].extra}`);
       for (const net of ['testnet', 'mainnet'] as const) {
+        if (!(await askYes(`  Set up ${net === 'testnet' ? 'TESTNET (test money, recommended first)' : 'MAINNET (real money, for LIVE later)'} keys now?`, net === 'testnet'))) continue;
+        await walkSteps(guideSteps(exName, net, appMode === 'grokbot' ? 'grokbot' : 'local'));
+        if (appMode === 'grokbot') { console.log('    Grok Bot mode: keys go only through the Grok Bot secret request card. Nothing to type here.'); continue; }
+        if (VENUE_GUIDES[exName].connectWallet && await askYes('    Use Connect wallet in the office instead of typing a key? (one wallet signature, opens your browser)', true)) { await openConnectWallet(env); continue; }
         const n = envNames(exName, net);
-        if (!(await askYes(`  Enter ${net} keys now?`, net === 'testnet'))) continue;
         const k = PUBLIC_KEY_FIELD.has(exName) ? await ask(`    ${n.key}`, env[n.key] || '') : await askSecret(`    ${n.key}`);
         const sct = await askSecret(`    ${n.secret}`);
         const pp = n.passphrase ? (PUBLIC_THIRD_FIELD.has(exName) ? await ask(`    ${n.passphrase}`, env[n.passphrase] || '') : await askSecret(`    ${n.passphrase}`)) : '';
-        if (k && sct) { const bad = localKeyCheck(exName, k, sct, pp || undefined); if (bad) { console.log(`    REFUSED: ${bad}`); continue; } }
-        if (k) up[n.key] = k; if (sct) up[n.secret] = sct; if (n.passphrase && pp) up[n.passphrase] = pp;
+        if (!k && !sct) continue;
+        console.log('    checking the key on the venue (one read)...');
+        const r = await saveVenueKeys(ENV_FILE, exName, net, { key: k, secret: sct, third: pp || undefined });
+        console.log(`    ${r.ok ? 'OK' : 'REFUSED'}: ${r.detail}${r.warning ? ` (${r.warning})` : ''}`);
       }
     }
   }
@@ -163,28 +172,66 @@ async function wizard() {
   let mode = (opt('trading-mode') ?? (nonInteractive ? 'PAPER' : (await choose('Trading mode', ['paper', 'testnet', 'live'] as const, 'paper')))).toUpperCase() as TradingMode;
   if (!['PAPER', 'TESTNET', 'LIVE'].includes(mode)) throw new Error('--trading-mode must be paper, testnet or live');
   if (mode !== 'PAPER') {
-    const merged = { ...env, ...Object.fromEntries(Object.entries(up).filter(([, v]) => v !== null)) } as NodeJS.ProcessEnv;
-    const pre = checkTradingMode(merged, mode);
-    let why = pre.ok ? '' : pre.reasons.join('; ');
-    if (!why) {
-      const k = await checkKeyStep(merged, networkFor(mode)!).catch((e) => ({ ok: false, detail: (e as Error).message }));
-      if (!k.ok) why = k.detail; else console.log(`  key check: ${k.detail}`);
+    const merged = { ...currentEnv(), ...Object.fromEntries(Object.entries(up).filter(([, v]) => v !== null)) } as NodeJS.ProcessEnv;
+    let confirm = opt('confirm-live');
+    if (mode === 'LIVE' && !confirm && !nonInteractive) {
+      console.log('\n  LIVE trades real money on its own (full auto). You can lose it. Not financial advice.');
+      confirm = await ask(`  Type exactly "${LIVE_CONFIRM_PHRASE}" to continue`);
     }
-    if (why) { console.log(`\n  ${mode} refused: ${why}\n  Staying in PAPER.`); mode = 'PAPER'; process.exitCode = 2; }
-    else if (mode === 'LIVE') console.log('\n  LIVE selected. Real money, full auto. You can lose the whole Money Trade part. Not financial advice. Kill switch is in the office.');
+    const r = await checkMode(merged, mode, { confirm });
+    if (!r.ok) { console.log(`\n  ${r.detail}\n  Staying in PAPER.`); mode = 'PAPER'; process.exitCode = 2; }
+    else { console.log(`  key check: ${r.detail}`); if (mode === 'LIVE') console.log('\n  LIVE selected. Real money, full auto. You can lose the whole Money Trade part. Not financial advice. Kill switch is in the office.'); }
   }
   up.TRADING_MODE = mode;
 
   setEnv(ENV_FILE, up);
   console.log(`\nSaved ${ENV_FILE}. TRADING_MODE=${mode}.`);
   status();
-  console.log('Next: npm run doctor, then npm run dev.');
+  if (!flag('no-doctor')) await runDoctor();
+  console.log('Next: npm run dev (office at http://localhost:5173, Setup button top right). The same setup is in the office Setup wizard.');
+}
+
+/** One step at a time: title, what to do, the direct links. */
+async function walkSteps(steps: GuideStep[]) {
+  for (const [i, st] of steps.entries()) {
+    console.log(`\n    Step ${i + 1}/${steps.length}: ${st.title}\n      ${st.text}`);
+    for (const l of st.links) console.log(`      -> ${l.label}: ${l.url}${l.login ? ' (sign in / connect wallet first)' : ''}${l.note ? ` (${l.note})` : ''}`);
+    if (isInteractive() && i < steps.length - 1) await ask('      Enter for the next step');
+  }
+}
+
+/** Connect wallet lives in the office (browser wallet). Opens it in the default browser; the office must be running. */
+async function openConnectWallet(env: NodeJS.ProcessEnv) {
+  const url = `http://127.0.0.1:${env.WEB_PORT || 5173}/#setup`;
+  const up = await fetch(`http://127.0.0.1:${env.PORT || 8787}/api/health`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok).catch(() => false);
+  if (!up) console.log('    The office is not running. In another terminal run: npm run dev   (then come back here)');
+  if (up || await askYes('    Open the office in your browser now?', true)) {
+    try { const [cmd, args] = openUrlCommand(process.platform, url); spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref(); } catch { /* print below */ }
+  }
+  console.log(`    Office: ${url}  -> Setup, pick the venue, Connect wallet, sign once. The agent key is saved to .env (chmod 600).`);
+}
+
+async function runDoctor() {
+  console.log('\nDoctor (harmless reads, never prints a secret):');
+  try { for (const l of await doctor(currentEnv())) console.log(`  ${l.ok === true ? 'OK  ' : l.ok === false ? 'FAIL' : '--  '} ${l.label.padEnd(26)} ${l.detail}`); }
+  catch (e) { console.log(`  doctor failed: ${(e as Error).message}`); }
+}
+
+function guide() {
+  const v = argv[1] as ExchangeName;
+  if (!EXCHANGES.includes(v)) { console.error(`usage: npm run setup -- guide <${EXCHANGES.join('|')}> [--network testnet|mainnet]`); process.exitCode = 1; return; }
+  const net = opt('network') === 'mainnet' ? 'mainnet' : 'testnet';
+  const g = VENUE_GUIDES[v];
+  console.log(`\n${g.label} (${g.kind}, ${g.status}) ${net} setup${g.networks[net].note ? `\n  ${g.networks[net].note}` : ''}\n  Sign-in: ${g.login}`);
+  guideSteps(v, net, (process.env.APP_MODE === 'grokbot' ? 'grokbot' : 'local')).forEach((st, i) => { console.log(`\n  ${i + 1}. ${st.title}\n     ${st.text}`); for (const l of st.links) console.log(`     -> ${l.label}: ${l.url}${l.login ? ' (sign in first)' : ''}`); });
+  console.log(`\n  Docs: ${g.docs.map((d) => d.url).join(' , ')}\n  Full guide: docs/setup/${v}.md`);
 }
 
 async function main() {
   switch (sub) {
     case 'wizard': return wizard();
     case 'status': return status();
+    case 'guide': return guide();
     case 'paper': case 'lock': setEnv(ENV_FILE, { TRADING_MODE: 'PAPER', LIVE_CONFIRMED: null }); console.log('Back to PAPER.'); return;
     case 'check-key': {
       const net = (opt('network') ?? 'mainnet') as 'mainnet' | 'testnet';
