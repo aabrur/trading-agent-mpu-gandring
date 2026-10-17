@@ -39,4 +39,4 @@ On your own computer (local mode) you can do the same setup in a terminal with `
 
 Ask your Grok Bot "show me the office". It starts the web UI on its own computer in the background (`APP_MODE=grokbot npm run office`, left running; `npm run office:status` says whether it is up and on which ports), opens http://localhost:5173 in its desktop browser and sends you a screenshot. To watch live, open the bot's desktop view.
 
-To stop everything at once: tell the Desk Lead "kill switch", or `npm run gb -- close all` and pause the routines.
+To stop everything at once: tell the Desk Lead "kill switch". It calls the office kill switch (`curl -s -X POST http://127.0.0.1:8787/api/kill`: cancel, flatten, stop) and pauses the routines. The kill switch stays on, also after a restart, until you run `npm run unkill -- --yes` in a terminal on that computer and restart the office.
