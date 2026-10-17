@@ -1,57 +1,64 @@
-# LIVE trading (locked by default)
+# TESTNET and LIVE trading (full auto)
 
 > **Real money. You can lose it.** This project is a learning tool, not financial advice, and it promises no profit. Agents are wrong often. Exchanges go down, stops slip, APIs change. Only trade an amount you are fine losing, on a sub-account that holds nothing else.
 
-PAPER is the default and stays the default. LIVE unlocks only when **all** of these are true, and the server checks them on every start:
+## How it works now
 
-1. **Testnet first.** A real round trip on the exchange's testnet passed: place a market entry with the stop attached, reconcile it from the exchange's order record, see the position, close it reduce-only, cancel leftovers, confirm flat.
-2. **No withdraw permission.** The mainnet key was checked on the exchange API and cannot withdraw. Bybit: `/v5/user/query-api` (refuses `Withdraw`, refuses read-only keys). Binance: `apiRestrictions`. OKX: `account/config`. Hyperliquid: the key must be an approved API agent wallet of your account, and not your main wallet key.
-3. **A person typed it.** In a real terminal: `I UNDERSTAND LIVE TRADING CAN LOSE MONEY`.
+After a one-time setup the desk trades on its own. There is no confirmation phrase, no approval button and no mandatory testnet step. In TESTNET and LIVE the agents open, close, size and set stops and take profits themselves. You watch the office and read the reports.
 
-Then the CLI writes `TRADING_MODE=LIVE` and `LIVE_CONFIRMED` to `.env`. You cannot get there by editing `.env`:
+`npm run setup` asks for the trading mode:
 
-- Each step is a signed record in `.mpu-gandring/live-state.json`, signed with a random install key that only exists on your computer (`.mpu-gandring/install.key`, gitignored).
-- `LIVE_CONFIRMED` is a signature over all three records plus a fingerprint of the current mainnet key.
-- Change the key, hand-edit the state, or copy a config from someone else, and the server refuses LIVE with exit code 2.
-- On start, the server asks the exchange about the key again and refuses if anything changed.
+| Mode | What happens |
+| --- | --- |
+| `PAPER` (default, also when you skip) | Simulated book. Nothing is sent to an exchange. |
+| `TESTNET` | Real orders on the exchange testnet, test funds. |
+| `LIVE` | Real orders with real money. |
 
-This protects against accidents and copy-paste. It is not a lock against the owner of the computer, who can always change the code.
+Agents and scripts can pick the mode too: `npm run setup -- --yes --exchange bybit --keys-from-env --trading-mode live`.
 
-Experimental adapters (Binance, OKX, Hyperliquid) also need `ALLOW_EXPERIMENTAL_LIVE=yes`.
+## Automatic guards (no human input, cannot be configured to zero)
+
+- **No withdraw permission.** The key is checked on the exchange at setup and again on every start. A key that can withdraw, cannot trade, or whose permissions cannot be read is refused, and the server does not start (exit code 2). Bybit: `/v5/user/query-api`. Binance: `apiRestrictions`. OKX: `account/config`. Hyperliquid: the key must be an approved API agent wallet of your account, never the main wallet key.
+- **Stop loss on every order**, attached on the exchange (Bybit, OKX, Hyperliquid) or placed right after the fill (Binance, which closes the entry if the stop fails). An order without a stop is refused in code.
+- **Daily loss stop.** Once equity is `DAILY_LOSS_LIMIT_PCT` (default 3, clamped to 0.5..20) below the start of the UTC day, no new orders until the next UTC day. Debates keep running so open positions can still close.
+- **Safety net is never touched.** Money Trade = balance minus `SAFETY_NET`. `SAFETY_NET` must be above 0 in TESTNET and LIVE.
+- **Max N open positions** (`OPEN_ORDERS_N`, 1 to 4). Allocation per order = (balance minus safety net) / N, recalculated from the exchange balance.
+- **One send, no blind retry.** If a send errors or times out, the desk reads the exchange order record and trusts only that.
+- **Reconcile from the exchange.** Fills use the exchange average price and size. Positions are re-read every 30 seconds; anything gone on the exchange (stop, take profit, closed by hand) is closed in the local mirror.
+- **Kill switch** in the UI (or `POST /api/kill`): stops the auto loop, cancels all orders, flattens every position, stays stopped until restart.
+- **Local only.** In LIVE the server always binds to `127.0.0.1`, whatever `HOST` says.
+- **Experimental adapters** (Binance, OKX, Hyperliquid) also need `ALLOW_EXPERIMENTAL_LIVE=yes`, because nobody has verified them on a real account. Bybit does not need it.
+- No exchange order on sample data. The desk never touches a position it did not open.
+
+## The auto loop
+
+With `AUTO_TRADING=on` (setup default) the scheduler starts with the server:
+
+- every `DEBATE_INTERVAL_MIN` (default 15) it runs one debate per symbol in `AUTO_SYMBOLS` (default: the watchlist)
+- the verdict executes on its own: open LONG or SHORT, CLOSE, or HOLD
+- an open position is closed on a CLOSE verdict, on an opposite signal (it closes first and may re-enter next cycle), when its stop or take profit hits, or after `MAX_HOLD_HOURS` (0 = off)
+- a cycle is skipped while the desk is paused or killed
+
+## Reports
+
+Every `REPORT_INTERVAL_MIN` (setup asks, for example 30, 60 or 240) the desk writes a report to `reports/YYYY-MM-DD/` (Markdown and JSON): balance, safety net, Money Trade, N, allocation per order, open positions with entry, stop, take profit and PnL, and everything opened, closed or skipped since the last report, with the reason. Reports show in the **Reports** panel of the office, go to the Grok Bot webhook bridge when it is configured, and optionally to Telegram (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, experimental and untested). Reports pass through the secret redactor.
 
 ## Steps
 
 ```bash
-npm run setup                       # pick the exchange, enter testnet and mainnet keys (trade only, no withdraw)
-npm run doctor                      # harmless reads on both keys
-npm run setup -- testnet            # step 1, uses TESTNET funds only
-npm run setup -- check-key          # step 2, mainnet key permissions
-npm run setup -- unlock-live        # step 3, needs a person at a terminal
+npm run setup                       # exchange, keys (hidden prompt or env), auto, reports, trading mode
+npm run doctor                      # harmless reads, key permission check
+npm run doctor --roundtrip          # optional: a real testnet round trip (testnet funds only)
 npm run dev
 ```
 
-`unlock-live` refuses to run without a terminal, so a script or coding agent cannot unlock LIVE for you. To go back: `npm run setup -- lock`.
+To go back to simulation: `npm run setup -- paper`.
 
-## What stays the same in LIVE
-
-Every order still goes through:
-
-- the debate and the **Risk gate** (code caps can only tighten)
-- the **money split**: Money Trade = balance minus safety net, split over N (1 to 4), recalculated from the exchange balance
-- a **mandatory stop loss**, attached to the order on the exchange (Bybit, OKX, Hyperliquid) or placed right after the fill (Binance, which closes the entry if the stop fails)
-- the **daily loss stop** (`DAILY_LOSS_LIMIT_PCT`, default 3)
-- **one send, no blind retry**: if a send errors or times out, the desk reads the exchange's order record and trusts only that
-- **reconcile from the exchange**: fills use the exchange's average price and size; positions are re-read every 30 seconds, and anything gone on the exchange (stop, take profit, closed by hand) is closed in the local mirror
-- a big red **LIVE** badge in the top bar and a **Kill switch** button (or `POST /api/kill`): cancel all orders, flatten every position, pause the desk until restart
-
-Other LIVE rules:
-
-- No LIVE order on sample data.
-- The backend binds to `127.0.0.1` unless you set `HOST`.
-- The desk never touches a position it did not open; it only warns about it.
+The optional round trip places a small market entry with the stop attached on the testnet, reconciles it from the order record, closes it reduce-only, cancels leftovers and confirms flat. It is a good idea before the first LIVE start, but it does not gate anything.
 
 ## What is not done
 
-- Binance, OKX and Hyperliquid adapters have never run against a real account. Run the testnet round trip and watch the first live trades closely.
-- Partial fills are mirrored at the filled size, there is no smart re-entry.
+- Bybit is tested against a mocked API only. Binance, OKX and Hyperliquid adapters have never run against a real account. Watch the first trades closely.
+- Partial fills are mirrored at the filled size; there is no smart re-entry.
 - No websocket order stream; the desk polls.
+- The Telegram report channel is untested.

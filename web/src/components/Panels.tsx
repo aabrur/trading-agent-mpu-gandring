@@ -6,7 +6,7 @@ import { Bot } from './Bot';
 import { EquityChart, AllocationBars } from './MiniCharts';
 import { fmt, fmtPx } from './format';
 export { fmt, fmtPx };
-const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec', reviewer: 'Reviewer' };
+const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec' };
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 void PamorPattern;
 
@@ -17,13 +17,16 @@ export function TopBar({ state, connected, theme, onTheme }: { state: DeskState 
         <div className="brand-mark"><KerisBlade size={40} /></div>
         <div>
           <h1>Trading Agent <span>Mpu Gandring</span></h1>
-          <p>seven little bots, one paper book, plenty of arguing</p>
+          <p>six little bots, one book, plenty of arguing</p>
         </div>
       </div>
       <div className="badges">
         {state?.mode === 'LIVE'
-          ? <span className="badge live-badge" title="Real orders on the exchange">LIVE · {state.live?.exchange}{state.live?.experimental ? ' (experimental)' : ''}</span>
-          : <span className="badge paper" title="Simulated trades only">PAPER MODE</span>}
+          ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.live?.exchange}{state.live?.experimental ? ' (experimental)' : ''}</span>
+          : state?.mode === 'TESTNET'
+            ? <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.live?.exchange}</span>
+            : <span className="badge paper" title="Simulated trades only">PAPER MODE</span>}
+        {state?.auto?.on && <span className="badge auto-badge" title="Agents trade on their own, no approval step">AUTO · {state.auto.intervalMin}m</span>}
         {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
         {state?.killed && <span className="badge warn">kill switch on</span>}
         {state?.dailyLoss?.hit && <span className="badge warn">daily loss stop</span>}
@@ -98,7 +101,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   useEffect(() => setBalance(String(p.balance)), [p.balance]);
   return (
     <section className="panel portfolio">
-      <div className="panel-head"><h2>{state.mode === 'LIVE' ? 'Live book (exchange mirror)' : 'Paper book'}</h2><span className={`pnl ${p.unrealized >= 0 ? 'up' : 'down'}`}>uPnL {p.unrealized >= 0 ? '+' : ''}{fmt(p.unrealized)}</span></div>
+      <div className="panel-head"><h2>{state.mode === 'PAPER' ? 'Paper book' : `${state.mode === 'LIVE' ? 'Live' : 'Testnet'} book (exchange mirror)`}</h2><span className={`pnl ${p.unrealized >= 0 ? 'up' : 'down'}`}>uPnL {p.unrealized >= 0 ? '+' : ''}{fmt(p.unrealized)}</span></div>
       <div className="stats">
         <label className="stat"><small>Total balance</small>
           <span className="inline-edit"><input value={balance} onChange={(e) => setBalance(e.target.value)} onBlur={() => balance !== String(p.balance) && command(`set balance ${balance}`)} inputMode="decimal" aria-label="paper balance" /> USDT</span>

@@ -1,4 +1,4 @@
-export type AgentId = 'lead' | 'market' | 'research' | 'strategist' | 'risk' | 'execution' | 'reviewer';
+export type AgentId = 'lead' | 'market' | 'research' | 'strategist' | 'risk' | 'execution';
 export type Stance = 'LONG' | 'SHORT' | 'NEUTRAL';
 export type Action = 'OPEN_LONG' | 'OPEN_SHORT' | 'CLOSE' | 'HOLD';
 export type AgentStatus = 'idle' | 'reading' | 'thinking' | 'typing' | 'arguing' | 'fighting' | 'executing' | 'journaling';

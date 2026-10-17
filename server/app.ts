@@ -18,6 +18,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { sanitizeUntrusted } from './untrusted.js';
 import type { LiveExecutor } from './live/executor.js';
+import { AutoTrader } from './auto.js';
+import { Reporter } from './reports.js';
 
 const sameSecret = (given: string, want: string) => {
   const a = Buffer.from(given), b = Buffer.from(want);
@@ -32,7 +34,7 @@ function limiter(max: number, windowMs: number) {
     h.n++; return h.n <= max;
   };
 }
-const AGENTS = ['lead', 'market', 'research', 'strategist', 'risk', 'execution', 'reviewer'] as const;
+const AGENTS = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'] as const;
 const AgentEventSchema = z.object({
   agent: z.enum(AGENTS),
   kind: z.enum(['say', 'status', 'proposal']),
@@ -54,6 +56,8 @@ const TradingViewSchema = z.object({
 
 export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null } = {}) {
   const desk = new Desk(cfg, opts.caller ?? makeCaller(cfg), { reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null });
+  const auto = new AutoTrader(desk);
+  const reporter = new Reporter(desk, opts.reportsDir === undefined ? 'reports' : opts.reportsDir, opts.outboxPath);
   const app = express();
   app.use(express.json({ limit: '32kb' }));
 
@@ -95,8 +99,12 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     res.json(await desk.command(text, agent));
   });
 
+  app.get('/api/reports', (_req, res) => res.json({ reports: desk.reports.slice(0, 50) }));
+  app.post('/api/reports/now', async (_req, res) => res.json({ ok: true, report: await reporter.generate() }));
+  app.post('/api/auto/cycle', async (_req, res) => res.json({ ok: true, ...(await auto.cycle()) }));
+
   // Kill switch: pause, cancel, flatten. Stays stopped until the server restarts.
-  app.post('/api/kill', async (_req, res) => { res.json({ ok: true, notes: await desk.kill() }); });
+  app.post('/api/kill', async (_req, res) => { auto.stop(); res.json({ ok: true, notes: await desk.kill() }); });
 
   // Grok Bot mode: agent turns from the user's own Grok Bot team. Off unless APP_MODE=grokbot and AGENT_EVENT_SECRET is set.
   const agentLimit = limiter(120, 60_000);
@@ -144,7 +152,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   const wss = new WebSocketServer({ server, path: '/ws' });
   const send = (ws: WebSocket, type: string, payload: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload })); };
   const broadcast = (type: string) => (payload: unknown) => { const msg = JSON.stringify({ type, payload }); for (const c of wss.clients) if (c.readyState === WebSocket.OPEN) c.send(msg); };
-  for (const ev of ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate']) desk.on(ev, broadcast(ev));
+  for (const ev of ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report']) desk.on(ev, broadcast(ev));
   wss.on('connection', (ws) => {
     send(ws, 'state', desk.snapshot());
     ws.on('message', async (buf) => {
@@ -157,5 +165,5 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
       } catch { /* ignore malformed frames */ }
     });
   });
-  return { app, server, desk, wss };
+  return { app, server, desk, wss, auto, reporter };
 }

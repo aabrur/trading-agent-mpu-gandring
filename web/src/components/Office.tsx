@@ -7,7 +7,7 @@ import { Sparkline } from './MiniCharts';
 
 const SEATS: Record<AgentId, { x: number; y: number }> = {
   lead: { x: 50, y: 55 }, market: { x: 31, y: 63 }, research: { x: 69, y: 63 },
-  strategist: { x: 31, y: 84 }, risk: { x: 69, y: 84 }, execution: { x: 43, y: 93 }, reviewer: { x: 57, y: 93 }
+  strategist: { x: 31, y: 84 }, risk: { x: 69, y: 84 }, execution: { x: 50, y: 94 }
 };
 const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'filling paper order', journaling: 'journaling' };
 const POW_WORDS = ['POW!', 'BAM!', 'BONK!', 'WHAM!', 'BUK!', 'PLAK!'];
@@ -244,7 +244,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
         return (
           <div key={`desk-${id}`} className={`desk ${busy ? 'is-busy' : ''}`} style={{ left: `${a.desk.x}%`, top: `${a.desk.y}%`, zIndex: Math.round(a.desk.y * 10) + 5, ['--agent' as string]: a.color }}>
             <div className="monitor"><div className="screen"><Sparkline values={spark} up={up} /></div></div>
-            <div className="desk-top"><i className="mug" /><i className="keyboard" />{id === 'research' && <i className="papers" />}{id === 'reviewer' && <i className="papers" />}{(id === 'lead' || id === 'strategist') && <i className="desk-plant" />}</div>
+            <div className="desk-top"><i className="mug" /><i className="keyboard" />{id === 'research' && <i className="papers" />}{id === 'lead' && <i className="papers" />}{(id === 'lead' || id === 'strategist') && <i className="desk-plant" />}</div>
             <div className="desk-front"><span>{a.name}</span></div>
           </div>
         );

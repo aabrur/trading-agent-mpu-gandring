@@ -3,13 +3,12 @@ import type { AgentId, DeskState } from '../types';
 import { Bot } from './Bot';
 
 const QUICK: Record<AgentId, string[]> = {
-  lead: ['analyze BTCUSDT', 'analyze ETHUSDT', 'be more cautious', 'status'],
+  lead: ['analyze ETHUSDT', 'What did we learn so far?', 'be more cautious', 'status'],
   market: ['analyze SOLUSDT', 'What is the tape saying?', 'be more aggressive'],
   research: ['Anything that would make you veto?', 'be more cautious'],
   strategist: ['Explain your rule in one line', 'analyze ETHUSDT'],
   risk: ['be more cautious', 'calm down', 'close all'],
-  execution: ['close all', 'status'],
-  reviewer: ['What did we learn so far?', 'calm down']
+  execution: ['close all', 'status']
 };
 
 export function AgentPanel({ state, id, onClose, command }: { state: DeskState; id: AgentId; onClose: () => void; command: (t: string, a?: AgentId) => Promise<unknown> }) {

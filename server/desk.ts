@@ -20,7 +20,7 @@ import type { ClosedTrade } from './types.js';
 import { getNewsFor } from './market/index.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const DEBATERS: AgentId[] = ['market', 'research', 'strategist', 'reviewer'];
+const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
 const val = (s: Stance) => (s === 'LONG' ? 1 : s === 'SHORT' ? -1 : 0);
 
 export interface AgentView {
@@ -32,6 +32,7 @@ export interface Ticker { symbol: string; last: number; change24hPct: number; so
 export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'warn'; agent?: AgentId; text: string; example?: boolean }
 
 export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null }
+export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action }
 
@@ -45,6 +46,10 @@ export class Desk extends EventEmitter {
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
   paused = false;
   killed = false;
+  /** Everything the desk opened, closed or skipped, with the reason. Feeds the periodic reports. */
+  activity: Activity[] = [];
+  autoState = { on: false, intervalMin: 0, nextAt: 0, cycles: 0, lastCycleAt: 0, running: false };
+  reports: import('./reports.js').Report[] = [];
   signals: ExternalSignal[] = [];
   day = { key: '', startEquity: 0, lossHit: false };
   equityHistory: { t: number; equity: number; balance: number }[] = [];
@@ -74,6 +79,8 @@ export class Desk extends EventEmitter {
       dailyLoss: { limitPct: this.cfg.risk.dailyLossLimitPct, startEquity: this.day.startEquity, hit: this.day.lossHit },
       tradingview: { widget: this.cfg.tradingview.widget, prefix: this.cfg.tradingview.prefix, webhook: this.cfg.tradingview.webhookEnabled },
       agentEvents: this.cfg.agentEvents.enabled, signals: this.signals.slice(0, 10),
+      auto: { ...this.autoState, symbols: this.cfg.auto.symbols, maxHoldHours: this.cfg.auto.maxHoldHours },
+      reports: this.reports.slice(0, 12), reportIntervalMin: this.cfg.reports.intervalMin,
       marketSource: this.cfg.marketSource, bridgeEnabled: this.cfg.bridge.enabled, paused: this.paused,
       agents: this.agents, tickers: this.tickers, debate: this.debate,
       paper: {
@@ -97,6 +104,10 @@ export class Desk extends EventEmitter {
       this.addLog({ kind: 'warn', text: `Daily loss stop: equity ${equity} is ${lim}% or more below today's start ${this.day.startEquity}. No new orders until tomorrow (UTC).` });
     }
     return this.day.lossHit;
+  }
+  note(kind: Activity['kind'], symbol: string, detail: string) {
+    this.activity.push({ at: Date.now(), kind, symbol, detail: safe(detail) });
+    if (this.activity.length > 500) this.activity.splice(0, this.activity.length - 500);
   }
   recordEquity() {
     this.checkDay();
@@ -149,6 +160,7 @@ export class Desk extends EventEmitter {
     this.tickers[snap.symbol] = { symbol: snap.symbol, last: snap.last, change24hPct: snap.change24hPct, source: snap.source, example: snap.example, at: snap.fetchedAt };
     for (const t of this.book.mark(snap.symbol, snap.last)) {
       this.addLog({ kind: 'trade', text: `${t.reason}: ${t.symbol} ${t.side} closed at ${t.exit}, PnL ${t.realizedPnl} USDT` });
+      this.note('closed', t.symbol, `${t.side} at ${t.exit}, PnL ${t.realizedPnl} USDT (${t.reason})`);
       void this.review(t);
     }
   }
@@ -165,7 +177,7 @@ export class Desk extends EventEmitter {
         const v = venue.find((x) => x.symbol === p.symbol && x.side === p.side);
         if (!v) {
           const t = this.book.close(p.id, this.tickers[p.symbol]?.last ?? p.mark, 'closed on the exchange (stop, take profit or manual)');
-          if (t) { this.addLog({ kind: 'trade', text: `${t.symbol} ${t.side} is flat on the exchange. Local PnL estimate ${t.realizedPnl} USDT.` }); void this.review(t); }
+          if (t) { this.addLog({ kind: 'trade', text: `${t.symbol} ${t.side} is flat on the exchange. Local PnL estimate ${t.realizedPnl} USDT.` }); this.note('closed', t.symbol, `${t.side} flat on the exchange (stop, take profit or manual), est. PnL ${t.realizedPnl} USDT`); void this.review(t); }
         } else { p.qty = v.qty; p.unrealizedPnl = round2(v.unrealizedPnl); }
       }
       for (const v of venue) if (!this.book.positions.some((p) => p.symbol === v.symbol)) this.addLog({ kind: 'warn', text: `Exchange shows a ${v.side} ${v.qty} ${v.symbol} position the desk did not open. Leaving it alone.` });
@@ -176,14 +188,6 @@ export class Desk extends EventEmitter {
     if (this.opts.executor) { void this.syncLive().then(() => this.checkDay()); this.timers.push(setInterval(() => void this.syncLive(), 30_000)); }
     void this.refreshTickers();
     this.timers.push(setInterval(() => void this.refreshTickers(), this.cfg.tickerRefreshSeconds * 1000));
-    if (this.cfg.debate.autoMinutes > 0) {
-      let i = 0;
-      this.timers.push(setInterval(() => {
-        if (this.paused || this.debate) return;
-        const sym = this.cfg.watchlist[i++ % this.cfg.watchlist.length];
-        void this.runDebate(sym).catch((e) => log('[auto]', e));
-      }, this.cfg.debate.autoMinutes * 60_000));
-    }
   }
   stop() { this.timers.forEach(clearInterval); this.timers = []; }
 
@@ -248,7 +252,6 @@ export class Desk extends EventEmitter {
       this.setOpinion('strategist', ruleStance, st.data.stance === ruleStance ? st.data.confidence : 0.5);
       await this.say('strategist', st.data.argument, st.example); note('Strategist', st.data.argument);
 
-      this.agents.reviewer.stance = 'NEUTRAL'; this.agents.reviewer.confidence = 0.3;
       const journal = this.book.closed.slice(0, 5).map((t) => ({ symbol: t.symbol, side: t.side, pnl: t.realizedPnl, reason: t.reason }));
 
       // 4. Rebuttal rounds
@@ -261,8 +264,8 @@ export class Desk extends EventEmitter {
           this.setStatus(a, 'thinking'); this.changed();
           const rb = await runAgent(this.cfg, this.call, a, 'rebuttal', {
             instruction: `Round ${round} of the ${symbol} debate. Answer the strongest view you disagree with. You may change your stance if the evidence is better.`,
-            data: { symbol, round, you: { stance: this.agents[a].stance, confidence: this.agents[a].confidence }, others, journal: a === 'reviewer' ? journal : undefined },
-            context: { symbol, round, myStance: this.agents[a].stance, myConfidence: this.agents[a].confidence, others, temperament: this.agents[a].mood, journalCount: journal.length }
+            data: { symbol, round, you: { stance: this.agents[a].stance, confidence: this.agents[a].confidence }, others },
+            context: { symbol, round, myStance: this.agents[a].stance, myConfidence: this.agents[a].confidence, others, temperament: this.agents[a].mood }
           });
           let stance = rb.data.stance;
           if (a === 'strategist') stance = ruleStance; // the rule does not change mid debate
@@ -290,14 +293,17 @@ export class Desk extends EventEmitter {
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await runAgent(this.cfg, this.call, 'lead', 'lead', {
         instruction: `Close the ${symbol} debate. Pick one action.`,
-        data: { symbol, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop } : null, freeSlots: this.book.n - this.book.positions.length },
+        data: { symbol, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop } : null, freeSlots: this.book.n - this.book.positions.length, journal },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false }
       });
       let action: Action = ld.data.action;
+      let flipNote = '';
       if (action === 'CLOSE' && !pos) action = 'HOLD';
+      // An opposite signal on an open position closes it. Re-entry the other way waits for the next cycle.
+      if ((action === 'OPEN_LONG' && pos?.side === 'SHORT') || (action === 'OPEN_SHORT' && pos?.side === 'LONG')) { action = 'CLOSE'; flipNote = ' Opposite signal, closing first.'; }
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
       if (researchVote === 'VETO' && action.startsWith('OPEN')) action = 'HOLD';
-      await this.say('lead', `${action.replace('_', ' ')}. ${ld.data.reason}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
+      await this.say('lead', `${action.replace('_', ' ')}. ${ld.data.reason}${flipNote}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
 
       // 6. Risk gate
       this.setPhase('risk gate');
@@ -314,7 +320,7 @@ export class Desk extends EventEmitter {
       // 7. Verdict and paper execution
       const verdict: Verdict = { id, symbol, action, riskDecision: action === 'HOLD' ? 'N/A' : gate.decision, executed: false, reason: ld.data.reason, disagreement, camps, example: mk.example || ld.example || rk.example || snap.example, at: Date.now() };
       if (action === 'OPEN_LONG' || action === 'OPEN_SHORT') {
-        if (gate.decision === 'REJECT') verdict.reason = `Risk rejected: ${rk.data.reason}`;
+        if (gate.decision === 'REJECT') { verdict.reason = `Risk rejected: ${rk.data.reason}`; this.note('skipped', symbol, verdict.reason); }
         else {
           const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
           const price = roundPrice(side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
@@ -325,10 +331,11 @@ export class Desk extends EventEmitter {
           note('Execution Trader', res.line);
         }
       } else if (action === 'CLOSE' && pos) {
-        const t = await this.executeClose(symbol, snap.last, 'desk verdict CLOSE');
+        const t = await this.executeClose(symbol, snap.last, flipNote ? 'opposite signal' : 'desk verdict CLOSE');
         verdict.executed = t.length > 0;
         note('Execution Trader', t.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ') || 'nothing closed');
       }
+      if (action === 'HOLD') this.note('skipped', symbol, `HOLD: ${ld.data.reason}`);
       this.verdicts.unshift(verdict); this.verdicts = this.verdicts.slice(0, 50);
       this.addLog({ kind: 'verdict', text: `VERDICT ${symbol}: ${action} (risk ${verdict.riskDecision}, disagreement ${disagreement.toFixed(2)})${verdict.executed ? (this.opts.executor ? ', LIVE filled' : ', paper filled') : ''}`, example: verdict.example });
       this.emit('verdict', verdict);
@@ -346,10 +353,10 @@ export class Desk extends EventEmitter {
   /** The only way an order is opened, paper or live. Risk gate result in, money split and caps applied here. */
   async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
     const live = this.opts.executor;
-    const no = async (reason: string) => { await this.say('execution', `No fill. ${reason}`, false, 'idle'); return { ok: false, line: `No fill. ${reason}`, reason }; };
+    const no = async (reason: string) => { this.note('skipped', symbol, `${side}: ${reason}`); await this.say('execution', `No fill. ${reason}`, false, 'idle'); return { ok: false, line: `No fill. ${reason}`, reason }; };
     if (this.killed) return no('Kill switch is on.');
     if (this.checkDay()) return no(`Daily loss stop is on (${this.cfg.risk.dailyLossLimitPct}% for today).`);
-    if (live && example) return no('Refusing a LIVE order on sample data.');
+    if (live && example) return no('Refusing an exchange order on sample data.');
     const plan = planOrder({
       balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
       price, side, sizeFactor: gate.sizeFactor, leverage: gate.leverage, stopPct: gate.stopPct, minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takeProfitR: this.cfg.risk.takeProfitR
@@ -367,6 +374,7 @@ export class Desk extends EventEmitter {
     this.recordEquity();
     const line = `${tag}: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
     this.addLog({ kind: 'trade', agent: 'execution', text: line });
+    this.note('opened', symbol, `${side} ${p.qty} at ${p.entry}, SL ${p.stop}${p.tp ? `, TP ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x`);
     await this.say('execution', line, false, 'idle');
     return { ok: true, line, reason: '', order: { side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage } };
   }
@@ -385,7 +393,7 @@ export class Desk extends EventEmitter {
         px = f.avgPrice ?? price;
       }
       const t = this.book.close(p.id, px, reason);
-      if (t) out.push(t);
+      if (t) { out.push(t); this.note('closed', t.symbol, `${t.side} at ${t.exit}, PnL ${t.realizedPnl} USDT (${reason})`); }
     }
     const line = out.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ');
     if (line) { this.addLog({ kind: 'trade', agent: 'execution', text: line }); await this.say('execution', line, false, 'idle'); }
@@ -396,9 +404,19 @@ export class Desk extends EventEmitter {
     return out;
   }
 
+  /** Closes positions held longer than MAX_HOLD_HOURS (0 = off). Runs every auto cycle. */
+  async closeStale(): Promise<number> {
+    const h = this.cfg.auto.maxHoldHours;
+    if (!(h > 0)) return 0;
+    const stale = [...new Set(this.book.positions.filter((p) => Date.now() - p.openedAt >= h * 3_600_000).map((p) => p.symbol))];
+    let n = 0;
+    for (const sym of stale) n += (await this.executeClose(sym, this.tickers[sym]?.last ?? this.book.positions.find((p) => p.symbol === sym)!.mark, `max holding time ${h}h`)).length;
+    return n;
+  }
+
   /** Kill switch: stop debating, cancel and flatten everything, stay stopped until restart. */
   async kill(): Promise<string[]> {
-    this.killed = true; this.paused = true; this.stopFlag = true;
+    this.killed = true; this.paused = true; this.stopFlag = true; this.autoState.on = false;
     let notes: string[] = [];
     if (this.opts.executor) {
       notes = await this.opts.executor.killAll(this.book.positions.map((p) => p.symbol));
@@ -490,12 +508,13 @@ export class Desk extends EventEmitter {
   }
 
   private async review(t: import('./types.js').ClosedTrade) {
-    this.setStatus('reviewer', 'journaling'); this.changed();
-    const rv = await runAgent(this.cfg, this.call, 'reviewer', 'review', {
+    // The Desk Lead keeps the journal: grade every closed trade, one lesson.
+    this.setStatus('lead', 'journaling'); this.changed();
+    const rv = await runAgent(this.cfg, this.call, 'lead', 'review', {
       instruction: 'Grade this closed paper trade and write one lesson.',
       data: { trade: t }, context: { trade: t }
     });
-    await this.say('reviewer', `Grade ${rv.data.grade}. ${rv.data.lesson}`, rv.example, 'idle');
+    await this.say('lead', `Journal: grade ${rv.data.grade}. ${rv.data.lesson}`, rv.example, 'idle');
     this.journal({ at: Date.now(), trade: t, grade: rv.data.grade, lesson: rv.data.lesson });
   }
 
@@ -535,6 +554,7 @@ export class Desk extends EventEmitter {
           this.book.n = cmd.n; reply = `N set to ${cmd.n}. ${this.book.split().note}.`; break;
         case 'set_safety':
           if (cmd.value < 0) { ok = false; reply = 'Safety net cannot be negative.'; break; }
+          if (this.cfg.tradingMode !== 'PAPER' && !(cmd.value > 0)) { ok = false; reply = 'Outside PAPER the safety net must stay above zero.'; break; }
           this.book.safetyNet = cmd.value; reply = `Safety net set to ${cmd.value} USDT. ${this.book.split().note}.`; break;
         case 'set_balance':
           if (this.book.positions.length) { ok = false; reply = 'Close open paper positions before resetting the balance.'; break; }

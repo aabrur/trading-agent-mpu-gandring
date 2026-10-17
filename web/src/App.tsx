@@ -5,6 +5,7 @@ import { Office } from './components/Office';
 import { AgentPanel } from './components/AgentPanel';
 import { CommandBar } from './components/CommandBar';
 import { PriceChart } from './components/PriceChart';
+import { Reports } from './components/Reports';
 import { TopBar, TickerStrip, FightMeter, Portfolio, Verdicts, TradeLog, Roster } from './components/Panels';
 
 function initialTheme() {
@@ -60,6 +61,7 @@ export default function App() {
           <FightMeter state={state} meter={meter} />
           <Verdicts state={state} />
           <Portfolio state={state} command={(t) => void command(t)} />
+          <Reports state={state} />
         </aside>
         <section className="bottom">
           <TradeLog state={state} />

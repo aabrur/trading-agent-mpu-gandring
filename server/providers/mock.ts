@@ -6,7 +6,7 @@ import { hashStr } from '../market/sample.js';
 // prompt, so it doubles as a reference for how a well-behaved agent should act.
 // Everything it produces is flagged example=true by the caller.
 
-const NAMES: Record<string, string> = { lead: 'Desk Lead', market: 'Market Analyst', research: 'Research Analyst', strategist: 'Strategist', risk: 'Risk Manager', execution: 'Execution Trader', reviewer: 'Trade Reviewer' };
+const NAMES: Record<string, string> = { lead: 'Desk Lead', market: 'Market Analyst', research: 'Research Analyst', strategist: 'Strategist', risk: 'Risk Manager', execution: 'Execution Trader' };
 const pick = <T,>(arr: T[], seed: string): T => arr[hashStr(seed) % arr.length];
 const clamp = (v: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -67,9 +67,6 @@ function rebuttal(c: Ctx) {
   const majority = bull > bear + 0.2 ? 'LONG' : bear > bull + 0.2 ? 'SHORT' : 'NEUTRAL';
   if (me === 'strategist') {
     confidence = clamp(confidence + 0.02); // the rule does not change mid debate
-  } else if (me === 'reviewer') {
-    // Devil's advocate: argues against a crowded side, from the journal.
-    if (majority !== 'NEUTRAL') { stance = majority === 'LONG' ? 'SHORT' : 'LONG'; confidence = 0.45 + (hashStr(`${c.symbol}${c.round}`) % 20) / 100; }
   } else if (Number(c.round) > 1 && stance !== majority && confidence < 0.5 && majority !== 'NEUTRAL') {
     stance = 'NEUTRAL'; confidence = clamp(confidence - 0.1);
   } else {
@@ -83,18 +80,12 @@ function rebuttal(c: Ctx) {
     market: [`${tname}, price is the only thing that pays. The tape says ${stance}, your story does not.`, `I hear you, ${tname}, but bids do not care about your narrative. ${stance}.`],
     research: [`${tname}, you are trading a chart while the catalysts say ${stance}. Read the sources.`, `Candles lag news, ${tname}. My read stays ${stance}.`],
     strategist: [`${tname}, the rule fired on a closed bar. Opinions are not signals. ${stance}.`, `Show me a closed bar that breaks my level, ${tname}. Until then, ${stance}.`],
-    reviewer: [`${tname}, my journal says calls this crowded go wrong more often than you think. I take the other side: ${stance}.`, `Crowded trade, ${tname}. My journal says fade it. ${stance}.`],
     lead: [`Enough. ${tname}, make your point in one line.`]
   };
-  const journalCount = Number(c.journalCount ?? 0);
-  if (me === 'reviewer' && journalCount === 0) {
-    lines.reviewer = [`${tname}, my journal is empty, so nobody here has earned this much confidence yet. I take the other side: ${stance}.`, `Crowded room, ${tname}. Somebody has to argue ${stance}, so it is me.`];
-  }
   const agree: Record<string, string[]> = {
     market: [`Same page for once. The tape still says ${stance}.`, `Nobody is fighting me on this. ${stance}, and I want to see volume confirm it.`],
     research: [`No one is arguing with the sources. ${stance}, still only sourced claims.`],
     strategist: [`The rule and the room agree. ${stance}. That does not make it more true.`],
-    reviewer: [`Too quiet in here. I stay ${stance} and I am watching for the trap.`],
     lead: ['Go on.']
   };
   const pool = target === 'none' ? (agree[me] ?? [`${stance}.`]) : (lines[me] ?? [`${stance}.`]);
@@ -153,12 +144,11 @@ function chat(c: Ctx) {
     if (asks('stop', 'lose', 'loss', 'rugi')) return { reply: pos.length ? `If every stop hits, we give back about ${r2(riskAtStop)} USDT plus fees. Each trade is capped at ${c.maxLossPct}% of the balance, so the worst single hit is ${r2((paper.balance ?? 0) * (c.maxLossPct ?? 1) / 100)} USDT.` : `Nothing open, so nothing to lose right now. When we do trade, a stop hit costs at most ${c.maxLossPct}% of the balance. That cap is in code.` };
     return { reply: `My job is saying no politely. Leverage tops out at ${c.maxLeverage}x and the safety net of ${paper.safetyNet} USDT never moves. I can shrink a trade or kill it, never grow it.` };
   }
-  if (agent === 'lead') return { reply: asks('why', 'kenapa') ? `I only sign what survives the argument and the risk gate. HOLD is a perfectly good answer.` : `Give me a symbol and I will call the table. Positions: ${posTxt}.` };
+  if (agent === 'lead') return { reply: asks('learn', 'journal', 'report', 'pelajaran') ? `I keep the journal too. Every closed trade gets a grade and one lesson, and the periodic report is mine. Positions: ${posTxt}.` : asks('why', 'kenapa') ? `I only sign what survives the argument and the risk gate. HOLD is a perfectly good answer.` : `Give me a symbol and I will call the table. Positions: ${posTxt}.` };
   if (agent === 'market') return { reply: `I read public prices and closed candles, nothing else. Ask me after a debate and I will tell you what the tape said.` };
   if (agent === 'research') return { reply: asks('veto') ? 'Delisting, halt, exploit or chain outage. Any of those and I veto, no debate.' : 'I trust sources, not vibes. Every claim gets a label: verified, reported or claimed.' };
   if (agent === 'strategist') return { reply: 'EMA9, EMA21 and EMA50 on closed 15 minute bars. Above all three is long, below all three is short, otherwise I abstain.' };
   if (agent === 'execution') return { reply: `Paper fills only. Every order goes in with a stop and a take profit. Open now: ${posTxt}.` };
-  if (agent === 'reviewer') return { reply: 'I keep the journal and I argue with whoever sounds too sure. Ask me again after a few closed trades.' };
   return { reply: 'Noted.' };
 }
 

@@ -27,3 +27,12 @@ describe('paper-only safety switch', () => {
     expect(() => loadConfig({ TRADING_MODE: 'PAPER', OPEN_ORDERS_N: '7' })).toThrow();
   });
 });
+
+describe('six agents', () => {
+  it('the desk has exactly six agents, each with its own provider slot', async () => {
+    const { AGENT_IDS } = await import('../server/config.js');
+    expect(AGENT_IDS).toEqual(['lead', 'market', 'research', 'strategist', 'risk', 'execution']);
+    const cfg = loadConfig({ TRADING_MODE: 'PAPER', AGENT_RISK_PROVIDER: 'mock', AGENT_EXECUTION_MODEL: 'm1' });
+    expect(Object.keys(cfg.agents)).toHaveLength(6);
+  });
+});

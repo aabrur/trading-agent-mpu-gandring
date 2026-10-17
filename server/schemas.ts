@@ -19,7 +19,7 @@ export const ResearchSchema = z.object({
 export const RebuttalSchema = z.object({
   stance: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
   confidence: conf,
-  target: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution', 'reviewer', 'none']).default('none'),
+  target: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution', 'none']).default('none'),
   rebuttal: text
 });
 

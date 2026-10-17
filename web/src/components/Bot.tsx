@@ -12,7 +12,6 @@ export const TINT: Record<AgentId, { base: string; light: string; dark: string; 
   strategist: { base: '#9fdc96', light: '#ecffe6', dark: '#4f9548', ink: '#1d3d1a' },
   risk:       { base: '#f2a596', light: '#fff0ea', dark: '#b65e4f', ink: '#4a1d16' },
   execution:  { base: '#f4c27e', light: '#fff4dd', dark: '#b07d34', ink: '#47300d' },
-  reviewer:   { base: '#c9a8ec', light: '#f5ecff', dark: '#7d5aa8', ink: '#33204a' }
 };
 
 interface Props { id: AgentId; size?: number; pose?: Pose; face?: Face; talking?: boolean; className?: string }
@@ -45,8 +44,7 @@ export function Bot({ id, size = 72, pose = 'idle', face = 'normal', talking = f
           <circle cx="14" cy="106" r="8" fill={t.base} stroke={t.dark} strokeWidth="1.5" />
           <circle cx="20" cy="102" r="3.4" fill={t.base} stroke={t.dark} strokeWidth="1.2" />
           {id === 'research' && <g transform="rotate(-12 10 108)"><rect x="-6" y="98" width="24" height="18" rx="2" fill="#fbf6ea" stroke="#b9a98c" /><path d="M-2 103 h16 M-2 107 h12 M-2 111 h14" stroke="#9b8a6c" strokeWidth="1.2" /></g>}
-          {id === 'reviewer' && <g transform="rotate(-8 10 108)"><rect x="-4" y="96" width="20" height="24" rx="2.5" fill="#c9965e" /><rect x="-1" y="100" width="14" height="17" rx="1" fill="#fffaf0" /><rect x="3" y="94" width="6" height="4" rx="1" fill="#7a6450" /><path d="M1 105 l2 2 l3 -4 M1 111 l2 2 l3 -4" stroke="#5f8a6c" strokeWidth="1.3" fill="none" /></g>}
-          {id !== 'research' && id !== 'reviewer' && <g className="mug"><rect x="2" y="100" width="12" height="13" rx="3" fill="#fffaf0" stroke="#c9b08a" strokeWidth="1.2" /><path d="M14 103 q5 1 0 7" stroke="#c9b08a" strokeWidth="1.6" fill="none" /><rect x="3.5" y="101.5" width="9" height="3" rx="1.5" fill="#8b5a33" /><path className="steam" d="M6 96 q-2 -4 1 -7 M10 96 q-2 -4 1 -7" stroke="rgba(255,255,255,.9)" strokeWidth="1.4" fill="none" strokeLinecap="round" /></g>}
+          {id !== 'research' && <g className="mug"><rect x="2" y="100" width="12" height="13" rx="3" fill="#fffaf0" stroke="#c9b08a" strokeWidth="1.2" /><path d="M14 103 q5 1 0 7" stroke="#c9b08a" strokeWidth="1.6" fill="none" /><rect x="3.5" y="101.5" width="9" height="3" rx="1.5" fill="#8b5a33" /><path className="steam" d="M6 96 q-2 -4 1 -7 M10 96 q-2 -4 1 -7" stroke="rgba(255,255,255,.9)" strokeWidth="1.4" fill="none" strokeLinecap="round" /></g>}
         </g>
 
         <g className="ball">
@@ -125,12 +123,6 @@ export function Bot({ id, size = 72, pose = 'idle', face = 'normal', talking = f
               <path d="M24 38 Q28 14 60 14 Q92 14 94 38 Z" fill="#d9774f" />
               <path d="M90 36 q22 -2 24 4 q-12 4 -26 2z" fill="#b65e3e" />
               <circle cx="60" cy="15" r="3" fill="#b65e3e" />
-            </g>
-          )}
-          {id === 'reviewer' && (
-            <g fill="none" stroke="#c99a3b" strokeWidth="2.4">
-              <circle cx="74" cy="60" r="12.5" fill="rgba(255,255,255,.18)" />
-              <path d="M84 68 Q96 86 88 102" strokeWidth="1.4" strokeDasharray="2 2" />
             </g>
           )}
         </g>

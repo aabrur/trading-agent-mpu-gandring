@@ -1,4 +1,4 @@
-export type AgentId = 'lead' | 'market' | 'research' | 'strategist' | 'risk' | 'execution' | 'reviewer';
+export type AgentId = 'lead' | 'market' | 'research' | 'strategist' | 'risk' | 'execution';
 export type Stance = 'LONG' | 'SHORT' | 'NEUTRAL';
 export type AgentStatus = 'idle' | 'reading' | 'thinking' | 'typing' | 'arguing' | 'fighting' | 'executing' | 'journaling';
 
@@ -18,8 +18,10 @@ export interface Verdict {
 export interface LogLine { at: number; kind: string; agent?: AgentId; text: string; example?: boolean }
 export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at: number }
 export interface DeskState {
-  app: string; mode: 'PAPER' | 'LIVE'; appMode: 'local' | 'grokbot'; marketSource: string; bridgeEnabled: boolean; paused: boolean;
-  live: { exchange: string; experimental: boolean } | null; killed: boolean;
+  app: string; mode: 'PAPER' | 'TESTNET' | 'LIVE'; appMode: 'local' | 'grokbot'; marketSource: string; bridgeEnabled: boolean; paused: boolean;
+  live: { exchange: string; network: string; experimental: boolean } | null; killed: boolean;
+  auto: { on: boolean; intervalMin: number; nextAt: number; cycles: number; lastCycleAt: number; running: boolean; symbols: string[]; maxHoldHours: number };
+  reports: Report[]; reportIntervalMin: number;
   dailyLoss: { limitPct: number; startEquity: number; hit: boolean };
   tradingview: { widget: boolean; prefix: string; webhook: boolean }; agentEvents: boolean;
   signals: { source: string; symbol: string; action: string; price: number | null; note: string; at: number }[];
@@ -29,9 +31,17 @@ export interface DeskState {
   equityHistory: { t: number; equity: number; balance: number }[];
   verdicts: Verdict[]; logs: LogLine[]; chats: Record<AgentId, ChatLine[]>; watchlist: string[]; fightThreshold: number;
 }
+export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
+export interface Report {
+  id: string; at: number; since: number; mode: string; exchange: string | null;
+  balance: number; safetyNet: number; moneyTrade: number; n: number; perOrder: number; equity: number; unrealized: number; realized: number;
+  dailyLoss: { limitPct: number; hit: boolean }; auto: { on: boolean; cycles: number; intervalMin: number };
+  positions: { symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }[];
+  opened: Activity[]; closed: Activity[]; skipped: Activity[]; text: string;
+}
 export interface Speech { agent: AgentId; text: string; done: boolean; example: boolean; at: number }
 export interface Fight { id: number; from: AgentId; to: AgentId; intensity: number; punches: number; at: number }
-export const AGENT_ORDER: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution', 'reviewer'];
+export const AGENT_ORDER: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'];
 export type Reaction = 'cheer' | 'worried';
 export interface Candle { time: number; open: number; high: number; low: number; close: number }
 export interface CandleData { symbol: string; source: string; example: boolean; last: number; change24hPct: number; candles: Candle[] }

@@ -1,21 +1,24 @@
 // npm run doctor: checks config and keys with harmless reads. Never prints a secret.
+// npm run doctor --roundtrip (or: npm run doctor -- --roundtrip): also runs an optional testnet round trip.
 import 'dotenv/config';
 import { loadConfig, ConfigError, type ProviderName } from '../server/config.js';
 import { exchangeSettings, makeAdapter, ADAPTER_STATUS, type Network } from '../server/exchange/index.js';
-import { checkLiveUnlock, stateDir } from '../server/live/state.js';
+import { checkTradingMode, type TradingMode } from '../server/live/guard.js';
+import { roundTripCheck } from '../server/live/steps.js';
 import { safe } from '../server/redact.js';
 
 type Line = { ok: boolean | null; label: string; detail: string };
 
-export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch): Promise<Line[]> {
+export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch, opts: { roundtrip?: boolean } = {}): Promise<Line[]> {
   const out: Line[] = [];
   const add = (ok: boolean | null, label: string, detail: string) => out.push({ ok, label, detail: safe(detail) });
   let cfg;
-  try { cfg = loadConfig({ ...env, TRADING_MODE: (env.TRADING_MODE ?? 'PAPER').toUpperCase() === 'LIVE' ? 'PAPER' : env.TRADING_MODE }); add(true, 'config', `APP_MODE ${cfg.appMode}, market ${cfg.marketSource}, N ${cfg.paper.n}`); }
+  const mode = (env.TRADING_MODE ?? 'PAPER').trim().toUpperCase() as TradingMode;
+  try { cfg = loadConfig({ ...env, TRADING_MODE: 'PAPER' }); add(true, 'config', `APP_MODE ${cfg.appMode}, market ${cfg.marketSource}, N ${cfg.paper.n}, auto ${cfg.auto.on ? `every ${cfg.auto.intervalMin} min` : 'off'}, reports every ${cfg.reports.intervalMin} min`); }
   catch (e) { add(false, 'config', (e as Error).message); return out; }
-  if ((env.TRADING_MODE ?? '').toUpperCase() === 'LIVE') {
-    const c = checkLiveUnlock(env, stateDir(env));
-    add(c.ok, 'LIVE unlock', c.ok ? 'signed state is valid' : c.reasons.join('; '));
+  if (mode !== 'PAPER') {
+    const c = checkTradingMode(env, mode);
+    add(c.ok, 'trading mode', c.ok ? `${mode} ready (key permissions checked below)` : `${mode}: ${c.reasons.join('; ')}`);
   } else add(true, 'trading mode', 'PAPER');
 
   const probes: Record<Exclude<ProviderName, 'mock'>, (k: string) => [string, RequestInit]> = {
@@ -33,6 +36,7 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: ty
     catch (e) { add(false, `${p} key`, (e as Error).message); }
   }
   for (const [id, a] of Object.entries(cfg.agents)) if (a.fellBackToMock) add(null, `agent ${id}`, 'provider has no key, using mock');
+  if (env.AGENT_REVIEWER_PROVIDER || env.AGENT_REVIEWER_MODEL) add(null, 'agent reviewer', 'ignored: the desk has six agents now, the Desk Lead keeps the journal. Remove AGENT_REVIEWER_*.');
 
   let ex;
   try { ex = exchangeSettings(env); } catch (e) { add(false, 'exchange', (e as Error).message); return out; }
@@ -46,20 +50,26 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: ty
         const ping = await a.ping();
         add(ping.ok, `${ex.name} ${net} read`, ping.detail);
         const perm = await a.permissions();
-        add(perm.ok && perm.canWithdraw !== true, `${ex.name} ${net} permissions`, perm.detail);
+        add(perm.ok && perm.canWithdraw !== true, `${ex.name} ${net} permissions`, `${perm.canWithdraw === true ? 'WITHDRAW ENABLED, will be refused. ' : ''}${perm.detail}`);
       } catch (e) { add(false, `${ex.name} ${net}`, (e as Error).message); }
     }
     add(null, `${ex.name} adapter`, ADAPTER_STATUS[ex.name]);
+    if (opts.roundtrip) {
+      try { const rt = await roundTripCheck(env, { factory: (n, net, c) => makeAdapter(n, net, c, fetchImpl) }); add(rt.ok, 'testnet round trip', rt.steps.join(' | ')); }
+      catch (e) { add(false, 'testnet round trip', (e as Error).message); }
+    }
   } else add(null, 'exchange', 'none (paper only)');
   add(cfg.tradingview.webhookEnabled ? true : null, 'TradingView webhook', cfg.tradingview.webhookEnabled ? 'on, POST /api/tradingview' : 'off');
   add(cfg.agentEvents.enabled ? true : null, 'Grok Bot agent events', cfg.agentEvents.enabled ? 'on, POST /api/agent-event' : 'off');
+  add(cfg.reports.telegram.enabled ? true : null, 'Telegram reports', cfg.reports.telegram.enabled ? 'on (experimental)' : 'off');
   add(cfg.news.provider === 'sample' ? null : !!cfg.news.key, 'news plugin', cfg.news.provider === 'sample' ? 'sample news' : cfg.news.key ? 'cryptopanic key set' : 'cryptopanic selected but no key');
   return out;
 }
 
 const isMain = process.argv[1] && /doctor\.(ts|js)$/.test(process.argv[1]);
 if (isMain) {
-  doctor().then((lines) => {
+  const roundtrip = process.argv.includes('--roundtrip') || /^(true|1)$/.test(process.env.npm_config_roundtrip ?? '');
+  doctor(process.env, fetch, { roundtrip }).then((lines) => {
     console.log('\nTrading Agent Mpu Gandring doctor');
     for (const l of lines) console.log(`  ${l.ok === true ? 'OK  ' : l.ok === false ? 'FAIL' : '--  '} ${l.label.padEnd(26)} ${l.detail}`);
     process.exitCode = lines.some((l) => l.ok === false) ? 1 : 0;

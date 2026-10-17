@@ -1,9 +1,7 @@
-// npm run setup                      interactive wizard (writes .env, PAPER mode)
+// npm run setup                      interactive wizard (writes .env; PAPER unless you pick TESTNET or LIVE)
 // npm run setup -- --yes [flags]     non-interactive, for coding agents (see AGENTS.md)
-// npm run setup -- testnet           testnet round trip, step 1 of the LIVE unlock
-// npm run setup -- check-key         mainnet key permission check, step 2
-// npm run setup -- unlock-live       typed confirmation, step 3 (needs a human at a terminal)
-// npm run setup -- lock              back to PAPER
+// npm run setup -- check-key         re-run the automatic withdraw-permission check
+// npm run setup -- paper             back to PAPER (alias: lock)
 // npm run setup -- status            what is configured, secrets masked
 import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
@@ -12,8 +10,8 @@ import { readEnv, setEnv, ensureEnv, mask } from './envfile.js';
 import { ask, askSecret, askYes, choose, isInteractive } from './prompt.js';
 import { PROVIDERS, AGENT_IDS, type ProviderName } from '../server/config.js';
 import { EXCHANGES, envNames, ADAPTER_STATUS, type ExchangeName } from '../server/exchange/index.js';
-import { stateDir, readState, CONFIRM_PHRASE } from '../server/live/state.js';
-import { testnetStep, checkKeyStep, unlockStep, hyperliquidMainKeyCheck } from '../server/live/steps.js';
+import { checkTradingMode, networkFor, type TradingMode } from '../server/live/guard.js';
+import { checkKeyStep, hyperliquidMainKeyCheck } from '../server/live/steps.js';
 import { registerSecrets } from '../server/redact.js';
 import { exchangeSecrets } from '../server/exchange/index.js';
 
@@ -31,14 +29,13 @@ function currentEnv() {
   const fileEnv = readEnv(ENV_FILE);
   loadDotenv({ path: ENV_FILE, override: true, quiet: true } as never);
   const env = { ...process.env, ...fileEnv };
-  registerSecrets([...exchangeSecrets(env), ...Object.values(KEY_VARS).map((k) => env[k]), env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.GROKBOT_WEBHOOK_KEY, env.CRYPTOPANIC_API_KEY]);
+  registerSecrets([...exchangeSecrets(env), ...Object.values(KEY_VARS).map((k) => env[k]), env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.GROKBOT_WEBHOOK_KEY, env.CRYPTOPANIC_API_KEY, env.TELEGRAM_BOT_TOKEN]);
   return env;
 }
 
 function status() {
   const env = currentEnv();
   const ex = (env.EXCHANGE || 'none') as ExchangeName | 'none';
-  const st = readState(stateDir(env));
   console.log(`\nTrading Agent Mpu Gandring setup (${ENV_FILE})`);
   console.log(`  TRADING_MODE      ${env.TRADING_MODE || 'PAPER'}`);
   console.log(`  APP_MODE          ${env.APP_MODE || 'local'}`);
@@ -48,16 +45,19 @@ function status() {
   console.log(`  news plugin       ${env.NEWS_PROVIDER || 'sample'}${env.CRYPTOPANIC_API_KEY ? ' (key set)' : ''}`);
   console.log(`  exchange          ${ex}${ex !== 'none' ? ` (${ADAPTER_STATUS[ex]})` : ''}`);
   if (ex !== 'none') for (const net of ['testnet', 'mainnet'] as const) { const n = envNames(ex, net); console.log(`    ${net.padEnd(8)} ${n.key} ${ex === 'hyperliquid' ? env[n.key] || '(empty)' : mask(env[n.key])}, ${n.secret} ${mask(env[n.secret])}`); }
-  console.log(`  LIVE unlock       testnet ${st.testnet ? `passed ${new Date(st.testnet.passedAt).toISOString()}` : 'not yet'}, key check ${st.permission ? 'passed' : 'not yet'}, confirmation ${st.confirmation ? 'typed' : 'not yet'}`);
+  console.log(`  auto trading      ${env.AUTO_TRADING || 'off'}, debate every ${env.DEBATE_INTERVAL_MIN || 15} min, max hold ${env.MAX_HOLD_HOURS || 0}h (0 = off)`);
+  console.log(`  reports           every ${env.REPORT_INTERVAL_MIN || 60} min${env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID ? ', Telegram on' : ''}${env.GROKBOT_WEBHOOK_URL ? ', Grok Bot bridge on' : ''}`);
+  console.log(`  safety net        ${env.SAFETY_NET || 200} USDT, N ${env.OPEN_ORDERS_N || 4}, daily loss stop ${env.DAILY_LOSS_LIMIT_PCT || 3}%`);
   console.log('');
 }
 
 async function wizard() {
   const nonInteractive = flag('yes') || !isInteractive();
   const env = currentEnv();
-  const up: Record<string, string | null> = { TRADING_MODE: 'PAPER', LIVE_CONFIRMED: null };
-  console.log('\nTrading Agent Mpu Gandring setup. Everything goes into .env on this computer. Nothing is sent anywhere.');
-  console.log('Paper trading is the default. LIVE has its own three-step unlock later (npm run setup -- testnet / check-key / unlock-live).\n');
+  // LIVE_CONFIRMED (old unlock) and AGENT_REVIEWER_* (old 7th agent, now part of the Desk Lead) are cleaned up.
+  const up: Record<string, string | null> = { LIVE_CONFIRMED: null, AGENT_REVIEWER_PROVIDER: null, AGENT_REVIEWER_MODEL: null };
+  console.log('\nTrading Agent Mpu Gandring setup. Everything goes into .env on this computer. Keys are only sent to their own provider to check them.');
+  console.log('After setup the desk trades on its own (full auto). PAPER is the default. LIVE uses real money and can lose it. Not financial advice.\n');
 
   // 1. app mode
   const appMode = (opt('app-mode') ?? (nonInteractive ? env.APP_MODE || 'local' : await choose('Who drives the agents? local = models on this computer, grokbot = your Grok Bot team', ['local', 'grokbot'] as const, (env.APP_MODE as 'local') || 'local'))) as string;
@@ -70,7 +70,7 @@ async function wizard() {
 
   // 2. model keys and per-agent mapping
   if (flag('keys-from-env')) {
-    for (const k of [...Object.values(KEY_VARS), 'CRYPTOPANIC_API_KEY', 'GROKBOT_WEBHOOK_URL', 'GROKBOT_WEBHOOK_KEY']) if (process.env[k]) up[k] = process.env[k]!;
+    for (const k of [...Object.values(KEY_VARS), 'CRYPTOPANIC_API_KEY', 'GROKBOT_WEBHOOK_URL', 'GROKBOT_WEBHOOK_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) if (process.env[k]) up[k] = process.env[k]!;
     for (const name of EXCHANGES) for (const net of ['testnet', 'mainnet'] as const) for (const k of Object.values(envNames(name, net))) if (process.env[k]) up[k] = process.env[k]!;
     console.log('  copied keys that were set in the current shell environment');
   } else if (!nonInteractive) {
@@ -130,42 +130,49 @@ async function wizard() {
   await num('DAILY_LOSS_LIMIT_PCT', 'daily-loss', 'Daily loss stop, percent of equity', '3');
   if (opt('market-source')) up.MARKET_SOURCE = opt('market-source')!;
 
+  // 7. full auto and reports
+  const auto = opt('auto') ?? (nonInteractive ? env.AUTO_TRADING || 'on' : ((await askYes('Full auto trading after setup? (agents open, close and size on their own)', (env.AUTO_TRADING ?? 'on') !== 'off')) ? 'on' : 'off'));
+  up.AUTO_TRADING = auto === 'off' ? 'off' : 'on';
+  await num('DEBATE_INTERVAL_MIN', 'debate-interval', 'Minutes between debate cycles', '15');
+  await num('MAX_HOLD_HOURS', 'max-hold', 'Close positions after this many hours (0 = no limit)', '0');
+  await num('REPORT_INTERVAL_MIN', 'report-interval', 'Report every how many minutes (e.g. 30, 60, 240)', '60');
+  if (!nonInteractive && await askYes('Also send reports to Telegram? (experimental)', !!env.TELEGRAM_BOT_TOKEN)) {
+    const t = await askSecret('  Telegram bot token'); if (t) up.TELEGRAM_BOT_TOKEN = t;
+    const c = await ask('  Telegram chat id', env.TELEGRAM_CHAT_ID || ''); if (c) up.TELEGRAM_CHAT_ID = c;
+  }
+
+  // 8. trading mode, last, with the automatic key check
+  let mode = (opt('trading-mode') ?? (nonInteractive ? 'PAPER' : (await choose('Trading mode', ['paper', 'testnet', 'live'] as const, 'paper')))).toUpperCase() as TradingMode;
+  if (!['PAPER', 'TESTNET', 'LIVE'].includes(mode)) throw new Error('--trading-mode must be paper, testnet or live');
+  if (mode !== 'PAPER') {
+    const merged = { ...env, ...Object.fromEntries(Object.entries(up).filter(([, v]) => v !== null)) } as NodeJS.ProcessEnv;
+    const pre = checkTradingMode(merged, mode);
+    let why = pre.ok ? '' : pre.reasons.join('; ');
+    if (!why) {
+      const k = await checkKeyStep(merged, networkFor(mode)!).catch((e) => ({ ok: false, detail: (e as Error).message }));
+      if (!k.ok) why = k.detail; else console.log(`  key check: ${k.detail}`);
+    }
+    if (why) { console.log(`\n  ${mode} refused: ${why}\n  Staying in PAPER.`); mode = 'PAPER'; process.exitCode = 2; }
+    else if (mode === 'LIVE') console.log('\n  LIVE selected. Real money, full auto. You can lose the whole Money Trade part. Not financial advice. Kill switch is in the office.');
+  }
+  up.TRADING_MODE = mode;
+
   setEnv(ENV_FILE, up);
-  console.log(`\nSaved ${ENV_FILE}. TRADING_MODE=PAPER.`);
+  console.log(`\nSaved ${ENV_FILE}. TRADING_MODE=${mode}.`);
   status();
   console.log('Next: npm run doctor, then npm run dev.');
 }
 
 async function main() {
-  const dir = stateDir(currentEnv());
   switch (sub) {
     case 'wizard': return wizard();
     case 'status': return status();
-    case 'lock': setEnv(ENV_FILE, { TRADING_MODE: 'PAPER', LIVE_CONFIRMED: null }); console.log('Back to PAPER. LIVE_CONFIRMED removed.'); return;
-    case 'testnet': {
-      console.log('Running the testnet round trip (place with stop, reconcile, close, cancel). Testnet funds only.');
-      const r = await testnetStep(currentEnv(), dir, { symbol: opt('symbol') });
-      for (const s of r.steps) console.log(`  ${s}`);
-      console.log(r.ok ? `PASSED on ${r.exchange} testnet. Recorded.` : 'FAILED. Nothing recorded.');
-      process.exitCode = r.ok ? 0 : 1; return;
-    }
+    case 'paper': case 'lock': setEnv(ENV_FILE, { TRADING_MODE: 'PAPER', LIVE_CONFIRMED: null }); console.log('Back to PAPER.'); return;
     case 'check-key': {
-      const r = await checkKeyStep(currentEnv(), dir);
-      console.log(`${r.ok ? 'OK' : 'NOT OK'} (${r.exchange} mainnet): ${r.detail}`);
+      const net = (opt('network') ?? 'mainnet') as 'mainnet' | 'testnet';
+      const r = await checkKeyStep(currentEnv(), net);
+      console.log(`${r.ok ? 'OK' : 'REFUSED'} (${r.exchange} ${net}): ${r.detail}`);
       process.exitCode = r.ok ? 0 : 1; return;
-    }
-    case 'unlock-live': {
-      if (!isInteractive()) { console.error('unlock-live needs a person at a real terminal. A script or agent cannot unlock LIVE.'); process.exitCode = 2; return; }
-      console.log('\nLIVE TRADING USES REAL MONEY. You can lose all of the Money Trade part of your balance.');
-      console.log('This is not financial advice. The desk can be wrong, exchanges can fail, stops can slip.\n');
-      const phrase = await ask(`Type exactly: ${CONFIRM_PHRASE}\n>`);
-      try {
-        const r = await unlockStep(currentEnv(), dir, phrase);
-        setEnv(ENV_FILE, r.env);
-        console.log('LIVE unlocked. TRADING_MODE=LIVE and LIVE_CONFIRMED written to .env. The server re-checks the key on every start.');
-        console.log('To go back: npm run setup -- lock');
-      } catch (e) { console.error(`LIVE stays locked: ${(e as Error).message}`); process.exitCode = 2; }
-      return;
     }
     default: console.error(`unknown command ${sub}`); process.exitCode = 1;
   }

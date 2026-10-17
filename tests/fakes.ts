@@ -46,6 +46,10 @@ export class MemoryAdapter implements ExchangeAdapter {
   readonly name = 'bybit' as const;
   readonly network = 'mainnet' as const;
   placed: PlaceOrder[] = [];
+  /** fill price for an entry; defaults to 60005 (a BTC-like price) */
+  fillAt: (o: PlaceOrder) => number = () => 60005;
+  /** fill price for a close; defaults to 60100 */
+  closeAt: (symbol: string) => number = () => 60100;
   closes = 0;
   pos: VenuePosition[] = [];
   private rec = new Map<string, OrderRecord>();
@@ -58,16 +62,17 @@ export class MemoryAdapter implements ExchangeAdapter {
   async placeOrder(o: PlaceOrder) {
     this.placed.push(o);
     if (this.failPlace) throw new Error('socket hang up');
-    this.rec.set(o.clientId, { clientId: o.clientId, orderId: 'x1', status: 'filled', filledQty: o.qty, avgPrice: 60005 });
-    this.pos.push({ symbol: o.symbol, side: o.side, qty: o.qty, entry: 60005, stop: o.stop, tp: o.tp, unrealizedPnl: 0 });
+    this.rec.set(o.clientId, { clientId: o.clientId, orderId: 'x1', status: 'filled', filledQty: o.qty, avgPrice: this.fillAt(o) });
+    this.pos.push({ symbol: o.symbol, side: o.side, qty: o.qty, entry: this.fillAt(o), stop: o.stop, tp: o.tp, unrealizedPnl: 0 });
     return { orderId: 'x1' };
   }
   async getOrder(_s: string, clientId: string) { return this.rec.get(clientId) ?? { clientId, orderId: '', status: 'unknown' as const, filledQty: 0, avgPrice: null }; }
   async positions(symbol?: string) { return this.pos.filter((p) => !symbol || p.symbol === symbol); }
   async closePosition(symbol: string, side: Side, qty: number, clientId: string) {
     this.closes++;
+    const px = this.closeAt(symbol);
     this.pos = this.pos.filter((p) => p.symbol !== symbol);
-    this.rec.set(clientId, { clientId, orderId: 'c1', status: 'filled', filledQty: qty, avgPrice: 60100 });
+    this.rec.set(clientId, { clientId, orderId: 'c1', status: 'filled', filledQty: qty, avgPrice: px });
     return { orderId: 'c1' };
   }
   async cancelAll() {}

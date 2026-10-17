@@ -2,11 +2,11 @@ import 'dotenv/config';
 import type { AgentId } from './types.js';
 import { registerSecrets } from './redact.js';
 import { exchangeSettings, exchangeSecrets, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
-import { checkLiveUnlock, stateDir } from './live/state.js';
+import { checkTradingMode, type TradingMode } from './live/guard.js';
 
 export type ProviderName = 'mock' | 'xai' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter';
 export const PROVIDERS: ProviderName[] = ['mock', 'xai', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter'];
-export const AGENT_IDS: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution', 'reviewer'];
+export const AGENT_IDS: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'];
 
 export class ConfigError extends Error {
   constructor(message: string, public exitCode = 2) { super(message); }
@@ -21,10 +21,12 @@ const num = (env: NodeJS.ProcessEnv, key: string, def: number) => {
 };
 
 export interface AppConfig {
-  tradingMode: 'PAPER' | 'LIVE';
+  tradingMode: TradingMode;
   appMode: 'local' | 'grokbot';
   host: string;
-  live: { exchange: ExchangeName; experimental: boolean } | null;
+  live: { exchange: ExchangeName; network: 'testnet' | 'mainnet'; experimental: boolean } | null;
+  auto: { on: boolean; intervalMin: number; symbols: string[]; maxHoldHours: number };
+  reports: { intervalMin: number; telegram: { token: string; chatId: string; enabled: boolean } };
   exchange: { name: ExchangeName | null; hasTestnetKeys: boolean; hasMainnetKeys: boolean };
   agentEvents: { secret: string; enabled: boolean };
   tradingview: { widget: boolean; passphrase: string; webhookEnabled: boolean; prefix: string };
@@ -40,22 +42,22 @@ export interface AppConfig {
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
   risk: { maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number; dailyLossLimitPct: number };
-  debate: { rounds: number; paceMs: number; fightThreshold: number; autoMinutes: number };
+  debate: { rounds: number; paceMs: number; fightThreshold: number };
   bridge: { url: string; key: string; enabled: boolean };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const mode = (env.TRADING_MODE ?? 'PAPER').trim().toUpperCase();
-  if (mode !== 'PAPER' && mode !== 'LIVE') {
-    throw new ConfigError(`TRADING_MODE is "${mode}". Use PAPER (default) or LIVE after unlocking with npm run setup. Refusing to start.`, 2);
+  if (mode !== 'PAPER' && mode !== 'TESTNET' && mode !== 'LIVE') {
+    throw new ConfigError(`TRADING_MODE is "${mode}". Use PAPER (default), TESTNET or LIVE. Refusing to start.`, 2);
   }
   let live: AppConfig['live'] = null;
-  if (mode === 'LIVE') {
-    const check = checkLiveUnlock(env, stateDir(env));
+  if (mode !== 'PAPER') {
+    const check = checkTradingMode(env, mode as TradingMode);
     if (!check.ok) {
-      throw new ConfigError(`TRADING_MODE=LIVE is locked, refusing to start. Run in PAPER, or finish the unlock steps in npm run setup:\n  - ${check.reasons.join('\n  - ')}`, 2);
+      throw new ConfigError(`TRADING_MODE=${mode} cannot start, refusing. Fix this or go back to PAPER (npm run setup):\n  - ${check.reasons.join('\n  - ')}`, 2);
     }
-    live = { exchange: check.exchange!, experimental: ADAPTER_STATUS[check.exchange!] === 'experimental' };
+    live = { exchange: check.exchange!, network: mode === 'LIVE' ? 'mainnet' : 'testnet', experimental: ADAPTER_STATUS[check.exchange!] === 'experimental' };
   }
   let ex: ReturnType<typeof exchangeSettings>;
   try { ex = exchangeSettings(env); } catch (e) { throw new ConfigError((e as Error).message); }
@@ -71,7 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     xai: env.XAI_API_KEY ?? '', openai: env.OPENAI_API_KEY ?? '', anthropic: env.ANTHROPIC_API_KEY ?? '',
     gemini: env.GEMINI_API_KEY ?? '', deepseek: env.DEEPSEEK_API_KEY ?? '', openrouter: env.OPENROUTER_API_KEY ?? ''
   };
-  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, env.LIVE_CONFIRMED, ...exchangeSecrets(env)]);
+  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, env.TELEGRAM_BOT_TOKEN, ...exchangeSecrets(env)]);
   const defaultModels: Record<ProviderName, string> = {
     mock: 'mock-desk-v1',
     xai: env.XAI_MODEL || 'grok-3-mini',
@@ -109,8 +111,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     tradingMode: mode as AppConfig['tradingMode'],
     appMode: appMode as AppConfig['appMode'],
-    // LIVE stays on this computer unless you set HOST yourself.
-    host: (env.HOST || (mode === 'LIVE' ? '127.0.0.1' : '0.0.0.0')).trim(),
+    // LIVE always binds to this computer only. TESTNET defaults to it too.
+    host: mode === 'LIVE' ? '127.0.0.1' : (env.HOST || (mode === 'TESTNET' ? '127.0.0.1' : '0.0.0.0')).trim(),
     live,
     exchange: { name: ex.name, hasTestnetKeys: !!ex.creds.testnet, hasMainnetKeys: !!ex.creds.mainnet },
     agentEvents: { secret: agentEventSecret, enabled: appMode === 'grokbot' && !!agentEventSecret },
@@ -139,13 +141,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       minOrderUsdt: num(env, 'MIN_ORDER_USDT', 5),
       takerFee: num(env, 'TAKER_FEE', 0.00055),
       takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 2)),
-      dailyLossLimitPct: Math.max(0, num(env, 'DAILY_LOSS_LIMIT_PCT', 3))
+      // cannot be switched off: clamped to 0.5..20 percent
+      dailyLossLimitPct: Math.min(20, Math.max(0.5, num(env, 'DAILY_LOSS_LIMIT_PCT', 3)))
     },
     debate: {
       rounds: Math.min(4, Math.max(1, num(env, 'DEBATE_ROUNDS', 2))),
       paceMs: Math.max(0, num(env, 'DEBATE_PACE_MS', 700)),
-      fightThreshold: num(env, 'FIGHT_THRESHOLD', 0.45),
-      autoMinutes: Math.max(0, num(env, 'AUTO_DEBATE_MINUTES', 0))
+      fightThreshold: num(env, 'FIGHT_THRESHOLD', 0.45)
+    },
+    auto: {
+      on: !/^(0|off|no|false)$/i.test((env.AUTO_TRADING ?? 'off').trim()),
+      intervalMin: Math.max(0.1, num(env, 'DEBATE_INTERVAL_MIN', 15)),
+      symbols: (env.AUTO_SYMBOLS || env.WATCHLIST || 'BTCUSDT,ETHUSDT,SOLUSDT').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
+      maxHoldHours: Math.max(0, num(env, 'MAX_HOLD_HOURS', 0))
+    },
+    reports: {
+      intervalMin: Math.max(1, num(env, 'REPORT_INTERVAL_MIN', 60)),
+      telegram: { token: (env.TELEGRAM_BOT_TOKEN ?? '').trim(), chatId: (env.TELEGRAM_CHAT_ID ?? '').trim(), enabled: !!(env.TELEGRAM_BOT_TOKEN ?? '').trim() && !!(env.TELEGRAM_CHAT_ID ?? '').trim() }
     },
     bridge: { url, key, enabled: !!url && !!key }
   };

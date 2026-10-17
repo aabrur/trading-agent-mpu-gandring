@@ -10,6 +10,6 @@ Role notes for the Trading Agent Mpu Gandring desk. A coding agent or Grok Bot c
 | `risk-gate` | Risk Manager | Writes the limits with the owner and gives PASS or FAIL on every ticket. |
 | `order-execution` | Execution Trader | The only seat that would send orders. |
 
-Important: the app runs in PAPER mode by default. LIVE is locked behind a testnet round trip, a no-withdraw key check and a typed confirmation (see `docs/live-trading.md`). The notes in `risk-gate` and `order-execution` describe how the desk behaves in both modes.
+Important: the app runs in PAPER mode by default. TESTNET and LIVE run full auto after setup, behind automatic guards: a no-withdraw key check, a stop on every order, the daily loss stop, the safety net and max N (see `docs/live-trading.md`). The notes in `risk-gate` and `order-execution` describe how the desk behaves in both modes.
 
 Keys are read from environment variables only. Never paste a key in chat and never commit one. No profit is promised.

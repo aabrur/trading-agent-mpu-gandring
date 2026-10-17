@@ -104,7 +104,7 @@ export function PriceChart({ state, symbol, onSymbol, data, theme }: Props) {
       </div>}
       <div className="chart-box" ref={box} style={tv ? { display: 'none' } : undefined} />
       {tv && <TradingViewChart symbol={symbol} prefix={state.tradingview.prefix} theme={theme} />}
-      {!tv && positions.length === 0 && <p className="chart-note">No open {state.mode === 'LIVE' ? 'LIVE' : 'paper'} position on {symbol}. Entry, stop and take profit lines show up here when one opens.</p>}
+      {!tv && positions.length === 0 && <p className="chart-note">No open {state.mode === 'PAPER' ? 'paper' : state.mode} position on {symbol}. Entry, stop and take profit lines show up here when one opens.</p>}
     </section>
   );
 }

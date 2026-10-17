@@ -19,8 +19,10 @@ The wizard asks, one section at a time:
 4. **Plugins**: an optional news feed.
 5. **Exchange**: none, Bybit, Binance, OKX or Hyperliquid, with testnet keys and (optionally) mainnet keys.
 6. **Money**: paper balance, safety net, N (1 to 4), daily loss stop.
+7. **Full auto and reports**: `AUTO_TRADING` (default on), minutes between debate cycles, optional max holding time, minutes between reports, and an optional Telegram bot for reports (experimental).
+8. **Trading mode**: PAPER (default, also when you just press Enter), TESTNET or LIVE. For TESTNET and LIVE the key is checked on the exchange first and refused if it can withdraw.
 
-It always writes `TRADING_MODE=PAPER`.
+After this one-time setup the desk runs on its own: it debates every interval, opens, closes and sizes positions without asking, and writes a report to `reports/` and the Reports panel. See [live-trading.md](live-trading.md) before choosing LIVE.
 
 ### Non-interactive (for coding agents)
 
@@ -32,6 +34,8 @@ npm run setup -- --yes \
   --tradingview-widget on --tradingview-webhook on \
   --news sample --exchange bybit \
   --balance 1000 --safety-net 200 --n 4 --daily-loss 3 \
+  --auto on --debate-interval 15 --max-hold 0 --report-interval 60 \
+  --trading-mode paper \
   --keys-from-env
 ```
 
@@ -78,4 +82,4 @@ All venues sit behind one interface, `server/exchange/types.ts` (`ExchangeAdapte
 
 Keys go in `.env` as `<VENUE>_TESTNET_API_KEY`, `<VENUE>_TESTNET_API_SECRET`, `<VENUE>_API_KEY`, `<VENUE>_API_SECRET` (plus `_API_PASSPHRASE` for OKX). Hyperliquid uses `HYPERLIQUID[_TESTNET]_ACCOUNT_ADDRESS` (your main address, public) and `HYPERLIQUID[_TESTNET]_AGENT_PRIVATE_KEY` (the API agent wallet).
 
-Exchange keys are only used for `npm run doctor`, the testnet round trip, and LIVE. In PAPER nothing is ever sent to an exchange. Going live: [live-trading.md](live-trading.md).
+Exchange keys are only used for `npm run doctor`, the optional `npm run doctor --roundtrip`, TESTNET and LIVE. In PAPER nothing is ever sent to an exchange. Going live: [live-trading.md](live-trading.md).

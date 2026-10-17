@@ -1,6 +1,6 @@
 # Grok Bot mode
 
-In Grok Bot mode the seven desk roles are played by your own Grok Bot trading team. The office still runs on your computer: it draws the agents, keeps the paper (or live) book, runs the risk gate and the money split. Your Grok Bot sends each agent's turn in, and the office sends commands and verdicts back out.
+In Grok Bot mode the six desk roles are played by your own Grok Bot trading team. The office still runs on your computer: it draws the agents, keeps the paper (or live) book, runs the risk gate and the money split. Your Grok Bot sends each agent's turn in, and the office sends commands and verdicts back out.
 
 ```
 Grok Bot routines  --POST /api/agent-event (secret)-->  office on your computer
@@ -53,7 +53,7 @@ Bodies (validated with a strict schema, text is capped at 600 characters and san
 { "agent": "lead", "kind": "proposal", "symbol": "ETHUSDT", "action": "OPEN_SHORT", "text": "Short it, small." }
 ```
 
-- `agent`: `lead`, `market`, `research`, `strategist`, `risk`, `execution`, `reviewer`
+- `agent`: `lead`, `market`, `research`, `strategist`, `risk`, `execution`
 - `kind`: `say` (speech bubble, stance moves the fight meter, a `target` with the opposite stance can start a cartoon punch), `status`, `proposal` (Desk Lead only: `OPEN_LONG`, `OPEN_SHORT`, `CLOSE`, `HOLD`)
 
 Answers: `401` wrong or missing secret, `400` invalid body, `429` more than 120 events a minute, `404` when Grok Bot mode is off.
@@ -77,7 +77,9 @@ The office sends verdicts, commands, TradingView signals and the kill switch to 
 
 4. Restart and send a probe: `curl -X POST http://localhost:8787/api/bridge/probe`.
 
-The body's `mode` field says `PAPER` or `LIVE`, so your routine always knows which one it is looking at.
+The body's `mode` field says `PAPER`, `TESTNET` or `LIVE`, so your routine always knows which one it is looking at.
+
+With full auto on, the bridge also receives a `report` event every `REPORT_INTERVAL_MIN`: balance, safety net, Money Trade, N, allocation, open positions with entry, stop, take profit and PnL, and what was opened, closed or skipped and why. Your routine can forward it to wherever you read things. The desk never waits for a reply; there is no approval step in either mode.
 
 ## 5. Check
 

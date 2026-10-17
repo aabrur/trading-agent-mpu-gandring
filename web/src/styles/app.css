@@ -399,3 +399,26 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .tv-wrap { height: 460px; border-radius: var(--radius-md, 12px); overflow: hidden; }
 .tv-box, .tv-box iframe { height: 100% !important; width: 100% !important; }
 @media (prefers-reduced-motion: reduce) { .badge.live-badge { animation: none; } }
+
+/* ---------- auto badge, testnet badge, reports ---------- */
+.badge.testnet-badge { background: var(--brass, #c9973c); color: #fff; border-color: transparent; font-weight: 800; letter-spacing: .06em; }
+.badge.auto-badge { background: var(--teal, #3f9e97); color: #fff; border-color: transparent; font-weight: 800; }
+.panel.reports .panel-head { gap: 8px; }
+.panel.reports .panel-head .muted { margin-left: auto; }
+.panel.reports button.mini { font-size: var(--fs-xs); padding: 3px 10px; border-radius: 999px; }
+.auto-line { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 700; color: var(--text-muted, #7a6a58); margin: 0 0 8px; }
+.auto-line i { width: 8px; height: 8px; border-radius: 50%; background: var(--long); display: inline-block; }
+.auto-line i.pulse { animation: live-pulse 1.2s ease-in-out infinite; }
+.report { border: 1px solid var(--line, rgba(120, 90, 60, .18)); border-radius: 12px; margin-bottom: 8px; background: var(--card-2, rgba(255, 250, 240, .6)); overflow: hidden; }
+.report-head { all: unset; cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; width: calc(100% - 20px); font-size: var(--fs-sm, 13px); }
+.report-head .muted { margin-left: auto; font-size: var(--fs-xs); }
+.report .tag { font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 999px; background: var(--sage, #9db48f); color: #fff; }
+.report .tag.mode-live { background: var(--short); }
+.report .tag.mode-testnet { background: var(--brass, #c9973c); }
+.report-body { padding: 0 10px 10px; font-size: var(--fs-xs, 12px); }
+.report-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-bottom: 6px; }
+.report-body h4 { margin: 8px 0 2px; font-family: var(--font-head); font-size: 12px; }
+.report-body ul { margin: 0; padding-left: 16px; }
+.report-body li { margin: 2px 0; line-height: 1.35; }
+.report-body .up, .report-head .up { color: var(--long); }
+.report-body .down, .report-head .down { color: var(--short); }

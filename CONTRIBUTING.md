@@ -19,8 +19,8 @@ Thanks for wanting to help with Trading Agent Mpu Gandring.
 
 ## What we will not merge
 
-- Withdrawal, transfer or wallet-key handling code. Changes that weaken the LIVE unlock, skip the risk gate, or retry live orders blindly.
-- New exchange adapters without tests against mocked HTTP. Mark them experimental in `server/exchange/types.ts` until someone has run the testnet round trip.
+- Withdrawal, transfer or wallet-key handling code. Changes that weaken an automatic LIVE guard (withdraw check, mandatory stop, daily loss stop, safety net, max N, kill switch), skip the risk gate, or retry live orders blindly.
+- New exchange adapters without tests against mocked HTTP. Mark them experimental in `server/exchange/types.ts` until someone has run `npm run doctor --roundtrip` and real trades on it.
 - Anything that loosens the code caps in `server/risk.ts` or `server/money.ts` by default.
 - Code that sends API keys to the browser or prints them in logs.
 - Profit claims in docs or UI copy.

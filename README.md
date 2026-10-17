@@ -1,6 +1,6 @@
 # Trading Agent Mpu Gandring
 
-Seven AI trading agents share one office. They read the market, argue about it, throw cartoon punches when they really disagree, and then a Risk Manager decides whether the Desk Lead's call is allowed to touch the paper book.
+Six AI trading agents share one office. They read the market, argue about it, throw cartoon punches when they really disagree, and then a Risk Manager decides whether the Desk Lead's call is allowed to touch the paper book.
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
 
@@ -10,7 +10,7 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use the offline sample data (`MARKET_SOURCE=sample`), so prices are tagged EXAMPLE.
 
-> **Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. LIVE trading exists but is locked: it needs a passed testnet round trip, an exchange key without withdraw permission (checked on the exchange), and a typed confirmation in the CLI. If you unlock it you can lose real money. Read [docs/live-trading.md](docs/live-trading.md) first.
+> **Risk warning. Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. If you choose TESTNET or LIVE in setup, the agents trade **on their own** (full auto, no approval step): they open, close, size and set stops without asking you. In LIVE that is real money and you can lose it, quickly. Automatic guards (no-withdraw key check, stop on every order, daily loss stop, safety net, max N, kill switch) limit damage; they do not prevent losses. Read [docs/live-trading.md](docs/live-trading.md) first.
 
 ## Two ways to run it
 
@@ -26,7 +26,7 @@ Both modes share the office, the risk gate, the money split and the paper book.
 
 ## What it does
 
-- **A real desk, not one bot.** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager, Execution Trader and Trade Reviewer each have a job, a personality and their own model.
+- **A real desk, not one bot.** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager and Execution Trader each have a job, a personality and their own model. The Desk Lead also keeps the trade journal: it grades every closed trade, writes one lesson and owns the periodic report.
 - **Bring your own brains.** Every agent can run on a different provider: xAI, OpenAI, Anthropic, Gemini, DeepSeek or OpenRouter. Mix them so the arguments get interesting.
 - **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
 - **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
@@ -35,10 +35,12 @@ Both modes share the office, the risk gate, the money split and the paper book.
 - **Every paper order has a stop loss and a take profit.** No stop, no order. The take profit sits `TAKE_PROFIT_R` times the stop distance away (2R by default).
 - **Live public market data.** Bybit, Binance and Hyperliquid public endpoints, no key needed, with offline sample data as a fallback.
 - **TradingView.** An optional TradingView chart widget, and an alert webhook (`POST /api/tradingview`, passphrase) whose alerts are untrusted signals that start a debate. They never place an order by themselves.
-- **Exchanges behind one adapter.** Bybit is fully implemented. Binance, OKX and Hyperliquid (API agent wallet only) are experimental. Exchange keys are used only for `npm run doctor`, the testnet round trip and LIVE.
+- **Exchanges behind one adapter.** Bybit is fully implemented. Binance, OKX and Hyperliquid (API agent wallet only) are experimental. Exchange keys are used only for `npm run doctor`, TESTNET and LIVE.
+- **Full auto after a one-time setup.** With `AUTO_TRADING=on` a scheduler runs a debate per symbol every `DEBATE_INTERVAL_MIN` and the verdicts execute by themselves: open, close on CLOSE or an opposite signal, stop or take profit, optional max holding time. No approval step, in both Grok Bot and local mode.
+- **Periodic reports.** Every `REPORT_INTERVAL_MIN` a report (balance, safety net, Money Trade, N, allocation, open positions with entry, stop, take profit and PnL, opened, closed and skipped with reasons) goes to `reports/`, the Reports panel, the Grok Bot bridge and optionally Telegram (experimental).
 - **Daily loss stop and kill switch.** No new orders after `DAILY_LOSS_LIMIT_PCT` of equity is lost in a day. The kill switch cancels, flattens and pauses until restart.
 - **Injection-aware.** News and posts are treated as untrusted data. The sample news even has a planted "ignore previous instructions" line, and a test proves the agents never see it.
-- **A cozy office.** Wood floors, a rug, sunset windows, a kopi corner and seven round little bots with mitten hands. Each role has its own color and prop: tie and keris pin for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk, cap and stopwatch for Execution, clipboard and monocle for the Reviewer. They walk to the table, type, point, punch, cheer when a trade fills and sweat when Risk says no.
+- **A cozy office.** Wood floors, a rug, sunset windows, a kopi corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. They walk to the table, type, point, punch, cheer when a trade fills and sweat when Risk says no.
 - **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for Money Trade / N, and every desk monitor shows a sparkline.
 - **Day and night.** A toggle in the top bar. All colors and fonts live in `web/src/styles/tokens.css`.
 - **Live office feed.** Status, speech bubbles and fights stream over WebSocket, next to the fight meter, ticker strip, verdict cards and a desk log.
@@ -91,9 +93,10 @@ npm run debate -- --symbol SOLUSDT --json     # machine readable verdict
 | `npm run dev` | Backend (Express + WebSocket) and frontend (Vite + React) together |
 | `npm run build` | Compiles the server and builds the UI into `dist/` |
 | `npm start` | Runs the built server, which also serves the built UI on port 8787 |
-| `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, LIVE unlock, withdraw refusal, no secrets in logs, inbound endpoints |
-| `npm run setup` | Setup wizard, or `-- --yes [flags]` for agents. Also `-- testnet`, `-- check-key`, `-- unlock-live`, `-- lock`, `-- status` |
+| `npm test` | Vitest suite: money split, risk caps, schemas, injection, bridge, withdraw refusal, auto scheduler, daily stop, reports, no secrets in logs or reports, inbound endpoints |
+| `npm run setup` | Setup wizard, or `-- --yes [flags]` for agents. Also `-- check-key`, `-- paper`, `-- status` |
 | `npm run doctor` | Checks config and every key with a harmless read. Never prints a secret |
+| `npm run doctor --roundtrip` | Optional real round trip on the exchange testnet (testnet funds only) |
 | `npm run debate -- --symbol X` | One debate in the terminal |
 | `npm run screenshot` | Saves `docs/screenshot.png` (overview mid-debate) and `docs/screenshot-chat.png` (agent chat and chart) from a running dev server (needs Chrome) |
 
@@ -103,24 +106,25 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TRADING_MODE` | `PAPER` | `PAPER`, or `LIVE` only after the CLI unlock (it writes `LIVE_CONFIRMED`). LIVE without a valid unlock exits with code 2. |
+| `TRADING_MODE` | `PAPER` | `PAPER`, `TESTNET` or `LIVE`. TESTNET and LIVE need an exchange key that can trade and cannot withdraw, checked on every start; otherwise exit code 2. |
 | `APP_MODE` | `local` | `local` or `grokbot` |
 | `AGENT_EVENT_SECRET` | empty | Grok Bot mode: secret for `POST /api/agent-event` (24+ chars) |
-| `HOST` | `0.0.0.0` (PAPER), `127.0.0.1` (LIVE) | Bind address |
+| `HOST` | `0.0.0.0` (PAPER), `127.0.0.1` (TESTNET) | Bind address. LIVE always binds `127.0.0.1`. |
 | `TRADINGVIEW_WIDGET` / `TRADINGVIEW_EXCHANGE_PREFIX` | `off` / `BYBIT` | TradingView chart widget in the UI |
 | `TRADINGVIEW_PASSPHRASE` | empty | Turns on `POST /api/tradingview` (12+ chars) |
 | `NEWS_PROVIDER` / `CRYPTOPANIC_API_KEY` | `sample` | Optional news plugin (experimental) |
 | `EXCHANGE` | `none` | `bybit`, `binance`, `okx` or `hyperliquid`, plus `<VENUE>_[TESTNET_]API_KEY` / `_API_SECRET`. See [docs/local-mode.md](docs/local-mode.md) |
-| `DAILY_LOSS_LIMIT_PCT` | `3` | Daily loss stop, percent of the day's starting equity. `0` is off |
+| `DAILY_LOSS_LIMIT_PCT` | `3` | Daily loss stop, percent of the day's starting equity, clamped to 0.5..20 |
+| `ALLOW_EXPERIMENTAL_LIVE` | `no` | Needed for LIVE on Binance, OKX or Hyperliquid (unverified) |
 | `PORT` / `WEB_PORT` | `8787` / `5173` | Backend and frontend ports |
 | `XAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` | empty | Model keys. All optional. |
 | `XAI_MODEL`, `OPENAI_MODEL`, ... | placeholders | Default model per provider. Model names change, so check your provider's list and edit. |
 | `DEFAULT_PROVIDER` | `mock` | Provider for agents without their own mapping |
-| `AGENT_<ID>_PROVIDER` / `AGENT_<ID>_MODEL` | unset | Per-agent mapping. IDs: `LEAD`, `MARKET`, `RESEARCH`, `STRATEGIST`, `RISK`, `EXECUTION`, `REVIEWER`. A provider without a key falls back to mock and the UI says so. |
+| `AGENT_<ID>_PROVIDER` / `AGENT_<ID>_MODEL` | unset | Per-agent mapping. IDs: `LEAD`, `MARKET`, `RESEARCH`, `STRATEGIST`, `RISK`, `EXECUTION`. A provider without a key falls back to mock and the UI says so. |
 | `MARKET_SOURCE` | `bybit` | `bybit`, `binance`, `hyperliquid` or `sample`. Falls through the others, then to sample data. |
 | `WATCHLIST` | `BTCUSDT,ETHUSDT,SOLUSDT` | Symbols in the ticker and the debate picker |
 | `PAPER_BALANCE` | `1000` | Starting paper balance in USDT |
-| `SAFETY_NET` | `200` | Part of the balance that is never used |
+| `SAFETY_NET` | `200` | Part of the balance that is never used. Must be above 0 in TESTNET and LIVE. |
 | `OPEN_ORDERS_N` | `4` | Max open orders, 1 to 4 |
 | `MAX_LEVERAGE` | `3` | Hard cap |
 | `DEFAULT_STOP_PCT` / `MIN_STOP_PCT` | `1.5` / `0.3` | Widest and tightest allowed stop distance, in percent |
@@ -130,7 +134,12 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate (1 to 4) |
 | `DEBATE_PACE_MS` | `700` | Speech pacing for the office. `0` is instant. |
 | `FIGHT_THRESHOLD` | `0.45` | Disagreement level where punches start |
-| `AUTO_DEBATE_MINUTES` | `0` | Debate the watchlist on a timer. `0` is off. |
+| `AUTO_TRADING` | `off` (setup writes `on`) | Full auto: debates and trades on a timer, no approval step |
+| `DEBATE_INTERVAL_MIN` | `15` | Minutes between auto cycles |
+| `AUTO_SYMBOLS` | the watchlist | Symbols the auto loop trades |
+| `MAX_HOLD_HOURS` | `0` | Close positions older than this. `0` is off. |
+| `REPORT_INTERVAL_MIN` | `60` | Minutes between reports |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | empty | Optional report channel (experimental, untested) |
 | `GROKBOT_WEBHOOK_URL` / `GROKBOT_WEBHOOK_KEY` | empty | Optional bridge, see [docs/grokbot-bridge.md](docs/grokbot-bridge.md) |
 
 ### The money split
@@ -162,7 +171,7 @@ flowchart TD
     L0 --> M[Market Analyst<br/>public prices, funding, closed candles]
     M --> R[Research Analyst<br/>news and catalysts, sanitized<br/>LONG / SHORT / ABSTAIN / VETO]
     R --> S[Strategist<br/>EMA rule on closed bars, in code<br/>side + invalidation]
-    S --> D{Rebuttal rounds<br/>Market, Research, Strategist, Reviewer}
+    S --> D{Rebuttal rounds<br/>Market, Research, Strategist}
     D -->|disagreement above threshold| F[Cartoon fight in the office]
     F --> D
     D --> L[Desk Lead<br/>OPEN_LONG / OPEN_SHORT / CLOSE / HOLD]
@@ -172,7 +181,7 @@ flowchart TD
     C -->|APPROVE or REDUCE| P[Money split<br/>Money Trade / N, safety net, min order]
     P --> E[Execution Trader<br/>paper fill with stop loss]
     E --> V
-    V --> J[Trade Reviewer journals closes]
+    V --> J[Desk Lead journals closes]
     V -.optional.-> G[Grok Bot webhook]
 ```
 
@@ -215,7 +224,7 @@ Click an agent in the office or the roster under it. You get a chat panel. Plain
 
 ## Safety notes
 
-- `TRADING_MODE` is `PAPER` unless the signed LIVE unlock is valid. Otherwise the server exits with code 2, and there are tests for it, including a hand-edited `.env` and a tampered state file.
+- `TRADING_MODE` is `PAPER` by default. TESTNET and LIVE start only when the exchange confirms the key can trade and cannot withdraw. Otherwise the server exits with code 2, and there are tests for it.
 - There is no withdrawal or transfer code. Keys that can withdraw are refused, checked on the exchange. On Hyperliquid only an approved API agent wallet works, never the main key.
 - LIVE orders: one send, no blind retry, reconciled from the exchange's order record. Stop loss mandatory. Daily loss stop and kill switch apply.
 - Inbound endpoints need their own secrets and are rate limited. TradingView alerts and Grok Bot texts are sanitized as untrusted.
@@ -227,13 +236,12 @@ Click an agent in the office or the roster under it. You get a chat panel. Plain
 
 > Real money can be lost. Not financial advice. Most people should stay in PAPER.
 
-LIVE is locked until three CLI steps pass: a testnet round trip, a no-withdraw check of the mainnet key on the exchange, and a typed confirmation. Full guide and the list of what is still experimental: [docs/live-trading.md](docs/live-trading.md).
+Pick TESTNET or LIVE in `npm run setup`. There is no confirmation phrase: after setup the desk trades on its own and you watch the office and read the reports. What protects you is automatic: the key is refused if it can withdraw (checked at setup and every start), every order has a stop loss, the daily loss stop pauses new orders until the next UTC day, the safety net is never traded, at most N (1 to 4) positions are open, orders are never blindly retried, the book is reconciled from the exchange, LIVE binds to 127.0.0.1, and the Kill switch flattens everything. Full guide and what is still experimental: [docs/live-trading.md](docs/live-trading.md).
 
 ```bash
-npm run setup -- testnet       # testnet funds only
-npm run setup -- check-key     # refuses keys that can withdraw
-npm run setup -- unlock-live   # type: I UNDERSTAND LIVE TRADING CAN LOSE MONEY
-npm run setup -- lock          # back to PAPER
+npm run setup                  # choose PAPER, TESTNET or LIVE (default PAPER)
+npm run doctor --roundtrip     # optional testnet round trip, not required
+npm run setup -- paper         # back to PAPER
 ```
 
 ## Repository layout
@@ -249,9 +257,11 @@ server/            Express + WebSocket backend
   paper.ts         paper book
   bridge.ts        optional Grok Bot webhook
   exchange/        adapter interface; Bybit (implemented), Binance, OKX, Hyperliquid (experimental)
-  live/            signed LIVE unlock state, testnet round trip, live executor (one send, reconcile)
+  live/            automatic key guard, optional testnet round trip, live executor (one send, reconcile)
+  auto.ts          full auto scheduler
+  reports.ts       periodic reports (files, UI, bridge, Telegram)
 cli/debate.ts      headless debate
-cli/setup.ts       setup wizard and LIVE unlock steps
+cli/setup.ts       setup wizard (mode, keys, auto, reports)
 cli/doctor.ts      key checks with harmless reads
 web/               Vite + React virtual office (tokens in web/src/styles/tokens.css)
 skills/            desk role notes for agents (market scan, research, strategy, risk, execution)
