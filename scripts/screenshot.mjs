@@ -15,8 +15,10 @@ const api = (p, body) => fetch(new URL(p, url), { method: 'POST', headers: { 'co
 const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1600, height: 1280 }, deviceScaleFactor: 1.5 });
 if (process.env.SHOT_THEME) await page.addInitScript((t) => localStorage.setItem('mg-theme', t), process.env.SHOT_THEME);
+await page.addInitScript(() => localStorage.setItem('mpu_tour_done_v1', '1'));
 await page.goto(url, { waitUntil: 'networkidle' });
 await page.waitForSelector('.office');
+await page.click('.trakteer-close-x', { timeout: 3000 }).catch(() => {});
 
 // one debate so the verdict panel, chart lines and paper book have something in them
 const first = process.env.SHOT_FIRST ?? 'ETHUSDT';

@@ -73,6 +73,9 @@ a.trbtn:hover { opacity: 0.9; transform: translateY(-1px); color: #fff !importan
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; grid-template-areas: 'stage side'; gap: 16px; margin-top: 6px; align-items: start; }
 .stage { grid-area: stage; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .side { grid-area: side; display: flex; flex-direction: column; gap: 16px; }
+.stage-duo { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.stage-duo > .panel { margin: 0; min-width: 0; }
+@media (max-width: 900px) { .stage-duo { grid-template-columns: 1fr; } }
 .bottom { grid-area: bottom; min-width: 0; }
 
 .panel { position: relative; background: var(--panel); border: 1.5px solid var(--line); border-radius: var(--radius-lg); padding: 16px 18px; box-shadow: var(--shadow); }

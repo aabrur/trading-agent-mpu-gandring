@@ -130,14 +130,16 @@ function AppInner() {
           <CommandBar state={state} command={(cmd) => command(cmd)} />
           <PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} />
           <TradeLog state={state} />
+          <div className="stage-duo">
+            <Reports state={state} />
+            <Lessons state={state} />
+          </div>
         </section>
         <aside className="side">
           <FightMeter state={state} meter={meter} />
           <Verdicts state={state} />
           <Portfolio state={state} command={(cmd) => void command(cmd)} />
           <DeskOps state={state} />
-          <Reports state={state} />
-          <Lessons state={state} />
         </aside>
       </main>
       {setup && <SetupWizard state={state} onClose={closeSetup} />}

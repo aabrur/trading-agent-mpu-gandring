@@ -8,11 +8,11 @@ Six AI trading agents share one office. They read the market, argue about it, th
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
 
-![The cozy office mid-debate, Market Analyst landing a punch on the Strategist](docs/screenshot.png)
+![The cozy office with the fight meter, verdicts and paper book with four open LONG positions and the Money Trade / N allocation](docs/screenshot.png)
 
-![Chatting with the Risk Manager while the ETH chart shows the paper SHORT with its entry, stop and take profit](docs/screenshot-chat.png)
+![Chatting with the Risk Manager next to the ETH chart, the desk log, and the Reports and Lessons panels side by side](docs/screenshot-chat.png)
 
-Screenshots use the offline sample data where `MARKET_SOURCE=sample`, so prices are tagged EXAMPLE.
+Screenshots are taken in PAPER mode with the keyless `mock` provider and live public Bybit prices. Verdict cards from the mock provider are tagged EXAMPLE.
 
 > **Risk warning. Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. If you choose TESTNET or LIVE in setup, the agents trade **on their own** in full auto with no approval step: they open, close, size and set stops without asking you. In LIVE that is real money and you can lose it, quickly. Automatic guards including the no-withdraw key check, stop on every order, daily loss stop, safety net, max N and kill switch limit damage; they do not prevent losses. Read [docs/live-trading.md](docs/live-trading.md) first.
 
