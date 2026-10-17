@@ -26,7 +26,9 @@ export function ChannelsSetup() {
   if (!info.ok) return <p className="wallet-msg bad">{info.error}</p>;
   const g = info.guides.find((x) => x.channel === ch)!;
   const st = info.status.channels.find((x) => x.channel === ch)!;
-  const cur = g.steps[at];
+  // Channels have different step counts: clamp so switching from a long guide (WhatsApp) to a short one never renders a missing step.
+  const step = Math.min(at, g.steps.length - 1);
+  const cur = g.steps[step];
 
   async function save() { setBusy(true); const r = await post('/api/setup/channels/save', { channel: ch, values: vals, commands }).catch(() => ({ ok: false, detail: 'office not reachable' })); setVals({}); setBusy(false); setMsg({ ok: r.ok, text: r.detail ?? r.error }); void load(); }
   async function test() { setBusy(true); const r = await post('/api/setup/channels/test', { channel: ch }).catch(() => ({ ok: false, detail: 'office not reachable' })); setBusy(false); setMsg({ ok: r.ok, text: r.detail ?? r.error }); }
@@ -35,11 +37,11 @@ export function ChannelsSetup() {
   return (
     <div className="setup-channels">
       <p className="wallet-note">The Desk Lead watches health, positions, stops, the daily loss cap and errors, and sends alerts and scheduled reports here. From chat, allowlisted ids can only ask for <b>status, report, positions</b> and <b>kill</b>. Orders, going LIVE, un-kill and key changes are never possible from chat.</p>
-      <div className="seg" role="group" aria-label="channel">{info.guides.map((x) => <button key={x.channel} className={ch === x.channel ? 'on' : ''} onClick={() => setCh(x.channel)}>{x.label}</button>)}</div>
+      <div className="seg" role="group" aria-label="channel">{info.guides.map((x) => <button key={x.channel} className={ch === x.channel ? 'on' : ''} onClick={() => { setAt(0); setCh(x.channel); }}>{x.label}</button>)}</div>
       <p className="wallet-note small">{g.official}. Posts: {g.outbound}. Commands: {g.inbound}.</p>
-      <h4>Step {at + 1} of {g.steps.length}: {cur.title}</h4>
+      <h4>Step {step + 1} of {g.steps.length}: {cur.title}</h4>
       <div className="setup-step"><p>{cur.text}</p><ul>{cur.links.map((l) => <li key={l.url}><a href={l.url} target="_blank" rel="noreferrer">{l.label}</a>{l.login ? ' (sign in first)' : ''}</li>)}</ul></div>
-      <div className="setup-nav"><button disabled={at === 0} onClick={() => setAt(at - 1)}>Back</button><button disabled={at >= g.steps.length - 1} onClick={() => setAt(at + 1)}>Next step</button>
+      <div className="setup-nav"><button disabled={step === 0} onClick={() => setAt(step - 1)}>Back</button><button disabled={step >= g.steps.length - 1} onClick={() => setAt(step + 1)}>Next step</button>
         {ch === 'telegram' && <button disabled={busy} onClick={findChats}>Find my chat id</button>}</div>
       {chats && chats.length > 0 && <ul className="wallet-note small">{chats.map((c) => <li key={c.chatId + c.userId}>chat id <code>{c.chatId}</code> ({c.chat}), user id <code>{c.userId}</code> ({c.user})</li>)}</ul>}
       {ch === 'discord' && <p className="wallet-note small">Register the slash commands yourself (bot token stays in your shell): <code>{info.discordRegister}</code></p>}
