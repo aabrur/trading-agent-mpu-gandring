@@ -68,6 +68,7 @@ Bring your own venue account and keys; nothing from the maintainer is needed. St
 - **By hand, in a terminal:** `npm install`, then `npm run setup`. It asks the venue and mode, shows the direct links one step at a time (sign-up, test funds, key page, permissions), reads keys with hidden input into `.env` (chmod 600), offers Connect wallet for Hyperliquid and Aster, and runs the doctor check.
 - **By hand, in the office:** `npm run dev`, open http://localhost:5173 and click **Setup** (top right). Same steps, same links, masked key inputs, doctor button, mode switch (LIVE needs a typed confirmation).
 - **With your own AI agent** (Grok Bot, Claude Code, Codex, Cursor, Copilot or another): point it at [AGENTS.md](AGENTS.md) (pointers in `CLAUDE.md`, `.cursor/rules/`, `.github/copilot-instructions.md`). It runs the interview, gives you one link per step and never asks for keys in chat. Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md).
+- **Chat channel (optional):** the Desk Lead sends alerts and reports to Telegram, Discord, Slack or WhatsApp (official APIs only) and accepts only `status`, `report`, `positions`, `kill` from allowlisted ids. `npm run channels -- setup telegram` or Setup, section 7. Details: [docs/channels.md](docs/channels.md). MiChat has no official bot API, so it is not supported.
 - **Per-venue guides** with testnet and mainnet sections: [docs/setup/](docs/setup/README.md) ([Bybit](docs/setup/bybit.md), [Binance](docs/setup/binance.md), [OKX](docs/setup/okx.md), [Hyperliquid](docs/setup/hyperliquid.md), [Aster](docs/setup/aster.md), [dYdX](docs/setup/dydx.md), [Paradex](docs/setup/paradex.md), [Orderly](docs/setup/orderly.md)). Print one in the terminal: `npm run setup -- guide bybit`.
 
 Refused everywhere: main wallet private keys, seed phrases, keys that can withdraw. Every TESTNET/LIVE start checks the key again.
@@ -93,7 +94,10 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 | Journal (verdicts, closed trades, log) | `npm run gb -- report`, `reports/` | Verdicts, Trade log, Reports panels |
 | Lessons | `npm run gb -- lessons list` / `lessons add ...` | Lessons panel; Desk ops **Add lesson** |
 | Reports | `npm run gb -- report` | Reports panel **Report now** |
-| Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill` (or tell the Desk Lead) | **Kill** in the command bar; status in Desk ops |
+| Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill`, or `kill confirm` from an allowlisted chat | **Kill** in the command bar; status in Desk ops |
+| Chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp) | `npm run channels -- setup <channel>` (or in `npm run setup`) | Setup, section 7 |
+| Test a chat channel | `npm run channels -- test <channel>` | Setup, section 7 **Send test message** |
+| Chat channel status (secrets masked) | `npm run channels -- status` | Setup, section 7 status line |
 | Release the kill switch | `npm run unkill -- --yes`, then restart | Not in the UI on purpose; the command is shown |
 
 ## Quickstart
@@ -193,7 +197,8 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `AUTO_SYMBOLS` | the watchlist | Symbols the auto loop trades |
 | `MAX_HOLD_HOURS` | `0` | Close positions older than this. `0` is off. |
 | `REPORT_INTERVAL_MIN` | `60` | Minutes between reports |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | empty | Optional report channel (experimental, untested) |
+| `TELEGRAM_*`, `DISCORD_*`, `SLACK_*`, `WHATSAPP_*` | empty | Chat channels for the Desk Lead's alerts and reports ([docs/channels.md](docs/channels.md)) |
+| `CHANNEL_COMMANDS` | `off` | `on` lets allowlisted chat ids send `status`, `report`, `positions`, `kill` (nothing else) |
 | `LEARNING` / `PROACTIVE_SCAN` | `on` / `on` | self-improving lessons and the proaktif-agent scan |
 | `REFLECT_EVERY_CYCLES` | `1` | Reflection cadence in auto cycles (closed trades, stops, errors and corrections always reflect at once) |
 | `PROMOTE_AFTER` | `3` | Sightings before a lesson becomes a standing rule (2 to 10) |
@@ -394,6 +399,7 @@ Proyek ini simulasi trading kertas (paper trading) secara default. Enam agen AI 
 
 6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `npm run setup` (atau tombol **Setup** di kanan atas office): pilih venue dan mode, ikuti link langsung satu per satu (daftar, dana tes, halaman pembuatan key, izin yang dicentang), lalu ketik key di input tersembunyi. Key masuk ke `.env` (chmod 600), tidak pernah ke chat. Izin: trade saja, withdraw/transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Hyperliquid dan Aster bisa lewat Connect wallet (satu tanda tangan). Setelah itu `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
 7. Pakai agen AI sendiri (Grok Bot, Claude Code, Codex, Cursor, Copilot)? Suruh dia membaca [AGENTS.md](AGENTS.md).
+8. Mau notifikasi di chat? `npm run channels -- setup telegram` (atau Discord, Slack, WhatsApp Cloud API resmi), atau **Setup** bagian 7. Desk Lead mengirim peringatan dan laporan. Dari chat hanya bisa `status`, `report`, `positions`, `kill`; buka order, pindah ke LIVE, un-kill dan ganti key tidak bisa dari chat. MiChat tidak punya API bot resmi, jadi tidak didukung. Panduan: [docs/channels.md](docs/channels.md).
 
 Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `set n 3`, `set safety 150`, `close all`, `be more cautious`.
 

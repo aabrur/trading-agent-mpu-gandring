@@ -36,9 +36,49 @@ Everything can be done in the terminal or in the office, through the same code (
 | Journal (verdicts, closed trades, log) | `npm run gb -- report`, `reports/` | Verdicts, Trade log, Reports panels |
 | Lessons | `npm run gb -- lessons list` / `lessons add ...` | Lessons panel; Desk ops **Add lesson** |
 | Reports | `npm run gb -- report` | Reports panel **Report now** |
-| Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill` (or tell the Desk Lead) | **Kill** in the command bar; status in Desk ops |
+| Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill`, or `kill confirm` from an allowlisted chat | **Kill** in the command bar; status in Desk ops |
+| Chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp) | `npm run channels -- setup <channel>` (or in `npm run setup`) | Setup, section 7 |
+| Test a chat channel | `npm run channels -- test <channel>` | Setup, section 7 **Send test message** |
+| Chat channel status (secrets masked) | `npm run channels -- status` | Setup, section 7 status line |
 | Release the kill switch | `npm run unkill -- --yes`, then restart | Not in the UI on purpose; the command is shown |
 
+
+## Head supervisor: the Desk Lead, or your own AI agent
+
+The desk has one supervisor role, the **Desk Lead** (`server/channels/supervisor.ts`). It checks health, positions, stops, the daily loss cap, the safety net and errors every `SUPERVISOR_INTERVAL_MIN`, and sends alerts and scheduled reports to the chat channel the person chose ([docs/channels.md](docs/channels.md)). From chat, allowlisted ids can send only `status`, `report`, `positions`, `kill`.
+
+An external AI agent can play the same head-supervisor role from outside: Grok Bot, Claude Code, Codex, Cursor, Cline, Kilo Code, Google Antigravity, Hermes Agent (Nous Research), OpenClaw, or any agent that can run a terminal command or an HTTP GET on the desk's computer. This repo ships no plugin or MCP server for any of them and does not guess their config formats. Use what every one of them has: **a shell**. If your agent only speaks MCP, give it a shell or fetch MCP server from its own catalog and point it at the commands below.
+
+**Poll (read only, on the desk's computer):**
+
+| What | Command |
+| --- | --- |
+| Alive, mode, venue, kill switch | `curl -s http://127.0.0.1:8787/api/health` |
+| Balance, equity, daily loss stop | `npm run gb -- account --json` |
+| Open positions with stop and take profit | `npm run gb -- positions --json` |
+| Kill switch status and release command | `curl -s http://127.0.0.1:8787/api/ops/kill` |
+| Latest reports | `curl -s http://127.0.0.1:8787/api/reports` |
+| Lessons | `npm run gb -- lessons list --json` |
+| Chat channel status (masked) | `npm run channels -- status` |
+| Proaktif scan (adds a line to the desk log, changes nothing else) | `npm run gb -- scan --json` |
+
+**Cadence:** check every 5 to 15 minutes; send a report every `REPORT_INTERVAL_MIN` (default 60) and at the end of the person's day; send an alert at once when an escalation rule fires. Use your agent's own scheduler if it has one, otherwise cron or a loop in a terminal.
+
+**Report template:**
+
+```
+Desk report <date time, the person's timezone>
+Mode: <PAPER|TESTNET|LIVE> on <venue>. Kill switch: <off|ON>. Office: <up|down>.
+Equity <x> USDT (balance <b>, safety net <s>, Money Trade <m>). Today: <+/-pnl>, daily loss stop <hit|not hit> (<used>% of the cap).
+Positions (<n>): <symbol side qty entry stop tp pnl>, one per line. Every position has a stop on the exchange: <yes|NO>.
+Since last report: opened <list>, closed <list with PnL>, skipped <count, main reasons>.
+Findings: <warn/alert lines from the scan, or "none">.
+Needs you: <decision the person must make, or "nothing">.
+```
+
+**Escalate to the person at once when:** a position has no stop; the kill switch turned on; the daily loss stop hit or the cap is 90% used; balance is at the safety net; 3 or more API or exchange errors in one check; prices are stale or on sample data while TESTNET or LIVE; `/api/health` fails twice in a row; the mode or venue changed and the person did not say so.
+
+**Forbidden for an external supervisor, exactly as for chat:** opening, closing or resizing orders; switching PAPER, TESTNET or LIVE; releasing the kill switch; adding, changing or reading keys or `.env`; loosening any guard or lesson. The one action allowed without asking is the kill switch (`curl -X POST http://127.0.0.1:8787/api/kill`), and only if the person wrote down in advance which condition allows it. Otherwise describe the problem and ask. Never paste keys, addresses or `.env` lines into a report.
 
 ## Ground rules
 
@@ -188,5 +228,6 @@ Tell the person:
 | `cli/setup.ts`, `cli/doctor.ts` | Setup wizard and key checks (CLI side) |
 | `server/setup/` | Shared setup: venue guide and links, key checks, mode gate, doctor, office routes |
 | `docs/setup/` | Per-venue guides generated from `server/setup/guide.ts` (`npm run docs:setup`) |
+| `server/channels/`, `cli/channels.ts`, `docs/channels.md` | Desk Lead supervisor, chat channels, signed webhooks, safe commands |
 | `skills/` | Role notes the desk follows |
 | `web/src/styles/tokens.css` | All colors, fonts and motion in one place |

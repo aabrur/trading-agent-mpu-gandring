@@ -44,7 +44,7 @@ With `AUTO_TRADING=on` (setup default) the scheduler starts with the server:
 
 ## Reports
 
-Every `REPORT_INTERVAL_MIN` (setup asks, for example 30, 60 or 240) the desk writes a report to `reports/YYYY-MM-DD/` (Markdown and JSON): balance, safety net, Money Trade, N, allocation per order, open positions with entry, stop, take profit and PnL, and everything opened, closed or skipped since the last report, with the reason. Reports show in the **Reports** panel of the office, go to the Grok Bot webhook bridge when it is configured, and optionally to Telegram (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, experimental and untested). Reports pass through the secret redactor.
+Every `REPORT_INTERVAL_MIN` (setup asks, for example 30, 60 or 240) the desk writes a report to `reports/YYYY-MM-DD/` (Markdown and JSON): balance, safety net, Money Trade, N, allocation per order, open positions with entry, stop, take profit and PnL, and everything opened, closed or skipped since the last report, with the reason. Reports show in the **Reports** panel of the office, go to the Grok Bot webhook bridge when it is configured, and to any chat channel you set up for the Desk Lead (Telegram, Discord, Slack, WhatsApp; see [channels.md](channels.md)). Reports pass through the secret redactor.
 
 ## Steps
 
