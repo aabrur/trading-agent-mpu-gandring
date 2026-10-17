@@ -11,7 +11,7 @@ Trading Agent Mpu Gandring trades perpetual futures on one venue at a time, chos
 | OKX | CEX | `okx` | experimental | API key + secret + passphrase | attached algo / conditional algo, closeFraction 1 |
 | Hyperliquid | DEX | `hyperliquid` | experimental | main ADDRESS + API agent wallet key | reduce-only trigger order |
 | Aster | DEX | `aster` | experimental | main ADDRESS + Pro API agent (API wallet) key | `STOP_MARKET` closePosition order |
-| dYdX v4 | DEX | `dydx` | experimental | owner ADDRESS + API Trading Key + authenticator id | conditional reduce-only `STOP_MARKET` |
+| dYdX v4 | DEX | `dydx` | experimental, **SDK required** | owner ADDRESS + API Trading Key + authenticator id | conditional reduce-only `STOP_MARKET` |
 | Paradex | DEX | `paradex` | experimental | main account ADDRESS + subkey | reduce-only `STOP_MARKET` |
 | Orderly | DEX | `orderly` | experimental | account id + Orderly key (read,trading) | `POSITIONAL_TP_SL` algo (CLOSE_POSITION) |
 
@@ -59,7 +59,8 @@ Optional: `ASTER_BASE_URL`, `ASTER_TESTNET_BASE_URL`, `DYDX_SUBACCOUNT` (default
 - Docs: https://docs.dydx.xyz/concepts/trading/authenticators, https://docs.dydx.xyz/interaction/permissioned-keys, creating a key in the app: https://help.dydx.trade/en/articles/267486-api-trading-keys-creating-a-new-key-on-the-front-end
 - Indexer (reads): `https://indexer.dydx.trade/v4`, testnet `https://indexer.v4testnet.dydx.exchange/v4`.
 - Delegation: API Trading Keys are permissioned keys (authenticators). The adapter reads the authenticator on chain and accepts only `AllOf(SignatureVerification(this key), MessageFilter(MsgPlaceOrder / MsgCancelOrder / MsgBatchCancel))`. No message filter, `AnyOf`, a different key, or any extra message type (transfers, withdrawals) is refused. The owner key is refused.
-- Orders are signed and broadcast with the official SDK `@dydxprotocol/v4-client-js`, loaded only when trading on dYdX. It is not a default dependency (it is large): `npm install @dydxprotocol/v4-client-js`. `npm run doctor` says whether it is installed.
+- **SDK required.** Orders, the authenticator check and the withdraw-off check are signed and broadcast with the official SDK `@dydxprotocol/v4-client-js`, loaded only when trading on dYdX. Without it the dYdX permission check fails and the desk refuses to start TESTNET or LIVE on dYdX (fail safe); public market data and sizing still work.
+- It is deliberately not bundled, not even as an optional dependency: v3.6 pulls 88 packages and `npm audit` reports 12 advisories (1 critical in `protobufjs`, high in `axios` and `@cosmjs/*`) against 0 for this app without it (checked 2026-10-17). Install it yourself only on the machine that trades dYdX: `npm install @dydxprotocol/v4-client-js`. `npm run doctor` says whether it is installed.
 - Stops: conditional `STOP_MARKET`, reduce only, good for 28 days. Market orders use a 2% worst price.
 - Connect wallet: not supported (no EVM signature approval this app can use). Manual steps in the office and in setup.
 

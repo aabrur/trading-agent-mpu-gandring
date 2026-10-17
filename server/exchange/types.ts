@@ -15,7 +15,7 @@ export const VENUE_KEY_HINT: Record<ExchangeName, string> = {
   okx: 'API key + secret + passphrase, trade only, withdrawals off',
   hyperliquid: 'main account ADDRESS (public) + API agent wallet private key',
   aster: 'main wallet ADDRESS (public) + Pro API agent (API wallet) private key, perp trading on, withdraw off',
-  dydx: 'owner dYdX ADDRESS (public) + API Trading Key private key + authenticator id',
+  dydx: 'owner dYdX ADDRESS (public) + API Trading Key private key + authenticator id. SDK REQUIRED: npm install @dydxprotocol/v4-client-js (not bundled)',
   paradex: 'main Paradex account ADDRESS (public) + registered subkey private key',
   orderly: 'Orderly account id (public) + Orderly key secret with scope read,trading'
 };
