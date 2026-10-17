@@ -8,6 +8,8 @@ import { PriceChart } from './components/PriceChart';
 import { Reports } from './components/Reports';
 import { Lessons } from './components/Lessons';
 import { WalletPanel } from './components/Wallet';
+import { SetupWizard } from './components/Setup';
+import { DeskOps } from './components/DeskOps';
 import { TopBar, TickerStrip, FightMeter, Portfolio, Verdicts, TradeLog, Roster } from './components/Panels';
 
 function initialTheme() {
@@ -22,6 +24,9 @@ export default function App() {
   const [theme, setTheme] = useState<string>(initialTheme);
   const [symbol, setSymbol] = useState<string>('');
   const [candles, setCandles] = useState<CandleData | null>(null);
+  const [setup, setSetup] = useState<boolean>(() => window.location.hash === '#setup');
+  useEffect(() => { const h = () => setSetup(window.location.hash === '#setup'); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+  const closeSetup = () => { setSetup(false); if (window.location.hash === '#setup') history.replaceState(null, '', window.location.pathname); };
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('mg-theme', theme); }, [theme]);
 
@@ -50,7 +55,7 @@ export default function App() {
   const spark = candles && candles.symbol === sym ? candles.candles.slice(-40).map((c) => c.close) : [];
   return (
     <div className="app">
-      <TopBar state={state} connected={connected} theme={theme} onTheme={() => setTheme(theme === 'night' ? 'day' : 'night')} />
+      <TopBar state={state} connected={connected} theme={theme} onTheme={() => setTheme(theme === 'night' ? 'day' : 'night')} onSetup={() => setSetup(true)} />
       <TickerStrip state={state} />
       <main className="layout">
         <section className="stage">
@@ -63,6 +68,7 @@ export default function App() {
           <FightMeter state={state} meter={meter} />
           <Verdicts state={state} />
           <Portfolio state={state} command={(t) => void command(t)} />
+          <DeskOps state={state} />
           <Reports state={state} />
           <Lessons state={state} />
           <WalletPanel state={state} />
@@ -71,6 +77,7 @@ export default function App() {
           <TradeLog state={state} />
         </section>
       </main>
+      {setup && <SetupWizard state={state} onClose={closeSetup} />}
       {selected && <AgentPanel state={state} id={selected} onClose={() => setSelected(null)} command={command} />}
       <footer className="footer">Paper trading simulation for learning. Not financial advice. No profit promised. Trading Agent Mpu Gandring, MIT license. Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a>.</footer>
     </div>

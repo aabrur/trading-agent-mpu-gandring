@@ -22,6 +22,7 @@ import { AutoTrader } from './auto.js';
 import { Reporter } from './reports.js';
 import { WalletConnector, walletAccess, walletInfo, findSecretLike } from './wallet.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
+import { mountSetupRoutes, mountOpsRoutes } from './setup/routes.js';
 
 const sameSecret = (given: string, want: string) => {
   const a = Buffer.from(given), b = Buffer.from(want);
@@ -70,7 +71,7 @@ const GbLessonSchema = z.object({
   symbol: z.string().max(20).optional(), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default(''), lesson: z.string().min(8).max(300)
 }).strict();
 
-export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null } = {}) {
+export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null; setupFetch?: typeof fetch } = {}) {
   const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
   const desk = new Desk(cfg, caller, { reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, killFile: opts.killFile ?? null });
   const auto = new AutoTrader(desk);
@@ -110,6 +111,10 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     try { res.json(await wallet.approve(p.data.id, p.data.signature)); }
     catch (e) { res.status(400).json({ ok: false, error: safe((e as Error).message) }); }
   });
+  // Setup wizard and Desk ops panel (same shared modules as npm run setup / npm run gb). Localhost only.
+  const routeCtx = { cfg, desk, envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch, limiter };
+  mountSetupRoutes(app, routeCtx);
+  mountOpsRoutes(app, routeCtx);
   // Closed 15m candles for the price chart. Cached briefly so the UI cannot hammer public APIs.
   const candleCache = new Map<string, { at: number; body: unknown }>();
   app.get('/api/candles', async (req, res) => {
