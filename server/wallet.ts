@@ -143,9 +143,14 @@ export class WalletConnector {
     if (!check.ok) throw new Error(`the venue accepted the approval, but the new agent key does not work yet (${check.detail}). Nothing was saved. Make sure the main account exists and has a deposit on ${p.network}, then try again.`);
     const n = envNames(p.venue, p.network);
     registerSecrets([p.agentKey]);
-    setEnv(this.opts.envFile, { [n.key]: p.main, [n.secret]: p.agentKey, EXCHANGE: p.venue });
+    const extra: Record<string, string> = {};
+    if (p.venue === 'aster') {
+      const pinKey = p.network === 'testnet' ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED' : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
+      extra[pinKey] = p.agentAddress;
+    }
+    setEnv(this.opts.envFile, { [n.key]: p.main, [n.secret]: p.agentKey, EXCHANGE: p.venue, ...extra });
     this.pending.delete(id);
-    return { ok: true, venue: p.venue, network: p.network, agentAddress: p.agentAddress, mainAddress: p.main, saved: [n.key, n.secret, 'EXCHANGE'], note: `Saved to ${this.opts.envFile} (chmod 600). Restart the office (or npm run trade) to use it. Revoke any time: ${WALLET_GUIDE[p.venue].revokeUrl}` };
+    return { ok: true, venue: p.venue, network: p.network, agentAddress: p.agentAddress, mainAddress: p.main, saved: [n.key, n.secret, 'EXCHANGE', ...Object.keys(extra)], note: `Saved to ${this.opts.envFile} (chmod 600). Restart the office (or npm run trade) to use it. Revoke any time: ${WALLET_GUIDE[p.venue].revokeUrl}` };
   }
   /** Signed read with the NEW agent key (Hyperliquid: approved agent list; Aster: signed balance read, then the withdraw flag). */
   private async verifyAgent(p: Pending, f: FetchLike): Promise<{ ok: boolean; detail: string; guard?: string }> {

@@ -25,13 +25,14 @@ export class AsterAdapter implements ExchangeAdapter {
   private base: string;
   private account: ReturnType<typeof privateKeyToAccount>;
   private pinnedAgent: string;
-  constructor(public readonly network: Network, private user: string, signerPrivateKey: string, private fetchImpl: FetchLike = fetch, base = process.env[network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'], pinnedAgent = process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED) {
+  constructor(public readonly network: Network, private user: string, signerPrivateKey: string, private fetchImpl: FetchLike = fetch, base = process.env[network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'], pinnedAgent?: string) {
     if (!/^0x[0-9a-fA-F]{40}$/.test(user)) throw new ExchangeError('ASTER user address must be the 0x main wallet address (public)');
     if (!/^0x[0-9a-fA-F]{64}$/.test(signerPrivateKey)) throw new ExchangeError('Aster signer key must be the 0x private key of a Pro API agent wallet');
     this.account = privateKeyToAccount(signerPrivateKey as Hex);
     this.base = base || BASE[network];
-    const fromEnv = () => { try { return readEnv(process.env.DOTENV_PATH || '.env').ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? ''; } catch { return ''; } };
-    this.pinnedAgent = (pinnedAgent ?? process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? fromEnv()).trim();
+    const envKey = network === 'testnet' ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED' : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
+    const fromEnv = () => { try { const e = readEnv(process.env.DOTENV_PATH || '.env') as Record<string, string>; return e[envKey] ?? e.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? ''; } catch { return ''; } };
+    this.pinnedAgent = (pinnedAgent ?? process.env[envKey] ?? process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? fromEnv()).trim();
   }
   get signerAddress() { return this.account.address; }
 

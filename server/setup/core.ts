@@ -1,6 +1,8 @@
 // Setup logic shared by the CLI wizard (npm run setup) and the office Setup wizard (/api/setup/*), so they cannot drift.
 // Keys only ever go into the local .env (chmod 600). Nothing here returns or logs a secret value.
 import { readEnv, setEnv } from '../../cli/envfile.js';
+import { privateKeyToAccount } from 'viem/accounts';
+import type { Hex } from 'viem';
 import { EXCHANGES, makeAdapter, envNames, PUBLIC_KEY_FIELD, PUBLIC_THIRD_FIELD, VENUE_LABEL, type ExchangeName, type Network } from '../exchange/index.js';
 import { localKeyCheck, looksLikeSeed, checkKeyStep } from '../live/steps.js';
 import { checkTradingMode, networkFor, verifyKey, type TradingMode } from '../live/guard.js';
@@ -54,6 +56,13 @@ export async function saveVenueKeys(envFile: string, venue: ExchangeName, net: N
   const n = envNames(venue, net);
   const up: Record<string, string> = { EXCHANGE: venue, [n.key]: k.key!.trim(), [n.secret]: k.secret!.trim() };
   if (n.passphrase) up[n.passphrase] = k.third!.trim();
+  if (venue === 'aster' && k.secret && /^0x[0-9a-fA-F]{64}$/.test(k.secret.trim())) {
+    try {
+      const signerAddr = privateKeyToAccount(k.secret.trim() as Hex).address;
+      const pinKey = net === 'testnet' ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED' : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
+      up[pinKey] = signerAddr;
+    } catch { /* ignore if invalid private key */ }
+  }
   setEnv(envFile, up);
   return { ok: true, detail: `${VENUE_LABEL[venue]} ${net} key saved to ${envFile} (chmod 600)${warning ? '' : ', checked: can trade, cannot withdraw'}.`, saved: Object.keys(up), warning };
 }
