@@ -45,6 +45,69 @@
     "example": true
   },
   {
+    "id": "n-pepe",
+    "symbol": "PEPEUSDT",
+    "headline": "EXAMPLE: Whale Alert tracks top wallets accumulating 420B PEPE",
+    "body": "Onchain tracking: Top wallets withdrew 420 billion PEPE from centralized exchanges to private vaults. Net exchange balance dropped with strong taker demand.",
+    "source": "sample-whale-alert",
+    "sentiment": "bullish",
+    "example": true
+  },
+  {
+    "id": "n-bnb",
+    "symbol": "BNBUSDT",
+    "headline": "EXAMPLE: Large institutional staking accumulation on BNB chain",
+    "body": "Over 25,000 BNB transferred to validator staking contracts. DEX volume ratio up with aggressive taker buying.",
+    "source": "sample-onchain-feed",
+    "sentiment": "bullish",
+    "example": true
+  },
+  {
+    "id": "n-doge",
+    "symbol": "DOGEUSDT",
+    "headline": "EXAMPLE: Dormant whale wallet transfers 85M DOGE to cold storage",
+    "body": "Whale tracker detects multi-million DOGE transfer between custody clusters. Exchange netflow negative, indicating holding behavior.",
+    "source": "sample-whale-alert",
+    "sentiment": "bullish",
+    "example": true
+  },
+  {
+    "id": "n-sui",
+    "symbol": "SUIUSDT",
+    "headline": "EXAMPLE: SUI network TVL jumps as smart money expands liquidity",
+    "body": "Onchain smart money inflow increases by 12M SUI. Institutional market makers provide deep bid depth across orderbooks.",
+    "source": "sample-onchain-feed",
+    "sentiment": "bullish",
+    "example": true
+  },
+  {
+    "id": "n-xrp",
+    "symbol": "XRPUSDT",
+    "headline": "EXAMPLE: Large whale sweeps 15M XRP from exchange liquidity",
+    "body": "Whale alert flagged 15M XRP transferred off exchange liquidity pools into cold storage. Open interest climbing with positive funding.",
+    "source": "sample-whale-alert",
+    "sentiment": "bullish",
+    "example": true
+  },
+  {
+    "id": "n-ada",
+    "symbol": "ADAUSDT",
+    "headline": "EXAMPLE: Cardano smart contract transactions reach weekly high",
+    "body": "Onchain metrics show steady whale accumulation with consistent net exchange outflows.",
+    "source": "sample-onchain-feed",
+    "sentiment": "bullish",
+    "example": true
+  },
+  {
+    "id": "n-avax",
+    "symbol": "AVAXUSDT",
+    "headline": "EXAMPLE: Avalanche subnet volume expands as institutional wallets accumulate",
+    "body": "Smart money wallets accumulate AVAX as enterprise subnet transaction velocity accelerates.",
+    "source": "sample-onchain-feed",
+    "sentiment": "bullish",
+    "example": true
+  },
+  {
     "id": "n6",
     "symbol": "*",
     "headline": "EXAMPLE: Exchange schedules 30 minute maintenance window this weekend",

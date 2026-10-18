@@ -309,7 +309,11 @@ export function FightMeter({ state, meter }: { state: DeskState; meter: { weight
   return (
     <section className="panel meter">
       <div className="panel-head"><h2>{t('fightMeter')}</h2><span className={`heat-label h-${rawKey}`}>{label}</span></div>
-      <div className="meter-bar"><div className="meter-fill" style={{ width: `${Math.round(dis * 100)}%` }} /><div className="meter-threshold" style={{ left: `${state.fightThreshold * 100}%` }} title="punches start here" /></div>
+      <div className="meter-bar">
+        <div className="meter-fill" style={{ width: `${Math.max(3, Math.round(dis * 100))}%` }} />
+        <div className="meter-pin" style={{ left: `${Math.round(dis * 100)}%` }} title={`${Math.round(dis * 100)}% disagreement`} />
+        <div className="meter-threshold" style={{ left: `${state.fightThreshold * 100}%` }} title="punches start here" />
+      </div>
       <div className="meter-scale"><span>{t('consensus')}</span><span>{Math.round(dis * 100)}{t('disagreementSuffix')}</span><span>{t('brawl')}</span></div>
       <div className="tug">
         <span className="bear-side">BEAR</span>

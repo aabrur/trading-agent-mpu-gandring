@@ -326,9 +326,10 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .panel.meter h2 { font-size: 15px; }
 .heat-label { font-family: var(--font-comic); letter-spacing: .05em; font-size: 15px; color: var(--sage-deep); }
 .h-heated { color: var(--warn); } .h-fists-out, .h-full-brawl { color: var(--hit); }
-.meter-bar { position: relative; height: 10px; border-radius: 999px; background: var(--panel-2); border: 1.5px solid var(--line); overflow: hidden; }
-.meter-fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--sage), var(--brass), var(--hit)); background-size: 400px 100%; border-radius: 999px; transition: width .6s cubic-bezier(.3, 1.4, .5, 1); }
-.meter-threshold { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); opacity: .5; }
+.meter-bar { position: relative; height: 12px; border-radius: 999px; background: var(--panel-2); border: 1.5px solid var(--line); overflow: visible; box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08); }
+.meter-fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #48bb78 0%, #ecc94b 40%, #ed8936 70%, #e53e3e 100%); border-radius: 999px; transition: width .5s cubic-bezier(.3, 1.3, .5, 1); box-shadow: 0 0 8px rgba(229, 62, 62, 0.2); }
+.meter-pin { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2.5px solid var(--terracotta, #c05621); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); transform: translate(-50%, -50%); transition: left .5s cubic-bezier(.3, 1.3, .5, 1); z-index: 3; }
+.meter-threshold { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .6; z-index: 2; }
 .meter-scale { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 700; color: var(--text-faint); margin-top: 3px; }
 .tug { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 10px; font-weight: 800; }
 .bear-side { color: var(--short); } .bull-side { color: var(--long); }
@@ -463,19 +464,45 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 }
 
 /* ---------- LIVE mode and kill switch ---------- */
-.badge.live-badge { background: var(--short); color: #fff; border-color: transparent; font-size: 15px; font-weight: 800; letter-spacing: .08em; padding: 6px 16px; animation: live-pulse 1.6s ease-in-out infinite; }
-@keyframes live-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(214, 90, 70, .55); } 50% { box-shadow: 0 0 0 8px rgba(214, 90, 70, 0); } }
+.badge.live-badge {
+  background: var(--short);
+  color: #fff;
+  border-color: transparent;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.badge.live-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  display: inline-block;
+  box-shadow: 0 0 4px #fff;
+  animation: live-dot-pulse 1.4s ease-in-out infinite;
+}
+@keyframes live-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
 .commandbar button.kill { background: transparent; color: var(--short); border: 2px solid var(--short); font-weight: 800; }
 .commandbar button.kill.is-live { background: var(--short); color: #fff; }
 .commandbar button.kill:disabled { opacity: .55; cursor: not-allowed; }
 /* the widget script forces height:100% on its container, so the fixed height lives on a wrapper */
 .tv-wrap { height: 460px; border-radius: var(--radius-md, 12px); overflow: hidden; }
 .tv-box, .tv-box iframe { height: 100% !important; width: 100% !important; }
-@media (prefers-reduced-motion: reduce) { .badge.live-badge { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .badge.live-badge::before { animation: none; } }
 
 /* ---------- auto badge, testnet badge, reports ---------- */
-.badge.testnet-badge { background: var(--brass, #c9973c); color: #fff; border-color: transparent; font-weight: 800; letter-spacing: .06em; }
-.badge.auto-badge { background: var(--teal, #3f9e97); color: #fff; border-color: transparent; font-weight: 800; }
+.badge.testnet-badge { background: var(--brass, #c9973c); color: #fff; border-color: transparent; font-weight: 800; letter-spacing: .04em; font-size: 11px; padding: 3px 10px; }
+.badge.auto-badge { background: var(--teal, #3f9e97); color: #fff; border-color: transparent; font-weight: 800; font-size: 11px; padding: 3px 10px; }
 .panel.reports .panel-head { gap: 8px; }
 .panel.reports .panel-head .muted { margin-left: auto; }
 .panel.reports button.mini { font-size: var(--fs-xs); padding: 3px 10px; border-radius: 999px; }

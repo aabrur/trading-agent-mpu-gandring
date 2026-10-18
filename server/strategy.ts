@@ -40,3 +40,41 @@ export function strategyVote(candles: Candle[]): RuleVote {
   if (change5Pct < -0.3 && close < e9) return { ...base, side: 'SHORT', invalidation: e9, reason: `Five-bar change ${change5Pct.toFixed(2)}% with close below EMA9.` };
   return { ...base, reason: 'Trend and momentum gates both undecided.' };
 }
+
+export function rsi(closes: number[], period = 14): number {
+  if (closes.length <= period) return 50;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return Math.round((100 - (100 / (1 + rs))) * 10) / 10;
+}
+
+export function volumeDelta(candles: Candle[], period = 20): { volRatio: number; takerBuyPressure: number } {
+  if (candles.length < 5) return { volRatio: 1, takerBuyPressure: 0.5 };
+  const slice = candles.slice(-period);
+  const avgVol = slice.reduce((acc, c) => acc + c.v, 0) / slice.length;
+  const lastVol = candles.at(-1)?.v ?? avgVol;
+  const volRatio = avgVol > 0 ? Math.round((lastVol / avgVol) * 100) / 100 : 1;
+  const recent5 = candles.slice(-5);
+  let buyVol = 0, totalVol = 0;
+  for (const c of recent5) {
+    totalVol += c.v;
+    if (c.c >= c.o) buyVol += c.v;
+  }
+  const takerBuyPressure = totalVol > 0 ? Math.round((buyVol / totalVol) * 100) / 100 : 0.5;
+  return { volRatio, takerBuyPressure };
+}

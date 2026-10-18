@@ -107,15 +107,21 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
   const visible = new Set((Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at).slice(0, 1).map((s) => s.agent));
 
+  const camps = state.debate?.camps ?? { bull: [], bear: [], neutral: [] };
+  const hasClash = camps.bull.length > 0 && camps.bear.length > 0;
+  const isHeated = (state.debate?.round ?? 0) >= 1 && disagreement >= state.fightThreshold && hasClash;
+  const anyFighting = Object.values(state.agents).some((a) => a.status === 'fighting');
+
   const displayFights = useMemo<Fight[]>(() => {
     if (fights.length > 0) return fights;
     if (!inDebate) return [];
+    // Only brawl if agents are explicitly fighting or arguments escalated into a heated clash
+    if (!anyFighting && !isHeated) return [];
     const debaters: AgentId[] = ['market', 'research', 'strategist'];
-    const speaker = debaters.find((id) => state.agents[id].status === 'fighting' || state.agents[id].status === 'arguing' || visible.has(id)) ?? 'market';
-    const speakerStance = state.agents[speaker].stance;
-    const opponent = debaters.find((id) => id !== speaker && state.agents[id].stance !== speakerStance)
-      ?? debaters.find((id) => id !== speaker)
-      ?? 'research';
+    const speaker = debaters.find((id) => state.agents[id].status === 'fighting' || (isHeated && (state.agents[id].status === 'arguing' || visible.has(id)))) ?? (camps.bear[0] ?? 'market');
+    const speakerStance = state.agents[speaker]?.stance;
+    const opponent = debaters.find((id) => id !== speaker && state.agents[id]?.stance && state.agents[id]?.stance !== speakerStance)
+      ?? (camps.bull[0] ?? 'research');
     return [{
       id: (state.debate?.round ?? 0) * 7 + debaters.indexOf(speaker) + 1,
       from: speaker,
@@ -124,7 +130,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
       punches: 3,
       at: Date.now()
     }];
-  }, [fights, inDebate, state.debate?.round, state.agents, visible, disagreement]);
+  }, [fights, inDebate, anyFighting, isHeated, state.debate?.round, state.agents, visible, disagreement, camps]);
   const activeFight = displayFights.at(-1);
 
   const positions = useMemo(() => {

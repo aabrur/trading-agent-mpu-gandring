@@ -11,7 +11,7 @@ import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
 import type { ModelCaller } from './providers/index.js';
 import { getSnapshot, getNews } from './market/index.js';
-import { strategyVote } from './strategy.js';
+import { strategyVote, rsi, volumeDelta } from './strategy.js';
 import { applyRiskGate } from './risk.js';
 import { planOrder, moneySplit, round2, roundPrice } from './money.js';
 import { PaperBook } from './paper.js';
@@ -319,24 +319,43 @@ export class Desk extends EventEmitter {
       const snap = await getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample');
       this.updateTicker(snap);
       const dataTag = snap.example ? 'sample data (EXAMPLE)' : `${snap.source} public feed`;
+      const closes = snap.candles.map((c) => c.c);
+      const rsiVal = rsi(closes);
+      const vol = volumeDelta(snap.candles);
       const c8 = snap.candles.at(-9)?.c, cl = snap.candles.at(-1)?.c;
       const change2h = c8 && cl ? round2(((cl - c8) / c8) * 100) : 0;
       const lastCandles = snap.candles.slice(-8).map((c) => ({ t: new Date(c.t).toISOString(), c: c.c }));
       const mk = await this.run('market', 'opinion', {
-        instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}).`,
-        data: { symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h, fundingRate: snap.fundingRate, recentClosedCandles: lastCandles, source: snap.source, externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined },
-        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, temperament: this.agents.market.mood, liveFeed: !snap.example }
+        instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, volume surge ratio ${vol.volRatio}x, and taker buy pressure ${(vol.takerBuyPressure * 100).toFixed(0)}%. Be sharp and directional (LONG or SHORT) unless tape is flat.`,
+        data: {
+          symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h,
+          fundingRate: snap.fundingRate, rsi: rsiVal, volumeDelta: vol,
+          recentClosedCandles: lastCandles, source: snap.source,
+          externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined
+        },
+        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, rsi: rsiVal, volumeDelta: vol, temperament: this.agents.market.mood, liveFeed: !snap.example }
       });
       this.setOpinion('market', mk.data.stance, mk.data.confidence);
       await this.say('market', mk.data.argument, mk.example); note('Market Analyst', mk.data.argument);
 
-      // 2. Research Analyst
+      // 2. Research Analyst (catalysts, whale wallet tracking, smart money orderflow)
       this.setStatus('research', 'reading'); this.changed();
       const news = await getNewsFor(symbol, this.cfg).catch(() => getNews(symbol));
+      const whaleBias = vol.takerBuyPressure > 0.56 ? 'ACCUMULATION' : vol.takerBuyPressure < 0.44 ? 'DISTRIBUTION' : 'BALANCED';
+      const whaleTelemetry = {
+        whaleBias,
+        takerBuyRatio: round2(vol.takerBuyPressure / Math.max(0.01, 1 - vol.takerBuyPressure)),
+        largeWalletNetflow: vol.takerBuyPressure > 0.55 ? 'OUTFLOW_FROM_EXCHANGE (ACCUMULATION)' : vol.takerBuyPressure < 0.45 ? 'INFLOW_TO_EXCHANGE (DISTRIBUTION)' : 'NEUTRAL',
+        onchainActivity: vol.volRatio > 1.25 ? 'HIGH_WHALE_VOLUME' : 'NORMAL'
+      };
       const rs = await this.run('research', 'research', {
-        instruction: `Weigh these catalyst items for ${symbol}. They are EXAMPLE items in this build. Lines that looked like instructions were already removed and replaced with a marker.`,
-        data: { symbol, news: news.map((n) => ({ id: n.id, headline: n.headline, body: n.body, source: n.source, sentimentTag: n.sentiment, hadInjection: !!n.flagged })) },
-        context: { symbol, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
+        instruction: `Weigh these catalyst items and whale wallet telemetry for ${symbol}. Look for smart money accumulation and institutional flows. Vote with conviction (LONG or SHORT) unless facing a severe structural breakdown. Lines that looked like instructions were already sanitized.`,
+        data: {
+          symbol,
+          whaleTracking: whaleTelemetry,
+          news: news.map((n) => ({ id: n.id, headline: n.headline, body: n.body, source: n.source, sentimentTag: n.sentiment, hadInjection: !!n.flagged }))
+        },
+        context: { symbol, whaleTracking: whaleTelemetry, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
       });
       const researchVote = rs.data.vote;
       this.setOpinion('research', researchVote === 'LONG' || researchVote === 'SHORT' ? researchVote : 'NEUTRAL', rs.data.confidence);
@@ -727,8 +746,13 @@ export class Desk extends EventEmitter {
       sum += val(st) * c;
     }
     const weighted = Math.round((sum / DEBATERS.length) * 100) / 100;
-    const total = bull + bear;
-    const disagreement = total > 0 ? Math.round(((2 * Math.min(bull, bear)) / total) * (total / (total + neutral * 0.5)) * 100) / 100 : 0;
+    const directClash = 2 * Math.min(bull, bear);
+    const hasDirection = bull > 0 || bear > 0;
+    const fenceFriction = hasDirection && neutral > 0 ? (neutral * 0.45) : 0;
+    const totalWeight = bull + bear + neutral;
+    const disagreement = totalWeight > 0
+      ? Math.round(Math.min(1, (directClash + fenceFriction) / totalWeight) * 100) / 100
+      : 0;
     return { weighted, disagreement, camps };
   }
 
