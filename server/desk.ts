@@ -242,7 +242,8 @@ export class Desk extends EventEmitter {
   async refreshTickers() {
     const live = Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
     let allSample = true;
-    await Promise.all(this.cfg.watchlist.map(async (s) => {
+    const symbols = [...new Set([...this.cfg.watchlist, ...this.cfg.auto.symbols])];
+    await Promise.all(symbols.map(async (s) => {
       const snap = await getSnapshot(s, live);
       if (snap.source !== 'sample') allSample = false;
       else if (live !== 'sample' && snap.errors.length) this.recordError('market', `${s}: ${snap.errors.join('; ')}`);

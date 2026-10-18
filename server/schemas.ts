@@ -33,7 +33,7 @@ export const RiskSchema = z.object({
   decision: z.enum(['APPROVE', 'REDUCE', 'REJECT']),
   sizeFactor: z.number().min(0).max(1),
   leverage: z.number().min(1).max(125),
-  stopPct: z.number().min(0.05).max(50),
+  stopPct: z.preprocess((val) => (typeof val === 'number' && val > 0 && val < 0.05 ? val * 100 : val), z.number().min(0.05).max(50)),
   reason: text
 });
 

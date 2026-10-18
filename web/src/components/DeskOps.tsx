@@ -113,7 +113,7 @@ export function DeskOps({ state }: { state: DeskState }) {
   const calcDefaultStop = (targetSym = symbol, targetSide = side, targetEntry = entry) => {
     const livePx = Number(targetEntry) > 0 ? Number(targetEntry) : (state.tickers[targetSym]?.last ?? 0);
     if (!(livePx > 0)) return '';
-    const sl = targetSide === 'LONG' ? livePx * 0.985 : livePx * 1.015;
+    const sl = targetSide === 'LONG' ? livePx * 0.70 : livePx * 1.30;
     return sl > 10 ? sl.toFixed(2) : sl > 1 ? sl.toFixed(4) : sl.toFixed(6);
   };
 
@@ -129,7 +129,7 @@ export function DeskOps({ state }: { state: DeskState }) {
         const targetTp = side === 'LONG' ? currentEntry + risk * 2 : currentEntry - risk * 2;
         if (targetTp > 0) setTp(targetTp > 10 ? targetTp.toFixed(2) : targetTp.toFixed(4));
       }
-      show(true, `Calculated 1.5% SL & 2R TP for ${symbol}`);
+      show(true, `Calculated 30% SL & 2R TP for ${symbol}`);
     } else {
       show(false, `No live price for ${symbol}. Enter entry price first.`);
     }
@@ -159,12 +159,14 @@ export function DeskOps({ state }: { state: DeskState }) {
         return show(false, 'no stop: enter a stop price or select an active token to auto-compute.');
       }
     }
-    if (!window.confirm(`${state.mode}: open ${side} ${symbol} with stop ${stopVal}?`)) return;
     const r = await post('/api/ops/open', { symbol, side, stop: stopVal, tp: num(tp), leverage: num(lev) }).catch(() => null);
     show(!!r?.ok, r?.reply ?? 'office not reachable');
   };
 
-  const close = async (target: string) => { if (!window.confirm(`Close ${target}?`)) return; const r = await post('/api/ops/close', { symbol: target }).catch(() => null); show(!!r?.ok, r?.reply ?? 'office not reachable'); };
+  const close = async (target: string) => {
+    const r = await post('/api/ops/close', { symbol: target }).catch(() => null);
+    show(!!r?.ok, r?.reply ?? 'office not reachable');
+  };
   const scan = async () => { const r = await post('/api/ops/scan', {}).catch(() => null); show(!!r?.ok, r?.findings?.length ? r.findings.map((f: { level: string; text: string }) => `${f.level}: ${f.text}`).join(' | ') : 'scan: all clear'); };
   const addLesson = async () => { const r = await post('/api/ops/lessons', { role: 'desk', lesson, kind: 'note' }).catch(() => null); show(!!r?.ok, r?.ok ? 'lesson saved' : r?.error ?? 'office not reachable'); if (r?.ok) setLesson(''); };
 
