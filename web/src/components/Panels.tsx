@@ -168,7 +168,7 @@ export function TopBar({
           </div>
           <div className="brand-meta">
             {state?.mode === 'LIVE'
-              ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}{state.live?.experimental ? ' experimental' : ''}</span>
+              ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}</span>
               : state?.mode === 'TESTNET'
                 ? <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
                 : <span className="badge paper" title="Simulated trades only">{t('paperMode')}</span>}
@@ -177,7 +177,7 @@ export function TopBar({
             {state?.killed && <span className="badge warn">{t('killSwitchOn')}</span>}
             {state?.dailyLoss?.hit && <span className="badge warn">{t('dailyLossStop')}</span>}
             {state?.venue && state.mode !== 'LIVE' && state.mode !== 'TESTNET' && (
-              <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' exp' : ''}</span>
+              <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}</span>
             )}
             {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
           </div>
@@ -186,7 +186,6 @@ export function TopBar({
       <div className="topbar-center">
         {state && (
           <div className={`topbar-balance-pill ${hasVenueLiveBal ? 'is-live-bal' : 'is-paper-bal'}`} title={`${t('topBalanceLabel')}: ${fmt(rawUsdt)} USDT`}>
-            <span className="tb-bal-tag">{balanceSourceTag}</span>
             <strong className="tb-bal-val">{formatCurrencyValue(rawUsdt, curOpt)}</strong>
             <select
               className="tb-cur-select"
@@ -207,7 +206,7 @@ export function TopBar({
           target="_blank"
           rel="noopener noreferrer"
           title={t('trakteerBtn')}
-          className="badge trakteer-btn"
+          className="trakteer-btn"
         >
           <img
             src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"

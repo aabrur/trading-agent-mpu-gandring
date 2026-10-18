@@ -37,16 +37,15 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .brand-meta { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 2px; }
 .brand-meta .badge { padding: 2px 8px; font-size: 10.5px; line-height: 1.15; }
 .topbar-center { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; margin: 0 auto; }
-.topbar-balance-pill { display: inline-flex; align-items: center; gap: 7px; padding: 3px 6px 3px 10px; border-radius: 999px; border: 1.5px solid var(--teal); background: var(--panel); box-shadow: var(--shadow); font-size: 12.5px; white-space: nowrap; flex-shrink: 0; }
+.topbar-balance-pill { display: inline-flex; align-items: center; gap: 8px; padding: 4px 11px; border-radius: 999px; border: 1.5px solid var(--teal); background: var(--panel); box-shadow: var(--shadow); font-size: 13px; white-space: nowrap; flex-shrink: 0; }
 .topbar-balance-pill.is-live-bal { border-color: var(--long); background: color-mix(in srgb, var(--long) 8%, var(--panel)); }
-.tb-bal-tag { font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; background: var(--sage-deep); color: #fff; }
-.topbar-balance-pill.is-live-bal .tb-bal-tag { background: var(--long); }
-.tb-bal-val { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--text); }
+.tb-bal-val { font-family: var(--font-mono); font-size: 13.5px; font-weight: 700; color: var(--text); }
 .tb-cur-select { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 2px 7px; font-size: 11px; font-weight: 800; cursor: pointer; outline: none; }
 .tb-cur-select:hover, .tb-cur-select:focus { border-color: var(--teal); }
-.trakteer-btn { background: #be1e2d; color: #fff !important; border: 1px solid #9e1422; padding: 4px 11px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; text-decoration: none !important; white-space: nowrap; box-shadow: 0 1px 3px rgba(190, 30, 45, 0.25); transition: opacity 0.15s ease, transform 0.15s ease; }
-.trakteer-btn:hover { opacity: 0.92; transform: translateY(-1px); color: #fff !important; }
-.trbtn-mini-img { height: 15px; width: auto; display: inline-block; animation: trbtn-wiggle 3s infinite; }
+.trakteer-btn { background: #be1e2d !important; color: #ffffff !important; border: 1px solid #991421 !important; padding: 5px 13px !important; border-radius: 999px !important; display: inline-flex !important; align-items: center !important; gap: 7px !important; font-family: var(--font-ui) !important; font-size: 12px !important; font-weight: 700 !important; text-decoration: none !important; white-space: nowrap !important; box-shadow: 0 2px 6px rgba(190, 30, 45, 0.35) !important; transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease !important; cursor: pointer !important; }
+.trakteer-btn:hover { background: #d42233 !important; color: #ffffff !important; transform: translateY(-1px) !important; box-shadow: 0 3px 8px rgba(190, 30, 45, 0.45) !important; opacity: 1 !important; }
+.trakteer-btn span { color: #ffffff !important; font-weight: 700 !important; }
+.trbtn-mini-img { height: 16px; width: auto; display: inline-block; vertical-align: middle; animation: trbtn-wiggle 3s infinite; }
 @keyframes trbtn-wiggle { 0%, 60%, 100% { transform: rotate(0) scale(1); } 75% { transform: rotate(0) scale(1.12); } 80% { transform: rotate(0) scale(1.1); } 84%, 92% { transform: rotate(-10deg) scale(1.1); } 88%, 96% { transform: rotate(10deg) scale(1.1); } }
 .trakteer-popup-card { position: relative; width: min(540px, 94vw); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
 .trakteer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }

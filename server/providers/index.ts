@@ -43,7 +43,11 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       case 'together':
       case 'fireworks': {
         const base = cfg.baseUrls[provider].replace(/\/$/, '');
-        const extra: Record<string, string> = provider === 'openrouter' ? { 'HTTP-Referer': 'https://github.com/trading-agent-mpu-gandring', 'X-Title': 'Trading Agent Mpu Gandring' } : {};
+        const extra: Record<string, string> = provider === 'openrouter' ? {
+          'HTTP-Referer': 'https://github.com/aabrur/trading-agent-mpu-gandring',
+          'X-Title': 'Trading Agent Mpu Gandring',
+          'X-OpenRouter-Title': 'Trading Agent Mpu Gandring'
+        } : {};
         // Reasoning models on OpenAI reject temperature and use the completion-token limit.
         const maxTokens = provider === 'openai' ? 400 : 1500;
         const generation = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model) ? { max_completion_tokens: maxTokens, reasoning_effort: 'low' } : { temperature: 0.6, max_tokens: maxTokens };

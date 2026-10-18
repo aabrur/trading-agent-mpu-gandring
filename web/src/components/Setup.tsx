@@ -169,8 +169,8 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
                 <h4>2. Venue and network</h4>
                 <div className="wallet-pick">
                   <select value={venue} onChange={(e) => setVenue(e.target.value)} aria-label="venue">
-                    <optgroup label="CEX">{info.venues.filter((x) => x.kind === 'CEX').map((x) => <option key={x.venue} value={x.venue}>{x.label}{x.status === 'experimental' ? ' · experimental' : ''}</option>)}</optgroup>
-                    <optgroup label="DEX">{info.venues.filter((x) => x.kind === 'DEX').map((x) => <option key={x.venue} value={x.venue}>{x.label} · experimental</option>)}</optgroup>
+                    <optgroup label="CEX">{info.venues.filter((x) => x.kind === 'CEX').map((x) => <option key={x.venue} value={x.venue}>{x.label}</option>)}</optgroup>
+                    <optgroup label="DEX">{info.venues.filter((x) => x.kind === 'DEX').map((x) => <option key={x.venue} value={x.venue}>{x.label}</option>)}</optgroup>
                   </select>
                   <div className="seg" role="group" aria-label="network">{(['testnet', 'mainnet'] as const).map((n) => <button key={n} className={network === n ? 'on' : ''} onClick={() => setNetwork(n)}>{n}</button>)}</div>
                 </div>
