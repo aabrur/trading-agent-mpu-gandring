@@ -59,3 +59,6 @@ const inboundServer = (ch.discord.inbound || ch.slack.inbound || ch.whatsapp.inb
 const shutdown = () => { auto.stop(); reporter.stop(); lead.stop(); inboundServer?.close(); desk.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500).unref(); };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+process.on('unhandledRejection', (reason) => {
+  log(`[unhandledRejection] ${safe(String(reason))}`);
+});

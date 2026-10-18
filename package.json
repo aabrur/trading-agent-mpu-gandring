@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.2.4",
-  "appVersion": "0.0.0.2.4",
+  "version": "0.2.5",
+  "appVersion": "0.0.0.2.5",
   "changelog": [
+    "Redesigned TopBar layout with non-colliding centered balance pill, unified action badges, and responsive desktop wrapping",
     "Synchronized ticker polling across all watchlist and auto-trading symbols, added decimal stop-loss preprocessing, and enabled 1-click frictionless order execution",
     "Full live trading support on Aster DEX with pinned trade-only agent wallet permissions and automatic startEquity calibration",
     "Telegram Desk Lead supervisor integration with remote chat commands (status, report, positions, kill) and 5-minute health watchdog",

@@ -67,7 +67,11 @@ export class AutoTrader {
 
   private schedule(ms: number) {
     this.desk.autoState.nextAt = Date.now() + ms;
-    this.timer = setTimeout(() => { void this.cycle().finally(() => { if (this.timer && !this.desk.killed) this.schedule(this.intervalMs); }); }, ms);
+    this.timer = setTimeout(() => {
+      this.cycle()
+        .catch((err) => log(`[auto] cycle error: ${safe((err as Error).message)}`))
+        .finally(() => { if (this.timer && !this.desk.killed) this.schedule(this.intervalMs); });
+    }, ms);
   }
 
   /** One cycle. Safe to call directly (tests, "run a cycle now"). */

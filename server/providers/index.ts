@@ -16,7 +16,7 @@ export interface ModelRequest {
 }
 export type ModelCaller = (req: ModelRequest) => Promise<string>;
 
-async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs = 30000): Promise<any> {
+async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs = 60000): Promise<any> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {

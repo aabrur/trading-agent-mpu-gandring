@@ -151,7 +151,19 @@ export function TopBar({
         <div className="brand-mark"><img src="/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring logo" width={72} height={45} /></div>
         <div className="brand-copy">
           <div className="brand-title-row">
-            <h1>Trading Agent <span>Mpu Gandring</span></h1>
+            <h1>
+              Trading Agent <span>Mpu Gandring</span>
+              {hasUpdate && onOpenUpdate && (
+                <button
+                  className="badge setup-btn version-btn update-avail-badge new-update-badge"
+                  onClick={onOpenUpdate}
+                  title={`${t('updateAvailable')}: v${updateInfo?.latestVersion}`}
+                >
+                  <i className="update-notif-dot" aria-hidden="true" />
+                  New Update
+                </button>
+              )}
+            </h1>
             <p>{t('subtitle')}</p>
           </div>
           <div className="brand-meta">
@@ -164,41 +176,14 @@ export function TopBar({
             {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
             {state?.killed && <span className="badge warn">{t('killSwitchOn')}</span>}
             {state?.dailyLoss?.hit && <span className="badge warn">{t('dailyLossStop')}</span>}
-            {state?.venue && <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' exp' : ''}</span>}
-            {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
-            {onOpenUpdate && (
-              <button
-                className="badge setup-btn version-btn update-avail-badge"
-                onClick={onOpenUpdate}
-                title={hasUpdate ? `${t('updateAvailable')}: v${updateInfo?.latestVersion}` : `v${ver} · ${t('versionModalTitle')}`}
-              >
-                <i className="update-notif-dot" aria-hidden="true" />
-                v{ver} · {hasUpdate ? `${t('updateAvailable')} ↑` : 'Update ↑'}
-              </button>
+            {state?.venue && state.mode !== 'LIVE' && state.mode !== 'TESTNET' && (
+              <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}${state.venue.experimental ? ', experimental adapter' : ''}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}{state.venue.experimental ? ' exp' : ''}</span>
             )}
-            <button className="badge setup-btn lang-toggle-btn" onClick={toggleLang} aria-label="switch language">
-              {lang === 'en' ? 'EN ▾ ID' : 'ID ▾ EN'}
-            </button>
+            {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
           </div>
         </div>
       </div>
       <div className="topbar-center">
-        <a
-          href="https://trakteer.id/aabrur/tip"
-          target="_blank"
-          rel="noopener noreferrer"
-          title={t('trakteerBtn')}
-          className="trbtn"
-        >
-          <span className="trbtn-txt">
-            <img
-              src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
-              alt="Traktiran"
-              className="trbtn-img"
-            />
-            <span>{t('trakteerBtn')}</span>
-          </span>
-        </a>
         {state && (
           <div className={`topbar-balance-pill ${hasVenueLiveBal ? 'is-live-bal' : 'is-paper-bal'}`} title={`${t('topBalanceLabel')}: ${fmt(rawUsdt)} USDT`}>
             <span className="tb-bal-tag">{balanceSourceTag}</span>
@@ -217,12 +202,29 @@ export function TopBar({
         )}
       </div>
       <div className="badges">
+        <a
+          href="https://trakteer.id/aabrur/tip"
+          target="_blank"
+          rel="noopener noreferrer"
+          title={t('trakteerBtn')}
+          className="badge trakteer-btn"
+        >
+          <img
+            src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+            alt="Trakteer"
+            className="trbtn-mini-img"
+          />
+          <span>{t('trakteerBtn')}</span>
+        </a>
         {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title="Connect browser wallet for DEX venues">{t('connectWallet')}</button>}
         {onSetup && <button id="setup-trigger" className="badge setup-btn" onClick={onSetup} title="Setup wizard: venue, mode, keys, doctor">{t('setup')}</button>}
         {onTour && <button className="badge setup-btn tour-trigger-btn" onClick={onTour} title="Interactive UI guide">? {t('tutorial')}</button>}
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">{t('paused')}</span>}
         <span className={`badge conn ${connected ? 'on' : 'off'}`}><i />{connected ? t('liveConn') : t('reconnecting')}</span>
+        <button className="badge setup-btn lang-toggle-btn" onClick={toggleLang} aria-label="switch language" title="Switch language">
+          {lang === 'en' ? 'EN ▾ ID' : 'ID ▾ EN'}
+        </button>
         {onTheme && <button className="badge theme-toggle" onClick={onTheme} aria-label="toggle day or night">{theme === 'night' ? t('nightMode') : t('dayMode')}</button>}
       </div>
     </header>
