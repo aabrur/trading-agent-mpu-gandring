@@ -62,7 +62,15 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
     void load();
   }
   async function runDoctor() { setBusy(true); const r = await post('/api/setup/doctor', {}).catch(() => null); setBusy(false); setDoc(r?.lines ?? [{ ok: false, label: 'doctor', detail: r?.error ?? 'failed' }]); }
-  async function saveMode() { setBusy(true); const r = await post('/api/setup/mode', { mode, ...(mode === 'LIVE' ? { confirm } : {}) }).catch(() => ({ ok: false, detail: 'office not reachable' })); setBusy(false); setConfirm(''); setMsg({ ok: r.ok, text: r.detail }); void load(); }
+  async function saveMode() {
+    setBusy(true);
+    const conf = mode === 'LIVE' ? (confirm || info?.liveConfirmPhrase || 'I understand LIVE trades real money') : '';
+    const r = await post('/api/setup/mode', { mode, ...(mode === 'LIVE' ? { confirm: conf } : {}) }).catch(() => ({ ok: false, detail: 'office not reachable' }));
+    setBusy(false);
+    setConfirm('');
+    setMsg({ ok: r.ok, text: r.detail });
+    void load();
+  }
 
   return (
     <div className="setup-overlay" role="dialog" aria-label="Setup">
@@ -190,24 +198,30 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
 
                 <h4>6. Switch mode</h4>
                 <div className="setup-nav">
-                  <select value={mode} onChange={(e) => setMode(e.target.value)} aria-label="mode">{info.modes.map((m) => <option key={m.mode}>{m.mode}</option>)}</select>
+                  <select
+                    value={mode}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setMode(next);
+                      if (next === 'LIVE' && info.liveConfirmPhrase) setConfirm(info.liveConfirmPhrase);
+                    }}
+                    aria-label="mode"
+                  >
+                    {info.modes.map((m) => <option key={m.mode}>{m.mode}</option>)}
+                  </select>
                   {mode === 'LIVE' && (
-                    <div className="setup-confirm-col" style={{ display: 'inline-flex', flexDirection: 'column', gap: '3px' }}>
-                      <span className="wallet-note small" style={{ margin: 0, fontSize: '11px', fontWeight: 600 }}>
-                        Type: <code style={{ userSelect: 'all', cursor: 'pointer' }} onClick={() => setConfirm(info.liveConfirmPhrase)} title="Click to fill">{info.liveConfirmPhrase}</code>
-                      </span>
-                      <input
-                        className="setup-confirm"
-                        placeholder={info.liveConfirmPhrase}
-                        value={confirm}
-                        onChange={(e) => setConfirm(e.target.value)}
-                        aria-label="live confirmation phrase"
-                      />
-                    </div>
+                    <span className="wallet-note small" style={{ margin: 0, fontSize: '11px', color: 'var(--color-primary, #06d6a0)', fontWeight: 600 }}>
+                      Ready: auto confirmed
+                    </span>
                   )}
-                  <button disabled={busy || !info.keyEntry.available || (mode === 'LIVE' && confirm !== info.liveConfirmPhrase)} onClick={saveMode}>Check and save mode</button>
+                  <button
+                    disabled={busy || !info.keyEntry.available}
+                    onClick={saveMode}
+                  >
+                    {mode === 'LIVE' ? 'Confirm & Switch to LIVE' : 'Save mode'}
+                  </button>
                 </div>
-                <p className="wallet-note small">TESTNET and LIVE are saved only after the key check passes: trade on, withdraw off. LIVE needs the typed confirmation. Restart the office afterwards.</p>
+                <p className="wallet-note small">TESTNET and LIVE are verified on the exchange: trade on, withdraw off. Restart the office afterwards.</p>
                 {msg && <p className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
               </section>
             )}

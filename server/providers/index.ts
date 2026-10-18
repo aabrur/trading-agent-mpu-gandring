@@ -45,7 +45,8 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
         const base = cfg.baseUrls[provider].replace(/\/$/, '');
         const extra: Record<string, string> = provider === 'openrouter' ? { 'HTTP-Referer': 'https://github.com/trading-agent-mpu-gandring', 'X-Title': 'Trading Agent Mpu Gandring' } : {};
         // Reasoning models on OpenAI reject temperature and use the completion-token limit.
-        const generation = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model) ? { max_completion_tokens: 400, reasoning_effort: 'low' } : { temperature: 0.6, max_tokens: 400 };
+        const maxTokens = provider === 'openai' ? 400 : 1500;
+        const generation = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model) ? { max_completion_tokens: maxTokens, reasoning_effort: 'low' } : { temperature: 0.6, max_tokens: maxTokens };
         const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, {
           model, ...generation,
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
@@ -54,7 +55,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       }
       case 'anthropic': {
         const data = await post('https://api.anthropic.com/v1/messages', { 'x-api-key': cfg.keys.anthropic, 'anthropic-version': '2023-06-01' }, {
-          model, max_tokens: 400, system, messages: [{ role: 'user', content: user }]
+          model, max_tokens: 1500, system, messages: [{ role: 'user', content: user }]
         });
         return String((data?.content ?? []).map((c: any) => c?.text ?? '').join(''));
       }
@@ -63,7 +64,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
         const data = await post(url, { 'x-goog-api-key': cfg.keys.gemini }, {
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text: user }] }],
-          generationConfig: { temperature: 0.6, maxOutputTokens: 400, responseMimeType: 'application/json' }
+          generationConfig: { temperature: 0.6, maxOutputTokens: 1500, responseMimeType: 'application/json' }
         });
         return String(data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text ?? '').join('') ?? '');
       }

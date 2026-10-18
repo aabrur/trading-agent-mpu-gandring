@@ -56,6 +56,17 @@ describe('safe command set', () => {
     for (const t of ['key set BYBIT_API_KEY=x', 'set TRADING_MODE=LIVE', 'withdraw 100', 'env']) refused(t, /Keys and settings/);
     refused('rm -rf /', /Unknown command/);
   });
+  it('accepts interactive commands: analyze, scan, ask, watchlist, scorecard, lessons, cautious', () => {
+    expect(parseCommand('/analyze BTCUSDT')).toMatchObject({ ok: true, cmd: 'analyze', symbol: 'BTCUSDT' });
+    expect(parseCommand('debate SOL')).toMatchObject({ ok: true, cmd: 'analyze', symbol: 'SOLUSDT' });
+    expect(parseCommand('/scan')).toMatchObject({ ok: true, cmd: 'scan' });
+    expect(parseCommand('/ask what is the trend?')).toMatchObject({ ok: true, cmd: 'ask', agent: 'lead', text: 'what is the trend?' });
+    expect(parseCommand('/ask market how are candles looking?')).toMatchObject({ ok: true, cmd: 'ask', agent: 'market', text: 'how are candles looking?' });
+    expect(parseCommand('/watchlist')).toMatchObject({ ok: true, cmd: 'watchlist' });
+    expect(parseCommand('/scorecard')).toMatchObject({ ok: true, cmd: 'scorecard' });
+    expect(parseCommand('/lessons')).toMatchObject({ ok: true, cmd: 'lessons' });
+    expect(parseCommand('/cautious')).toMatchObject({ ok: true, cmd: 'cautious' });
+  });
   it('allowlist: empty means nobody; ids compare exactly', () => {
     expect(allowed([], '1')).toBe(false);
     expect(allowed(['2222'], 2222)).toBe(true);

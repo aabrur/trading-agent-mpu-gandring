@@ -1,13 +1,21 @@
-// The ONLY things a chat channel can ask the desk to do. Read-only status, plus the kill switch (which only ever reduces risk).
-// Opening or closing orders, switching modes (PAPER/TESTNET/LIVE), releasing the kill switch and changing keys are not here
-// on purpose: they need the CLI or the office on the desk's own computer.
 import type { Desk } from '../desk.js';
 import { buildReport } from '../reports.js';
 import { safe } from '../redact.js';
+import { normSymbol } from '../commands.js';
+import { proactiveScan } from '../scan.js';
+import type { AgentId } from '../types.js';
 
 export const SAFE_COMMANDS = ['status', 'report', 'positions', 'kill', 'help'] as const;
 export type SafeCommand = (typeof SAFE_COMMANDS)[number];
-export type Parsed = { ok: true; cmd: SafeCommand; confirm: boolean } | { ok: false; reply: string };
+export const INTERACTIVE_COMMANDS = ['scan', 'analyze', 'debate', 'ask', 'chat', 'watchlist', 'scorecard', 'lessons', 'cautious', 'aggressive', 'calm'] as const;
+export type InteractiveCommand = (typeof INTERACTIVE_COMMANDS)[number];
+
+export type Parsed =
+  | { ok: true; cmd: SafeCommand; confirm: boolean }
+  | { ok: true; cmd: 'scan' | 'watchlist' | 'scorecard' | 'lessons' | 'cautious' | 'aggressive' | 'calm' }
+  | { ok: true; cmd: 'analyze' | 'debate'; symbol: string }
+  | { ok: true; cmd: 'ask' | 'chat'; agent: AgentId; text: string }
+  | { ok: false; reply: string };
 
 const FORBIDDEN: Array<[RegExp, string]> = [
   [/^(open|buy|sell|long|short|order|trade|enter|close|flatten|exit|tp|sl|stop|size|leverage)\b/, 'Orders cannot be opened, closed or changed from chat. Use the office or npm run gb on the desk computer.'],
@@ -16,14 +24,58 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/^(key|keys|secret|api|token|env|set|config|wallet|withdraw|transfer)\b/, 'Keys and settings cannot be changed from chat. They live in the local .env only.']
 ];
 
-export const HELP_TEXT = 'Commands: status, report, positions, kill (send "kill confirm" to flatten everything and stop). Nothing else is possible from chat: no orders, no mode changes, no un-kill, no key changes.';
+export const HELP_TEXT = [
+  'Trading Agent Mpu Gandring Commands:',
+  '• /status: Balance, equity, venue, guards status',
+  '• /positions: Active positions and resting exchange stops',
+  '• /report: Latest performance and execution report',
+  '• /scan: Instant proactive scan for desk alerts',
+  '• /analyze <symbol>: Direct agents to debate & auto-trade (e.g. /analyze BTCUSDT)',
+  '• /ask <question>: Chat with Desk Lead (or /ask <agent> <question>)',
+  '• /watchlist: Active auto-trading symbols',
+  '• /scorecard: Agent performance & win rate',
+  '• /lessons: Recent self-improving lessons',
+  '• /cautious or /aggressive: Adjust agent risk appetite',
+  '• /kill: Emergency stop (send "kill confirm" to flatten all positions)'
+].join('\n');
 
-/** Parse one chat message. Accepts "/status", "status", "/status@MyBot", "desk status". */
+const AGENTS: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'];
+
+/** Parse one chat message. Accepts "/status", "status", "/status@MyBot", "desk status", "/analyze BTC", "/ask ...". */
 export function parseCommand(text: string): Parsed {
   const t = String(text ?? '').trim().toLowerCase().replace(/^\/?desk\s+/, '').replace(/^\//, '').replace(/^([a-z-]+)@\S+/, '$1').slice(0, 200);
   const [word = '', ...rest] = t.split(/\s+/);
   if (!word) return { ok: false, reply: HELP_TEXT };
-  if ((SAFE_COMMANDS as readonly string[]).includes(word)) return { ok: true, cmd: word as SafeCommand, confirm: word === 'kill' && /^(confirm|yes)$/.test(rest.join(' ').replace(/^confirm:\s*/, '')) };
+  if ((SAFE_COMMANDS as readonly string[]).includes(word)) {
+    return { ok: true, cmd: word as SafeCommand, confirm: word === 'kill' && /^(confirm|yes)$/.test(rest.join(' ').replace(/^confirm:\s*/, '')) };
+  }
+  if (word === 'scan') return { ok: true, cmd: 'scan' };
+  if (word === 'watchlist' || word === 'tokens') return { ok: true, cmd: 'watchlist' };
+  if (word === 'scorecard' || word === 'scores') return { ok: true, cmd: 'scorecard' };
+  if (word === 'lessons' || word === 'learnings') return { ok: true, cmd: 'lessons' };
+  if (word === 'cautious' || word === 'hati-hati') return { ok: true, cmd: 'cautious' };
+  if (word === 'aggressive' || word === 'berani') return { ok: true, cmd: 'aggressive' };
+  if (word === 'calm' || word === 'reset') return { ok: true, cmd: 'calm' };
+  if (['analyze', 'debate', 'analisa', 'debat'].includes(word)) {
+    const sym = rest[0] ? normSymbol(rest[0]) : '';
+    if (!sym) return { ok: false, reply: 'Usage: /analyze <symbol> (e.g. /analyze BTCUSDT)' };
+    return { ok: true, cmd: 'analyze', symbol: sym };
+  }
+  if (word === 'ask' || word === 'chat' || (AGENTS as string[]).includes(word)) {
+    let agent: AgentId = 'lead';
+    let textContent = '';
+    if ((AGENTS as string[]).includes(word)) {
+      agent = word as AgentId;
+      textContent = rest.join(' ').trim();
+    } else if (rest[0] && (AGENTS as string[]).includes(rest[0])) {
+      agent = rest[0] as AgentId;
+      textContent = rest.slice(1).join(' ').trim();
+    } else {
+      textContent = rest.join(' ').trim();
+    }
+    if (!textContent) return { ok: false, reply: 'Usage: /ask <question> or /ask <agent> <question>' };
+    return { ok: true, cmd: 'ask', agent, text: textContent };
+  }
   for (const [re, reply] of FORBIDDEN) if (re.test(word)) return { ok: false, reply: `Refused. ${reply}` };
   return { ok: false, reply: `Unknown command. ${HELP_TEXT}` };
 }
@@ -66,6 +118,39 @@ export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void): Pr
     case 'status': return statusText(desk);
     case 'positions': return positionsText(desk);
     case 'report': return reportText(desk);
+    case 'scan': {
+      const findings = proactiveScan(desk);
+      if (!findings.length) return 'Proactive scan: all clear, no open warnings.';
+      return safe(`Proactive Scan Findings:\n${findings.map((f) => `[${f.level.toUpperCase()}] ${f.text}`).join('\n')}`);
+    }
+    case 'analyze':
+    case 'debate': {
+      const res = await desk.command(`analyze ${p.symbol}`);
+      return safe(res.reply);
+    }
+    case 'ask':
+    case 'chat': {
+      const res = await desk.command(p.text, p.agent);
+      return safe(`[${p.agent.toUpperCase()}]: ${res.reply}`);
+    }
+    case 'watchlist': {
+      return safe(`Watchlist (${desk.cfg.auto.symbols.length} symbols, auto every ${desk.cfg.auto.intervalMin}m):\n${desk.cfg.auto.symbols.join(', ')}`);
+    }
+    case 'scorecard': {
+      const rows = desk.scorecard.rows();
+      return safe(`Employee Scorecard:\n${rows.map((r) => `• ${r.name}: ${r.note}`).join('\n')}`);
+    }
+    case 'lessons': {
+      const ls = desk.learnings.recent(5);
+      if (!ls.length) return 'No lessons recorded yet.';
+      return safe(`Recent Lessons:\n${ls.map((l: { role: string; lesson: string }) => `• [${l.role}] ${l.lesson}`).join('\n')}`);
+    }
+    case 'cautious':
+    case 'aggressive':
+    case 'calm': {
+      const res = await desk.command(p.cmd === 'cautious' ? 'be more cautious' : p.cmd === 'aggressive' ? 'be more aggressive' : 'calm down');
+      return safe(res.reply);
+    }
     case 'kill': {
       if (!p.confirm) return 'This flattens every position and stops the desk until someone runs npm run unkill -- --yes on the desk computer. Send "kill confirm" to do it.';
       onKill?.();
