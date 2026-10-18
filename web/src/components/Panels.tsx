@@ -69,7 +69,7 @@ export function TopBar({
   onOpenTrakteer?: () => void;
 }) {
   const { lang, toggleLang, t } = useI18n();
-  const ver = updateInfo?.currentVersion ?? '0.0.0.2.2';
+  const ver = updateInfo?.currentVersion ?? '0.0.0.2.3';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
   void onOpenTrakteer;
 

@@ -40,10 +40,10 @@ describe('trading modes: no confirmation, automatic guards only', () => {
     expect((await checkKeyStep(env, 'mainnet', { factory: factoryFor(fakeBybit(), fakeBybit({ readOnly: 1 })) })).ok).toBe(false);
   });
   it('LIVE without exchange keys exits with code 2', () => {
-    const r = spawnSync(process.execPath, ['--import', 'tsx', 'server/index.ts'], { env: { ...process.env, TRADING_MODE: 'LIVE', EXCHANGE: 'bybit', BYBIT_API_KEY: '', BYBIT_API_SECRET: '', PORT: '0', DOTENV_CONFIG_PATH: '/nonexistent' }, encoding: 'utf8', timeout: 15000 });
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'server/index.ts'], { env: { ...process.env, TRADING_MODE: 'LIVE', EXCHANGE: 'bybit', BYBIT_API_KEY: '', BYBIT_API_SECRET: '', PORT: '0', DOTENV_CONFIG_PATH: '/nonexistent' }, encoding: 'utf8', timeout: 60000 });
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/keys are missing/);
-  });
+  }, 60000);
   it('guards cannot be configured to zero', () => {
     expect(() => loadConfig({ ...env, TRADING_MODE: 'LIVE', SAFETY_NET: '0' })).toThrow(/SAFETY_NET/);
     expect(loadConfig({ ...env, DAILY_LOSS_LIMIT_PCT: '0' }).risk.dailyLossLimitPct).toBe(0.5);

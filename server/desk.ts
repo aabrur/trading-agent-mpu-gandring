@@ -73,6 +73,7 @@ export class Desk extends EventEmitter {
   private liveBackoffUntil = 0;
   private timers: NodeJS.Timeout[] = [];
   private killFilePath: string | null = null;
+  private syncedLive = false;
 
   constructor(public cfg: AppConfig, private call: ModelCaller, private opts: DeskOptions = {}) {
     super();
@@ -267,7 +268,13 @@ export class Desk extends EventEmitter {
     try {
       const [bal, venue] = await Promise.all([ex.adapter.balance(), ex.adapter.positions()]);
       const venueUpnl = venue.reduce((sum, p) => sum + p.unrealizedPnl, 0);
+      const isInitial = !this.syncedLive;
+      this.syncedLive = true;
       this.book.balance = round2(bal.equityUsdt - venueUpnl);
+      if (isInitial) {
+        const key = new Date().toISOString().slice(0, 10);
+        this.day = { key, startEquity: round2(bal.equityUsdt), lossHit: false };
+      }
       for (const p of [...this.book.positions]) {
         const v = venue.find((x) => x.symbol === p.symbol && x.side === p.side);
         if (!v) {

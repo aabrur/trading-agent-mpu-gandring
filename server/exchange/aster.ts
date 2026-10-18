@@ -2,6 +2,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import type { Hex } from 'viem';
 import { ExchangeError, httpJson, floorStep, roundTick, pickProtection, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
 import { asterRules, type InstrumentRules, type RulesCache } from './rules.js';
+import { readEnv } from '../../cli/envfile.js';
 
 // EXPERIMENTAL, UNTESTED against a real account. Aster perpetual futures, API v3, one-way mode.
 // Docs: https://github.com/asterdex/api-docs (V3 Futures), https://asterdex.github.io/aster-api-website/asterCode/authentication/
@@ -29,7 +30,8 @@ export class AsterAdapter implements ExchangeAdapter {
     if (!/^0x[0-9a-fA-F]{64}$/.test(signerPrivateKey)) throw new ExchangeError('Aster signer key must be the 0x private key of a Pro API agent wallet');
     this.account = privateKeyToAccount(signerPrivateKey as Hex);
     this.base = base || BASE[network];
-    this.pinnedAgent = (pinnedAgent ?? '').trim();
+    const fromEnv = () => { try { return readEnv(process.env.DOTENV_PATH || '.env').ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? ''; } catch { return ''; } };
+    this.pinnedAgent = (pinnedAgent ?? process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? fromEnv()).trim();
   }
   get signerAddress() { return this.account.address; }
 

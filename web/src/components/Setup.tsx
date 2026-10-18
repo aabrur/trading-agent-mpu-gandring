@@ -191,7 +191,20 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
                 <h4>6. Switch mode</h4>
                 <div className="setup-nav">
                   <select value={mode} onChange={(e) => setMode(e.target.value)} aria-label="mode">{info.modes.map((m) => <option key={m.mode}>{m.mode}</option>)}</select>
-                  {mode === 'LIVE' && <input className="setup-confirm" placeholder={`type: ${info.liveConfirmPhrase}`} value={confirm} onChange={(e) => setConfirm(e.target.value)} />}
+                  {mode === 'LIVE' && (
+                    <div className="setup-confirm-col" style={{ display: 'inline-flex', flexDirection: 'column', gap: '3px' }}>
+                      <span className="wallet-note small" style={{ margin: 0, fontSize: '11px', fontWeight: 600 }}>
+                        Type: <code style={{ userSelect: 'all', cursor: 'pointer' }} onClick={() => setConfirm(info.liveConfirmPhrase)} title="Click to fill">{info.liveConfirmPhrase}</code>
+                      </span>
+                      <input
+                        className="setup-confirm"
+                        placeholder={info.liveConfirmPhrase}
+                        value={confirm}
+                        onChange={(e) => setConfirm(e.target.value)}
+                        aria-label="live confirmation phrase"
+                      />
+                    </div>
+                  )}
                   <button disabled={busy || !info.keyEntry.available || (mode === 'LIVE' && confirm !== info.liveConfirmPhrase)} onClick={saveMode}>Check and save mode</button>
                 </div>
                 <p className="wallet-note small">TESTNET and LIVE are saved only after the key check passes: trade on, withdraw off. LIVE needs the typed confirmation. Restart the office afterwards.</p>

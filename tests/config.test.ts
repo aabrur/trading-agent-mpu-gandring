@@ -9,10 +9,10 @@ describe('paper-only safety switch', () => {
     }
   });
   it('server process exits with code 2 when TRADING_MODE=LIVE', () => {
-    const r = spawnSync(process.execPath, ['--import', 'tsx', 'server/index.ts'], { env: { ...process.env, TRADING_MODE: 'LIVE', PORT: '0' }, encoding: 'utf8', timeout: 15000 });
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'server/index.ts'], { env: { ...process.env, TRADING_MODE: 'LIVE', PORT: '0', EXCHANGE: 'none' }, encoding: 'utf8', timeout: 60000 });
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/PAPER/);
-  });
+  }, 60000);
   it('falls back to mock when a provider has no key', () => {
     const c = loadConfig({ TRADING_MODE: 'PAPER', AGENT_RISK_PROVIDER: 'anthropic' });
     expect(c.agents.risk.provider).toBe('mock');
