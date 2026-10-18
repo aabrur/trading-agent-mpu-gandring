@@ -47,7 +47,8 @@ export class BybitAdapter implements ExchangeAdapter {
 
   async balance() {
     const r = await this.req('GET', '/v5/account/wallet-balance', { accountType: 'UNIFIED' });
-    const acc = r?.list?.[0] ?? {};
+    const acc = r?.list?.[0];
+    if (acc?.totalEquity == null || acc?.totalAvailableBalance == null || !Number.isFinite(Number(acc.totalEquity)) || !Number.isFinite(Number(acc.totalAvailableBalance))) throw new ExchangeError('bybit: incomplete account balance response');
     return { equityUsdt: Number(acc.totalEquity ?? 0), availableUsdt: Number(acc.totalAvailableBalance ?? 0) };
   }
 
@@ -86,16 +87,29 @@ export class BybitAdapter implements ExchangeAdapter {
     let row = (await this.req('GET', '/v5/order/realtime', { category: 'linear', symbol, orderLinkId: clientId }))?.list?.[0];
     if (!row) row = (await this.req('GET', '/v5/order/history', { category: 'linear', symbol, orderLinkId: clientId }))?.list?.[0];
     if (!row) return { clientId, orderId: '', status: 'unknown', filledQty: 0, avgPrice: null };
-    const map: Record<string, OrderRecord['status']> = { Filled: 'filled', PartiallyFilled: 'partial', PartiallyFilledCanceled: 'partial', New: 'open', Created: 'open', Untriggered: 'open', Rejected: 'rejected', Cancelled: 'cancelled', Deactivated: 'cancelled' };
+    const map: Record<string, OrderRecord['status']> = { Filled: 'filled', PartiallyFilled: 'partial', PartiallyFilledCanceled: 'cancelled', New: 'open', Created: 'open', Untriggered: 'open', Rejected: 'rejected', Cancelled: 'cancelled', Deactivated: 'cancelled' };
     return { clientId, orderId: row.orderId, status: map[row.orderStatus] ?? 'unknown', filledQty: Number(row.cumExecQty ?? 0), avgPrice: Number(row.avgPrice) || null, raw: row.orderStatus };
   }
 
   async positions(symbol?: string): Promise<VenuePosition[]> {
-    const r = await this.req('GET', '/v5/position/list', { category: 'linear', symbol, settleCoin: symbol ? undefined : 'USDT' });
-    return (r?.list ?? []).filter((p: any) => Number(p.size) > 0).map((p: any) => ({
-      symbol: p.symbol, side: p.side === 'Buy' ? 'LONG' : 'SHORT', qty: Number(p.size), entry: Number(p.avgPrice),
-      stop: Number(p.stopLoss) || null, tp: Number(p.takeProfit) || null, unrealizedPnl: Number(p.unrealisedPnl ?? 0)
-    }));
+    const result: VenuePosition[] = [];
+    let cursor: string | undefined;
+    const cursors = new Set<string>();
+    do {
+      const response = await this.req('GET', '/v5/position/list', { category: 'linear', symbol, settleCoin: symbol ? undefined : 'USDT', cursor });
+      if (!Array.isArray(response?.list)) throw new ExchangeError('bybit: incomplete position response');
+      for (const p of response.list as Record<string, unknown>[]) {
+        const qty = Number(p.size);
+        if (!Number.isFinite(qty) || qty < 0) throw new ExchangeError('bybit: invalid position quantity');
+        if (!qty) continue;
+        if (p.side !== 'Buy' && p.side !== 'Sell') throw new ExchangeError('bybit: invalid position side');
+        result.push({ symbol: String(p.symbol), side: p.side === 'Buy' ? 'LONG' : 'SHORT', qty, entry: Number(p.avgPrice), stop: Number(p.stopLoss) || null, tp: Number(p.takeProfit) || null, unrealizedPnl: p.unrealisedPnl == null ? NaN : Number(p.unrealisedPnl) });
+      }
+      cursor = response.nextPageCursor || undefined;
+      if (cursor && cursors.has(cursor)) throw new ExchangeError('bybit: repeated position page');
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+    return result;
   }
 
   async closePosition(symbol: string, side: Side, qty: number, clientId: string) {

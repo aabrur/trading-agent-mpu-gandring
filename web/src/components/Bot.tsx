@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import type { AgentId } from '../types';
 
-export type Pose = 'idle' | 'type' | 'point' | 'think' | 'argue' | 'punch' | 'guard' | 'cheer' | 'walk';
+export type Pose = 'idle' | 'type' | 'point' | 'think' | 'argue' | 'punch' | 'guard' | 'cheer' | 'walk' | 'read' | 'drink' | 'stretch' | 'sit' | 'observe' | 'pass';
 export type Face = 'normal' | 'happy' | 'angry' | 'dizzy' | 'worried';
 
 // Body tints: all from the same glossy mint family, nudged per role.
@@ -43,7 +43,7 @@ export function Bot({ id, size = 72, pose = 'idle', face = 'normal', talking = f
           <path d="M24 78 Q12 90 14 104" stroke={t.dark} strokeWidth="9" fill="none" strokeLinecap="round" />
           <circle cx="14" cy="106" r="8" fill={t.base} stroke={t.dark} strokeWidth="1.5" />
           <circle cx="20" cy="102" r="3.4" fill={t.base} stroke={t.dark} strokeWidth="1.2" />
-          {id === 'research' && <g transform="rotate(-12 10 108)"><rect x="-6" y="98" width="24" height="18" rx="2" fill="#fbf6ea" stroke="#b9a98c" /><path d="M-2 103 h16 M-2 107 h12 M-2 111 h14" stroke="#9b8a6c" strokeWidth="1.2" /></g>}
+          {(id === 'research' || pose === 'read' || pose === 'pass') && <g transform="rotate(-12 10 108)"><rect x="-6" y="98" width="24" height="18" rx="2" fill="#fbf6ea" stroke="#b9a98c" /><path d="M-2 103 h16 M-2 107 h12 M-2 111 h14" stroke="#9b8a6c" strokeWidth="1.2" /></g>}
           {id !== 'research' && <g className="mug"><rect x="2" y="100" width="12" height="13" rx="3" fill="#fffaf0" stroke="#c9b08a" strokeWidth="1.2" /><path d="M14 103 q5 1 0 7" stroke="#c9b08a" strokeWidth="1.6" fill="none" /><rect x="3.5" y="101.5" width="9" height="3" rx="1.5" fill="#8b5a33" /><path className="steam" d="M6 96 q-2 -4 1 -7 M10 96 q-2 -4 1 -7" stroke="rgba(255,255,255,.9)" strokeWidth="1.4" fill="none" strokeLinecap="round" /></g>}
         </g>
 

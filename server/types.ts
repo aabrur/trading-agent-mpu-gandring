@@ -30,6 +30,10 @@ export interface NewsItem {
 }
 
 export interface Position {
+  decisionEvidence?: Record<string, unknown>;
+  ownership?: 'managed' | 'recovered' | 'external';
+  protectionStatus?: 'confirmed' | 'missing' | 'unknown';
+  entryStatus?: 'confirmed' | 'estimated';
   id: string;
   symbol: string;
   side: 'LONG' | 'SHORT';
@@ -45,6 +49,11 @@ export interface Position {
 }
 
 export interface ClosedTrade extends Omit<Position, 'unrealizedPnl'> {
+  positionId?: string;
+  remainingQty?: number;
+  pnlStatus?: 'confirmed' | 'estimated' | 'unknown';
+  exitStatus?: 'confirmed' | 'estimated';
+  executionId?: string;
   exit: number;
   closedAt: number;
   realizedPnl: number;
@@ -59,6 +68,7 @@ export interface Opinion {
 }
 
 export interface Verdict {
+  executionStatus?: 'partial' | 'filled' | 'closed';
   id: string;
   symbol: string;
   action: Action;
@@ -67,7 +77,7 @@ export interface Verdict {
   reason: string;
   disagreement: number;
   camps: { bull: AgentId[]; bear: AgentId[]; neutral: AgentId[] };
-  order?: { side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number };
+  order?: { positionId?: string; status?: 'partial' | 'filled'; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number };
   example: boolean;
   at: number;
 }

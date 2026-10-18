@@ -12,6 +12,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 //   after:  self-improving reflection (lessons with status new / confirmed / promoted)
 export class AutoTrader {
   private timer: NodeJS.Timeout | null = null;
+  private generation = 0;
   constructor(private desk: Desk, private firstDelayMs = 5000) {}
 
   get intervalMs() { return this.desk.cfg.auto.intervalMin * 60_000; }
@@ -21,10 +22,12 @@ export class AutoTrader {
     if (this.desk.grokbot) { log('[auto] Grok Bot mode: the trading loop runs as a Grok Bot routine (see grokbot/BOOTSTRAP.md), not here'); return; }
     this.desk.autoState = { ...this.desk.autoState, on: true, intervalMin: this.desk.cfg.auto.intervalMin };
     log(`[auto] full auto on: ${this.desk.cfg.auto.symbols.join(', ')} every ${this.desk.cfg.auto.intervalMin} min`);
-    this.schedule(this.firstDelayMs);
+    if (!this.desk.autoState.running) this.schedule(this.firstDelayMs);
     this.desk.emit('state', this.desk.snapshot());
   }
   stop() {
+    this.generation++;
+    this.desk.autoState.stopping = this.desk.autoState.running;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.desk.autoState.on = false;
@@ -68,35 +71,43 @@ export class AutoTrader {
   private schedule(ms: number) {
     this.desk.autoState.nextAt = Date.now() + ms;
     this.timer = setTimeout(() => {
-      this.cycle()
+      this.timer = null;
+      this.desk.autoState.nextAt = 0;
+      this.cycle('scheduled')
         .catch((err) => log(`[auto] cycle error: ${safe((err as Error).message)}`))
-        .finally(() => { if (this.timer && !this.desk.killed) this.schedule(this.intervalMs); });
+        .finally(() => { if (!this.timer && this.desk.autoState.on && !this.desk.killed) this.schedule(this.intervalMs); });
     }, ms);
   }
 
   /** One cycle. Safe to call directly (tests, "run a cycle now"). */
-  async cycle(): Promise<{ ran: string[]; skipped: string }> {
+  async cycle(trigger: 'manual' | 'scheduled' = 'manual'): Promise<{ ran: string[]; skipped: string }> {
     const d = this.desk;
     if (d.killed) { this.stop(); return { ran: [], skipped: 'kill switch' }; }
     if (d.paused) return { ran: [], skipped: 'desk paused' };
     if (d.autoState.running) return { ran: [], skipped: 'previous cycle still running' };
-    d.autoState.running = true;
+    const generation = this.generation;
+    const cancelled = () => generation !== this.generation || d.paused || d.killed;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null; d.autoState.nextAt = 0;
+    d.autoState.running = true; d.autoState.trigger = trigger; d.autoState.stopping = false;
     d.autoState.lastCycleAt = Date.now();
     d.emit('state', d.snapshot());
     const ran: string[] = [];
     const started = Date.now();
     try {
       if (d.cfg.learning.scan) d.scan();
-      await d.closeStale();
+      await d.closeStale(() => !cancelled());
       // 1. Evaluate open positions first so any CLOSE decision frees up a slot out of N immediately.
-      const openSyms = [...new Set(d.book.positions.map((p) => p.symbol))];
+      const openSyms = [...new Set(d.book.positions.filter((p) => p.ownership !== 'external').map((p) => p.symbol))];
+      const ranking = (symbol: string) => { const evidence = d.opportunities[symbol]; return evidence && Date.now() - evidence.at < d.cfg.tickerRefreshSeconds * 3000 ? evidence.score : 0; };
       const candidates = d.cfg.auto.symbols
         .filter((s) => !openSyms.includes(s))
-        .sort((a, b) => Math.abs(d.tickers[b]?.change24hPct ?? 0) - Math.abs(d.tickers[a]?.change24hPct ?? 0));
+        .sort((a, b) => ranking(b) - ranking(a));
       const queue = [...openSyms, ...candidates];
       for (const sym of queue) {
-        if (d.paused || d.killed) break;
-        for (let i = 0; d.debate && i < 600; i++) await sleep(500); // a manual debate is running, wait for it
+        if (cancelled()) break;
+        for (let i = 0; d.debate && !cancelled() && i < 600; i++) await sleep(500); // a manual debate is running, wait for it
+        if (cancelled()) break;
         try { await d.runDebate(sym); ran.push(sym); }
         catch (e) { log(`[auto] ${sym}: ${safe((e as Error).message)}`); }
       }
@@ -104,7 +115,8 @@ export class AutoTrader {
       if (d.autoState.cycles % d.cfg.learning.reflectEveryCycles === 0) d.reflect(started - 1);
       return { ran, skipped: '' };
     } finally {
-      d.autoState.running = false;
+      d.autoState.running = false; d.autoState.stopping = false; d.autoState.completedAt = Date.now();
+      if (d.autoState.on && !d.killed && !this.timer) this.schedule(this.intervalMs);
       d.emit('state', d.snapshot());
     }
   }

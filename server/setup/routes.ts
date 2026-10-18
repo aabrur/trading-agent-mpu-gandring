@@ -11,7 +11,6 @@ import { AGENT_IDS } from '../config.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from '../exchange/index.js';
 import { walletAccess } from '../wallet.js';
 import { safe } from '../redact.js';
-import { sizeTicket } from '../sizing.js';
 import { sanitizeUntrusted } from '../untrusted.js';
 import { VENUE_GUIDES, guideSteps, envFields, MODES, MODE_INFO, LIVE_CONFIRM_PHRASE, LINKS_CHECKED_ON } from './guide.js';
 import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus } from './core.js';
@@ -191,16 +190,7 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
   app.post('/api/ops/size', async (req, res) => {
     if (!gate(req, res)) return;
     const p = SizeBody.safeParse(req.body); if (!p.success) return res.status(400).json({ ok: false, text: 'symbol, side, stop (entry optional: live price)' });
-    const s = c.desk.snapshot();
-    let entry = p.data.entry;
-    if (!entry) { const t = c.desk.tickers[p.data.symbol.toUpperCase()]; entry = t ? Number((t as { last: number }).last) : undefined; }
-    if (!entry) return res.status(400).json({ ok: false, text: 'no live price yet for that symbol: enter an entry price' });
-    let stop = p.data.stop;
-    if (!stop && entry) {
-      stop = p.data.side === 'LONG' ? entry * (1 - 0.015) : entry * (1 + 0.015);
-    }
-    const r = await sizeTicket(c.cfg, setupEnv(c.envFile), { balance: s.paper.balance, equity: s.paper.equity, safetyNet: s.paper.safetyNet, n: s.paper.n, open: s.paper.positions.length, used: s.paper.usedMargin, mode: s.mode }, { ...p.data, entry, stop: stop! }, c.fetchImpl ?? fetch);
-    res.json(r);
+    res.json(await c.desk.previewTicket(p.data));
   });
   // Same single execution path as everything else: risk gate caps, money split, required stop, daily stop, kill switch.
   app.post('/api/ops/open', async (req, res) => {

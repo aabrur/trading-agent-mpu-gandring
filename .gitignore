@@ -16,3 +16,8 @@ test-results/
 data/learnings.json
 data/kill-switch.json
 *.xml
+
+# Execution ownership and cumulative-fill checkpoints
+data/execution-*.json
+data/execution-*.json.tmp
+.superpowers/

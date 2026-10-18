@@ -268,7 +268,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   const wss = new WebSocketServer({ server, path: '/ws' });
   const send = (ws: WebSocket, type: string, payload: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload })); };
   const broadcast = (type: string) => (payload: unknown) => { const msg = JSON.stringify({ type, payload }); for (const c of wss.clients) if (c.readyState === WebSocket.OPEN) c.send(msg); };
-  for (const ev of ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report']) desk.on(ev, broadcast(ev));
+  for (const ev of ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report', 'execution']) desk.on(ev, broadcast(ev));
   wss.on('connection', (ws) => {
     send(ws, 'state', desk.snapshot());
     ws.on('message', async (buf) => {

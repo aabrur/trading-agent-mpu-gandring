@@ -26,7 +26,7 @@ if (net) {
       console.error(`[trading-agent-mpu-gandring] ${cfg.tradingMode} refused at startup: ${v.detail}`);
       process.exit(2);
     }
-    executor = new LiveExecutor(adapter);
+    executor = new LiveExecutor(adapter, 1200, `data/execution-${ex.name}-${net}.json`);
     if (v.perm?.exception) log(`[withdraw guard] ${safe(v.perm.exception)}`);
     log(`${cfg.tradingMode} on ${ex.name}: ${v.detail}`);
     // Every open position must have its stop resting ON THE EXCHANGE, so it stays protected while this computer is off.

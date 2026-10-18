@@ -27,7 +27,7 @@ function initialTourOpen() {
 
 function AppInner() {
   const { t } = useI18n();
-  const { state, connected, speech, fights, meter, reactions, command } = useDesk();
+  const { state, connected, speech, fights, meter, reactions, sceneEvents, command } = useDesk();
   const [selected, setSelected] = useState<AgentId | null>(null);
   const [theme, setTheme] = useState<string>(initialTheme);
   const [symbol, setSymbol] = useState<string>('');
@@ -127,7 +127,7 @@ function AppInner() {
       <TickerStrip state={state} />
       <main className="layout">
         <section className="stage">
-          <Office state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected} />
+          <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected} />
           <Roster state={state} onSelect={setSelected} />
           <CommandBar state={state} command={(cmd) => command(cmd)} />
           <PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} />
@@ -138,7 +138,7 @@ function AppInner() {
           </div>
         </section>
         <aside className="side">
-          <FightMeter state={state} meter={meter} />
+          <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
           <DeskOps state={state} />
           <Verdicts state={state} />
           <Portfolio state={state} command={(cmd) => void command(cmd)} />

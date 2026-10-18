@@ -1,39 +1,70 @@
 import { randomBytes } from 'node:crypto';
 import type { ExchangeAdapter, OrderRecord, Side } from '../exchange/index.js';
+import { ExecutionJournal, type ExecutionIntent } from './journal.js';
 import { log, safe } from '../redact.js';
 
 export const newClientId = (tag = 'o') => `mg${tag}${Date.now().toString(36)}${randomBytes(4).toString('hex')}`.slice(0, 32);
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export interface Fill { ok: boolean; clientId: string; record: OrderRecord | null; qty: number; avgPrice: number | null; note: string }
+export interface Fill { ok: boolean; clientId: string; record: OrderRecord | null; qty: number; requestedQty: number; remainingQty: number; avgPrice: number | null; note: string }
 
 // Every exchange write goes through here. Rules:
 //  - one send per intent, never a blind retry
 //  - after the send (or a send error, or a timeout) we read the exchange's own record and trust only that
 //  - every entry carries a stop loss, the adapter refuses otherwise
 export class LiveExecutor {
-  constructor(public adapter: ExchangeAdapter, private reconcileDelayMs = 1200) {}
+  readonly journal: ExecutionJournal;
+  constructor(public adapter: ExchangeAdapter, private reconcileDelayMs = 1200, journalPath: string | null = null) {
+    this.journal = new ExecutionJournal(journalPath, `${adapter.name}:${adapter.network}`);
+  }
+  private intent(kind: 'open' | 'close', o: { symbol: string; side: Side; qty: number; stop?: number; tp?: number | null; leverage?: number; positionId?: string }) {
+    const intent: ExecutionIntent = { ...o, kind, requestedQty: o.qty, clientId: newClientId(kind === 'open' ? 'e' : 'c'), accountedQty: 0, accountedValue: 0, record: null, at: Date.now() };
+    this.journal.intents.push(intent);
+    this.journal.save(); // Persist before sending so a restart cannot lose ownership evidence.
+    return intent;
+  }
+  async refreshPending() {
+    for (const intent of this.journal.intents.filter((i) => !this.journal.settled(i))) {
+      try {
+        const record = await this.adapter.getOrder(intent.symbol, intent.clientId);
+        const terminal = (status: OrderRecord['status']) => ['filled', 'cancelled', 'rejected'].includes(status);
+        if (record.status !== 'unknown' && Number.isFinite(record.filledQty) && record.filledQty >= (intent.record?.filledQty ?? 0) && !(intent.record && terminal(intent.record.status) && !terminal(record.status))) intent.record = record;
+      }
+      catch (e) { log(`[live] pending order read failed: ${safe((e as Error).message)}`); }
+    }
+    this.journal.save();
+  }
+  hasPending(symbol: string, _side: Side, kind: 'open' | 'close') {
+    return this.journal.intents.some((i) => i.symbol === symbol && i.kind === kind && !this.journal.settled(i));
+  }
+  account(clientId: string, qty: number, avgPrice: number | null, awaitingQty?: number) {
+    const i = this.journal.intents.find((x) => x.clientId === clientId);
+    if (i) { if (awaitingQty != null) { i.awaitingQty = awaitingQty; delete i.awaitingObservedQty; } i.accountedQty = qty; i.accountedValue = avgPrice == null ? null : qty * avgPrice; }
+  }
 
-  private async reconcile(symbol: string, clientId: string, sendError: string | null): Promise<Fill> {
+  private async reconcile(symbol: string, clientId: string, sendError: string | null, requestedQty: number): Promise<Fill> {
     if (this.reconcileDelayMs) await pause(this.reconcileDelayMs);
     let rec: OrderRecord | null = null;
     try { rec = await this.adapter.getOrder(symbol, clientId); } catch (e) { log(`[live] reconcile read failed for ${clientId}: ${safe((e as Error).message)}`); }
-    const filled = !!rec && (rec.status === 'filled' || rec.status === 'partial') && rec.filledQty > 0;
+    const filled = !!rec && rec.status !== 'unknown' && Number.isFinite(rec.filledQty) && rec.filledQty > 0;
+    const intent = this.journal.intents.find((i) => i.clientId === clientId);
+    if (intent && rec) { intent.record = rec; this.journal.save(); }
     const note = filled
       ? `exchange record: ${rec!.status} ${rec!.filledQty} @ ${rec!.avgPrice ?? '?'}${sendError ? ` (send reported: ${sendError})` : ''}`
       : `not filled per exchange record (${rec?.status ?? 'no record'})${sendError ? `; send error: ${sendError}` : ''}. Not retried.`;
-    return { ok: filled, clientId, record: rec, qty: filled ? rec!.filledQty : 0, avgPrice: filled ? rec!.avgPrice : null, note: safe(note) };
+    return { ok: filled, clientId, record: rec, qty: filled ? rec!.filledQty : 0, requestedQty, remainingQty: Math.max(0, requestedQty - (filled ? rec!.filledQty : 0)), avgPrice: filled ? rec!.avgPrice : null, note: safe(note) };
   }
 
   async open(o: { symbol: string; side: Side; qty: number; stop: number; tp: number | null; leverage: number }): Promise<Fill> {
-    if (!(o.stop > 0)) return { ok: false, clientId: '', record: null, qty: 0, avgPrice: null, note: 'refused: no stop loss' };
+    if (!(o.stop > 0)) return { ok: false, clientId: '', record: null, qty: 0, requestedQty: o.qty, remainingQty: o.qty, avgPrice: null, note: 'refused: no stop loss' };
     // Fail closed: a venue that cannot hold the stop on its own side never gets an entry.
-    if (this.adapter.exchangeStops !== true) return { ok: false, clientId: '', record: null, qty: 0, avgPrice: null, note: `refused: the ${this.adapter.name} adapter cannot place an exchange-side stop loss` };
-    const clientId = newClientId('e');
+    if (this.adapter.exchangeStops !== true) return { ok: false, clientId: '', record: null, qty: 0, requestedQty: o.qty, remainingQty: o.qty, avgPrice: null, note: `refused: the ${this.adapter.name} adapter cannot place an exchange-side stop loss` };
+    const { clientId } = this.intent('open', o);
+    this.journal.protectionClients.push({ symbol: o.symbol, clientId }); this.journal.save();
     let sendError: string | null = null;
     try { await this.adapter.placeOrder({ ...o, clientId }); }
     catch (e) { sendError = safe((e as Error).message); log(`[live] send for ${clientId} failed: ${sendError}. Reconciling, not retrying.`); }
-    const fill = await this.reconcile(o.symbol, clientId, sendError);
+    const fill = await this.reconcile(o.symbol, clientId, sendError, o.qty);
     if (!fill.ok) return fill;
     const guard = await this.ensureOnExchange(o.symbol, o.side, fill.qty, o.stop, o.tp);
     if (!guard.ok) return { ...fill, ok: false, qty: 0, note: safe(`${fill.note}. ${guard.note}`) };
@@ -53,14 +84,16 @@ export class LiveExecutor {
     const notes: string[] = [];
     const missStop = !have.stop, missTp = !!tp && !have.tp;
     if (missStop || missTp) {
-      try { await this.adapter.protect({ symbol, side, qty, stop: missStop ? stop : null, tp: missTp ? tp : null, clientId: newClientId('p') }); }
+      const protectionId = newClientId('p');
+      this.journal.protectionClients.push({ symbol, clientId: protectionId }); this.journal.save();
+      try { await this.adapter.protect({ symbol, side, qty, stop: missStop ? stop : null, tp: missTp ? tp : null, clientId: protectionId }); }
       catch (e) { notes.push(`placing the missing ${missStop ? 'stop' : 'take profit'} failed: ${safe((e as Error).message)}`); }
       if (this.reconcileDelayMs) await pause(this.reconcileDelayMs);
       have = (await read()) ?? { stop: null, tp: null };
     }
     if (!have.stop) {
       const c = await this.close(symbol, side, qty);
-      return { ok: false, note: `FAIL CLOSED: no exchange-side stop could be confirmed, position closed (${c.note})${notes.length ? `; ${notes.join('; ')}` : ''}`, stop: null, tp: null };
+      return { ok: false, note: `FAIL CLOSED: no exchange-side stop could be confirmed, close attempted (${c.note}); confirmed filled ${c.qty}, requested ${qty}${notes.length ? `; ${notes.join('; ')}` : ''}`, stop: null, tp: null };
     }
     if (tp && !have.tp) notes.push('take profit is NOT on the exchange (stop is)');
     if (missStop) notes.push(`exchange-side stop re-placed at ${have.stop}`);
@@ -90,14 +123,31 @@ export class LiveExecutor {
     return notes;
   }
 
-  async close(symbol: string, side: Side, qty: number): Promise<Fill> {
-    const clientId = newClientId('c');
+  async close(symbol: string, side: Side, qty: number, positionId?: string): Promise<Fill> {
+    const { clientId } = this.intent('close', { symbol, side, qty, positionId });
     let sendError: string | null = null;
     try { await this.adapter.closePosition(symbol, side, qty, clientId); }
     catch (e) { sendError = safe((e as Error).message); }
-    const fill = await this.reconcile(symbol, clientId, sendError);
-    try { await this.adapter.cancelAll(symbol); } catch (e) { log(`[live] cancel leftovers on ${symbol} failed: ${safe((e as Error).message)}`); }
+    const fill = await this.reconcile(symbol, clientId, sendError, qty);
+    if (fill.ok && fill.remainingQty === 0) await this.cleanupProtection(symbol);
+    // Do not sweep symbol-wide orders here: they can protect a remainder or belong to the owner.
+    // Attached/reduce-only protection is left on the venue; killAll retains its explicit cancellation policy.
     return fill;
+  }
+
+  async cleanupProtection(symbol: string) {
+    if (!this.adapter.cancelOrder || this.journal.intents.some((i) => i.symbol === symbol && i.kind === 'open' && !this.journal.settled(i))) return;
+    try {
+      if ((await this.adapter.positions(symbol)).some((p) => p.qty > 0)) return;
+      for (const parent of this.journal.protectionClients.filter((p) => p.symbol === symbol)) {
+        for (const suffix of ['s', 't']) {
+          const clientId = `${parent.clientId}${suffix}`;
+          const order = await this.adapter.getOrder(symbol, clientId);
+          if (order.status === 'open' || order.status === 'partial') await this.adapter.cancelOrder(symbol, clientId);
+        }
+      }
+      this.journal.protectionClients = this.journal.protectionClients.filter((p) => p.symbol !== symbol); this.journal.save();
+    } catch (e) { log(`[live] owned protection cleanup deferred: ${safe((e as Error).message)}`); }
   }
 
   /** Kill switch: cancel everything and flatten every position the exchange reports. */
@@ -107,6 +157,7 @@ export class LiveExecutor {
     try { venue = await this.adapter.positions(); } catch (e) { notes.push(`could not read positions: ${safe((e as Error).message)}`); }
     const all = new Set([...symbols, ...venue.map((p) => p.symbol)]);
     for (const s of all) { try { await this.adapter.cancelAll(s); notes.push(`${s}: orders cancelled`); } catch (e) { notes.push(`${s}: cancel failed ${safe((e as Error).message)}`); } }
+    try { venue = await this.adapter.positions(); } catch (e) { notes.push(`post-cancel position read failed: ${safe((e as Error).message)}`); }
     for (const p of venue) { const f = await this.close(p.symbol, p.side, p.qty); notes.push(`${p.symbol}: ${f.note}`); }
     return notes;
   }

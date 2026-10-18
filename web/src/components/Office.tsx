@@ -4,17 +4,16 @@ import { AGENT_ORDER } from '../types';
 import { Bot, type Face, type Pose } from './Bot';
 import { KerisBlade } from './Keris';
 import { Sparkline } from './MiniCharts';
+import { SEATS, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
+import { useSceneDirector } from '../useSceneDirector';
 
-const SEATS: Record<AgentId, { x: number; y: number }> = {
-  lead: { x: 50, y: 55 }, market: { x: 31, y: 63 }, research: { x: 69, y: 63 },
-  strategist: { x: 31, y: 84 }, risk: { x: 69, y: 84 }, execution: { x: 50, y: 94 }
-};
-const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'filling paper order', journaling: 'journaling' };
+const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'tracking execution', journaling: 'journaling' };
 const POW_WORDS = ['GEBUK!', 'POW!', 'BONK!', 'DUAR!', 'PLAK!', 'BLETAK!', 'BAM!', 'AMPUN!', 'HAJAR!', 'JEDER!'];
 const BRAWL_PROPS = ['🥊', '👊', '💥', '⚡', '💫', '🩹', '👟', '🔥'];
 
 interface Props {
   state: DeskState;
+  sceneEvents: SceneEvent[];
   speech: Partial<Record<AgentId, Speech>>;
   fights: Fight[];
   reactions: Partial<Record<AgentId, Reaction>>;
@@ -47,24 +46,47 @@ function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | un
   }
 }
 
-function useWalking(x: number, y: number) {
-  const prev = useRef({ x, y });
-  const [walk, setWalk] = useState<{ on: boolean; left: boolean }>({ on: false, left: false });
+function useMovement(pos: Point, desks: Point[]) {
+  const anchor = useRef<HTMLDivElement>(null);
+  const previous = useRef(pos);
+  const [walk, setWalk] = useState({ on: false, left: false });
+  const geometry = desks.map((d) => `${d.x},${d.y}`).join(';');
   useEffect(() => {
-    if (prev.current.x === x && prev.current.y === y) return;
-    const left = x < prev.current.x;
-    prev.current = { x, y };
-    setWalk({ on: true, left });
-    const t = window.setTimeout(() => setWalk((w) => ({ ...w, on: false })), 950);
-    return () => window.clearTimeout(t);
-  }, [x, y]);
-  return walk;
+    const el = anchor.current;
+    if (!el) return;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const from = previous.current;
+    if (from.x === pos.x && from.y === pos.y) { el.style.transform = `translate(${pos.x}%, ${pos.y}%)`; return; }
+    const path = route(from, pos, desks);
+    const target = path.at(-1)!;
+    previous.current = target;
+    const distance = path.slice(1).reduce((d, p, i) => d + Math.hypot(p.x - path[i].x, p.y - path[i].y), 0);
+    const duration = media.matches ? 0 : Math.max(600, distance * 65);
+    setWalk({ on: duration > 0 && path.length > 1, left: target.x < from.x });
+    let travelled = 0;
+    const frames = path.map((p, i) => {
+      if (i) travelled += Math.hypot(p.x - path[i - 1].x, p.y - path[i - 1].y);
+      return { transform: `translate(${p.x}%, ${p.y}%)`, offset: distance ? travelled / distance : i / Math.max(1, path.length - 1) };
+    });
+    const animation = el.animate(frames, { duration, easing: 'ease-in-out', fill: 'forwards' });
+    animation.onfinish = () => { el.style.transform = `translate(${target.x}%, ${target.y}%)`; setWalk((w) => ({ ...w, on: false })); };
+    const reduce = () => { if (media.matches) animation.finish(); };
+    media.addEventListener('change', reduce);
+    return () => {
+      const matrix = new DOMMatrixReadOnly(getComputedStyle(el).transform);
+      const parent = el.parentElement;
+      if (parent?.clientWidth && parent.clientHeight) previous.current = { x: matrix.m41 / parent.clientWidth * 100, y: matrix.m42 / parent.clientHeight * 100 };
+      el.style.transform = getComputedStyle(el).transform;
+      animation.cancel(); media.removeEventListener('change', reduce);
+    };
+  }, [pos.x, pos.y, geometry]);
+  return { anchor, walk };
 }
 
-function Agent({ a, pos, sp, fight, reaction, inDebate, selected, onSelect }: { a: AgentView; pos: { x: number; y: number }; sp?: Speech; fight?: Fight; reaction?: Reaction; inDebate: boolean; selected: boolean; onSelect: () => void }) {
-  const walk = useWalking(pos.x, pos.y);
-  let { pose, face } = poseFor(a, fight, reaction, inDebate);
-  if (walk.on && (pose === 'idle' || pose === 'argue')) pose = 'walk';
+function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selected, onSelect }: { a: AgentView; pos: Point; activity: Activity; desks: Point[]; sp?: Speech; fight?: Fight; reaction?: Reaction; inDebate: boolean; selected: boolean; onSelect: () => void }) {
+  const { anchor, walk } = useMovement(pos, desks);
+  let { pose, face } = fight || reaction ? poseFor(a, fight, reaction, inDebate) : activity;
+  if (walk.on && !fight) pose = 'walk';
   // face the opponent when punching, face travel direction when walking
   let flip = false;
   if (fight) {
@@ -74,19 +96,20 @@ function Agent({ a, pos, sp, fight, reaction, inDebate, selected, onSelect }: { 
   }
   else if (walk.on && walk.left) flip = true;
   const talking = !!sp && !sp.done;
-  const isPunching = fight?.from === a.id || a.status === 'fighting';
+  const isPunching = fight?.from === a.id;
   const isHit = fight?.to === a.id;
   return (
+    <div ref={anchor} className="agent-anchor" style={{ zIndex: Math.round(pos.y * 10) + (sp ? 600 : 0) }}>
     <button
-      className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${isPunching ? 'is-punching' : ''} ${isHit ? 'is-hit' : ''} ${(isPunching || isHit) ? 'in-dust-brawl' : ''} ${!inDebate && pose === 'idle' ? 'at-desk' : ''}`}
-      style={{ left: `${pos.x}%`, top: `${pos.y}%`, zIndex: Math.round(pos.y * 10) + (sp ? 400 : 0) + (isPunching || isHit ? 250 : 0), ['--agent' as string]: a.color }}
+      className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${isPunching ? 'is-punching' : ''} ${isHit ? 'is-hit' : ''} ${(isPunching || isHit) ? 'in-dust-brawl' : ''} ${!inDebate && pose === 'idle' ? 'at-desk' : ''} ${pos.y < 48 ? 'bubble-below' : ''} ${pos.x < 25 ? 'bubble-left' : pos.x > 75 ? 'bubble-right' : ''}`}
+      style={{ zIndex: Math.round(pos.y * 10) + (sp ? 400 : 0) + (isPunching || isHit ? 250 : 0), ['--agent' as string]: a.color }}
       onClick={onSelect}
-      aria-label={`${a.name}, ${STATUS_LABEL[a.status]}`}
+      aria-label={`${a.name}, ${walk.on ? 'walking' : activity.label}`}
     >
       {sp && (
         <div className={`bubble ${sp.done ? 'done' : 'streaming'}`}>
           <b className="bubble-name">{a.name}</b>
-          <span>{sp.text}</span>{!sp.done && <i className="caret" />}
+          <span>{sp.text.length > 150 ? `${sp.text.slice(0, 147)}...` : sp.text}</span><small className="bubble-more">Open agent for full speech</small>{!sp.done && <i className="caret" />}
           {sp.example && <em className="tag-example">EXAMPLE</em>}
         </div>
       )}
@@ -94,43 +117,22 @@ function Agent({ a, pos, sp, fight, reaction, inDebate, selected, onSelect }: { 
       <div className={`bot-wrap ${flip ? 'flip' : ''}`}><Bot id={a.id} size={84} pose={pose} face={face} talking={talking} /></div>
       <div className="nametag">
         <strong>{a.name}</strong>
-        <span className="status"><i className="dot" />{inDebate && a.status === 'idle' ? 'listening' : STATUS_LABEL[a.status]}</span>
+        <span className="status"><i className="dot" />{walk.on ? 'walking' : activity.label}</span>
         {a.stance && inDebate && <span className={`stance s-${a.stance}`}>{a.stance}{a.confidence != null ? ` ${Math.round(a.confidence * 100)}%` : ''}</span>}
       </div>
     </button>
+    </div>
   );
 }
 
-export function Office({ state, speech, fights, reactions, disagreement, selected, spark, onSelect }: Props) {
+export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect }: Props) {
+  const activities = useSceneDirector(state, sceneEvents);
   const inDebate = !!state.debate;
   const heat = Math.min(1, disagreement);
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
   const visible = new Set((Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at).slice(0, 1).map((s) => s.agent));
 
-  const camps = state.debate?.camps ?? { bull: [], bear: [], neutral: [] };
-  const hasClash = camps.bull.length > 0 && camps.bear.length > 0;
-  const isHeated = (state.debate?.round ?? 0) >= 1 && disagreement >= state.fightThreshold && hasClash;
-  const anyFighting = Object.values(state.agents).some((a) => a.status === 'fighting');
-
-  const displayFights = useMemo<Fight[]>(() => {
-    if (fights.length > 0) return fights;
-    if (!inDebate) return [];
-    // Only brawl if agents are explicitly fighting or arguments escalated into a heated clash
-    if (!anyFighting && !isHeated) return [];
-    const debaters: AgentId[] = ['market', 'research', 'strategist'];
-    const speaker = debaters.find((id) => state.agents[id].status === 'fighting' || (isHeated && (state.agents[id].status === 'arguing' || visible.has(id)))) ?? (camps.bear[0] ?? 'market');
-    const speakerStance = state.agents[speaker]?.stance;
-    const opponent = debaters.find((id) => id !== speaker && state.agents[id]?.stance && state.agents[id]?.stance !== speakerStance)
-      ?? (camps.bull[0] ?? 'research');
-    return [{
-      id: (state.debate?.round ?? 0) * 7 + debaters.indexOf(speaker) + 1,
-      from: speaker,
-      to: opponent,
-      intensity: Math.max(0.7, disagreement),
-      punches: 3,
-      at: Date.now()
-    }];
-  }, [fights, inDebate, anyFighting, isHeated, state.debate?.round, state.agents, visible, disagreement, camps]);
+  const displayFights = fights.slice(-1);
   const activeFight = displayFights.at(-1);
 
   const positions = useMemo(() => {
@@ -144,8 +146,9 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
       const f = SEATS[activeFight.from], t = SEATS[activeFight.to];
       out[activeFight.from] = approach(f, t);
     }
+    for (const id of AGENT_ORDER) if (!inDebate && activities[id].destination) out[id] = activities[id].destination!;
     return out;
-  }, [state.agents, inDebate, activeFight]);
+  }, [state.agents, inDebate, activeFight, activities]);
 
   return (
     <div className={`office ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
@@ -254,6 +257,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
       <div className="prop plant big" style={{ left: '96.5%', top: '97%' }}><i className="leaf l1" /><i className="leaf l2" /><i className="leaf l3" /><i className="leaf l4" /><i className="pot" /></div>
       <div className="prop plant small" style={{ left: '26%', top: '40%' }}><i className="leaf l1" /><i className="leaf l2" /><i className="leaf l3" /><i className="pot" /></div>
 
+      <div className="analysis-board" aria-hidden="true"><span>Analysis</span><svg viewBox="0 0 90 30"><path d="M4 23 L18 16 L31 20 L44 8 L57 13 L70 6 L85 9" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div>
       {/* debate table */}
       <div className="arena" style={{ left: '50%', top: '72%' }}>
         <div className="arena-table">
@@ -277,7 +281,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
 
       {AGENT_ORDER.map((id) => {
         const f = activeFight && (activeFight.from === id || activeFight.to === id) ? activeFight : undefined;
-        return <Agent key={id} a={state.agents[id]} pos={positions[id]} sp={visible.has(id) ? speech[id] : undefined} fight={inDebate ? f : undefined} reaction={reactions[id]} inDebate={inDebate} selected={selected === id} onSelect={() => onSelect(id)} />;
+        return <Agent key={id} a={state.agents[id]} pos={positions[id]} activity={activities[id]} desks={AGENT_ORDER.map((id) => state.agents[id].desk)} sp={visible.has(id) ? speech[id] : undefined} fight={f} reaction={reactions[id]} inDebate={inDebate} selected={selected === id} onSelect={() => onSelect(id)} />;
       })}
 
       {displayFights.map((f) => {

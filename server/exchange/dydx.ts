@@ -138,7 +138,7 @@ export class DydxAdapter implements ExchangeAdapter {
         const q = mine.reduce((s: number, f: any) => s + Number(f.size), 0);
         avg = q ? mine.reduce((s: number, f: any) => s + Number(f.size) * Number(f.price), 0) / q : null;
       }
-      const map: Record<string, OrderRecord['status']> = { FILLED: 'filled', OPEN: 'open', BEST_EFFORT_OPENED: 'open', UNTRIGGERED: 'open', CANCELED: filled > 0 ? 'partial' : 'cancelled', BEST_EFFORT_CANCELED: filled > 0 ? 'partial' : 'cancelled' };
+      const map: Record<string, OrderRecord['status']> = { FILLED: 'filled', OPEN: 'open', BEST_EFFORT_OPENED: 'open', UNTRIGGERED: 'open', CANCELED: 'cancelled', BEST_EFFORT_CANCELED: 'cancelled' };
       return { clientId, orderId: String(o.id), status: map[o.status] ?? (filled > 0 ? 'partial' : 'unknown'), filledQty: filled, avgPrice: avg, raw: o.status };
     } catch { return { clientId, orderId: '', status: 'unknown', filledQty: 0, avgPrice: null }; }
   }

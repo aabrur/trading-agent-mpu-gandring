@@ -53,7 +53,7 @@ export interface OrderRecord { clientId: string; orderId: string; status: 'fille
 /** Stop loss and take profit that rest ON THE EXCHANGE (attached to the position or as reduce-only trigger orders). */
 export interface Protection { stop: number | null; tp: number | null }
 export interface ProtectRequest { symbol: string; side: Side; qty: number; stop: number | null; tp: number | null; clientId: string }
-export interface VenuePosition { symbol: string; side: Side; qty: number; entry: number; stop: number | null; tp: number | null; unrealizedPnl: number }
+export interface VenuePosition { leverage?: number; margin?: number; mark?: number; symbol: string; side: Side; qty: number; entry: number; stop: number | null; tp: number | null; unrealizedPnl: number }
 
 export interface ExchangeAdapter {
   readonly name: ExchangeName;
@@ -75,6 +75,7 @@ export interface ExchangeAdapter {
   /** Reduce-only market close. */
   closePosition(symbol: string, side: Side, qty: number, clientId: string): Promise<{ orderId: string | null }>;
   cancelAll(symbol: string): Promise<void>;
+  cancelOrder?(symbol: string, clientId: string): Promise<void>;
   /**
    * true when this adapter places the stop loss on the exchange itself, so a position stays protected
    * if this computer shuts down. The executor refuses to open anything on an adapter that says false.

@@ -116,7 +116,17 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     }
     case 'size': {
       let book: SizeBook = { balance: cfg.paper.balance, equity: cfg.paper.balance, safetyNet: cfg.paper.safetyNet, n: cfg.paper.n, open: 0, used: 0, mode: 'offline' };
-      try { const st = await state(); book = { balance: st.paper.balance, equity: st.paper.equity ?? st.paper.balance, safetyNet: st.paper.safetyNet, n: st.paper.n, open: st.paper.positions.length, used: st.paper.usedMargin, mode: st.mode }; } catch { /* offline: config values */ }
+      try {
+        const st = await state();
+        if (st.mode === 'LIVE' || st.mode === 'TESTNET') {
+          const preview = await call('POST', '/api/ops/size', { symbol: args[0] ?? '', side: args[1] ?? '', entry: Number(args[2]), stop: Number(args[3]), leverage: num(flags.leverage) });
+          return preview.ok ? ok(preview.data, preview.text) : fail(preview.text ?? 'Venue ticket preview unavailable', preview.data);
+        }
+        book = { balance: st.paper.balance, equity: st.paper.equity ?? st.paper.balance, safetyNet: st.paper.safetyNet, n: st.paper.n, open: st.paper.positions.length, used: st.paper.usedMargin, mode: st.mode };
+      } catch (e) {
+        if (env.TRADING_MODE?.toUpperCase() === 'LIVE' || env.TRADING_MODE?.toUpperCase() === 'TESTNET') return fail(`Cannot confirm venue sizing: ${(e as Error).message}`);
+      }
+
       const r = await sizeTicket(cfg, env, book, { symbol: args[0] ?? '', side: args[1] ?? '', entry: Number(args[2]), stop: Number(args[3]), leverage: num(flags.leverage) }, f);
       return r.ok ? ok(r.data, r.text) : fail(r.text, r.data);
     }

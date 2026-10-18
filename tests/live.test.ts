@@ -57,7 +57,7 @@ describe('trading modes: no confirmation, automatic guards only', () => {
 });
 
 describe('optional testnet round trip (doctor --roundtrip, mocked Bybit testnet)', () => {
-  it('places with a stop, reconciles, closes and cancels', async () => {
+  it('places with a stop, reconciles and closes without sweeping owner orders', async () => {
     const t = fakeBybit(), m = fakeBybit();
     const r = await roundTripCheck(env, { factory: factoryFor(t, m), reconcileDelayMs: 0 });
     expect(r.ok).toBe(true);
@@ -65,7 +65,7 @@ describe('optional testnet round trip (doctor --roundtrip, mocked Bybit testnet)
     expect(create).toHaveLength(2);
     expect(Number(create[0].body.stopLoss)).toBeGreaterThan(0);
     expect(create[1].body.reduceOnly).toBe(true);
-    expect(t.count('/v5/order/cancel-all')).toBe(1);
+    expect(t.count('/v5/order/cancel-all')).toBe(0);
     expect(t.calls[0].headers['X-BAPI-SIGN']).toMatch(/^[0-9a-f]{64}$/);
     expect(m.calls).toHaveLength(0);
   });

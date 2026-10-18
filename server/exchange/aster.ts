@@ -100,7 +100,7 @@ export class AsterAdapter implements ExchangeAdapter {
       detail: `${detail}; accepted because signer ${this.account.address} is a registered agent of ${this.user} and Aster's per-agent record reports canWithdraw false, canPerpTrade true (ASTER_AGENT_WITHDRAW_OFF_VERIFIED pinned). The report's canWithdraw is the agent's flag; the account flag is canWithdraw ${String(acct?.canWithdraw)}`
     };
   }
-  async balance() { const r = await this.req('GET', '/fapi/v3/account'); return { equityUsdt: Number(r?.totalMarginBalance ?? 0), availableUsdt: Number(r?.availableBalance ?? 0) }; }
+  async balance() { const r = await this.req('GET', '/fapi/v3/account'); if (r?.totalMarginBalance == null || r?.availableBalance == null || !Number.isFinite(Number(r.totalMarginBalance)) || !Number.isFinite(Number(r.availableBalance))) throw new ExchangeError('aster: incomplete account response'); return { equityUsdt: Number(r.totalMarginBalance), availableUsdt: Number(r.availableBalance) }; }
   private rulesCache: RulesCache = new Map();
   /** Lot step, min qty, tick, min notional and taker fee straight from Aster exchangeInfo, cached 5 min. */
   instrumentRules(symbol: string): Promise<InstrumentRules> { return asterRules(symbol, this.network, this.fetchImpl, this.base, this.rulesCache); }
@@ -137,12 +137,15 @@ export class AsterAdapter implements ExchangeAdapter {
   }
   async positions(symbol?: string): Promise<VenuePosition[]> {
     const r = await this.req('GET', '/fapi/v3/positionRisk', { symbol });
-    return (r ?? []).filter((p: any) => Number(p.positionAmt) !== 0).map((p: any) => ({ symbol: p.symbol, side: Number(p.positionAmt) > 0 ? 'LONG' : 'SHORT', qty: Math.abs(Number(p.positionAmt)), entry: Number(p.entryPrice), stop: null, tp: null, unrealizedPnl: Number(p.unRealizedProfit ?? 0) }));
+    if (!Array.isArray(r)) throw new ExchangeError('aster: incomplete position response');
+    const rows = r as Array<{ symbol: string; positionAmt: unknown; entryPrice: unknown; leverage?: unknown; markPrice?: unknown; unRealizedProfit?: unknown }>;
+    return rows.filter((p) => Number(p.positionAmt) !== 0).map((p) => ({ symbol: p.symbol, side: Number(p.positionAmt) > 0 ? 'LONG' : 'SHORT', qty: Math.abs(Number(p.positionAmt)), entry: Number(p.entryPrice), leverage: Number(p.leverage) || undefined, mark: Number(p.markPrice) || undefined, stop: null, tp: null, unrealizedPnl: Number(p.unRealizedProfit ?? 0) }));
   }
   async closePosition(symbol: string, side: Side, qty: number, clientId: string) {
     const r = await this.req('POST', '/fapi/v3/order', { symbol, side: side === 'LONG' ? 'SELL' : 'BUY', type: 'MARKET', quantity: qty, reduceOnly: 'true', newClientOrderId: clientId });
     return { orderId: r?.orderId != null ? String(r.orderId) : null };
   }
+  async cancelOrder(symbol: string, clientId: string) { await this.req('DELETE', '/fapi/v3/order', { symbol, origClientOrderId: clientId }); }
   async cancelAll(symbol: string) { await this.req('DELETE', '/fapi/v3/allOpenOrders', { symbol }); }
   async protection(symbol: string, side: Side): Promise<Protection> {
     const open: any[] = await this.req('GET', '/fapi/v3/openOrders', { symbol });

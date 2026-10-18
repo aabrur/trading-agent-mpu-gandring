@@ -8,9 +8,10 @@ import { round2 } from './money.js';
 import { scoreLine, type RoleScore } from './scorecard.js';
 import type { Finding } from './scan.js';
 
-export interface ReportPosition { symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }
+export interface ReportPosition { ownership?: string; protectionStatus?: string; entryStatus?: string; symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }
 export interface Report {
   id: string; at: number; since: number; mode: string; exchange: string | null;
+  accounting?: { source: string; status: string; observedAt: number | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: null; funding: null };
   balance: number; safetyNet: number; moneyTrade: number; n: number; perOrder: number; equity: number; unrealized: number; realized: number;
   dailyLoss: { limitPct: number; hit: boolean }; auto: { on: boolean; cycles: number; intervalMin: number };
   positions: ReportPosition[]; opened: Activity[]; closed: Activity[]; skipped: Activity[];
@@ -27,14 +28,18 @@ export interface Report {
 export function buildReport(desk: Desk, since: number): Report {
   const s = desk.book.split();
   const acts = desk.activity.filter((a) => a.at > since);
-  const realized = round2(desk.book.closed.filter((t) => t.closedAt > since).reduce((sum, t) => sum + t.realizedPnl, 0));
+  const exits = desk.book.closed.filter((t) => t.closedAt > since);
+  const confirmedRealized = round2(exits.filter((t) => !t.pnlStatus || t.pnlStatus === 'confirmed').reduce((sum, t) => sum + t.realizedPnl, 0));
+  const estimatedRealized = round2(exits.filter((t) => t.pnlStatus === 'estimated').reduce((sum, t) => sum + t.realizedPnl, 0));
+  const realized = round2(confirmedRealized + estimatedRealized);
   const r: Omit<Report, 'text'> = {
     id: `rep-${Date.now().toString(36)}`, at: Date.now(), since, mode: desk.cfg.tradingMode, exchange: desk.cfg.live?.exchange ?? null,
+    accounting: { source: desk.venueAccount ? 'exchange' : 'local book', status: desk.venueAccount?.status ?? (desk.cfg.tradingMode === 'PAPER' ? 'paper' : 'unverified'), observedAt: desk.venueAccount?.at ?? null, confirmedRealized, estimatedRealized, unknownExits: exits.filter((t) => t.pnlStatus === 'unknown').length, actualFees: null, funding: null },
     balance: desk.book.balance, safetyNet: desk.book.safetyNet, moneyTrade: s.moneyTrade, n: desk.book.n, perOrder: s.perOrder,
     equity: round2(desk.book.balance + desk.book.unrealized), unrealized: desk.book.unrealized, realized,
     dailyLoss: { limitPct: desk.cfg.risk.dailyLossLimitPct, hit: desk.day.lossHit },
     auto: { on: desk.autoState.on, cycles: desk.autoState.cycles, intervalMin: desk.cfg.auto.intervalMin },
-    positions: desk.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, mark: p.mark, pnl: p.unrealizedPnl, openedAt: p.openedAt })),
+    positions: desk.book.positions.map((p) => ({ ownership: p.ownership, protectionStatus: p.protectionStatus, entryStatus: p.entryStatus, symbol: p.symbol, side: p.side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, mark: p.mark, pnl: p.unrealizedPnl, openedAt: p.openedAt })),
     opened: acts.filter((a) => a.kind === 'opened'), closed: acts.filter((a) => a.kind === 'closed'), skipped: acts.filter((a) => a.kind === 'skipped'),
     scorecard: desk.scorecard.rows(),
     lessons: desk.learnings.since(since + 1).slice(0, 20).map((l) => ({ role: l.role, kind: l.kind, status: l.status, count: l.count, symbol: l.symbol, happened: l.happened, rootCause: l.rootCause, lesson: l.lesson })),
@@ -53,10 +58,11 @@ function renderText(r: Omit<Report, 'text'>) {
     `Balance ${r.balance} USDT, equity ${r.equity}, safety net ${r.safetyNet}`,
     `Money Trade ${r.moneyTrade} / N ${r.n} = ${r.perOrder} per order`,
     `Realized this period ${r.realized >= 0 ? '+' : ''}${r.realized}, unrealized ${r.unrealized >= 0 ? '+' : ''}${r.unrealized}`,
+    ...(r.accounting ? [`Accounting: ${r.accounting.source} (${r.accounting.status}). Realized confirmed ${r.accounting.confirmedRealized}, estimated ${r.accounting.estimatedRealized}; exits with unknown PnL ${r.accounting.unknownExits}. Actual fees and funding unavailable.`] : []),
     `Daily loss stop ${r.dailyLoss.limitPct}%${r.dailyLoss.hit ? ' (HIT, no new orders until next UTC day)' : ''}. Auto ${r.auto.on ? `on, every ${r.auto.intervalMin} min, ${r.auto.cycles} cycles` : 'off'}`,
     '',
     `Open positions (${r.positions.length}):`,
-    ...(r.positions.length ? r.positions.map((p) => `- ${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} mark ${p.mark} PnL ${p.pnl >= 0 ? '+' : ''}${p.pnl}`) : ['- none']),
+    ...(r.positions.length ? r.positions.map((p) => `- ${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} mark ${p.mark} (${p.ownership ?? 'managed'}, protection ${p.protectionStatus ?? 'paper'}, entry ${p.entryStatus ?? 'paper'}) PnL ${p.pnl >= 0 ? '+' : ''}${p.pnl}`) : ['- none']),
     '',
     `Opened (${r.opened.length}):`, ...(r.opened.length ? r.opened.map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
     `Closed (${r.closed.length}):`, ...(r.closed.length ? r.closed.map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),

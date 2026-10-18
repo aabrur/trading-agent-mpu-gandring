@@ -33,6 +33,7 @@ export class PaperBook {
 
   mark(symbol: string, price: number): ClosedTrade[] {
     const hits: ClosedTrade[] = [];
+    if (!this.autoExit) return hits;
     for (const p of [...this.positions]) {
       if (p.symbol !== symbol) continue;
       p.mark = price;
@@ -46,15 +47,23 @@ export class PaperBook {
     return hits;
   }
 
-  close(positionId: string, price: number, reason: string): ClosedTrade | null {
+  close(positionId: string, price: number, reason: string, details: { qty?: number; executionId?: string; pnlStatus?: ClosedTrade['pnlStatus']; exitStatus?: ClosedTrade['exitStatus'] } = {}): ClosedTrade | null {
+    if (details.executionId && this.closed.some((t) => t.executionId === details.executionId)) return null;
     const i = this.positions.findIndex((p) => p.id === positionId);
     if (i < 0) return null;
     const p = this.positions[i];
-    const realizedPnl = this.pnl(p, price);
-    this.positions.splice(i, 1);
-    this.balance = round2(this.balance + realizedPnl);
-    const { unrealizedPnl: _u, ...rest } = p;
-    const t: ClosedTrade = { ...rest, exit: roundPrice(price), closedAt: Date.now(), realizedPnl, reason };
+    const qty = Math.min(p.qty, details.qty ?? p.qty);
+    if (!(qty > 0)) return null;
+    const fraction = qty / p.qty;
+    const slice = { ...p, qty, margin: p.margin * fraction };
+    const realizedPnl = this.pnl(slice, price);
+    const remainingQty = Math.max(0, Number((p.qty - qty).toPrecision(14)));
+    if (remainingQty === 0) this.positions.splice(i, 1);
+    else { p.qty = remainingQty; p.margin -= slice.margin; p.unrealizedPnl *= 1 - fraction; }
+    if (this.autoExit) this.balance = round2(this.balance + realizedPnl);
+    const { unrealizedPnl: _u, ...rest } = slice;
+    const t: ClosedTrade = { ...rest, id: id('exit'), positionId, remainingQty, exit: price, closedAt: Date.now(), realizedPnl, reason,
+      pnlStatus: details.pnlStatus ?? (this.autoExit ? 'confirmed' : 'estimated'), exitStatus: details.exitStatus ?? 'confirmed', executionId: details.executionId };
     this.closed.unshift(t);
     this.closed = this.closed.slice(0, 100);
     return t;

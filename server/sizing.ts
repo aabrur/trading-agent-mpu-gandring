@@ -1,6 +1,7 @@
 // Size a ticket (read only). Shared by `npm run gb -- size` and the office Desk ops panel, so both give the same answer.
 // Lot step, tick, min notional and fee come from the venue's own instrument rules, never guessed from price.
 import type { AppConfig } from './config.js';
+import type { InstrumentRules } from './exchange/rules.js';
 import { publicRules } from './exchange/index.js';
 import { planOrder, round2 } from './money.js';
 import { normSymbol } from './commands.js';
@@ -25,6 +26,14 @@ export async function sizeTicket(cfg: AppConfig, env: NodeJS.ProcessEnv, book: S
   catch (e) { return fail(`no ticket: could not read ${venue} instrument rules for ${s} (${safe((e as Error).message)}). Not sizing on guessed lot sizes.`); }
   if (rules?.status && rules.status !== 'TRADING') return fail(`no ticket: ${s} status on ${venue} is ${rules.status}, not TRADING`);
   const notes = [(i.leverage ?? 0) > cfg.risk.maxLeverage ? `leverage capped to ${cfg.risk.maxLeverage}x` : '', rules ? '' : `no public instrument reader for ${venue}; lot step guessed here, the office re-sizes with the exchange rules before any order`].filter(Boolean);
+  return previewTicket(cfg, book, { ...i, side: side as 'LONG' | 'SHORT' }, rules, notes);
+}
+
+export function previewTicket(cfg: AppConfig, book: SizeBook, i: { symbol: string; side: 'LONG' | 'SHORT'; entry: number; stop?: number; leverage?: number }, rules: InstrumentRules | null, notes: string[] = []): SizeResult {
+  const s = normSymbol(i.symbol), side = i.side, entry = i.entry;
+  const stop = i.stop ?? (side === 'LONG' ? entry * (1 - cfg.risk.defaultStopPct / 100) : entry * (1 + cfg.risk.defaultStopPct / 100));
+  const leverage = Math.max(1, Math.min(cfg.risk.maxLeverage, Math.floor(i.leverage ?? cfg.risk.maxLeverage)));
+  const fail = (text: string, data: Record<string, unknown> | null = null): SizeResult => ({ ok: false, text, data });
   const plan = planOrder({ balance: book.balance, equity: book.equity, safetyNet: book.safetyNet, n: book.n, openPositions: book.open, usedMargin: book.used, price: entry, side: side as 'LONG', sizeFactor: 1, leverage, stop, minStopPct: cfg.risk.minStopPct, maxStopPct: cfg.risk.defaultStopPct, minOrderUsdt: cfg.risk.minOrderUsdt, maxLossPerTradePct: cfg.risk.maxLossPerTradePct, takerFee: cfg.risk.takerFee, rules, takeProfitR: cfg.risk.takeProfitR });
   if (!plan.ok) return fail(`no ticket: ${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`, { ok: false, reason: plan.reason, suggestion: plan.suggestion, split: plan.split, rules, notes });
   const maxLoss = round2((Math.min(book.balance, book.equity) * cfg.risk.maxLossPerTradePct) / 100);

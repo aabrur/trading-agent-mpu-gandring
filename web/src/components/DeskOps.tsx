@@ -1,6 +1,6 @@
 // Desk ops: the office side of `npm run gb`.
 // Same backend paths as the CLI: shared sizing module and the desk's one execution path. Localhost only.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
 import { POPULAR_SYMBOLS } from '../types';
 import { useI18n } from '../i18n';
@@ -13,6 +13,9 @@ export function DeskOps({ state }: { state: DeskState }) {
   const [symbol, setSymbol] = useState(state.watchlist[0] ?? 'BTCUSDT');
   const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
   const [entry, setEntry] = useState(''); const [stop, setStop] = useState(''); const [tp, setTp] = useState(''); const [lev, setLev] = useState('');
+  const [ticketBusy, setTicketBusy] = useState(false);
+  const ticketSelection = useRef('');
+  ticketSelection.current = `${symbol}:${side}:${entry}:${lev}`;
   const [out, setOut] = useState<{ ok: boolean; text: string } | null>(null);
   const [lesson, setLesson] = useState('');
   const [kill, setKill] = useState<{ killed: boolean; release: string | null; unkillCommand: string } | null>(null);
@@ -110,57 +113,38 @@ export function DeskOps({ state }: { state: DeskState }) {
     }
   };
 
-  const calcDefaultStop = (targetSym = symbol, targetSide = side, targetEntry = entry) => {
-    const livePx = Number(targetEntry) > 0 ? Number(targetEntry) : (state.tickers[targetSym]?.last ?? 0);
-    if (!(livePx > 0)) return '';
-    const sl = targetSide === 'LONG' ? livePx * 0.70 : livePx * 1.30;
-    return sl > 10 ? sl.toFixed(2) : sl > 1 ? sl.toFixed(4) : sl.toFixed(6);
-  };
-
-  const autoFillStop = () => {
-    const sl = calcDefaultStop();
-    if (sl) {
-      setStop(sl);
-      const livePx = state.tickers[symbol]?.last;
-      if (!entry && livePx) setEntry(String(livePx));
-      const currentEntry = Number(entry) || livePx;
-      if (currentEntry) {
-        const risk = Math.abs(currentEntry - Number(sl));
-        const targetTp = side === 'LONG' ? currentEntry + risk * 2 : currentEntry - risk * 2;
-        if (targetTp > 0) setTp(targetTp > 10 ? targetTp.toFixed(2) : targetTp.toFixed(4));
-      }
-      show(true, `Calculated 30% SL & 2R TP for ${symbol}`);
-    } else {
-      show(false, `No live price for ${symbol}. Enter entry price first.`);
+  const preview = async (useGivenStop = true) => {
+    const selection = ticketSelection.current;
+    const r = await post('/api/ops/size', { symbol, side, entry: num(entry), stop: useGivenStop ? num(stop) : undefined, leverage: num(lev) }).catch(() => null);
+    if (selection !== ticketSelection.current) return null;
+    if (r?.ok && r.data) {
+      setStop(String(r.data.stop));
+      setTp(r.data.tp == null ? '' : String(r.data.tp));
     }
+    show(!!r?.ok, r ? `${r.text}${r.source ? ` Price source: ${r.source}.` : ''}` : 'Office not reachable.');
+    return r;
   };
-
+  const autoFillStop = async () => {
+    setTicketBusy(true);
+    try { await preview(false); } finally { setTicketBusy(false); }
+  };
   const size = async () => {
-    let stopVal = num(stop);
-    if (!stopVal) {
-      const def = calcDefaultStop();
-      if (def) {
-        setStop(def);
-        stopVal = Number(def);
-      }
-    }
-    const r = await post('/api/ops/size', { symbol, side, entry: num(entry), stop: stopVal, leverage: num(lev) }).catch(() => null);
-    show(!!r?.ok, r?.text ?? 'office not reachable');
+    setTicketBusy(true);
+    try { await preview(); } finally { setTicketBusy(false); }
   };
-
   const open = async () => {
-    let stopVal = Number(stop);
-    if (!(stopVal > 0)) {
-      const def = calcDefaultStop();
-      if (def) {
-        setStop(def);
-        stopVal = Number(def);
-      } else {
-        return show(false, 'no stop: enter a stop price or select an active token to auto-compute.');
+    setTicketBusy(true);
+    try {
+      let stopVal = num(stop);
+      let tpVal = num(tp);
+      if (!(stopVal && stopVal > 0)) {
+        const r = await preview(false);
+        if (!r?.ok) return;
+        stopVal = r.data.stop; tpVal = r.data.tp ?? undefined;
       }
-    }
-    const r = await post('/api/ops/open', { symbol, side, stop: stopVal, tp: num(tp), leverage: num(lev) }).catch(() => null);
-    show(!!r?.ok, r?.reply ?? 'office not reachable');
+      const r = await post('/api/ops/open', { symbol, side, stop: stopVal, tp: tpVal, leverage: num(lev) }).catch(() => null);
+      show(!!r?.ok, r?.reply ?? 'Office not reachable.');
+    } finally { setTicketBusy(false); }
   };
 
   const close = async (target: string) => {
@@ -337,16 +321,17 @@ export function DeskOps({ state }: { state: DeskState }) {
         <input aria-label="symbol" title="Type or edit token symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
         <div className="seg" role="group" aria-label="side">{(['LONG', 'SHORT'] as const).map((s) => <button key={s} className={side === s ? 'on' : ''} onClick={() => setSide(s)}>{s}</button>)}</div>
       </div>
-      <div className="ops-row">
-        <input aria-label="entry" placeholder={t('entryPlaceholder')} value={entry} onChange={(e) => setEntry(e.target.value)} />
-        <input aria-label="stop" placeholder={t('stopPlaceholder')} value={stop} onChange={(e) => setStop(e.target.value)} />
-        <input aria-label="take profit" placeholder={t('tpPlaceholder')} value={tp} onChange={(e) => setTp(e.target.value)} />
-        <input aria-label="leverage" placeholder={t('levPlaceholder')} value={lev} onChange={(e) => setLev(e.target.value)} />
-        <button type="button" className="auto-stop-pill-btn" onClick={autoFillStop} title="Auto-calculate 1.5% stop loss and 2R take profit from current price">{t('calcAutoStopBtn')}</button>
+      <p className="account-note">Execution: {state.venue?.label ?? state.mode}. Analysis: {state.marketSource}. Preview prices and fills can differ.</p>
+      <div className="ops-row ticket-inputs">
+        <label>Entry<input aria-label="entry" placeholder={t('entryPlaceholder')} value={entry} onChange={(e) => setEntry(e.target.value)} /></label>
+        <label>Stop<input aria-label="stop" placeholder={t('stopPlaceholder')} value={stop} onChange={(e) => setStop(e.target.value)} /></label>
+        <label>Take profit<input aria-label="take profit" placeholder={t('tpPlaceholder')} value={tp} onChange={(e) => setTp(e.target.value)} /></label>
+        <label>Leverage<input aria-label="leverage" placeholder={t('levPlaceholder')} value={lev} onChange={(e) => setLev(e.target.value)} /></label>
+        <button type="button" className="auto-stop-pill-btn" onClick={() => void autoFillStop()} disabled={ticketBusy} title="Calculate stop and take profit from active desk parameters and venue rules">{t('calcAutoStopBtn')}</button>
       </div>
       <div className="ops-row ops-actions-row">
-        <button onClick={size}>{t('sizeTicket')}</button>
-        <button onClick={open} disabled={state.killed}>{t('openWithStop')}</button>
+        <button onClick={() => void size()} disabled={ticketBusy}>{t('sizeTicket')}</button>
+        <button onClick={() => void open()} disabled={state.killed || ticketBusy}>{t('openWithStop')}</button>
         <button onClick={() => close(symbol)}>{t('closeSymbolPrefix')} {symbol}</button>
         <button onClick={() => close('all')}>{t('closeAll')}</button>
         <button onClick={scan}>{t('proaktifScan')}</button>

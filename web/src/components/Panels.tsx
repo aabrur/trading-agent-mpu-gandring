@@ -80,7 +80,7 @@ export function TopBar({
       return 'USDT';
     }
   });
-  const [liveBal, setLiveBal] = useState<{ equityUsdt: number | null; venueLabel: string | null; configured: boolean } | null>(null);
+  const [liveBal, setLiveBal] = useState<{ equityUsdt: number | null; venueLabel: string | null; configured: boolean; observedAt: number } | null>(null);
 
   const handleCurrencyChange = (code: string) => {
     setCurrencyCode(code);
@@ -118,13 +118,13 @@ export function TopBar({
         .then((r) => r.json())
         .then((d: VenueBalance) => {
           if (!alive) return;
-          if (d && (typeof d.equityUsdt === 'number' || d.configured)) {
-            setLiveBal({ equityUsdt: d.equityUsdt ?? 0, venueLabel: d.label || targetVenue.toUpperCase(), configured: Boolean(d.configured) });
+          if (d && typeof d.equityUsdt === 'number' && Number.isFinite(d.equityUsdt)) {
+            setLiveBal({ equityUsdt: d.equityUsdt ?? 0, venueLabel: d.label || targetVenue.toUpperCase(), configured: Boolean(d.configured), observedAt: Date.now() });
           } else {
             setLiveBal(null);
           }
         })
-        .catch(() => {});
+        .catch(() => { if (alive) setLiveBal(null); });
     };
     load();
     const timer = window.setInterval(load, 20_000);
@@ -137,13 +137,14 @@ export function TopBar({
   }, [activeVenue, activeMode]);
 
   const curOpt = CURRENCIES.find((c) => c.code === currencyCode) ?? CURRENCIES[0];
-  const hasVenueLiveBal = Boolean(liveBal && (liveBal.configured || (liveBal.equityUsdt !== null && liveBal.equityUsdt > 0)));
-  const rawUsdt = hasVenueLiveBal && (liveBal?.equityUsdt ?? 0) > 0
-    ? (liveBal?.equityUsdt ?? 0)
-    : (state?.paper?.equity ?? 1000);
-  const balanceSourceTag = hasVenueLiveBal
-    ? (liveBal?.venueLabel ?? state?.venue?.label ?? activeVenue.toUpperCase())
-    : t('topPaperBadge');
+  const account = state?.mode !== 'PAPER' ? state?.venueAccount : null;
+  const hasVenueLiveBal = state?.mode !== 'PAPER' && (account != null || liveBal?.equityUsdt != null);
+  const rawUsdt = state?.mode === 'PAPER' ? (state.paper.equity ?? 0) : account?.equity ?? liveBal?.equityUsdt ?? state?.paper?.equity ?? 0;
+  const balanceSourceTag = state?.mode === 'PAPER' ? 'Paper equity' : account
+    ? `${state?.venue?.label ?? activeVenue} equity / ${account.status}${account.at ? ` / ${time(account.at)}` : ''}`
+    : liveBal?.equityUsdt != null ? `${liveBal.venueLabel} equity / ${time(liveBal.observedAt)}`
+    : 'Local book / venue equity unverified';
+
 
   return (
     <header className="topbar">
@@ -186,7 +187,7 @@ export function TopBar({
       <div className="topbar-center">
         {state && (
           <div className={`topbar-balance-pill ${hasVenueLiveBal ? 'is-live-bal' : 'is-paper-bal'}`} title={`${t('topBalanceLabel')}: ${fmt(rawUsdt)} USDT`}>
-            <strong className="tb-bal-val">{formatCurrencyValue(rawUsdt, curOpt)}</strong>
+            <strong className="tb-bal-val">{formatCurrencyValue(rawUsdt, curOpt)}</strong><small className="balance-provenance">{balanceSourceTag}{curOpt.code !== 'USDT' ? ' / static FX estimate' : ''}</small>
             <select
               className="tb-cur-select"
               aria-label={t('topCurrencyLabel')}
@@ -298,21 +299,22 @@ export function TickerStrip({ state }: { state: DeskState }) {
   );
 }
 
-export function FightMeter({ state, meter }: { state: DeskState; meter: { weighted: number; disagreement: number } | null }) {
+export function FightMeter({ state, meter, fighting = false }: { state: DeskState; meter: { weighted: number; disagreement: number } | null; fighting?: boolean }) {
   const { t } = useI18n();
   const d = state.debate;
   const dis = meter?.disagreement ?? d?.disagreement ?? 0;
   const w = meter?.weighted ?? d?.weighted ?? 0;
   const camps = d?.camps ?? { bull: [], bear: [], neutral: [] };
-  const rawKey = dis >= state.fightThreshold ? (dis > 0.75 ? 'full-brawl' : 'fists-out') : dis > 0.25 ? 'heated' : d ? 'mostly-agree' : 'quiet';
-  const label = rawKey === 'full-brawl' ? t('fullBrawl') : rawKey === 'fists-out' ? t('fistsOut') : rawKey === 'heated' ? t('heated') : rawKey === 'mostly-agree' ? t('mostlyAgree') : t('quiet');
+  const opposing = camps.bull.length > 0 && camps.bear.length > 0;
+  const rawKey = fighting ? 'full-brawl' : !d ? 'quiet' : dis >= state.fightThreshold && opposing ? 'fists-out' : dis > 0.25 ? 'heated' : 'mostly-agree';
+  const label = rawKey === 'full-brawl' ? t('fullBrawl') : rawKey === 'fists-out' ? 'Heated opposing views' : rawKey === 'heated' ? (opposing ? 'Opposing views' : 'General tension') : rawKey === 'mostly-agree' ? t('mostlyAgree') : t('quiet');
   return (
     <section className="panel meter">
       <div className="panel-head"><h2>{t('fightMeter')}</h2><span className={`heat-label h-${rawKey}`}>{label}</span></div>
       <div className="meter-bar">
         <div className="meter-fill" style={{ width: `${Math.max(3, Math.round(dis * 100))}%` }} />
         <div className="meter-pin" style={{ left: `${Math.round(dis * 100)}%` }} title={`${Math.round(dis * 100)}% disagreement`} />
-        <div className="meter-threshold" style={{ left: `${state.fightThreshold * 100}%` }} title="punches start here" />
+        <div className="meter-threshold" style={{ left: `${state.fightThreshold * 100}%` }} title="Configured debate escalation threshold" />
       </div>
       <div className="meter-scale"><span>{t('consensus')}</span><span>{Math.round(dis * 100)}{t('disagreementSuffix')}</span><span>{t('brawl')}</span></div>
       <div className="tug">
@@ -431,11 +433,13 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   const bookTitle = state.mode === 'PAPER' ? t('paperBook') : state.mode === 'LIVE' ? t('liveBook') : t('testnetBook');
   const currentVenue = ALL_VENUES.find((v) => v.venue === selectedVenue) ?? ALL_VENUES[0];
   const activeDepositUrl = venueBal?.depositUrl || currentVenue.depositUrl;
-  const isVenueConnected = Boolean(venueBal && (venueBal.equityUsdt !== null || venueBal.configured));
+  const isVenueConnected = Boolean(venueBal && venueBal.equityUsdt != null && Number.isFinite(venueBal.equityUsdt));
 
   return (
     <section className="panel portfolio">
       <div className="panel-head"><h2>{bookTitle}</h2><span className={`pnl ${p.unrealized >= 0 ? 'up' : 'down'}`}>uPnL {p.unrealized >= 0 ? '+' : ''}{fmt(p.unrealized)}</span></div>
+      <p className="account-note">{state.mode === 'PAPER' ? 'Paper book' : state.venueAccount ? `Exchange account ${state.venueAccount.status} / ${time(state.venueAccount.at)} / available ${fmt(state.venueAccount.available)} USDT` : 'Local book; venue balance unverified'}{curOpt.code !== 'USDT' ? '. Currency conversions use static estimates.' : ''}</p>
+      {!!state.venueAccount?.pendingSymbols?.length && <p className="account-note" role="status">Fill reconciliation pending. Last venue observation: {state.venueAccount.positions?.map((p) => `${p.symbol} ${p.side} ${p.qty}`).join(', ') || 'flat'}. Local quantities are awaiting venue confirmation.</p>}
       <div className="stats">
         <label className="stat"><small>{t('totalBalance')}</small>
           <span className="inline-edit"><input value={balance} onChange={(e) => setBalance(e.target.value)} onBlur={() => balance !== String(p.balance) && command(`set balance ${balance}`)} inputMode="decimal" aria-label="paper balance" /> USDT</span>
@@ -487,7 +491,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
           {isVenueConnected && venueBal ? (
             <div className="venue-balance-stats">
               <span>{t('equityUsdt')}: <b>{fmt(venueBal.equityUsdt ?? 0)} USDT</b>{curOpt.code !== 'USDT' ? ` (${formatCurrencyValue(venueBal.equityUsdt ?? 0, curOpt)})` : ''}</span>
-              <span>{t('availableUsdt')}: <b>{fmt(venueBal.availableUsdt ?? 0)} USDT</b></span>
+              <span>{t('availableUsdt')}: <b>{venueBal.availableUsdt == null ? 'unavailable' : fmt(venueBal.availableUsdt)} USDT</b></span>
               {(venueBal.equityUsdt ?? 0) > 0 && Math.abs((venueBal.equityUsdt ?? 0) - p.balance) > 0.01 && (
                 <button type="button" className="mini" onClick={() => command(`set balance ${venueBal.equityUsdt}`)}>
                   Sync to book
@@ -495,7 +499,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
               )}
             </div>
           ) : (
-            <p className="wallet-note small">{venueBal?.error ? venueBal.error : t('notConnectedBalance')}</p>
+            <p className="wallet-note small">{venueBal?.error || venueBal?.note || t('notConnectedBalance')}</p>
           )}
         </div>
       </div>
@@ -511,9 +515,9 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
         {p.positions.length === 0 && <p className="muted">{t('noOpenPositions')}</p>}
         {p.positions.map((x) => (
           <div key={x.id} className={`pos ${x.side}`}>
-            <b>{x.side} {x.symbol}</b>
+            <b>{x.side} {x.symbol}{x.ownership === 'external' ? <small> external / ownership unknown</small> : x.ownership === 'recovered' ? <small> recovered</small> : null}</b>
             <span>{x.qty} @ {fmtPx(x.entry)}</span>
-            <span className="sl">SL {fmtPx(x.stop)}{x.tp ? <em className="tp"> TP {fmtPx(x.tp)}</em> : null}</span>
+            <span className="sl">SL {x.stop > 0 ? fmtPx(x.stop) : 'unavailable'}{x.protectionStatus ? ` (${x.protectionStatus})` : ''}{x.tp ? <em className="tp"> TP {fmtPx(x.tp)}</em> : null}</span>
             <span>{x.leverage}x · {fmt(x.margin)}</span>
             <span className={x.unrealizedPnl >= 0 ? 'up' : 'down'}>{x.unrealizedPnl >= 0 ? '+' : ''}{fmt(x.unrealizedPnl)}</span>
             <button className="mini" onClick={() => command(`close ${x.symbol}`)}>{t('closeBtn')}</button>
@@ -545,7 +549,7 @@ export function Verdicts({ state }: { state: DeskState }) {
             <div className="v-meta">
               <span>risk {v.riskDecision}</span>
               <span>heat {Math.round(v.disagreement * 100)}%</span>
-              <span>{v.executed ? t('paperFilled') : t('noFill')}</span>
+              <span>{v.executed ? `${state.mode === 'PAPER' ? 'Paper' : state.mode} ${v.executionStatus ?? v.order?.status ?? 'execution recorded'}` : t('noFill')}</span>
               {v.order && <span>{v.order.qty} @ {fmtPx(v.order.entry)} · SL {fmtPx(v.order.stop)}{v.order.tp ? ` · TP ${fmtPx(v.order.tp)}` : ''}</span>}
             </div>
           </article>

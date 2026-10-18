@@ -39,11 +39,12 @@ function ReportCard({ r, open, onToggle }: { r: Report; open: boolean; onToggle:
         <div className="report-grid">
           <span>Balance <b>{fmt(r.balance)}</b></span><span>Safety net <b>{fmt(r.safetyNet)}</b></span>
           <span>Money Trade <b>{fmt(r.moneyTrade)}</b></span><span>N <b>{r.n}</b> · per order <b>{fmt(r.perOrder)}</b></span>
+          {r.accounting && <p className="account-note">{r.accounting.source} / {r.accounting.status}. Realized confirmed {fmt(r.accounting.confirmedRealized)}, estimated {fmt(r.accounting.estimatedRealized)}. Unknown exits: {r.accounting.unknownExits}. Fees/funding unavailable.</p>}
           <span>Unrealized <b className={r.unrealized >= 0 ? 'up' : 'down'}>{fmt(r.unrealized)}</b></span>
           <span>Daily stop <b>{r.dailyLoss.limitPct}%</b>{r.dailyLoss.hit ? <em className="down"> hit</em> : ''}</span>
         </div>
         <h4>Open positions</h4>
-        {r.positions.length ? <ul>{r.positions.map((p) => <li key={p.symbol + p.openedAt}><b className={p.side === 'LONG' ? 'up' : 'down'}>{p.side}</b> {p.qty} {p.symbol} · entry {fmtPx(p.entry)} · SL {fmtPx(p.stop)}{p.tp ? ` · TP ${fmtPx(p.tp)}` : ''} · <span className={p.pnl >= 0 ? 'up' : 'down'}>{p.pnl >= 0 ? '+' : ''}{fmt(p.pnl)}</span></li>)}</ul> : <p className="muted small">none</p>}
+        {r.positions.length ? <ul>{r.positions.map((p) => <li key={p.symbol + p.openedAt}><b className={p.side === 'LONG' ? 'up' : 'down'}>{p.side}</b> {p.qty} {p.symbol} · entry {fmtPx(p.entry)} ({p.entryStatus ?? 'paper'}) / {p.ownership ?? 'managed'} · SL {p.stop > 0 ? fmtPx(p.stop) : 'unavailable'} ({p.protectionStatus ?? 'paper'}){p.tp ? ` · TP ${fmtPx(p.tp)}` : ''} · <span className={p.pnl >= 0 ? 'up' : 'down'}>{p.pnl >= 0 ? '+' : ''}{fmt(p.pnl)}</span></li>)}</ul> : <p className="muted small">none</p>}
         {r.scorecard && r.scorecard.length > 0 && <>
           <h4>Scorecard · Desk Lead</h4>
           <ul>{r.scorecard.map((s) => { const n = s.right + s.wrong; return <li key={s.role}><b>{s.name}</b> {n ? `${s.right}/${n} right` : 'no scored calls'} <span className="muted">· {s.note}</span></li>; })}</ul>

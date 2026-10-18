@@ -204,11 +204,12 @@ export class WalletConnector {
     if (venue === 'hyperliquid' && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
       try {
         const s = await httpJson(f, `${HL_BASE[activeNet]}/info`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'clearinghouseState', user: addr }) });
-        const equityUsdt = Number(s?.marginSummary?.accountValue ?? 0);
+        if (s?.marginSummary?.accountValue == null || s?.withdrawable == null) throw new Error('Incomplete venue balance response');
+        const equityUsdt = Number(s.marginSummary.accountValue);
         const availableUsdt = Number(s?.withdrawable ?? 0);
         return { ok: true, ...base, configured: true, address: addr, equityUsdt, availableUsdt };
       } catch (e) {
-        return { ok: true, ...base, configured: true, address: addr, equityUsdt: 0, availableUsdt: 0, note: (e as Error).message };
+        return { ok: true, ...base, configured: true, address: addr, equityUsdt: null, availableUsdt: null, note: (e as Error).message };
       }
     }
 
@@ -218,7 +219,7 @@ export class WalletConnector {
         const b = await adapter.balance();
         return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: b.equityUsdt, availableUsdt: b.availableUsdt };
       } catch (e) {
-        return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: 0, availableUsdt: 0, note: (e as Error).message };
+        return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: null, availableUsdt: null, note: (e as Error).message };
       }
     }
 
@@ -228,8 +229,8 @@ export class WalletConnector {
         ...base,
         configured: true,
         address: addr,
-        equityUsdt: 0,
-        availableUsdt: 0,
+        equityUsdt: null,
+        availableUsdt: null,
         note: 'Wallet connected. Approve agent key or deposit funds on this venue to trade.'
       };
     }

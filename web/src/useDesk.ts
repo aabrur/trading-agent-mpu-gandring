@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { SceneEvent } from './sceneDirector';
 import type { AgentId, DeskState, Fight, Reaction, Speech, Verdict } from './types';
 
 export function useDesk() {
@@ -9,11 +10,15 @@ export function useDesk() {
   const [meter, setMeter] = useState<{ weighted: number; disagreement: number } | null>(null);
   const [reactions, setReactions] = useState<Partial<Record<AgentId, Reaction>>>({});
   const fightId = useRef(0);
+  const [sceneEvents, setSceneEvents] = useState<SceneEvent[]>([]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
     let retry: number | undefined;
     let alive = true;
+    const timers = new Set<number>();
+    let reactionTimer: number | undefined;
+    const later = (fn: () => void, ms: number) => { const id = window.setTimeout(() => { timers.delete(id); if (alive) fn(); }, ms); timers.add(id); return id; };
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -21,13 +26,18 @@ export function useDesk() {
       ws.onclose = () => { setConnected(false); if (alive) retry = window.setTimeout(connect, 1500); };
       ws.onmessage = (ev) => {
         const { type, payload } = JSON.parse(ev.data);
+        if (!alive) return;
+        if (type === 'execution' || type === 'report' || type === 'verdict') {
+          const event: SceneEvent = { id: String(payload.id ?? `${type}:${payload.at}`), kind: type, status: payload.status, at: typeof payload.at === 'number' ? payload.at : Date.now() };
+          setSceneEvents((events) => events.some((e) => e.id === event.id) ? events : [...events.slice(-11), event]);
+        }
         if (type === 'state') { setState(payload); if (!payload.debate) setMeter(null); }
         else if (type === 'speech') setSpeech((s) => ({ ...s, [payload.agent]: { ...payload, at: Date.now() } }));
         else if (type === 'meter') setMeter(payload);
         else if (type === 'fight') {
           const f: Fight = { ...payload, id: ++fightId.current, at: Date.now() };
           setFights((xs) => [...xs.slice(-4), f]);
-          window.setTimeout(() => setFights((xs) => xs.filter((x) => x.id !== f.id)), 2600);
+          later(() => setFights((xs) => xs.filter((x) => x.id !== f.id)), 2600);
         } else if (type === 'verdict') {
           const v = payload as Verdict;
           const r: Partial<Record<AgentId, Reaction>> = {};
@@ -39,13 +49,14 @@ export function useDesk() {
             r.risk = 'worried';
           }
           setReactions(r);
-          window.setTimeout(() => setReactions({}), 4500);
+          if (reactionTimer) { window.clearTimeout(reactionTimer); timers.delete(reactionTimer); }
+          reactionTimer = later(() => setReactions({}), 4500);
         } else if (type === 'debate' && payload?.phase === 'opening') { setSpeech({}); setFights([]); setReactions({}); }
         else if (type === 'status') setState((s) => (s ? { ...s, agents: { ...s.agents, [payload.agent]: { ...s.agents[payload.agent as AgentId], status: payload.status } } } : s));
       };
     };
     connect();
-    return () => { alive = false; window.clearTimeout(retry); ws?.close(); };
+    return () => { alive = false; for (const t of timers) window.clearTimeout(t); window.clearTimeout(retry); ws?.close(); };
   }, []);
 
   // fade old bubbles
@@ -70,5 +81,5 @@ export function useDesk() {
     return (await res.json()) as { ok: boolean; reply: string; command: string };
   }, []);
 
-  return { state, connected, speech, fights, meter, reactions, command };
+  return { state, connected, speech, fights, meter, reactions, sceneEvents, command };
 }

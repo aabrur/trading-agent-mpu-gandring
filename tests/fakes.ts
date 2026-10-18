@@ -1,4 +1,5 @@
 // In-memory fakes for exchange tests. No network.
+import { sampleSnapshot } from '../server/market/sample.js';
 import type { ExchangeAdapter, OrderRecord, VenuePosition, PlaceOrder, Side, PermissionReport, ProtectRequest } from '../server/exchange/index.js';
 
 /** A tiny Bybit v5 testnet lookalike behind a fetch function. */
@@ -68,7 +69,7 @@ export class MemoryAdapter implements ExchangeAdapter {
   async permissions() { return this.perm; }
   async balance() { return { equityUsdt: 1000, availableUsdt: 1000 }; }
   async instrument(symbol: string) { return { symbol, qtyStep: 0.001, minQty: 0.001, tickSize: 0.1 }; }
-  async ticker() { return 60000; }
+  async ticker(symbol = 'BTCUSDT') { return symbol === 'BTCUSDT' ? 60000 : sampleSnapshot(symbol).last; }
   async placeOrder(o: PlaceOrder) {
     this.placed.push(o);
     if (this.failPlace) throw new Error('socket hang up');
