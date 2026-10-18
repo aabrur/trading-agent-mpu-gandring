@@ -109,7 +109,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
 
   const displayFights = useMemo<Fight[]>(() => {
     if (fights.length > 0) return fights;
-    if (!inDebate || (state.debate?.round ?? 0) < 1) return [];
+    if (!inDebate) return [];
     const debaters: AgentId[] = ['market', 'research', 'strategist'];
     const speaker = debaters.find((id) => state.agents[id].status === 'fighting' || state.agents[id].status === 'arguing' || visible.has(id)) ?? 'market';
     const speakerStance = state.agents[speaker].stance;
@@ -117,7 +117,7 @@ export function Office({ state, speech, fights, reactions, disagreement, selecte
       ?? debaters.find((id) => id !== speaker)
       ?? 'research';
     return [{
-      id: (state.debate?.round ?? 1) * 7 + debaters.indexOf(speaker) + 1,
+      id: (state.debate?.round ?? 0) * 7 + debaters.indexOf(speaker) + 1,
       from: speaker,
       to: opponent,
       intensity: Math.max(0.7, disagreement),

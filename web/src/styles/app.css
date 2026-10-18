@@ -246,7 +246,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 @keyframes dot { 50% { transform: translateY(-3px); } }
 
 /* Cartoon Dust-Cloud Brawl */
-.brawl-zone { position: absolute; transform: translate(-50%, -50%); width: 170px; height: 150px; z-index: 1500; pointer-events: none; animation: powin .25s cubic-bezier(.2, 1.6, .4, 1) both, powout .38s ease-in 2.1s forwards; }
+.brawl-zone { position: absolute; transform: translate(-50%, -50%); width: 170px; height: 150px; z-index: 1500; pointer-events: none; animation: powin .25s cubic-bezier(.2, 1.6, .4, 1) both, brawl-hover 1.6s ease-in-out infinite alternate; }
+@keyframes brawl-hover { from { transform: translate(-50%, -50%) scale(0.96) rotate(-2deg); } to { transform: translate(-50%, -53%) scale(1.04) rotate(2deg); } }
 .brawl-dust-cloud { position: absolute; inset: 0; filter: drop-shadow(0 6px 14px rgba(60, 35, 15, .32)); }
 .smoke-puff { position: absolute; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fffdf8 0%, #f1e4ce 52%, #d8c3a5 88%, #b99e7c 100%); border: 3px solid #6e4e32; opacity: .94; }
 .smoke-puff.p1 { width: 88px; height: 82px; left: 24%; top: 22%; animation: puff-spin 0.42s linear infinite; }

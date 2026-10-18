@@ -33,7 +33,12 @@ export const RiskSchema = z.object({
   decision: z.enum(['APPROVE', 'REDUCE', 'REJECT']),
   sizeFactor: z.number().min(0).max(1),
   leverage: z.number().min(1).max(125),
-  stopPct: z.preprocess((val) => (typeof val === 'number' && val > 0 && val < 0.05 ? val * 100 : val), z.number().min(0.05).max(50)),
+  stopPct: z.preprocess((val) => {
+    if (typeof val !== 'number' || !Number.isFinite(val)) return 1.5;
+    if (val <= 0) return 0;
+    if (val > 0 && val < 0.05) return val * 100;
+    return val;
+  }, z.number().min(0).max(50)),
   reason: text
 });
 
@@ -61,7 +66,7 @@ export const SCHEMA_HINTS: Record<TaskKind, string> = {
   research: '{"vote":"LONG|SHORT|ABSTAIN|VETO","confidence":0..1,"argument":"max 2 sentences","sources":["id or source name"]}',
   rebuttal: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"target":"agent id you answer or none","rebuttal":"max 2 sentences, direct and in character"}',
   lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences"}',
-  risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":number,"stopPct":number,"reason":"max 2 sentences"}',
+  risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":number,"stopPct":0..30,"reason":"max 2 sentences"}',
   review: '{"lesson":"one sentence","grade":"A|B|C|D|F"}',
   chat: '{"reply":"short answer in character"}'
 };

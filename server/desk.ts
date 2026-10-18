@@ -396,7 +396,7 @@ export class Desk extends EventEmitter {
       const cautious = this.agents.lead.mood < 0;
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await this.run('lead', 'lead', {
-        instruction: `Close the ${symbol} debate. Pick one action.`,
+        instruction: `Close the ${symbol} debate. Pick one decisive action. When directional momentum or consensus exists, favor active execution (OPEN_LONG or OPEN_SHORT) with a protected stop loss.`,
         data: { symbol, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       });
@@ -412,10 +412,13 @@ export class Desk extends EventEmitter {
       // 6. Risk gate
       this.setPhase('risk gate');
       this.setStatus('risk', 'thinking'); this.changed();
+      const finalResearchVote = researchVote === 'VETO' ? 'VETO' : (this.agents.research.stance ?? researchVote);
+      const estPrice = roundPrice(action === 'OPEN_LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
+      const stopDistancePct = rule.invalidation && estPrice > 0 ? round2(Math.abs((estPrice - rule.invalidation) / estPrice) * 100) : this.cfg.risk.defaultStopPct;
       const rk = await this.run('risk', 'risk', {
-        instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol}. Caps: max leverage ${this.cfg.risk.maxLeverage}x, stop at most ${this.cfg.risk.defaultStopPct}%, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance.`,
-        data: { symbol, action, disagreement, researchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length },
-        context: { action, disagreement, researchVote, strategySide: rule.side, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, temperament: this.agents.risk.mood }
+        instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol} at current price ~${estPrice}. Strategist invalidation is ${rule.invalidation} (~${stopDistancePct}% stop). Research debate stance is ${finalResearchVote}. If within caps, APPROVE or REDUCE so the trade can execute. Caps: max leverage ${this.cfg.risk.maxLeverage}x, stop at most ${this.cfg.risk.defaultStopPct}%, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance. Send decision, sizeFactor (0.1..1), leverage, stopPct (e.g. 1.5 to 30), reason.`,
+        data: { symbol, action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length },
+        context: { action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategySide: rule.side, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, temperament: this.agents.risk.mood }
       });
       const gate = applyRiskGate(rk.data, this.cfg.risk, this.agents.risk.mood);
       this.scorecard.verdict();

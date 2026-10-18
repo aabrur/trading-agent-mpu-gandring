@@ -37,7 +37,7 @@ export function proactiveScan(desk: Desk, now = Date.now()): Finding[] {
   // 5. balance near the safety net
   const split = book.split();
   if (split.moneyTrade <= 0) out.push({ level: 'alert', code: 'safety_net', text: `Balance ${book.balance} is at or below the safety net ${book.safetyNet}. Nothing left to trade.` });
-  else if (split.moneyTrade < book.balance * 0.1 || split.perOrder < cfg.risk.minOrderUsdt * 2) out.push({ level: 'warn', code: 'safety_net', text: `Money Trade ${split.moneyTrade} is close to the safety net ${book.safetyNet} (per order ${split.perOrder}).` });
+  else if (split.moneyTrade < book.balance * 0.1 || split.perOrder < cfg.risk.minOrderUsdt) out.push({ level: 'warn', code: 'safety_net', text: `Money Trade ${split.moneyTrade} is close to the safety net ${book.safetyNet} (per order ${split.perOrder}).` });
   if (desk.killed) out.push({ level: 'alert', code: 'killed', text: 'Kill switch is on. Restart the server to trade again.' });
   else if (desk.paused) out.push({ level: 'info', code: 'paused', text: 'Desk is paused.' });
   if (!out.some((f) => f.level === 'warn' || f.level === 'alert')) out.push({ level: 'ok', code: 'ok', text: 'Scan clean: loss cap fine, every position has a stop, no errors, data fresh.' });
