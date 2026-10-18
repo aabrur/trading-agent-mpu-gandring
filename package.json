@@ -1,8 +1,11 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.2.5",
-  "appVersion": "0.0.0.2.5",
+  "version": "0.2.6",
+  "appVersion": "0.0.0.2.6",
   "changelog": [
+    "Resolved debate deadlock and paralysis by steering Lead and Risk toward active execution with strict stop loss protection",
+    "Continuous cartoon brawl animation during debates with persistent hovering dust cloud and comic punch effects",
+    "Eliminated false alarm safety net warning spam and fixed Risk Manager stopPct validation schema",
     "Redesigned TopBar layout with non-colliding centered balance pill, unified action badges, and responsive desktop wrapping",
     "Synchronized ticker polling across all watchlist and auto-trading symbols, added decimal stop-loss preprocessing, and enabled 1-click frictionless order execution",
     "Full live trading support on Aster DEX with pinned trade-only agent wallet permissions and automatic startEquity calibration",
