@@ -64,6 +64,7 @@ export async function saveVenueKeys(envFile: string, venue: ExchangeName, net: N
     } catch { /* ignore if invalid private key */ }
   }
   setEnv(envFile, up);
+  Object.assign(process.env, up);
   return { ok: true, detail: `${VENUE_LABEL[venue]} ${net} key saved to ${envFile} (chmod 600)${warning ? '' : ', checked: can trade, cannot withdraw'}.`, saved: Object.keys(up), warning };
 }
 
@@ -97,6 +98,7 @@ export async function setTradingMode(envFile: string, mode: string, o: { confirm
 /** process.env (platform secrets, e.g. Grok Bot secret cards) plus the .env file; non-empty file values win. */
 export function setupEnv(envFile: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const file = Object.fromEntries(Object.entries(readEnv(envFile)).filter(([, v]) => v !== ''));
+  Object.assign(process.env, file);
   return { ...base, ...file };
 }
 

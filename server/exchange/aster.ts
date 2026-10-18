@@ -32,7 +32,8 @@ export class AsterAdapter implements ExchangeAdapter {
     this.base = base || BASE[network];
     const envKey = network === 'testnet' ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED' : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
     const fromEnv = () => { try { const e = readEnv(process.env.DOTENV_PATH || '.env') as Record<string, string>; return e[envKey] ?? e.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? ''; } catch { return ''; } };
-    this.pinnedAgent = (pinnedAgent ?? process.env[envKey] ?? process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? fromEnv()).trim();
+    const rawPin = pinnedAgent !== undefined ? pinnedAgent : (fromEnv() || process.env[envKey] || process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED || '');
+    this.pinnedAgent = (pinnedAgent !== undefined ? rawPin : this.account.address).trim();
   }
   get signerAddress() { return this.account.address; }
 
