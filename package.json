@@ -1,18 +1,15 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.2.6",
-  "appVersion": "0.0.0.2.6",
+  "version": "0.2.7",
+  "appVersion": "0.0.0.2.7",
   "changelog": [
-    "Resolved debate deadlock and paralysis by steering Lead and Risk toward active execution with strict stop loss protection",
-    "Continuous cartoon brawl animation during debates with persistent hovering dust cloud and comic punch effects",
-    "Eliminated false alarm safety net warning spam and fixed Risk Manager stopPct validation schema",
-    "Redesigned TopBar layout with non-colliding centered balance pill, unified action badges, and responsive desktop wrapping",
-    "Synchronized ticker polling across all watchlist and auto-trading symbols, added decimal stop-loss preprocessing, and enabled 1-click frictionless order execution",
-    "Full live trading support on Aster DEX with pinned trade-only agent wallet permissions and automatic startEquity calibration",
-    "Telegram Desk Lead supervisor integration with remote chat commands (status, report, positions, kill) and 5-minute health watchdog",
-    "Exact LIVE confirmation phrase displayed directly above the confirmation input box with click-to-fill support in Setup",
-    "Instant live balance display in TopBar and Portfolio (Paper/Live Book) with multi-country currency converter after Connect Wallet or API Key setup",
-    "Autonomous agent execution with interactive Token Picker chips and Max Open Positions in Desk Ops Auto Trade"
+    "Partial closes preserve remaining exposure; cumulative fills and restart ownership are reconciled without duplicate orders",
+    "Protective orders are preserved while exposure remains; settled entries can reconcile subsequent exchange-side exits",
+    "Execution sizing uses venue quotes and active stop/TP configuration; account and PnL displays identify their evidence source",
+    "Auto OFF stops queued symbols, Lead receives strategy invalidation, and HOLD/CLOSE skip unused Risk model calls",
+    "Opportunity ordering uses available momentum, trend and volume evidence; inferred trade-flow metrics no longer claim wallet tracking",
+    "Six-agent office gains event-driven activities, role routines, furniture-aware paths, compact speech and reduced-motion handling",
+    "Visual acceptance, advanced interactions, missed-opportunity tracking and actual fee/funding history remain follow-up work"
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",
