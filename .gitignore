@@ -21,3 +21,7 @@ data/kill-switch.json
 data/execution-*.json
 data/execution-*.json.tmp
 .superpowers/
+data/opportunity-reviews.json
+data/opportunity-reviews.json.tmp
+data/execution-*.json.financial.json
+data/execution-*.json.financial.json.tmp

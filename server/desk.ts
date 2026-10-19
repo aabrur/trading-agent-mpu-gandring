@@ -26,6 +26,7 @@ import { Learnings, type LessonInput } from './learnings.js';
 import { Scorecard } from './scorecard.js';
 import { proactiveScan, type Finding } from './scan.js';
 import { codeReview } from './providers/mock.js';
+import { OpportunityReviews } from './opportunity-review.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
@@ -39,7 +40,7 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'warn'; agent?: AgentId; text: string; example?: boolean }
 
-export interface DeskOptions { reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null }
+export interface DeskOptions { opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action; stop?: number; tp?: number }
@@ -48,6 +49,7 @@ export class Desk extends EventEmitter {
   agents: Record<AgentId, AgentView>;
   tickers: Record<string, Ticker> = {};
   opportunities: Record<string, { score: number; reasons: string[]; at: number; source: string }> = {};
+  opportunityReviews: OpportunityReviews;
   book: PaperBook;
   verdicts: Verdict[] = [];
   logs: LogLine[] = [];
@@ -90,9 +92,11 @@ export class Desk extends EventEmitter {
     this.emit('execution', { id: `${Date.now()}-${++this.executionSeq}`, status, symbol, at: Date.now(), ...extra });
   }
   private executionSeq = 0;
+  private speechSeq = 0;
 
   constructor(public cfg: AppConfig, private call: ModelCaller, private opts: DeskOptions = {}) {
     super();
+    this.opportunityReviews = new OpportunityReviews(opts.opportunityReviewsPath !== undefined ? opts.opportunityReviewsPath : process.env.VITEST ? null : 'data/opportunity-reviews.json');
     this.setMaxListeners(50);
     this.autoState.intervalMin = cfg.auto.intervalMin;
     this.book = new PaperBook(cfg.paper.balance, cfg.paper.safetyNet, cfg.paper.n, cfg.risk.takerFee);
@@ -240,17 +244,19 @@ export class Desk extends EventEmitter {
   /** Speech bubble in the office. log=false when the same line was already logged as a trade (no duplicate log line). */
   private async say(agent: AgentId, text: string, example: boolean, after: AgentStatus = 'arguing', log = true) {
     const clean = safe(text);
-    const pace = this.cfg.debate.paceMs;
+    const at = Date.now(), id = 'speech-' + at + '-' + (++this.speechSeq);
+    // Decision work never waits for cosmetic typewriter pacing.
+    const pace = this.debate ? 0 : this.cfg.debate.paceMs;
     this.setStatus(agent, 'typing');
     const words = clean.split(' ');
     const chunk = 3;
     let shown = '';
     for (let i = 0; i < words.length; i += chunk) {
       shown = words.slice(0, i + chunk).join(' ');
-      this.emit('speech', { agent, text: shown, done: false, example });
+      this.emit('speech', { id, at, agent, text: shown, done: false, example });
       if (pace) await sleep(Math.max(25, pace / 8));
     }
-    this.emit('speech', { agent, text: clean, done: true, example });
+    this.emit('speech', { id, at, agent, text: clean, done: true, example });
     this.agents[agent].lastLine = clean;
     this.setStatus(agent, after);
     if (log) this.addLog({ kind: 'speech', agent, text: clean, example });
@@ -274,6 +280,7 @@ export class Desk extends EventEmitter {
     this.changed();
   }
   private updateTicker(snap: MarketSnapshot) {
+    this.opportunityReviews.observe(snap);
     const rule = strategyVote(snap.candles), flow = volumeDelta(snap.candles);
     const returns = snap.candles.slice(-8).map((c) => (c.c - c.o) / c.o);
     const sign = Math.sign(rule.change5Pct);
@@ -292,6 +299,13 @@ export class Desk extends EventEmitter {
 
   /** LIVE: pull balance and positions from the exchange. Positions gone on the venue were closed there (stop, take profit or by hand). */
   async syncLive() { return this.exclusive(() => this.syncLiveUnlocked()); }
+  async refreshFinancialEvidence(since: number, until: number) { await this.opts.executor?.refreshFinancialEvidence(since, until); }
+  financialSummary(since: number, until: number) {
+    const ex = this.opts.executor;
+    if (!ex) return undefined;
+    ex.financialEvidence.attribute(ex.journal.intents, this.book.closed);
+    return ex.financialEvidence.summary(since, until);
+  }
   private async syncLiveUnlocked() {
     const ex = this.opts.executor;
     if (!ex) return;
@@ -589,6 +603,13 @@ export class Desk extends EventEmitter {
         note('Execution Trader', t.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ') || 'nothing closed');
       }
       if (action === 'HOLD') this.note('skipped', symbol, `HOLD: ${ld.data.reason}`);
+      if (!verdict.executed && action !== 'CLOSE') this.opportunityReviews.record({
+        id: verdict.id, symbol, side: rule.side === 'LONG' || rule.side === 'SHORT' ? rule.side : null,
+        reasonKind: researchVote === 'VETO' ? 'veto' : opening && gate.decision === 'REJECT' ? 'risk-reject' : opening ? 'execution-failed' : 'hold',
+        reason: researchVote === 'VETO' ? 'Research VETO: ' + rs.data.argument : verdict.reason, at: verdict.at, horizonMs: this.cfg.auto.intervalMin * 60000,
+        reference: { price: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example },
+        evidence: { strategy: rule, votes: DEBATERS.map((agent) => ({ agent, stance: this.agents[agent].stance })), action }
+      });
       this.verdicts.unshift(verdict); this.verdicts = this.verdicts.slice(0, 50);
       this.addLog({ kind: 'verdict', text: `VERDICT ${symbol}: ${action} (risk ${verdict.riskDecision}, disagreement ${disagreement.toFixed(2)})${verdict.executed ? `, ${this.opts.executor ? 'exchange' : 'paper'} ${verdict.executionStatus ?? 'execution recorded'}` : ''}`, example: verdict.example });
       this.emit('verdict', verdict);

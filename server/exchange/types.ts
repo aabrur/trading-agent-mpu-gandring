@@ -37,6 +37,12 @@ export const ADAPTER_STATUS: Record<ExchangeName, 'implemented' | 'experimental'
 /** Lot step, min qty, tick. minNotional (qty * price, quote) when the venue publishes one; null/undefined = none published. */
 export interface Instrument { symbol: string; qtyStep: number; minQty: number; tickSize: number; minNotional?: number | null; maxQty?: number | null; status?: string | null }
 export interface Balance { equityUsdt: number; availableUsdt: number }
+export interface FinancialQuery { since: number; until: number; cursor?: string; symbols?: string[] }
+export interface FinancialFill { kind: 'fill'; id: string; orderId: string; clientId?: string; symbol: string; side: Side | null; qty: number; price: number; fee: { amount: number; currency: string } | null; realizedPnl: { amount: number; currency: string } | null; at: number }
+export interface FinancialFunding { kind: 'funding'; id: string; symbol: string; amount: number; currency: string; at: number }
+export interface FinancialCost { kind: 'fee'; id: string; symbol: string; tradeId?: string; amount: number; currency: string; realizedPnl?: number; at: number }
+export type FinancialRecord = FinancialFill | FinancialFunding | FinancialCost;
+export interface FinancialPage { accountScope: string; records: FinancialRecord[]; nextCursor: string | null; complete: boolean; supported: Array<'fills' | 'fees' | 'funding'>; fillSymbols?: string[] }
 export interface PermissionReport {
   /** true only when the venue told us the key cannot withdraw (or, on Hyperliquid, it is an approved agent wallet). */
   ok: boolean;
@@ -56,6 +62,7 @@ export interface ProtectRequest { symbol: string; side: Side; qty: number; stop:
 export interface VenuePosition { leverage?: number; margin?: number; mark?: number; symbol: string; side: Side; qty: number; entry: number; stop: number | null; tp: number | null; unrealizedPnl: number }
 
 export interface ExchangeAdapter {
+  financialHistory?(query: FinancialQuery): Promise<FinancialPage>;
   readonly name: ExchangeName;
   readonly network: Network;
   /** Harmless authenticated read. Used by `npm run doctor`. */

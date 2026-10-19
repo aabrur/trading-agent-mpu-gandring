@@ -1,4 +1,6 @@
 import { createHmac } from 'node:crypto';
+import { historyObject, historyRows, historyText, historyScope, historyWindow, bybitIncome, bybitFills } from './financial-history.js';
+import type { FinancialQuery, FinancialPage } from './types.js';
 import { ExchangeError, httpJson, floorStep, roundTick, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
 
 // Bybit v5, USDT linear perpetuals, one-way mode. Docs: https://bybit-exchange.github.io/docs/v5/intro
@@ -8,6 +10,23 @@ export class BybitAdapter implements ExchangeAdapter {
   readonly exchangeStops = true;
   private base: string;
   private recvWindow = '5000';
+  private financialScope: string | null = null;
+  async financialHistory(q: FinancialQuery): Promise<FinancialPage> {
+    historyWindow(q);
+    if (!this.financialScope) this.financialScope = historyScope(this.name, this.network, historyObject(await this.req('GET', '/v5/user/query-api')).userID);
+    const c = q.cursor ? JSON.parse(q.cursor) as { fills?: string; income?: string; fillsDone?: boolean; incomeDone?: boolean } : {};
+    const params = { category: 'linear', startTime: q.since, endTime: q.until };
+    const [fills, income] = await Promise.all([
+      c.fillsDone ? Promise.resolve({ list: [], nextPageCursor: '' }) : this.req('GET', '/v5/execution/list', { ...params, cursor: c.fills, limit: 100 }),
+      c.incomeDone ? Promise.resolve({ list: [], nextPageCursor: '' }) : this.req('GET', '/v5/account/transaction-log', { ...params, accountType: 'UNIFIED', cursor: c.income, limit: 50 })
+    ]);
+    const f = historyObject(fills), i = historyObject(income);
+    if (typeof f.nextPageCursor !== 'string' || typeof i.nextPageCursor !== 'string') throw new Error('Missing financial history cursor');
+    if (f.nextPageCursor && f.nextPageCursor === c.fills || i.nextPageCursor && i.nextPageCursor === c.income) throw new Error('Repeated financial history cursor');
+    const records = bybitIncome(historyRows(i.list));
+    const complete = !f.nextPageCursor && !i.nextPageCursor;
+    return { accountScope: this.financialScope, records: [...records, ...bybitFills(historyRows(f.list), records)], complete, supported: ['fills', 'fees', 'funding'], nextCursor: complete ? null : JSON.stringify({ fills: f.nextPageCursor, income: i.nextPageCursor, fillsDone: !f.nextPageCursor, incomeDone: !i.nextPageCursor }) };
+  }
   constructor(public readonly network: Network, private key: string, private secret: string, private fetchImpl: FetchLike = fetch) {
     if (!key || !secret) throw new ExchangeError('Bybit key and secret are required');
     this.base = network === 'testnet' ? 'https://api-testnet.bybit.com' : 'https://api.bybit.com';

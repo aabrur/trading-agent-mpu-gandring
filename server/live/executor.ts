@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { ExchangeAdapter, OrderRecord, Side } from '../exchange/index.js';
 import { ExecutionJournal, type ExecutionIntent } from './journal.js';
+import { FinancialEvidence } from './financial-evidence.js';
+import type { FinancialPage, FinancialRecord } from '../exchange/types.js';
 import { log, safe } from '../redact.js';
 
 export const newClientId = (tag = 'o') => `mg${tag}${Date.now().toString(36)}${randomBytes(4).toString('hex')}`.slice(0, 32);
@@ -14,8 +16,39 @@ export interface Fill { ok: boolean; clientId: string; record: OrderRecord | nul
 //  - every entry carries a stop loss, the adapter refuses otherwise
 export class LiveExecutor {
   readonly journal: ExecutionJournal;
+  readonly financialEvidence: FinancialEvidence;
+  private financialRead: Promise<void> | null = null;
   constructor(public adapter: ExchangeAdapter, private reconcileDelayMs = 1200, journalPath: string | null = null) {
     this.journal = new ExecutionJournal(journalPath, `${adapter.name}:${adapter.network}`);
+    this.financialEvidence = new FinancialEvidence(journalPath ? journalPath + '.financial.json' : null);
+  }
+  refreshFinancialEvidence(since: number, until: number): Promise<void> {
+    if (this.financialRead) return this.financialRead;
+    if (!this.adapter.financialHistory || since > until) return Promise.resolve();
+    this.financialRead = (async () => {
+      const starts = this.journal.intents.filter((i) => i.kind === 'open' && i.at <= until).map((i) => i.at);
+      const start = Math.max(0, until - 7 * 86400000, Math.min(since, ...starts));
+      const symbols = [...new Set(this.journal.intents.map((i) => i.symbol))];
+      let combined: FinancialPage | null = null, cursor: string | undefined;
+      const records: FinancialRecord[] = [];
+      const seen = new Set<string>();
+      try {
+        for (let n = 0; n < 20; n++) {
+          const page = await this.adapter.financialHistory!({ since: start, until, symbols, cursor });
+          if (combined && combined.accountScope !== page.accountScope) { this.financialEvidence.invalidateAccountScope(); throw new Error('History account changed between pages'); }
+          records.push(...page.records);
+          combined = { ...page, records };
+          if (!page.nextCursor) break;
+          if (seen.has(page.nextCursor)) throw new Error('Repeated history cursor');
+          seen.add(page.nextCursor); cursor = page.nextCursor;
+        }
+        if (combined) this.financialEvidence.ingest(combined, { since: start, until });
+      } catch (e) {
+        if (combined) try { this.financialEvidence.ingest({ ...combined, complete: false }, { since: start, until }); } catch { /* Preserve evidence but never let an account mismatch interrupt reporting or orders. */ }
+        log('[financial evidence] read incomplete: ' + safe((e as Error).message));
+      }
+    })().finally(() => { this.financialRead = null; });
+    return this.financialRead;
   }
   private intent(kind: 'open' | 'close', o: { symbol: string; side: Side; qty: number; stop?: number; tp?: number | null; leverage?: number; positionId?: string }) {
     const intent: ExecutionIntent = { ...o, kind, requestedQty: o.qty, clientId: newClientId(kind === 'open' ? 'e' : 'c'), accountedQty: 0, accountedValue: 0, record: null, at: Date.now() };

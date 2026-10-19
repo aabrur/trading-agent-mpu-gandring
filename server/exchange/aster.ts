@@ -1,4 +1,6 @@
 import { privateKeyToAccount } from 'viem/accounts';
+import { historyRows, historyScope, historyWindow, asterIncome, asterFills } from './financial-history.js';
+import type { FinancialQuery, FinancialPage } from './types.js';
 import type { Hex } from 'viem';
 import { ExchangeError, httpJson, floorStep, roundTick, pickProtection, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
 import { asterRules, type InstrumentRules, type RulesCache } from './rules.js';
@@ -25,6 +27,20 @@ export class AsterAdapter implements ExchangeAdapter {
   private base: string;
   private account: ReturnType<typeof privateKeyToAccount>;
   private pinnedAgent: string;
+  async financialHistory(q: FinancialQuery): Promise<FinancialPage> {
+    historyWindow(q);
+    const symbols = [...new Set(q.symbols ?? [])];
+    const params = { startTime: q.since, endTime: q.until, limit: 1000 };
+    const income = historyRows(await this.req('GET', '/fapi/v3/income', params));
+    const records = asterIncome(income);
+    let complete = income.length < 1000;
+    for (const symbol of symbols) {
+      const fills = historyRows(await this.req('GET', '/fapi/v3/userTrades', { ...params, symbol }));
+      complete = complete && fills.length < 1000;
+      records.push(...asterFills(fills, records));
+    }
+    return { accountScope: historyScope(this.name, this.network, this.user), records, complete, nextCursor: null, supported: symbols.length ? ['fills', 'fees', 'funding'] : ['fees', 'funding'], fillSymbols: symbols };
+  }
   constructor(public readonly network: Network, private user: string, signerPrivateKey: string, private fetchImpl: FetchLike = fetch, base = process.env[network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'], pinnedAgent?: string) {
     if (!/^0x[0-9a-fA-F]{40}$/.test(user)) throw new ExchangeError('ASTER user address must be the 0x main wallet address (public)');
     if (!/^0x[0-9a-fA-F]{64}$/.test(signerPrivateKey)) throw new ExchangeError('Aster signer key must be the 0x private key of a Pro API agent wallet');

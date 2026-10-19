@@ -10,8 +10,9 @@ import type { Finding } from './scan.js';
 
 export interface ReportPosition { ownership?: string; protectionStatus?: string; entryStatus?: string; symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }
 export interface Report {
+  opportunityReviews?: { observed: number; pending: number; unavailable: number; items: import('./opportunity-review.js').OpportunityReview[] };
   id: string; at: number; since: number; mode: string; exchange: string | null;
-  accounting?: { source: string; status: string; observedAt: number | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: null; funding: null };
+  accounting?: { source: string; status: string; observedAt: number | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: number | null; funding: number | null; financialEvidence?: import('./live/financial-evidence.js').FinancialSummary };
   balance: number; safetyNet: number; moneyTrade: number; n: number; perOrder: number; equity: number; unrealized: number; realized: number;
   dailyLoss: { limitPct: number; hit: boolean }; auto: { on: boolean; cycles: number; intervalMin: number };
   positions: ReportPosition[]; opened: Activity[]; closed: Activity[]; skipped: Activity[];
@@ -25,16 +26,19 @@ export interface Report {
   text: string;
 }
 
-export function buildReport(desk: Desk, since: number): Report {
+export function buildReport(desk: Desk, since: number, at = Date.now()): Report {
   const s = desk.book.split();
-  const acts = desk.activity.filter((a) => a.at > since);
-  const exits = desk.book.closed.filter((t) => t.closedAt > since);
+  const acts = desk.activity.filter((a) => a.at > since && a.at <= at);
+  const exits = desk.book.closed.filter((t) => t.closedAt > since && t.closedAt <= at);
+  const reviews = desk.opportunityReviews.since(since).filter((r) => (r.updatedAt ?? r.at) <= at);
+  const financial = desk.financialSummary(since + 1, at);
   const confirmedRealized = round2(exits.filter((t) => !t.pnlStatus || t.pnlStatus === 'confirmed').reduce((sum, t) => sum + t.realizedPnl, 0));
   const estimatedRealized = round2(exits.filter((t) => t.pnlStatus === 'estimated').reduce((sum, t) => sum + t.realizedPnl, 0));
   const realized = round2(confirmedRealized + estimatedRealized);
   const r: Omit<Report, 'text'> = {
-    id: `rep-${Date.now().toString(36)}`, at: Date.now(), since, mode: desk.cfg.tradingMode, exchange: desk.cfg.live?.exchange ?? null,
-    accounting: { source: desk.venueAccount ? 'exchange' : 'local book', status: desk.venueAccount?.status ?? (desk.cfg.tradingMode === 'PAPER' ? 'paper' : 'unverified'), observedAt: desk.venueAccount?.at ?? null, confirmedRealized, estimatedRealized, unknownExits: exits.filter((t) => t.pnlStatus === 'unknown').length, actualFees: null, funding: null },
+    id: `rep-${at.toString(36)}`, at, since, mode: desk.cfg.tradingMode, exchange: desk.cfg.live?.exchange ?? null,
+    accounting: { source: desk.venueAccount ? 'exchange' : 'local book', status: desk.venueAccount?.status ?? (desk.cfg.tradingMode === 'PAPER' ? 'paper' : 'unverified'), observedAt: desk.venueAccount?.at ?? null, confirmedRealized, estimatedRealized, unknownExits: exits.filter((t) => t.pnlStatus === 'unknown').length, actualFees: financial?.actualFees ?? null, funding: financial?.funding ?? null, financialEvidence: financial },
+    opportunityReviews: { observed: reviews.filter((r) => r.status === 'observed').length, pending: reviews.filter((r) => r.status === 'pending').length, unavailable: reviews.filter((r) => r.status === 'unavailable').length, items: reviews.slice(-10) },
     balance: desk.book.balance, safetyNet: desk.book.safetyNet, moneyTrade: s.moneyTrade, n: desk.book.n, perOrder: s.perOrder,
     equity: round2(desk.book.balance + desk.book.unrealized), unrealized: desk.book.unrealized, realized,
     dailyLoss: { limitPct: desk.cfg.risk.dailyLossLimitPct, hit: desk.day.lossHit },
@@ -58,7 +62,7 @@ function renderText(r: Omit<Report, 'text'>) {
     `Balance ${r.balance} USDT, equity ${r.equity}, safety net ${r.safetyNet}`,
     `Money Trade ${r.moneyTrade} / N ${r.n} = ${r.perOrder} per order`,
     `Realized this period ${r.realized >= 0 ? '+' : ''}${r.realized}, unrealized ${r.unrealized >= 0 ? '+' : ''}${r.unrealized}`,
-    ...(r.accounting ? [`Accounting: ${r.accounting.source} (${r.accounting.status}). Realized confirmed ${r.accounting.confirmedRealized}, estimated ${r.accounting.estimatedRealized}; exits with unknown PnL ${r.accounting.unknownExits}. Actual fees and funding unavailable.`] : []),
+    ...(r.accounting ? [`Accounting: ${r.accounting.source} (${r.accounting.status}). Realized confirmed ${r.accounting.confirmedRealized}, estimated ${r.accounting.estimatedRealized}; exits with unknown PnL ${r.accounting.unknownExits}. Account fees ${r.accounting.actualFees ?? 'unknown'} USDT; funding ${r.accounting.funding ?? 'unknown'} USDT; confirmed managed net ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'} USDT.`] : []),
     `Daily loss stop ${r.dailyLoss.limitPct}%${r.dailyLoss.hit ? ' (HIT, no new orders until next UTC day)' : ''}. Auto ${r.auto.on ? `on, every ${r.auto.intervalMin} min, ${r.auto.cycles} cycles` : 'off'}`,
     '',
     `Open positions (${r.positions.length}):`,
@@ -69,6 +73,7 @@ function renderText(r: Omit<Report, 'text'>) {
     `Skipped (${r.skipped.length}):`, ...(r.skipped.length ? r.skipped.slice(-12).map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
     '',
     'Scorecard (Desk Lead):', ...r.scorecard.map((x) => `- ${scoreLine(x)}`),
+    ...(r.opportunityReviews ? ['', 'Skipped opportunity observations (analytical movement, not profit):', ...r.opportunityReviews.items.map((x) => `- ${x.symbol} ${x.side ?? 'no side'} / ${x.reasonKind}: ${x.status}; ${x.directionalMovePct == null ? 'movement unavailable' : x.directionalMovePct + '% directional movement'} (${x.reference.source})`)] : []),
     '',
     `Lessons this period (${r.lessons.length}):`, ...(r.lessons.length ? r.lessons.map((l) => `- [${l.status}${l.count > 1 ? ` x${l.count}` : ''}] ${l.role}${l.symbol ? ` ${l.symbol}` : ''}: ${l.lesson} (cause: ${l.rootCause})`) : ['- none']),
     ...(r.standingRules.length ? ['Standing rules:', ...r.standingRules.map((x) => `- ${x}`)] : []),
@@ -105,8 +110,14 @@ export class Reporter {
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
 
   async generate(): Promise<Report> {
-    const rep = buildReport(this.desk, this.last);
-    this.last = rep.at;
+    const at = Date.now();
+    const since = this.last;
+    const rep = structuredClone(buildReport(this.desk, since, at));
+    await this.desk.refreshFinancialEvidence(since + 1, at);
+    const financial = this.desk.financialSummary(since + 1, at);
+    if (rep.accounting) { rep.accounting.actualFees = financial?.actualFees ?? null; rep.accounting.funding = financial?.funding ?? null; rep.accounting.financialEvidence = financial; }
+    rep.text = safe(renderText(rep));
+    this.last = Math.max(this.last, rep.at);
     this.desk.reports.unshift(rep);
     this.desk.reports = this.desk.reports.slice(0, 50);
     if (this.dir) {
