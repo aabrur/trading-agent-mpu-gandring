@@ -187,7 +187,7 @@ export function TopBar({
       <div className="topbar-center">
         {state && (
           <div className={`topbar-balance-pill ${hasVenueLiveBal ? 'is-live-bal' : 'is-paper-bal'}`} title={`${t('topBalanceLabel')}: ${fmt(rawUsdt)} USDT`}>
-            <strong className="tb-bal-val">{formatCurrencyValue(rawUsdt, curOpt)}</strong><small className="balance-provenance">{balanceSourceTag}{curOpt.code !== 'USDT' ? ' / static FX estimate' : ''}</small>
+            <strong className="tb-bal-val">{formatCurrencyValue(rawUsdt, curOpt)}</strong>
             <select
               className="tb-cur-select"
               aria-label={t('topCurrencyLabel')}
@@ -198,6 +198,7 @@ export function TopBar({
                 <option key={c.code} value={c.code}>{c.label}</option>
               ))}
             </select>
+            <small className="balance-provenance">{balanceSourceTag}{curOpt.code !== 'USDT' ? ' / static FX estimate' : ''}</small>
           </div>
         )}
       </div>
@@ -221,7 +222,7 @@ export function TopBar({
         {onTour && <button className="badge setup-btn tour-trigger-btn" onClick={onTour} title="Interactive UI guide">? {t('tutorial')}</button>}
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">{t('paused')}</span>}
-        <span className={`badge conn ${connected ? 'on' : 'off'}`}><i />{connected ? t('liveConn') : t('reconnecting')}</span>
+        {!connected && <span className="badge warn" role="status">{t('reconnecting')}</span>}
         <button className="badge setup-btn lang-toggle-btn" onClick={toggleLang} aria-label="switch language" title="Switch language">
           {lang === 'en' ? 'EN ▾ ID' : 'ID ▾ EN'}
         </button>
@@ -316,7 +317,7 @@ export function FightMeter({ state, meter, fighting = false }: { state: DeskStat
         <div className="meter-pin" style={{ left: `${Math.round(dis * 100)}%` }} title={`${Math.round(dis * 100)}% disagreement`} />
         <div className="meter-threshold" style={{ left: `${state.fightThreshold * 100}%` }} title="Configured debate escalation threshold" />
       </div>
-      <div className="meter-scale"><span>{t('consensus')}</span><span>{Math.round(dis * 100)}{t('disagreementSuffix')}</span><span>{t('brawl')}</span></div>
+      <div className="meter-scale"><span>{t('consensus')}</span><span className="meter-reading-full">{Math.round(dis * 100)}{t('disagreementSuffix')}</span><span className="meter-reading-short" aria-hidden="true">{Math.round(dis * 100)}%</span><span>{t('brawl')}</span></div>
       <div className="tug">
         <span className="bear-side">BEAR</span>
         <div className="rope"><i style={{ left: `${50 + w * 50}%` }} /></div>

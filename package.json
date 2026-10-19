@@ -1,14 +1,11 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.2.8",
-  "appVersion": "0.0.0.2.8",
+  "version": "0.2.9",
+  "appVersion": "0.0.0.2.9",
   "changelog": [
-    "Dashboard Default and Manual setup open saved, independent testnet and mainnet trading profiles for review",
-    "Daily loss, per-trade risk, entry confidence, leverage, stops, TP and allocation feed the existing agent and sizing paths",
-    "Active profile changes wait for exchange operations; CLOSE, existing positions and the daily loss latch remain intact",
-    "Setup uses stable modal dimensions, saved Edit flows and clearer operational controls",
-    "Office interactions follow authentic events; skipped-opportunity markouts and scoped financial evidence enrich reports",
-    "Deferred client panels remove the oversized bundle warning; offline CI validates typecheck, tests and build"
+    "Compact header keeps balance, source details and all navigation visible without a hamburger menu",
+    "Remove the redundant live connection badge while retaining trading mode and reconnect warnings",
+    "Desk Ops stays compact with all controls visible; the fight meter lives inside the office corner"
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",

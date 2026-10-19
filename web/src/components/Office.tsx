@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { AgentId, AgentView, DeskState, Fight, Reaction, Speech } from '../types';
 import { AGENT_ORDER } from '../types';
 import { Bot, type Face, type Pose } from './Bot';
@@ -12,6 +13,7 @@ const POW_WORDS = ['GEBUK!', 'POW!', 'BONK!', 'DUAR!', 'PLAK!', 'BLETAK!', 'BAM!
 const BRAWL_PROPS = ['🥊', '👊', '💥', '⚡', '💫', '🩹', '👟', '🔥'];
 
 interface Props {
+  children?: ReactNode;
   state: DeskState;
   sceneEvents: SceneEvent[];
   speech: Partial<Record<AgentId, Speech>>;
@@ -128,7 +130,7 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
   );
 }
 
-export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect }: Props) {
+export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, children }: Props) {
   const activities = useSceneDirector(state, sceneEvents);
   const inDebate = !!state.debate;
   const heat = Math.min(1, disagreement);
@@ -155,6 +157,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
 
   return (
     <div className={`office ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
+      <div className="office-hud">{children}</div>
       <svg className="office-scene" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden>
         <defs>
           <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--sky-top)" /><stop offset="1" stopColor="var(--sky-bottom)" /></linearGradient>

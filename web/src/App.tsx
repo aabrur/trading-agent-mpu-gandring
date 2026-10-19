@@ -130,7 +130,9 @@ function AppInner() {
       <TickerStrip state={state} />
       <main className="layout">
         <section className="stage">
-          <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected} />
+          <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected}>
+            <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
+          </Office>
           <Roster state={state} onSelect={setSelected} />
           <CommandBar state={state} command={(cmd) => command(cmd)} />
           <DeferredPanel label="Price chart"><PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} /></DeferredPanel>
@@ -141,7 +143,6 @@ function AppInner() {
           </div>
         </section>
         <aside className="side">
-          <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
           <DeskOps state={state} />
           <Verdicts state={state} />
           <Portfolio state={state} command={(cmd) => void command(cmd)} />
