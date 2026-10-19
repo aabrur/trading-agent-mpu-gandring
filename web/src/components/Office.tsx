@@ -61,7 +61,7 @@ function useMovement(pos: Point, desks: Point[]) {
     const target = path.at(-1)!;
     previous.current = target;
     const distance = path.slice(1).reduce((d, p, i) => d + Math.hypot(p.x - path[i].x, p.y - path[i].y), 0);
-    const duration = media.matches ? 0 : Math.max(600, distance * 65);
+    const duration = media.matches || document.hidden ? 0 : Math.max(600, distance * 65);
     setWalk({ on: duration > 0 && path.length > 1, left: target.x < from.x });
     let travelled = 0;
     const frames = path.map((p, i) => {
@@ -70,14 +70,16 @@ function useMovement(pos: Point, desks: Point[]) {
     });
     const animation = el.animate(frames, { duration, easing: 'ease-in-out', fill: 'forwards' });
     animation.onfinish = () => { el.style.transform = `translate(${target.x}%, ${target.y}%)`; setWalk((w) => ({ ...w, on: false })); };
-    const reduce = () => { if (media.matches) animation.finish(); };
+    const reduce = () => { if (media.matches || document.hidden) animation.finish(); };
     media.addEventListener('change', reduce);
+    document.addEventListener('visibilitychange', reduce);
     return () => {
       const matrix = new DOMMatrixReadOnly(getComputedStyle(el).transform);
       const parent = el.parentElement;
       if (parent?.clientWidth && parent.clientHeight) previous.current = { x: matrix.m41 / parent.clientWidth * 100, y: matrix.m42 / parent.clientHeight * 100 };
       el.style.transform = getComputedStyle(el).transform;
       animation.cancel(); media.removeEventListener('change', reduce);
+      document.removeEventListener('visibilitychange', reduce);
     };
   }, [pos.x, pos.y, geometry]);
   return { anchor, walk };
@@ -95,6 +97,7 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
     else if (fight.to === a.id) flip = from.x < hit.x;
   }
   else if (walk.on && walk.left) flip = true;
+  else if (activity.facing) flip = activity.facing === 'left';
   const talking = !!sp && !sp.done;
   const isPunching = fight?.from === a.id;
   const isHit = fight?.to === a.id;
@@ -146,7 +149,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       const f = SEATS[activeFight.from], t = SEATS[activeFight.to];
       out[activeFight.from] = approach(f, t);
     }
-    for (const id of AGENT_ORDER) if (!inDebate && activities[id].destination) out[id] = activities[id].destination!;
+    for (const id of AGENT_ORDER) if ((!inDebate || (!activeFight && activities[id].partner)) && activities[id].destination) out[id] = activities[id].destination!;
     return out;
   }, [state.agents, inDebate, activeFight, activities]);
 

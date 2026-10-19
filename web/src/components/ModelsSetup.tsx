@@ -14,15 +14,19 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [ok, setOk] = useState(false);
+  const [editing, setEditing] = useState(false);
+  function restore(d: ModelsInfo) {
+    setSelection({ provider: d.defaultProvider, model: d.defaultModel });
+    setAgents(Object.fromEntries(d.agents.map((a) => [a.id, { provider: a.provider, model: a.model }])));
+    setCustom(d.agents.some((a) => a.custom)); setKeys({});
+  }
 
   const load = async () => {
     try {
       const r = await fetch('/api/setup/models');
       const d: ModelsInfo = await r.json();
       if (!r.ok || !d.ok) throw new Error('unavailable');
-      setInfo(d); setSelection({ provider: d.defaultProvider, model: d.defaultModel });
-      setAgents(Object.fromEntries(d.agents.map((a) => [a.id, { provider: a.provider, model: a.model }])));
-      setCustom(d.agents.some((a) => a.custom));
+      setInfo(d); restore(d);
     } catch { setMessage('Model setup is unavailable. Reopen Setup to try again.'); setOk(false); }
   };
   useEffect(() => { if (appMode !== 'grokbot') void load(); }, [appMode]);
@@ -49,12 +53,14 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
       const r = await fetch('/api/setup/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultProvider: selection.provider, defaultModel: selection.model, ...(custom ? { agents } : {}), keys: Object.fromEntries(Object.entries(keys).filter(([p]) => used.includes(p))) }) });
       const d: { ok: boolean; detail?: string; error?: string } = await r.json();
       setOk(r.ok && d.ok); setMessage(d.detail || d.error || 'Unable to save model choices.');
-      if (r.ok && d.ok) await load();
+      if (r.ok && d.ok) { await load(); setEditing(false); }
     } catch { setOk(false); setMessage('Office not reachable. Model choices were not confirmed saved.'); }
     finally { setKeys({}); setBusy(false); }
   }
 
-  return <form className="setup-models" autoComplete="off" onChange={() => setMessage('')} onSubmit={(e) => { e.preventDefault(); void save(); }}>
+  return <section className="setup-models">
+    {!editing && <><div className="setup-section-actions"><p className="wallet-note">Saved provider choices. Existing API keys stay on this computer.</p><button disabled={!available} onClick={() => { setMessage(''); setEditing(true); }}>Edit models and providers</button></div><dl className="setup-summary"><div><dt>Default</dt><dd>{info.defaultProvider} · {info.defaultModel}</dd></div>{info.agents.map((a) => <div key={a.id}><dt>{a.id}</dt><dd>{a.provider} · {a.model}</dd></div>)}</dl><p className="field-help">{info.providers.filter((p) => p.keyEnv && p.keySet).map((p) => p.provider).join(', ') || 'No provider API keys'}: saved keys remain hidden. Local agents keep their own sign-in.</p></>}
+    <form hidden={!editing} autoComplete="off" onChange={() => setMessage('')} onSubmit={(e) => { e.preventDefault(); void save(); }}>
     <p className="wallet-note">Curated {info.checkedOn}: 10 providers with 20 AI models each.</p>
     {controls(selection, setSelection, 'Default')}
     <label><input type="checkbox" disabled={!available || busy} checked={custom} onChange={(e) => { setCustom(e.target.checked); if (e.target.checked) setAgents(Object.fromEntries(info.agents.map((a) => [a.id, { ...selection }]))); }} /> Customize provider and model for each agent</label>
@@ -68,6 +74,8 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
     <p className="wallet-note small">Free tier choices depend on account eligibility and quota. The same model can be billed on a paid tier. Providers without confirmed free API models have no free choices listed.</p>
     <p className="wallet-note small">Source: <a href={info.usageSource.url} target="_blank" rel="noreferrer">OpenRouter</a>, as of {info.usageSource.asOf} over {info.usageSource.period}. Token ranks measure OpenRouter traffic. Model and pricing sources: {used.filter((p) => p !== 'mock').map((p) => <a key={p} href={provider(p).source} target="_blank" rel="noreferrer">{p} </a>)}</p>
     <button type="submit" disabled={!available || busy}>{busy ? 'Saving...' : custom ? 'Save provider and model choices' : 'Use default provider and model for all agents'}</button>
+    <button type="button" disabled={busy} onClick={() => { restore(info); setEditing(false); setMessage(''); }}>Cancel</button>
+    </form>
     {message && <p className={`wallet-msg ${ok ? 'ok' : 'bad'}`} role="status">{message}</p>}
-  </form>;
+  </section>;
 }

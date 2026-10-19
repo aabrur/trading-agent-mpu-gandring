@@ -1,9 +1,20 @@
-import type { AgentId, DeskState } from './types';
+import { AGENT_ORDER, type AgentId, type DeskState, type Verdict, type Reaction } from './types';
 import type { Pose, Face } from './components/Bot';
 
 export interface Point { x: number; y: number }
-export interface SceneEvent { id: string; kind: 'execution' | 'report' | 'verdict'; status?: string; at: number }
-export interface Activity { pose: Pose; face: Face; label: string; destination?: Point }
+export interface SceneEvent { id: string; kind: 'execution' | 'report' | 'verdict' | 'speech'; status?: string; agent?: AgentId; target?: AgentId; at: number }
+export interface Activity { pose: Pose; face: Face; label: string; destination?: Point; facing?: 'left' | 'right'; partner?: AgentId }
+export function verdictReactions(v: Verdict): Partial<Record<AgentId, Reaction>> {
+  const reactions: Partial<Record<AgentId, Reaction>> = {};
+  if (v.executed && v.order && (v.executionStatus ?? v.order.status) === 'filled' && v.order.status !== 'partial') {
+    const winners = v.order.side === 'LONG' ? v.camps.bull : v.camps.bear;
+    for (const id of [...winners, 'lead', 'execution'] as AgentId[]) reactions[id] = 'cheer';
+  } else if (v.riskDecision === 'REJECT') {
+    for (const id of ['lead', ...(v.action === 'OPEN_LONG' ? v.camps.bull : v.camps.bear)] as AgentId[]) reactions[id] = 'worried';
+    reactions.risk = 'worried';
+  }
+  return reactions;
+}
 export const SEATS: Record<AgentId, Point> = {
   lead: { x: 50, y: 55 }, market: { x: 31, y: 63 }, research: { x: 69, y: 63 },
   strategist: { x: 31, y: 84 }, risk: { x: 69, y: 84 }, execution: { x: 50, y: 94 }
@@ -19,6 +30,26 @@ const routines: Record<AgentId, Activity[]> = {
 };
 export function ambientActivity(id: AgentId, slot: number): Activity {
   return routines[id][Math.abs(slot + id.length) % routines[id].length];
+}
+
+export function directScene(input: { state: DeskState; events: SceneEvent[]; tick: number; now: number; hidden: boolean; reducedMotion: boolean }): Record<AgentId, Activity> {
+  const { state, events, tick, now, hidden, reducedMotion } = input;
+  const slot = Math.floor(tick / 15);
+  const recent = events.filter((e) => e.at <= now && now - e.at < 7000).sort((a, b) => b.at - a.at);
+  const important = recent.find((e) => e.kind === 'execution') ?? recent.find((e) => e.kind !== 'speech');
+  const visitor = tick % 15 < 11 && !hidden && !reducedMotion && !state.debate && !state.killed && !recent.length ? AGENT_ORDER[slot % AGENT_ORDER.length] : null;
+  const frame = Object.fromEntries(AGENT_ORDER.map((id) => [id, activityFor(state, id, slot, visitor, important)])) as Record<AgentId, Activity>;
+  const speech = recent.find((e) => e.kind === 'speech' && (e.agent === 'research' || e.agent === 'risk'));
+  if (!hidden && !reducedMotion && !state.killed && !important && speech?.agent) {
+    const from = speech.agent, to = from === 'risk' ? 'execution' : 'lead';
+    const available = [from, to].every((id) => !['executing', 'fighting'].includes(state.agents[id as AgentId].status));
+    if (available) {
+      frame[from] = { pose: 'pass', face: 'normal', label: 'sharing a report', destination: { x: 46, y: 52 }, facing: 'right', partner: to };
+      frame[to] = { pose: 'read', face: 'normal', label: 'reviewing a report', destination: { x: 59, y: 52 }, facing: 'left', partner: from };
+    }
+  }
+  if (hidden || reducedMotion) for (const a of Object.values(frame)) { delete a.destination; delete a.partner; }
+  return frame;
 }
 export function eventActivity(event: SceneEvent): Activity {
   if (event.kind === 'report') return { pose: 'read', face: 'normal', label: 'checking the report' };

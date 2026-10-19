@@ -21,6 +21,7 @@ export function DeskOps({ state }: { state: DeskState }) {
   const [kill, setKill] = useState<{ killed: boolean; release: string | null; unkillCommand: string } | null>(null);
 
   const auto = state.auto;
+  const savedSymbols = auto?.symbols?.join(', ');
   const [autoMin, setAutoMin] = useState(String(auto?.intervalMin || 15));
   const [autoSyms, setAutoSyms] = useState((auto?.symbols ?? state.watchlist).join(', '));
   const [autoN, setAutoN] = useState<1 | 2 | 3 | 4>((state.paper?.n ?? 4) as 1 | 2 | 3 | 4);
@@ -30,8 +31,8 @@ export function DeskOps({ state }: { state: DeskState }) {
     if (auto?.intervalMin) setAutoMin(String(auto.intervalMin));
   }, [auto?.intervalMin]);
   useEffect(() => {
-    if (auto?.symbols?.length) setAutoSyms(auto.symbols.join(', '));
-  }, [auto?.symbols]);
+    if (savedSymbols) setAutoSyms(savedSymbols);
+  }, [savedSymbols]);
   useEffect(() => {
     if (state.paper?.n) setAutoN(Math.min(4, Math.max(1, state.paper.n)) as 1 | 2 | 3 | 4);
   }, [state.paper?.n]);
@@ -56,15 +57,16 @@ export function DeskOps({ state }: { state: DeskState }) {
       const syms = patch.symbolsOverride ?? parseSyms();
       const mins = Math.max(1, Math.min(1440, Number(autoMin) || 15));
       const nextN = patch.n ?? autoN;
-      const r = await post('/api/ops/auto', {
+      const schedule = patch.on !== undefined ? { on: patch.on } : patch.runNow ? { runNow: true } : {
         on: patch.on,
         runNow: patch.runNow,
         intervalMin: mins,
         n: nextN,
         symbols: syms.length ? syms : state.watchlist
-      }).catch(() => null);
+      };
+      const r = await post('/api/ops/auto', schedule).catch(() => null);
       if (r?.ok) {
-        const modeTxt = r.auto?.on ? `Auto Trade ON (every ${r.auto.intervalMin}m · max ${nextN} pos)` : `Auto Trade saved (max ${nextN} pos)`;
+        const modeTxt = r.auto?.on ? `Auto Trade scheduled every ${r.auto.intervalMin}m` : 'Auto scheduler off';
         show(true, patch.runNow ? `${modeTxt} · cycle started` : modeTxt);
       } else {
         show(false, r?.error ?? 'office not reachable');
@@ -82,12 +84,12 @@ export function DeskOps({ state }: { state: DeskState }) {
       : [...current, sym];
     const nextStr = next.join(', ');
     setAutoSyms(nextStr);
-    void updateAuto({ symbolsOverride: next });
+
   };
 
   const pickMaxN = (nVal: 1 | 2 | 3 | 4) => {
     setAutoN(nVal);
-    void updateAuto({ n: nVal });
+
   };
 
   const toggleKillSwitch = async (turnOn: boolean) => {
@@ -159,7 +161,7 @@ export function DeskOps({ state }: { state: DeskState }) {
 
   return (
     <div className="panel desk-ops">
-      <div className="panel-head"><h2>{t('deskOpsTitle')}</h2><span className="badge">{t('deskOpsSub')}</span></div>
+      <div className="panel-head"><h2>{t('deskOpsTitle')}</h2><span className="badge">{state.mode} · {state.venue?.label ?? state.marketSource}</span></div>
 
       <div className={`ops-kill-bar ${state.killed ? 'is-killed' : 'is-active'}`}>
         <div className="kill-status-wrap">
@@ -177,14 +179,7 @@ export function DeskOps({ state }: { state: DeskState }) {
           >
             {state.killed ? t('unlockKillBtn') : t('engageKillBtn')}
           </button>
-          <button
-            type="button"
-            className="office-restart-btn"
-            onClick={restartOffice}
-            title="Reload configuration and synchronize office in-place"
-          >
-            {t('restartOfficeBtn')}
-          </button>
+
         </div>
       </div>
 
@@ -194,13 +189,13 @@ export function DeskOps({ state }: { state: DeskState }) {
             <i className={`auto-dot ${isAutoOn ? 'on' : 'off'} ${auto?.running ? 'pulse' : ''}`} />
             <strong>{t('autoTradeTitle')}</strong>
             <span className={`auto-status-pill ${isAutoOn ? 'on' : 'off'}`}>
-              {isAutoOn ? t('autoTradeOn') : t('autoTradeOff')}
+              {auto?.running ? 'Cycle active' : isAutoOn ? 'Scheduled' : 'Off'}
             </span>
             <span className="auto-slots-pill" title="Open positions vs max allowed open positions (N)">
               Slots {state.paper.positions.length}/{state.paper.n} · ${state.paper.perOrder}/ord
             </span>
             <small className="auto-cycle-meta">
-              {auto?.cycles ?? 0} {t('autoCyclesLabel')}{auto?.running ? ' · busy' : ''}
+              {auto?.running ? (auto.trigger === 'manual' ? 'Manual cycle running' : 'Scheduled cycle running') : auto?.on ? 'Waiting for next cycle' : 'Scheduler off'}{auto?.stopping ? ' · stopping after current symbol' : ''}
             </small>
           </div>
           <div className="seg auto-toggle-seg" role="group" aria-label="Auto Trade toggle">
@@ -222,7 +217,15 @@ export function DeskOps({ state }: { state: DeskState }) {
             </button>
           </div>
         </div>
-        <div className="auto-setup-controls">
+            <button
+            type="button"
+            className="mini auto-run-btn"
+            disabled={autoBusy || state.killed || !!auto?.running}
+            onClick={() => void updateAuto({ runNow: true })}
+          >
+            {t('autoRunNowBtn')}
+          </button>
+      <details className="ops-disclosure"><summary>Schedule & symbols <span>{auto?.intervalMin} min · {auto?.symbols?.length ?? 0} symbols</span></summary><p className="field-help">Edit the schedule below, then Save. ON/OFF and Cycle now use the saved schedule.</p><div className="auto-setup-controls">
           <label className="auto-min-field" title="Debate interval in minutes">
             <span>{t('autoIntervalMin')}</span>
             <input
@@ -261,14 +264,7 @@ export function DeskOps({ state }: { state: DeskState }) {
           <button type="button" className="mini" disabled={autoBusy} onClick={() => void updateAuto({})}>
             {t('autoSaveBtn')}
           </button>
-          <button
-            type="button"
-            className="mini auto-run-btn"
-            disabled={autoBusy || state.killed || !!auto?.running}
-            onClick={() => void updateAuto({ runNow: true })}
-          >
-            ▶ {t('autoRunNowBtn')}
-          </button>
+
         </div>
         <div className="auto-token-bar">
           <span className="auto-token-label" title="Click tokens for agents to debate and autonomously Buy/Long, Sell/Short, Close, or Hold">
@@ -294,9 +290,9 @@ export function DeskOps({ state }: { state: DeskState }) {
             })}
           </div>
         </div>
-      </div>
+      </details></div>
 
-      <div className="ops-row">
+      <div className="ops-position-actions"><strong>Positions {state.paper.positions.length}/{state.paper.n}</strong>{[...new Set(state.paper.positions.map((p) => p.symbol))].map((sym) => <button key={sym} onClick={() => close(sym)}>Close {sym}</button>)}<button disabled={!state.paper.positions.length} onClick={() => close('all')}>{t('closeAll')}</button></div><details className="ops-disclosure"><summary>Manual ticket <span>Preview, open or close</span></summary><div className="ops-row">
         <select
           className="ops-symbol-select"
           aria-label="select symbol"
@@ -334,14 +330,15 @@ export function DeskOps({ state }: { state: DeskState }) {
         <button onClick={() => void open()} disabled={state.killed || ticketBusy}>{t('openWithStop')}</button>
         <button onClick={() => close(symbol)}>{t('closeSymbolPrefix')} {symbol}</button>
         <button onClick={() => close('all')}>{t('closeAll')}</button>
-        <button onClick={scan}>{t('proaktifScan')}</button>
+
       </div>
-      <div className="ops-row">
+      </details><details className="ops-disclosure"><summary>Maintenance <span>Scan, lessons & restart</span></summary><div className="ops-row">
         <input aria-label="lesson" placeholder={t('lessonPlaceholder')} value={lesson} onChange={(e) => setLesson(e.target.value)} />
         <button disabled={lesson.trim().length < 2} onClick={addLesson}>{t('addLessonBtn')}</button>
       </div>
-      {out && <p className={`wallet-msg ${out.ok ? 'ok' : 'bad'}`}>{out.text}</p>}
-      <p className="wallet-note small">{t('killSwitch')}: {kill?.killed ? <>ON. {kill.release} <button type="button" className="mini release-btn" style={{ marginLeft: 6, padding: '2px 6px' }} onClick={() => toggleKillSwitch(false)}>{t('unlockKillBtn')}</button></> : <>off. <button type="button" className="mini" style={{ marginLeft: 6, padding: '2px 6px' }} onClick={() => toggleKillSwitch(true)}>{t('engageKillBtn')}</button></>}</p>
+      <div className="ops-row"><button onClick={scan}>{t('proaktifScan')}</button><button onClick={restartOffice}>{t('restartOfficeBtn')}</button></div></details>
+      {out && <p role="status" className={`wallet-msg ${out.ok ? 'ok' : 'bad'}`}>{out.text}</p>}
+
     </div>
   );
 }

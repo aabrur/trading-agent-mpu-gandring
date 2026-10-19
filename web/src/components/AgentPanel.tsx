@@ -17,7 +17,7 @@ export function AgentPanel({ state, id, onClose, command }: { state: DeskState; 
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const body = useRef<HTMLDivElement>(null);
-  useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight, behavior: 'smooth' }); }, [chat.length]);
+  useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }, [chat.length]);
   const send = async (t: string) => {
     if (!t.trim() || busy) return;
     setBusy(true); setText('');
@@ -40,6 +40,7 @@ export function AgentPanel({ state, id, onClose, command }: { state: DeskState; 
         </div>
       </div>
       <div className="ap-chat" ref={body}>
+        {a.lastLine && <section className="ap-desk-speech"><small>Latest desk speech{a.provider === 'mock' || a.fellBackToMock ? ' · EXAMPLE' : ''}</small><p>{a.lastLine}</p></section>}
         {chat.length === 0 && <p className="muted">Say something, or give an order. Try a quick command below.</p>}
         {chat.map((c, i) => (
           <div key={i} className={`msg ${c.from === 'user' ? 'me' : 'them'}`}><span>{c.text}</span></div>

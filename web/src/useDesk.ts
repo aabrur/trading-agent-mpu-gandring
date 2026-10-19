@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SceneEvent } from './sceneDirector';
+import { verdictReactions, type SceneEvent } from './sceneDirector';
 import type { AgentId, DeskState, Fight, Reaction, Speech, Verdict } from './types';
 
 export function useDesk() {
@@ -32,7 +32,12 @@ export function useDesk() {
           setSceneEvents((events) => events.some((e) => e.id === event.id) ? events : [...events.slice(-11), event]);
         }
         if (type === 'state') { setState(payload); if (!payload.debate) setMeter(null); }
-        else if (type === 'speech') setSpeech((s) => ({ ...s, [payload.agent]: { ...payload, at: Date.now() } }));
+        else if (type === 'speech') {
+          const at = typeof payload.at === 'number' ? payload.at : Date.now();
+          setSpeech((s) => ({ ...s, [payload.agent]: { ...payload, at } }));
+          const id = String(payload.id ?? 'speech:' + payload.agent + ':' + payload.text);
+          if (payload.done) setSceneEvents((events) => events.some((e) => e.id === id) ? events : [...events.slice(-11), { id, kind: 'speech', agent: payload.agent, at }]);
+        }
         else if (type === 'meter') setMeter(payload);
         else if (type === 'fight') {
           const f: Fight = { ...payload, id: ++fightId.current, at: Date.now() };
@@ -40,15 +45,7 @@ export function useDesk() {
           later(() => setFights((xs) => xs.filter((x) => x.id !== f.id)), 2600);
         } else if (type === 'verdict') {
           const v = payload as Verdict;
-          const r: Partial<Record<AgentId, Reaction>> = {};
-          if (v.executed && v.order) {
-            const winners = v.order.side === 'LONG' ? v.camps.bull : v.camps.bear;
-            for (const a of [...winners, 'lead', 'execution'] as AgentId[]) r[a] = 'cheer';
-          } else if (v.riskDecision === 'REJECT') {
-            for (const a of ['lead', ...(v.action === 'OPEN_LONG' ? v.camps.bull : v.camps.bear)] as AgentId[]) r[a] = 'worried';
-            r.risk = 'worried';
-          }
-          setReactions(r);
+          setReactions(verdictReactions(v));
           if (reactionTimer) { window.clearTimeout(reactionTimer); timers.delete(reactionTimer); }
           reactionTimer = later(() => setReactions({}), 4500);
         } else if (type === 'debate' && payload?.phase === 'opening') { setSpeech({}); setFights([]); setReactions({}); }

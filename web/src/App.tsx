@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, useCallback, useEffect, useState } from 'react';
 import { useDesk } from './useDesk';
 import type { AgentId, CandleData } from './types';
 import { Office } from './components/Office';
-import { AgentPanel } from './components/AgentPanel';
+import { DeferredPanel } from './components/DeferredPanel';
 import { CommandBar } from './components/CommandBar';
-import { PriceChart } from './components/PriceChart';
 import { Reports } from './components/Reports';
 import { Lessons } from './components/Lessons';
 import { WalletPanel } from './components/Wallet';
-import { SetupWizard } from './components/Setup';
 import { DeskOps } from './components/DeskOps';
 import { Tour } from './components/Tour';
 import { UpdateModal, type UpdateInfo } from './components/UpdateModal';
 import { TopBar, TickerStrip, FightMeter, Portfolio, Verdicts, TradeLog, Roster, TrakteerPopup } from './components/Panels';
 import { I18nProvider, useI18n } from './i18n';
+
+const PriceChart = lazy(() => import('./components/PriceChart').then((m) => ({ default: m.PriceChart })));
+const SetupWizard = lazy(() => import('./components/Setup').then((m) => ({ default: m.SetupWizard })));
+const AgentPanel = lazy(() => import('./components/AgentPanel').then((m) => ({ default: m.AgentPanel })));
 
 function initialTheme() {
   const saved = localStorage.getItem('mg-theme');
@@ -130,7 +132,7 @@ function AppInner() {
           <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected} />
           <Roster state={state} onSelect={setSelected} />
           <CommandBar state={state} command={(cmd) => command(cmd)} />
-          <PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} />
+          <DeferredPanel label="Price chart"><PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} /></DeferredPanel>
           <TradeLog state={state} />
           <div className="stage-duo">
             <Reports state={state} />
@@ -144,7 +146,7 @@ function AppInner() {
           <Portfolio state={state} command={(cmd) => void command(cmd)} />
         </aside>
       </main>
-      {setup && <SetupWizard state={state} onClose={closeSetup} />}
+      {setup && <DeferredPanel label="Setup"><SetupWizard state={state} onClose={closeSetup} /></DeferredPanel>}
       {venueKeys && <div className="setup-overlay" role="dialog" aria-modal="true" aria-label={t('connectWallet')} onKeyDown={(e) => {
         if (e.key === 'Escape') closeVenueKeys();
         if (e.key === 'Tab') { const elements = e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled),a[href]'); const first = elements[0], last = elements[elements.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } }
@@ -153,7 +155,7 @@ function AppInner() {
       </div>}
       {updateOpen && <UpdateModal info={updateInfo} onRefresh={refreshUpdate} onClose={() => setUpdateOpen(false)} />}
       {trakteerOpen && !tourOpen && !setup && !venueKeys && !updateOpen && <TrakteerPopup onClose={() => setTrakteerOpen(false)} />}
-      {selected && <AgentPanel state={state} id={selected} onClose={() => setSelected(null)} command={command} />}
+      {selected && <DeferredPanel label="Agent"><AgentPanel state={state} id={selected} onClose={() => setSelected(null)} command={command} /></DeferredPanel>}
       <Tour open={tourOpen && !setup && !venueKeys && !updateOpen} onClose={closeTour} />
       <footer className="footer">{t('footerNote')} Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a>.</footer>
     </div>
