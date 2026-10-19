@@ -2,6 +2,7 @@ import type { Candle, MarketSnapshot, NewsItem } from '../types.js';
 import { sampleSnapshot } from './sample.js';
 import { closedOnly } from '../strategy.js';
 import { sanitizeUntrusted } from '../untrusted.js';
+import { parsePublishedAt } from './news.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -181,7 +182,14 @@ export async function getNewsFor(symbol: string, cfg: { news: { provider: 'sampl
       const b = sanitizeUntrusted(String(p.description ?? p.title ?? ''), 400);
       const votes = p.votes ?? {};
       const sentiment = (votes.positive ?? 0) > (votes.negative ?? 0) ? 'bullish' : (votes.negative ?? 0) > (votes.positive ?? 0) ? 'bearish' : 'neutral';
-      return { id: `cp-${p.id ?? i}`, symbol: coin, headline: h.text, body: b.text, source: String(p.source?.title ?? p.domain ?? 'cryptopanic').slice(0, 60), sentiment, flagged: h.flagged || b.flagged, example: false } as NewsItem;
+      const sourceUrl = typeof p.url === 'string' && p.url ? p.url : (typeof p.source?.url === 'string' ? p.source.url : null);
+      return {
+        id: `cp-${p.id ?? i}`, symbol: coin, headline: h.text, body: b.text,
+        source: String(p.source?.title ?? p.domain ?? 'cryptopanic').slice(0, 60),
+        sentiment, flagged: h.flagged || b.flagged, example: false,
+        publishedAt: parsePublishedAt(p.published_at ?? p.created_at ?? p.createdAt),
+        sourceUrl
+      } as NewsItem;
     });
     if (!items.length) return getNews(symbol);
     newsCache.set(coin, { at: Date.now(), items });

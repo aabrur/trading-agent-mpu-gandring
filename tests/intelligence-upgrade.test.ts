@@ -55,8 +55,10 @@ describe('News intelligence and normalization', () => {
     };
     const norm = normalizeLegacyItem(item, 'BTCUSDT');
     const briefing = buildNewsBriefing('BTCUSDT', [norm], 'CONFIGURED_LIVE');
-    expect(briefing.criticalVetoFound).toBe(true);
+    expect(briefing.criticalClaimFound).toBe(true);
+    expect(briefing.criticalVetoFound).toBe(false);
     expect(briefing.vetoReason).toContain('Security exploit');
+    expect(briefing.events[0].evidenceStatus).toBe('REPORTED');
   });
 });
 

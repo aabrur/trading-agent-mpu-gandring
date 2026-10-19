@@ -5,11 +5,11 @@ export interface NormalizedWhaleEvent {
   chainId: string | number;
   txHash: string;
   blockNumber: number | null;
-  timestamp: number;
+  timestamp: number | null;
   tokenAddress: string | null;
   tokenSymbol: string;
   rawAmount: string;
-  normalizedAmount: number;
+  normalizedAmount: number | null;
   usdValueOrNull: number | null;
   fromAddress: string;
   toAddress: string;
@@ -55,7 +55,7 @@ export function classifyTransfer(
   const fromEx = fromEntity && /binance|bybit|coinbase|okx|kraken|bitfinex/i.test(fromEntity);
   const toEx = toEntity && /binance|bybit|coinbase|okx|kraken|bitfinex/i.test(toEntity);
 
-  const valStr = usdValue ? ` ($${(usdValue / 1e6).toFixed(1)}M)` : '';
+  const valStr = usdValue != null && Number.isFinite(usdValue) ? ` ($${(usdValue / 1e6).toFixed(1)}M)` : '';
 
   if (toEx && !fromEx) {
     return {
@@ -87,8 +87,27 @@ export function classifyTransfer(
   };
 }
 
-// In-memory cache for whale data
+export function optionalNumber(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function attributionConfidence(fromEntity: string | null, toEntity: string | null): NormalizedWhaleEvent['attributionConfidence'] {
+  if (!fromEntity && !toEntity) return 'unknown';
+  return 'medium';
+}
+
+function confirmationStatus(tx: { hash?: unknown; block_number?: unknown }): NormalizedWhaleEvent['confirmationStatus'] {
+  const hash = tx.hash != null && String(tx.hash).trim() !== '';
+  const block = optionalNumber(tx.block_number);
+  if (hash && block != null) return 'confirmed';
+  if (hash) return 'unverified';
+  return 'unverified';
+}
+
 const whaleCache = new Map<string, { at: number; briefing: WhaleBriefing }>();
+export function resetWhaleCache() { whaleCache.clear(); }
 
 export async function getWhaleBriefing(
   symbol: string,
@@ -131,26 +150,28 @@ export async function getWhaleBriefing(
     const events: NormalizedWhaleEvent[] = rawTxs.slice(0, 10).map((tx: any) => {
       const fromEntity = tx.from?.owner ? String(tx.from.owner) : null;
       const toEntity = tx.to?.owner ? String(tx.to.owner) : null;
-      const amt = Number(tx.amount ?? 0);
-      const usd = Number(tx.amount_usd ?? null);
-      const { classification, interpretation } = classifyTransfer(fromEntity, toEntity, amt, coin, usd);
+      const amt = optionalNumber(tx.amount);
+      const usd = optionalNumber(tx.amount_usd);
+      const tsSec = optionalNumber(tx.timestamp);
+      const { classification, interpretation } = classifyTransfer(fromEntity, toEntity, amt ?? 0, coin, usd);
+      const blockNumber = optionalNumber(tx.block_number);
 
       return {
-        chainId: tx.blockchain ?? 'mainnet',
-        txHash: String(tx.hash ?? ''),
-        blockNumber: tx.block_number ?? null,
-        timestamp: (tx.timestamp ?? Math.floor(Date.now() / 1000)) * 1000,
-        tokenAddress: null,
-        tokenSymbol: coin,
-        rawAmount: String(tx.amount ?? '0'),
+        chainId: tx.blockchain ?? 'unknown',
+        txHash: tx.hash != null && String(tx.hash).trim() !== '' ? String(tx.hash) : '',
+        blockNumber,
+        timestamp: tsSec == null ? null : (tsSec < 1e12 ? tsSec * 1000 : tsSec),
+        tokenAddress: tx.token?.address ? String(tx.token.address) : null,
+        tokenSymbol: tx.symbol ? String(tx.symbol).toUpperCase() : coin,
+        rawAmount: tx.amount == null ? '' : String(tx.amount),
         normalizedAmount: amt,
-        usdValueOrNull: Number.isFinite(usd) ? usd : null,
+        usdValueOrNull: usd,
         fromAddress: String(tx.from?.address ?? 'unknown'),
         toAddress: String(tx.to?.address ?? 'unknown'),
         fromEntityOrNull: fromEntity,
         toEntityOrNull: toEntity,
-        attributionConfidence: (fromEntity || toEntity) ? 'high' : 'unknown',
-        confirmationStatus: 'confirmed',
+        attributionConfidence: attributionConfidence(fromEntity, toEntity),
+        confirmationStatus: confirmationStatus(tx),
         source: 'whale-alert',
         classification,
         interpretation

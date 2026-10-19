@@ -492,7 +492,7 @@ export class Desk extends EventEmitter {
         onchainActivity: whaleBriefing.providerStatus
       };
       const rs = await this.run('research', 'research', {
-        instruction: `Weigh the sourced catalysts and on-chain intelligence for ${symbol}. Separate VERIFIED on-chain observations, REPORTED news claims, INFERRED candle proxies, and UNAVAILABLE information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. VETO only for verified critical events: delistings, trading halts, exploits, or chain outages. ${newsBriefing.criticalVetoFound ? `CRITICAL VETO WARNING: ${newsBriefing.vetoReason}.` : ''}`,
+        instruction: `Weigh the sourced catalysts and on-chain intelligence for ${symbol}. Separate VERIFIED on-chain observations, REPORTED news claims, INFERRED candle proxies, and UNAVAILABLE information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. VETO only for verified critical events: delistings, trading halts, exploits, or chain outages. Keyword matches are reported claims, not independent verification. ${newsBriefing.criticalVetoFound ? `CRITICAL VETO (verified): ${newsBriefing.vetoReason}.` : newsBriefing.criticalClaimFound ? `CRITICAL CLAIM (unverified): ${newsBriefing.vetoReason}.` : ''}`,
         data: {
           symbol,
           tradeFlowProxy,

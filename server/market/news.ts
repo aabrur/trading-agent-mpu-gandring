@@ -1,6 +1,4 @@
 import type { NewsItem } from '../types.js';
-import { sanitizeUntrusted } from '../untrusted.js';
-import { safe } from '../redact.js';
 
 export type NewsCategory =
   | 'macro'
@@ -20,14 +18,15 @@ export type NewsCategory =
   | 'general_market';
 
 export type EvidenceStatus = 'VERIFIED' | 'REPORTED' | 'UNAVAILABLE';
-export type NewsFreshness = 'fresh' | 'stale' | 'archived';
+export type NewsFreshness = 'fresh' | 'stale' | 'archived' | 'unknown';
+export type ClaimVerification = 'verified' | 'reported_claim' | 'inferred' | 'unavailable' | 'sample';
 
 export interface NormalizedNewsEvent {
   id: string;
   title: string;
   source: string;
   sourceUrl: string | null;
-  publishedAt: number;
+  publishedAt: number | null;
   observedAt: number;
   affectedAssets: string[];
   category: NewsCategory;
@@ -46,12 +45,40 @@ export interface NewsBriefing {
   providerStatus: 'CONFIGURED_LIVE' | 'SAMPLE_FALLBACK' | 'UNAVAILABLE' | 'UNCONFIGURED';
   events: NormalizedNewsEvent[];
   criticalVetoFound: boolean;
+  criticalClaimFound: boolean;
   vetoReason: string | null;
   summary: string;
   observedAt: number;
 }
 
 // Normalize headline strings into a slug to identify duplicates
+const FRESH_MS = 6 * 60 * 60 * 1000;
+const STALE_MS = 48 * 60 * 60 * 1000;
+
+export function parsePublishedAt(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1e12 ? Math.round(value * 1000) : value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^\d+(\.\d+)?$/.test(trimmed)) return parsePublishedAt(Number(trimmed));
+    const ms = Date.parse(trimmed);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+export function newsFreshness(publishedAt: number | null, now: number = Date.now()): NewsFreshness {
+  if (publishedAt == null || !Number.isFinite(publishedAt) || publishedAt <= 0) return 'unknown';
+  const age = now - publishedAt;
+  if (age < 0) return 'unknown';
+  if (age <= FRESH_MS) return 'fresh';
+  if (age <= STALE_MS) return 'stale';
+  return 'archived';
+}
+
 export function titleSlug(title: string): string {
   return title
     .toLowerCase()
@@ -61,7 +88,19 @@ export function titleSlug(title: string): string {
     .slice(0, 80);
 }
 
-// Categorize news based on keyword presence
+export function coinOf(symbol: string): string {
+  return symbol.replace(/USDT?$|USDC$/i, '').toUpperCase();
+}
+
+export function eventRelevantToSymbol(event: NormalizedNewsEvent, symbol: string): boolean {
+  const coin = coinOf(symbol);
+  if (!event.affectedAssets.length) return false;
+  return event.affectedAssets.some((a) => {
+    const asset = a.replace(/USDT?$|USDC$/i, '').toUpperCase();
+    return asset === coin || asset === '*' || asset === 'CRYPTO' || asset === 'MARKET';
+  });
+}
+
 export function categorizeNews(text: string): NewsCategory {
   const t = text.toLowerCase();
   if (/\b(hack|exploit|drained|stolen|breach|reentrancy|vulnerability|rugpull|phishing)\b/.test(t)) return 'exploit_hack';
@@ -81,45 +120,46 @@ export function categorizeNews(text: string): NewsCategory {
 }
 
 // Assess potential impact and whether a critical VETO is warranted
-export function assessImpact(category: NewsCategory, sentiment: string, title: string): { impactAssessment: string; isVeto: boolean; vetoReason: string | null } {
+export function assessImpact(category: NewsCategory, sentiment: string, title: string): {
+  impactAssessment: string;
+  isVeto: boolean;
+  isVetoCandidate: boolean;
+  verification: ClaimVerification;
+  vetoReason: string | null;
+} {
+  const reported = (impactAssessment: string, vetoReason: string) => ({
+    impactAssessment,
+    isVeto: true,
+    isVetoCandidate: true,
+    verification: 'reported_claim' as const,
+    vetoReason
+  });
   if (category === 'exploit_hack') {
-    return {
-      impactAssessment: 'High severe negative risk. Exploit or security compromise reported.',
-      isVeto: true,
-      vetoReason: `Security exploit or hack reported: ${title.slice(0, 80)}`
-    };
+    return reported('High severe negative risk. Exploit or security compromise reported, not independently verified by this desk.', `Security exploit or hack reported: ${title.slice(0, 80)}`);
   }
   if (category === 'blockchain_outage') {
-    return {
-      impactAssessment: 'Network halt or infrastructure failure. Liquidity and settlement impaired.',
-      isVeto: true,
-      vetoReason: `Chain outage or trading halt reported: ${title.slice(0, 80)}`
-    };
+    return reported('Network halt or infrastructure failure reported. Liquidity and settlement may be impaired.', `Chain outage or trading halt reported: ${title.slice(0, 80)}`);
   }
   if (category === 'listing_delisting' && sentiment === 'severe') {
-    return {
-      impactAssessment: 'Asset delisting event. Structural liquidity removal.',
-      isVeto: true,
-      vetoReason: `Delisting event reported: ${title.slice(0, 80)}`
-    };
+    return reported('Asset delisting claim. Structural liquidity removal if confirmed.', `Delisting event reported: ${title.slice(0, 80)}`);
   }
   if (category === 'stablecoin' && sentiment === 'severe') {
-    return {
-      impactAssessment: 'Severe stablecoin depeg warning. Collateral risk elevated.',
-      isVeto: true,
-      vetoReason: `Critical stablecoin instability reported: ${title.slice(0, 80)}`
-    };
+    return reported('Severe stablecoin depeg warning. Collateral risk elevated if confirmed.', `Critical stablecoin instability reported: ${title.slice(0, 80)}`);
   }
   if (category === 'regulation' || category === 'fed' || category === 'macro') {
     return {
       impactAssessment: 'High-volatility macroeconomic or regulatory driver. Directional catalyst.',
       isVeto: false,
+      isVetoCandidate: false,
+      verification: 'reported_claim',
       vetoReason: null
     };
   }
   return {
     impactAssessment: 'Moderate catalyst event. Price context required.',
     isVeto: false,
+    isVetoCandidate: false,
+    verification: 'reported_claim',
     vetoReason: null
   };
 }
@@ -144,24 +184,24 @@ export function deduplicateEvents(events: NormalizedNewsEvent[]): NormalizedNews
 }
 
 // Convert legacy NewsItem into NormalizedNewsEvent
-export function normalizeLegacyItem(item: NewsItem, symbol: string): NormalizedNewsEvent {
-  const now = Date.now();
+export function normalizeLegacyItem(item: NewsItem, symbol: string, now: number = Date.now()): NormalizedNewsEvent {
   const cat = categorizeNews(`${item.headline} ${item.body}`);
-  const { impactAssessment, isVeto, vetoReason } = assessImpact(cat, item.sentiment, item.headline);
+  const { impactAssessment } = assessImpact(cat, item.sentiment, item.headline);
   const status: EvidenceStatus = item.example ? 'UNAVAILABLE' : 'REPORTED';
+  const publishedAt = parsePublishedAt(item.publishedAt);
   return {
     id: item.id,
     title: item.headline,
     source: item.source,
-    sourceUrl: null,
-    publishedAt: now,
+    sourceUrl: item.sourceUrl ?? null,
+    publishedAt,
     observedAt: now,
-    affectedAssets: [symbol.replace(/USDT?$|USDC$/, '')],
+    affectedAssets: [coinOf(symbol)],
     category: cat,
     evidenceStatus: status,
     impactAssessment,
     sentiment: item.sentiment,
-    freshness: 'fresh',
+    freshness: newsFreshness(publishedAt, now),
     duplicateGroup: titleSlug(item.headline),
     provider: item.example ? 'sample' : 'cryptopanic',
     example: item.example,
@@ -170,30 +210,52 @@ export function normalizeLegacyItem(item: NewsItem, symbol: string): NormalizedN
 }
 
 // Produce a unified news briefing for a symbol
+function canAutoVeto(ev: NormalizedNewsEvent, symbol: string): { ok: boolean; reason: string | null } {
+  if (ev.example || ev.provider === 'sample') return { ok: false, reason: null };
+  if (ev.evidenceStatus !== 'VERIFIED') return { ok: false, reason: null };
+  if (ev.freshness !== 'fresh') return { ok: false, reason: null };
+  if (!eventRelevantToSymbol(ev, symbol)) return { ok: false, reason: null };
+  const { isVetoCandidate, vetoReason } = assessImpact(ev.category, ev.sentiment, ev.title);
+  if (!isVetoCandidate) return { ok: false, reason: null };
+  return { ok: true, reason: vetoReason };
+}
+
 export function buildNewsBriefing(symbol: string, events: NormalizedNewsEvent[], providerStatus: NewsBriefing['providerStatus']): NewsBriefing {
   const deduped = deduplicateEvents(events);
   let criticalVetoFound = false;
+  let criticalClaimFound = false;
   let vetoReason: string | null = null;
 
   for (const ev of deduped) {
-    const { isVeto, vetoReason: vr } = assessImpact(ev.category, ev.sentiment, ev.title);
-    if (isVeto && ev.evidenceStatus !== 'UNAVAILABLE') {
+    const { isVetoCandidate, vetoReason: vr } = assessImpact(ev.category, ev.sentiment, ev.title);
+    if (isVetoCandidate && ev.evidenceStatus !== 'UNAVAILABLE' && !ev.example) {
+      criticalClaimFound = true;
+    }
+    const auto = canAutoVeto(ev, symbol);
+    if (auto.ok) {
       criticalVetoFound = true;
-      vetoReason = vr;
+      vetoReason = auto.reason;
       break;
     }
+    if (isVetoCandidate && !vetoReason) vetoReason = vr;
   }
 
+  const claimNote = criticalVetoFound
+    ? ` [CRITICAL VETO: ${vetoReason}]`
+    : criticalClaimFound
+      ? ` [CRITICAL CLAIM, unverified: ${vetoReason}]`
+      : '';
   const summary = deduped.length === 0
     ? `No active news catalysts recorded for ${symbol}. Provider status: ${providerStatus}.`
-    : `${deduped.length} catalyst(s) processed. Provider: ${providerStatus}. Top headline: "${deduped[0].title.slice(0, 90)}"${criticalVetoFound ? ` [CRITICAL VETO: ${vetoReason}]` : ''}`;
+    : `${deduped.length} catalyst(s) processed. Provider: ${providerStatus}. Top headline: "${deduped[0].title.slice(0, 90)}"${claimNote}`;
 
   return {
     symbol,
     providerStatus,
     events: deduped,
     criticalVetoFound,
-    vetoReason,
+    criticalClaimFound,
+    vetoReason: criticalVetoFound || criticalClaimFound ? vetoReason : null,
     summary,
     observedAt: Date.now()
   };

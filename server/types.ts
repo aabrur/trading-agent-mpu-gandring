@@ -27,6 +27,8 @@ export interface NewsItem {
   sentiment: 'bullish' | 'bearish' | 'neutral' | 'severe';
   example: boolean;
   flagged?: boolean;
+  publishedAt?: number | null;
+  sourceUrl?: string | null;
 }
 
 export interface Position {
