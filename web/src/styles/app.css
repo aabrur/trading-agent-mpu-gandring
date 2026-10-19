@@ -867,7 +867,14 @@ button:disabled { cursor: default; }
 .desk-ops .ops-kill-bar { padding: 5px 8px; margin-bottom: 7px; }
 .desk-ops .auto-setup-box { padding: 8px; gap: 6px; margin-bottom: 0; }
 .auto-quick-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.auto-quick-actions .auto-run-btn { flex: 1; }
+.auto-quick-actions .auto-run-btn { flex: 1; width: 100%; }
+.auto-quick-actions .auto-run-group { display: flex; flex-direction: column; align-items: stretch; gap: 2px; flex: 1; }
+.auto-preset-selector { position: relative; display: inline-flex; align-items: center; justify-content: flex-end; width: 100%; }
+.auto-preset-select { appearance: none; -webkit-appearance: none; background: transparent; border: none; padding: 1px 12px 1px 2px; color: var(--text-dim); font-family: var(--font-ui); font-size: 11px; font-weight: 600; cursor: pointer; text-align: right; width: 100%; outline: none; }
+.auto-preset-select:hover:not(:disabled) { color: var(--text); }
+.auto-preset-select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: var(--radius-sm); }
+.auto-preset-select:disabled { opacity: 0.6; cursor: default; }
+.auto-preset-chevron { position: absolute; right: 0; pointer-events: none; font-size: 10px; color: var(--text-dim); line-height: 1; }
 .desk-ops .auto-setup-controls { gap: 6px; flex-wrap: nowrap; }
 .desk-ops .auto-min-field, .desk-ops .auto-n-field { padding: 0 4px; gap: 3px; }
 .desk-ops .auto-min-field input { width: 35px !important; min-width: 35px !important; }

@@ -13,7 +13,7 @@ import { readEnv, setEnv } from '../cli/envfile';
 import { Desk } from '../server/desk';
 import { makeCaller } from '../server/providers/index';
 import { loadConfig } from '../server/config';
-import { DEFAULT_TRADING_SETTINGS, entryConfidenceReason, resolveTradingSettings, tradingSettingsFromConfig, TradingSettingsSchema } from '../server/trading-settings';
+import { DEFAULT_TRADING_SETTINGS, entryConfidenceReason, resolveTradingPreset, resolveTradingSettings, TRADING_PRESETS, TRADING_PRESET_IDS, tradingSettingsFromConfig, TradingSettingsSchema } from '../server/trading-settings';
 
 describe('network trading settings', () => {
   it('saves only the chosen network without overwriting legacy settings or the other profile', () => {
@@ -154,6 +154,118 @@ describe('network trading settings', () => {
       built.desk.stop(); await new Promise((r) => built.server.close(r));
       for (const key of Object.keys(process.env)) if (!(key in oldEnv)) delete process.env[key];
       Object.assign(process.env, oldEnv); rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('defines four recommended presets with exact values and schema validity', () => {
+    expect(TRADING_PRESET_IDS).toEqual(['default', 'balance', 'profit', 'high_risk']);
+    const base = { ...DEFAULT_TRADING_SETTINGS, minOrderUsdt: 12, safetyNet: 350 };
+
+    const def = resolveTradingPreset('default', base);
+    expect(def).toEqual(DEFAULT_TRADING_SETTINGS);
+    expect(TradingSettingsSchema.safeParse(def).success).toBe(true);
+
+    const bal = resolveTradingPreset('balance', base);
+    expect(bal).toMatchObject({
+      dailyLossLimitPct: 2,
+      maxLossPerTradePct: 0.5,
+      minEntryConfidencePct: 75,
+      maxLeverage: 2,
+      defaultStopPct: 1.5,
+      minStopPct: 0.3,
+      takeProfitR: 2,
+      maxPositions: 2,
+      minOrderUsdt: 12,
+      safetyNet: 350
+    });
+    expect(TradingSettingsSchema.safeParse(bal).success).toBe(true);
+
+    const prof = resolveTradingPreset('profit', base);
+    expect(prof).toMatchObject({
+      dailyLossLimitPct: 4,
+      maxLossPerTradePct: 1,
+      minEntryConfidencePct: 75,
+      maxLeverage: 4,
+      defaultStopPct: 2,
+      minStopPct: 0.3,
+      takeProfitR: 3,
+      maxPositions: 3,
+      minOrderUsdt: 12,
+      safetyNet: 350
+    });
+    expect(TradingSettingsSchema.safeParse(prof).success).toBe(true);
+
+    const hr = resolveTradingPreset('high_risk', base);
+    expect(hr).toMatchObject({
+      dailyLossLimitPct: 6,
+      maxLossPerTradePct: 2,
+      minEntryConfidencePct: 70,
+      maxLeverage: 6,
+      defaultStopPct: 2.5,
+      minStopPct: 0.5,
+      takeProfitR: 3,
+      maxPositions: 4,
+      minOrderUsdt: 12,
+      safetyNet: 350
+    });
+    expect(TradingSettingsSchema.safeParse(hr).success).toBe(true);
+  });
+  it('persists recommended presets per network, preserving capital settings and manual drafts without side effects', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'mpu-presets-')), file = path.join(dir, 'settings.env');
+    try {
+      setEnv(file, {
+        TRADING_MODE: 'PAPER',
+        SAFETY_NET: '250',
+        MIN_ORDER_USDT: '10',
+        TESTNET_DESK_SAFETY_NET: '80',
+        TESTNET_DESK_MIN_ORDER_USDT: '15',
+        TESTNET_DESK_MAX_LEVERAGE: '7'
+      });
+
+      const savedTestnet = saveTradingProfile(file, { network: 'testnet', profile: 'balance' });
+      expect(savedTestnet.profile).toBe('balance');
+      expect(savedTestnet.values.maxLeverage).toBe(2);
+      expect(savedTestnet.values.safetyNet).toBe(80);
+      expect(savedTestnet.values.minOrderUsdt).toBe(15);
+      expect(savedTestnet.values.maxPositions).toBe(2);
+
+      const envAfterTestnet = readEnv(file);
+      expect(envAfterTestnet.TESTNET_DESK_PROFILE).toBe('balance');
+      expect(envAfterTestnet.TESTNET_DESK_MAX_LEVERAGE).toBe('7');
+      expect(envAfterTestnet.MAINNET_DESK_PROFILE).toBeUndefined();
+
+      const savedMainnet = saveTradingProfile(file, { network: 'mainnet', profile: 'high_risk' });
+      expect(savedMainnet.profile).toBe('high_risk');
+      expect(savedMainnet.values.maxLeverage).toBe(6);
+      expect(savedMainnet.values.safetyNet).toBe(250);
+      expect(savedMainnet.values.minOrderUsdt).toBe(10);
+      expect(savedMainnet.values.maxPositions).toBe(4);
+
+      const envAfterMainnet = readEnv(file);
+      expect(envAfterMainnet.MAINNET_DESK_PROFILE).toBe('high_risk');
+      expect(envAfterMainnet.TESTNET_DESK_PROFILE).toBe('balance');
+      expect(envAfterMainnet.TRADING_MODE).toBe('PAPER');
+
+      const savedManual = saveTradingProfile(file, {
+        network: 'testnet',
+        profile: 'manual',
+        values: { ...DEFAULT_TRADING_SETTINGS, maxLeverage: 5, safetyNet: 80 }
+      });
+      expect(savedManual.profile).toBe('manual');
+      expect(savedManual.values.maxLeverage).toBe(5);
+      expect(readEnv(file).TESTNET_DESK_PROFILE).toBe('manual');
+
+      const cfg = loadConfig({ TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'k', BYBIT_TESTNET_API_SECRET: 's', MARKET_SOURCE: 'sample' });
+      const desk = new Desk(cfg, makeCaller(cfg), { reportsDir: null, killFile: null });
+      const applied = await desk.applyTradingSettings('testnet', 'profit', savedMainnet.values);
+      expect(applied).toBe(true);
+      expect(cfg.tradingProfile).toBe('profit');
+      expect(cfg.risk.maxLeverage).toBe(6);
+      expect(desk.book.n).toBe(4);
+      expect(cfg.tradingMode).toBe('TESTNET');
+      expect(desk.book.positions).toHaveLength(0);
+      desk.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

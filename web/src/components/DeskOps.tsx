@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
 import { POPULAR_SYMBOLS } from '../types';
 import { useI18n } from '../i18n';
+import { TRADING_PRESETS, TRADING_PRESET_IDS, type TradingPresetId, type TradingNetwork } from '../../../server/trading-settings';
 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const num = (s: string) => (s.trim() === '' ? undefined : Number(s));
@@ -26,6 +27,60 @@ export function DeskOps({ state }: { state: DeskState }) {
   const [autoSyms, setAutoSyms] = useState((auto?.symbols ?? state.watchlist).join(', '));
   const [autoN, setAutoN] = useState<1 | 2 | 3 | 4>((state.paper?.n ?? 4) as 1 | 2 | 3 | 4);
   const [autoBusy, setAutoBusy] = useState(false);
+  const [presetBusy, setPresetBusy] = useState(false);
+  const [paperConfirmedPreset, setPaperConfirmedPreset] = useState<TradingPresetId | null>(null);
+
+  useEffect(() => {
+    if (state.mode === 'PAPER') {
+      fetch('/api/setup/trading')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.ok && d.networks?.testnet?.profile && (TRADING_PRESET_IDS as readonly string[]).includes(d.networks.testnet.profile)) {
+            setPaperConfirmedPreset(d.networks.testnet.profile as TradingPresetId);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [state.mode]);
+
+  const runningPreset = state.trading?.profile && (TRADING_PRESET_IDS as readonly string[]).includes(state.trading.profile)
+    ? (state.trading.profile as TradingPresetId)
+    : null;
+  const activePreset = (state.mode === 'PAPER' ? (paperConfirmedPreset ?? runningPreset) : runningPreset) ?? '';
+
+  const handlePresetChange = async (newPreset: TradingPresetId) => {
+    if (presetBusy || autoBusy) return;
+    const targetNetwork: TradingNetwork = state.mode === 'LIVE' ? 'mainnet' : 'testnet';
+
+    if (state.mode === 'LIVE') {
+      const runningLeverage = state.trading?.values?.maxLeverage ?? state.paper?.maxLeverage ?? 3;
+      const runningDailyLoss = state.trading?.values?.dailyLossLimitPct ?? state.dailyLoss?.limitPct ?? 3;
+      const targetPresetValues = TRADING_PRESETS[newPreset].values;
+      const increasesLeverage = targetPresetValues.maxLeverage > runningLeverage;
+      const increasesDailyLoss = targetPresetValues.dailyLossLimitPct > runningDailyLoss;
+      const isHighRisk = newPreset === 'high_risk';
+
+      if (isHighRisk || increasesLeverage || increasesDailyLoss) {
+        const confirmed = window.confirm(
+          `Switch LIVE to ${TRADING_PRESETS[newPreset].name}? This increases risk limits (max leverage ${targetPresetValues.maxLeverage}x, daily loss ${targetPresetValues.dailyLossLimitPct}%).`
+        );
+        if (!confirmed) return;
+      }
+    }
+
+    setPresetBusy(true);
+    try {
+      const r = await post('/api/setup/trading', { network: targetNetwork, profile: newPreset }).catch(() => null);
+      if (r?.ok) {
+        if (state.mode === 'PAPER') setPaperConfirmedPreset(newPreset);
+        show(true, r.detail || `Preset ${TRADING_PRESETS[newPreset].name} applied.`);
+      } else {
+        show(false, r?.detail || 'Failed to apply preset.');
+      }
+    } finally {
+      setPresetBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (auto?.intervalMin) setAutoMin(String(auto.intervalMin));
@@ -179,10 +234,28 @@ export function DeskOps({ state }: { state: DeskState }) {
         <small className="auto-cycle-meta">{auto?.running ? (auto.trigger === 'manual' ? 'Manual cycle running' : 'Scheduled cycle running') : auto?.on ? 'Waiting for next cycle' : 'Scheduler off'}{auto?.stopping ? ' · stopping after current symbol' : ''}</small>
         <div className="auto-quick-actions">
           <div className="seg auto-toggle-seg" role="group" aria-label="Auto Trade toggle">
-            <button type="button" className={isAutoOn ? 'on auto-on-btn' : ''} disabled={autoBusy} onClick={() => void updateAuto({ on: true })}>{t('autoStartBtn')}</button>
-            <button type="button" className={!isAutoOn ? 'on auto-off-btn' : ''} disabled={autoBusy} onClick={() => void updateAuto({ on: false })}>{t('autoStopBtn')}</button>
+            <button type="button" className={isAutoOn ? 'on auto-on-btn' : ''} disabled={autoBusy || presetBusy} onClick={() => void updateAuto({ on: true })}>{t('autoStartBtn')}</button>
+            <button type="button" className={!isAutoOn ? 'on auto-off-btn' : ''} disabled={autoBusy || presetBusy} onClick={() => void updateAuto({ on: false })}>{t('autoStopBtn')}</button>
           </div>
-          <button type="button" className="mini auto-run-btn" disabled={autoBusy || state.killed || !!auto?.running} onClick={() => void updateAuto({ runNow: true })}>{t('autoRunNowBtn')}</button>
+          <div className="auto-run-group">
+            <div className="auto-preset-selector">
+              <select
+                className="auto-preset-select"
+                aria-label="Trading risk preset"
+                disabled={presetBusy || autoBusy}
+                value={activePreset}
+                onChange={(e) => void handlePresetChange(e.target.value as TradingPresetId)}
+              >
+                {!activePreset && <option value="" disabled hidden>Custom settings</option>}
+                <option value="default">Default</option>
+                <option value="balance">Balance</option>
+                <option value="profit">Profit</option>
+                <option value="high_risk">High Risk High Reward</option>
+              </select>
+              <span className="auto-preset-chevron" aria-hidden="true">▾</span>
+            </div>
+            <button type="button" className="mini auto-run-btn" disabled={autoBusy || presetBusy || state.killed || !!auto?.running} onClick={() => void updateAuto({ runNow: true })}>{t('autoRunNowBtn')}</button>
+          </div>
         </div>
         <div className="auto-setup-controls">
           <label className="auto-min-field"><span>Every</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>min</span></label>

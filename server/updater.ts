@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const APP_VERSION = '0.0.0.2.9';
+export const APP_VERSION = '0.0.0.3.0';
 export const REPO_RAW_PKG_URL = 'https://raw.githubusercontent.com/aabrur/trading-agent-mpu-gandring/main/package.json';
 export const REPO_URL = 'https://github.com/aabrur/trading-agent-mpu-gandring';
 
@@ -61,12 +61,13 @@ export async function checkUpdate(fetchImpl: typeof fetch = fetch, cwd = process
     'Brutal cartoon smoke-cloud fight animation with flying fists, stars, and impact bursts'
   ];
 
+  let timer: NodeJS.Timeout | null = null;
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4500);
+    timer = setTimeout(() => ctrl.abort(), 4500);
+    timer.unref?.();
     const sep = REPO_RAW_PKG_URL.includes('?') ? '&' : '?';
     const res = await fetchImpl(`${REPO_RAW_PKG_URL}${sep}t=${Date.now()}`, { signal: ctrl.signal, headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
-    clearTimeout(timer);
     if (!res.ok) {
       return {
         ok: true,
@@ -105,6 +106,8 @@ export async function checkUpdate(fetchImpl: typeof fetch = fetch, cwd = process
       notes: defaultNotes,
       error: (e as Error).message
     };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

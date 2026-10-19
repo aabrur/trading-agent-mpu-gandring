@@ -12,6 +12,7 @@ import { BinanceAdapter } from '../server/exchange/binance.js';
 import { verifyKey } from '../server/live/guard.js';
 import { doctor } from '../server/setup/doctor.js';
 import type { ExchangeAdapter } from '../server/exchange/types.js';
+import { WebSocket } from 'ws';
 
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status });
 const servers: Server[] = [];
@@ -93,5 +94,39 @@ describe('npm run trade --service build PATH', () => {
     expect(env.PATH!.split(path.delimiter)[0]).toBe('/opt/homebrew/bin');
     expect(env.PATH).toContain('/usr/bin');
     expect(buildEnv({}, '/x/node').PATH).toBe('/x');
+  });
+});
+
+describe('server lifecycle and WebSocket error resilience', () => {
+  it('server.close cleans up desk listeners and active WebSockets without deadlocking', async () => {
+    const { base, server, desk } = await boot();
+    const wsUrl = base.replace(/^http/, 'ws') + '/ws';
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+
+    expect(desk.listenerCount('state')).toBeGreaterThan(0);
+    const closePromise = new Promise<void>((resolve) => server.close(() => resolve()));
+    const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error('server.close timed out due to deadlock')), 2500));
+    await expect(Promise.race([closePromise, timeoutPromise])).resolves.toBeUndefined();
+    expect(desk.listenerCount('state')).toBe(0);
+  });
+
+  it('client WebSocket errors do not crash server', async () => {
+    const { base, server } = await boot();
+    const wsUrl = base.replace(/^http/, 'ws') + '/ws';
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+    // Trigger socket error event
+    ws.emit('error', new Error('test ECONNRESET'));
+    // Server should remain alive and responsive
+    const res = await fetch(`${base}/api/health`);
+    expect(res.status).toBe(200);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 });

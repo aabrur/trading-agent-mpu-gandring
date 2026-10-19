@@ -266,10 +266,30 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
 
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
+  wss.on('error', () => { /* ignore */ });
   const send = (ws: WebSocket, type: string, payload: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload })); };
   const broadcast = (type: string) => (payload: unknown) => { const msg = JSON.stringify({ type, payload }); for (const c of wss.clients) if (c.readyState === WebSocket.OPEN) c.send(msg); };
-  for (const ev of ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report', 'execution']) desk.on(ev, broadcast(ev));
+  const eventTypes = ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report', 'execution'] as const;
+  const listeners = eventTypes.map((ev) => {
+    const fn = broadcast(ev);
+    desk.on(ev, fn);
+    return { ev, fn };
+  });
+  const origClose = server.close.bind(server);
+  const cleanup = () => {
+    for (const { ev, fn } of listeners) desk.off(ev, fn);
+    for (const c of wss.clients) {
+      try { c.terminate(); } catch { /* ignore */ }
+    }
+    try { wss.close(); } catch { /* ignore */ }
+  };
+  server.close = function (cb?: (err?: Error) => void) {
+    cleanup();
+    return origClose(cb);
+  };
+  server.on('close', cleanup);
   wss.on('connection', (ws) => {
+    ws.on('error', () => { /* ignore */ });
     send(ws, 'state', desk.snapshot());
     ws.on('message', async (buf) => {
       try {
@@ -281,5 +301,6 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
       } catch { /* ignore malformed frames */ }
     });
   });
-  return { app, server, desk, wss, auto, reporter, lead, inbound };
+  const close = (cb?: (err?: Error) => void) => server.close(cb);
+  return { app, server, desk, wss, auto, reporter, lead, inbound, close };
 }

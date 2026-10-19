@@ -22,6 +22,20 @@ export default defineConfig(({ mode }) => {
         '/ws': { target: `ws://127.0.0.1:${apiPort}`, ws: true }
       }
     },
-    build: { outDir: '../dist/web', emptyOutDir: true }
+    build: {
+      outDir: '../dist/web',
+      emptyOutDir: true,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (/[\\/]node_modules[\\/]lightweight-charts[\\/]/.test(id)) return 'charts';
+              if (/[\\/]node_modules[\\/]react-dom[\\/]/.test(id)) return 'react-dom';
+              if (/[\\/]node_modules[\\/](react|scheduler)[\\/]/.test(id)) return 'react';
+            }
+          }
+        }
+      }
+    }
   };
 });

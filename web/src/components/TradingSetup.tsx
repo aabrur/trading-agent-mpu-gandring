@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DeskState } from '../types';
-import type { TradingNetwork, TradingProfile, TradingSettings } from '../../../server/trading-settings';
+import type { TradingNetwork, TradingPresetId, TradingProfile, TradingSettings } from '../../../server/trading-settings';
+import { TRADING_PRESETS, resolveTradingPreset } from '../../../server/trading-settings';
 
 interface TradingInfo {
   defaults: TradingSettings;
@@ -20,10 +21,10 @@ const fields: { key: keyof TradingSettings; label: string; help: string; min: nu
   { key: 'maxPositions', label: 'Maximum open positions', min: 1, max: 4, step: 1, help: 'Money Trade is divided into these slots. Changing this does not close or resize existing positions.' }
 ];
 
-export function TradingSetup({ state, initialProfile }: { state: DeskState; initialProfile?: 'default' | 'manual' }) {
+export function TradingSetup({ state, initialProfile }: { state: DeskState; initialProfile?: TradingProfile }) {
   const [info, setInfo] = useState<TradingInfo | null>(null);
   const [network, setNetwork] = useState<TradingNetwork>(state.mode === 'LIVE' ? 'mainnet' : 'testnet');
-  const [profile, setProfile] = useState<'default' | 'manual'>(initialProfile ?? 'manual');
+  const [profile, setProfile] = useState<TradingProfile>(initialProfile ?? 'manual');
   const [drafts, setDrafts] = useState<Record<TradingNetwork, TradingSettings> | null>(null);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const load = async () => {
@@ -37,7 +38,10 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
   useEffect(() => { void load(); }, []);
   useEffect(() => { if (initialProfile) setProfile(initialProfile); }, [initialProfile]);
   if (!info || !drafts) return <div className="wallet-note" role="status"><p>{message || 'Loading saved trading profiles...'}</p>{message && <button onClick={() => void load()}>Retry loading</button>}</div>;
-  const values = profile === 'default' ? info.defaults : drafts[network];
+  const isPreset = profile in TRADING_PRESETS;
+  const values = isPreset
+    ? resolveTradingPreset(profile as TradingPresetId, drafts[network])
+    : drafts[network];
   const active = info.running.network === network;
   async function save() {
     setBusy(true); setMessage('');
@@ -48,18 +52,30 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     } catch { setMessage('Saving was not confirmed. Refresh this section before trying again.'); }
     finally { setBusy(false); }
   }
+  const savedProfile = info.networks[network].profile;
+  const savedLabel = savedProfile === 'current'
+    ? 'existing configuration'
+    : savedProfile in TRADING_PRESETS
+      ? TRADING_PRESETS[savedProfile as TradingPresetId].name
+      : savedProfile;
   return <section className="trading-setup">
-    <p className="wallet-note">Running: <b>{info.running.mode}</b>{info.running.network ? ` · ${info.running.network}` : ''} · {info.running.profile === 'current' ? 'existing settings' : info.running.profile}. Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.</p>
+    <p className="wallet-note">Running: <b>{info.running.mode}</b>{info.running.network ? ` · ${info.running.network}` : ''} · {info.running.profile === 'current' ? 'existing settings' : (info.running.profile in TRADING_PRESETS ? TRADING_PRESETS[info.running.profile as TradingPresetId].name : info.running.profile)}. Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.</p>
     <div className="wallet-pick">
       <label>Trading network<select aria-label="Trading network" disabled={busy} value={network} onChange={(e) => { setNetwork(e.target.value as TradingNetwork); setMessage(''); }}><option value="testnet">Testnet · TESTNET</option><option value="mainnet">Mainnet · LIVE</option></select></label>
-      <label>Settings profile<select aria-label="Settings profile" disabled={busy} value={profile} onChange={(e) => { setProfile(e.target.value as 'default' | 'manual'); setMessage(''); }}><option value="default">Default · app preset</option><option value="manual">Manual · edit saved values</option></select></label>
+      <label>Settings profile<select aria-label="Settings profile" disabled={busy} value={profile} onChange={(e) => { setProfile(e.target.value as TradingProfile); setMessage(''); }}>
+        <option value="default">Default · app preset</option>
+        <option value="balance">Balance · recommended</option>
+        <option value="profit">Profit · recommended</option>
+        <option value="high_risk">High Risk High Reward · recommended</option>
+        <option value="manual">Manual · edit saved values</option>
+      </select></label>
     </div>
-    <p className="setup-guide-note">Saved for {network}: <b>{info.networks[network].profile === 'current' ? 'existing configuration' : info.networks[network].profile}</b>. {profile === 'default' ? 'Review the app preset below before applying. It can differ from your current settings and available capital.' : 'Edit only the values you want to change. The previous manual values are retained separately for each network.'}</p>
-    <p className="field-help">All manual fields are required.</p>
+    <p className="setup-guide-note">Saved for {network}: <b>{savedLabel}</b>. {isPreset ? `Review the ${TRADING_PRESETS[profile as TradingPresetId].name} preset below before applying. It preserves account-specific capital settings and can differ from running configuration.` : 'Edit only the values you want to change. The previous manual values are retained separately for each network.'}</p>
+    <p className="field-help">{isPreset ? 'Preset values are fixed by recommendation. Capital reserves and order minimums reflect your network configuration.' : 'All manual fields are required.'}</p>
     <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
-      <div className="settings-grid">{fields.map((f) => <label key={f.key}>{f.label}<input aria-label={f.label} type="number" required min={f.min} max={f.max} step={f.step ?? 'any'} disabled={busy || profile === 'default'} value={values[f.key]} onChange={(e) => setDrafts((old) => old ? { ...old, [network]: { ...old[network], [f.key]: Number(e.target.value) } } : old)} /><small className="field-help">{f.help}</small></label>)}</div>
+      <div className="settings-grid">{fields.map((f) => <label key={f.key}>{f.label}<input aria-label={f.label} type="number" required min={f.min} max={f.max} step={f.step ?? 'any'} disabled={busy || isPreset} value={values[f.key]} onChange={(e) => setDrafts((old) => old ? { ...old, [network]: { ...old[network], [f.key]: Number(e.target.value) } } : old)} /><small className="field-help">{f.help}</small></label>)}</div>
       <p className="field-help">These settings feed the Risk Agent, shared sizing and execution checks. Manual tickets keep their stop/size guards; the confidence floor applies to agent entries. Applying does not resize open orders, reset a daily loss stop, enable Auto Trade or switch mode.</p>
-      <div className="setup-nav"><button disabled={busy} type="submit">{busy ? 'Saving...' : `${active ? 'Save and apply' : 'Save'} ${profile} for ${network}`}</button>{profile === 'manual' && <button disabled={busy} type="button" onClick={() => { setDrafts({ ...drafts, [network]: info.networks[network].manual }); setMessage('Draft restored to saved values.'); }}>Discard edits</button>}</div>
+      <div className="setup-nav"><button disabled={busy} type="submit">{busy ? 'Saving...' : `${active ? 'Save and apply' : 'Save'} ${isPreset ? TRADING_PRESETS[profile as TradingPresetId].name : profile} for ${network}`}</button>{profile === 'manual' && <button disabled={busy} type="button" onClick={() => { setDrafts({ ...drafts, [network]: info.networks[network].manual }); setMessage('Draft restored to saved values.'); }}>Discard edits</button>}</div>
       {!active && <p className="field-help">This network is not running. Saving prepares it for its next start; change mode separately in Exchange & Safety.</p>}
     </form>
     {message && <p className="wallet-note" role="status">{message}</p>}
