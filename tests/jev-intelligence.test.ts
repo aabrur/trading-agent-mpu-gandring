@@ -58,6 +58,7 @@ describe('Jev shadow debate', () => {
     const v = await desk.runDebate('ETHUSDT');
     expect(v.action).toBe(baseline.action);
     expect(v.riskDecision).toBe(baseline.riskDecision);
+    await desk.jev.flush();
     expect(fetchImpl.mock.calls.length).toBeGreaterThan(0);
     const call = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(String(call[1]?.body));

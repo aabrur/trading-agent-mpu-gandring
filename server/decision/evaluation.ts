@@ -8,7 +8,8 @@ export const REGIME_CRITERIA = {
   RANGING: 'Mean-reverting or sideways from the supplied indicators',
   BREAKOUT: 'Leaving a defined range on the supplied indicators',
   VOLATILE: 'Unusually wide range versus recent ATR/returns',
-  UNCERTAIN: 'Insufficient or conflicting indicator evidence'
+  UNCERTAIN: 'Insufficient or conflicting indicator evidence',
+  UNAVAILABLE: 'Indicators missing or not valid; do not invent a regime'
 };
 
 export function preAnalysisQuestions(): Record<string, Question> {
@@ -123,8 +124,42 @@ export function interpretAnswers(response: DecisionsResponse | null): JevInterpr
   };
 }
 
+export function selectPreQuestions(input: {
+  hasIndicators: boolean;
+  hasNews: boolean;
+  hasWhale: boolean;
+}): Record<string, Question> {
+  const all = preAnalysisQuestions();
+  const out: Record<string, Question> = {};
+  if (input.hasIndicators) out.market_regime = all.market_regime;
+  else {
+    out.market_regime = {
+      type: 'choice',
+      instructions: 'Indicators are missing. Return UNAVAILABLE. Do not invent a market regime.',
+      criteria: { UNAVAILABLE: REGIME_CRITERIA.UNAVAILABLE }
+    };
+  }
+  if (input.hasNews) {
+    out.news_relevant = all.news_relevant;
+    out.news_needs_research = all.news_needs_research;
+    out.news_false_critical = all.news_false_critical;
+  }
+  if (input.hasWhale) out.whale_significant = all.whale_significant;
+  return out;
+}
+
 export function jevMayEnrichAgents(effectiveMode: string) {
   return effectiveMode === 'assist';
+}
+
+export function jevRoleContext(interpretation: JevInterpretation | null, role: 'market' | 'research' | 'strategist' | 'lead' | 'risk' | 'execution') {
+  if (!interpretation) return undefined;
+  if (role === 'execution') return undefined;
+  if (role === 'market' || role === 'strategist') return { marketRegime: interpretation.marketRegime, note: 'Advisory only. Do not recompute indicators or override the strategy rule.' };
+  if (role === 'research') return { newsRelevant: interpretation.newsRelevant, newsNeedsResearch: interpretation.newsNeedsResearch, newsFalseCritical: interpretation.newsFalseCritical, whaleSignificant: interpretation.whaleSignificant };
+  if (role === 'lead') return { marketRegime: interpretation.marketRegime, newsRelevant: interpretation.newsRelevant, whaleSignificant: interpretation.whaleSignificant, materialConflict: interpretation.materialConflict };
+  if (role === 'risk') return { marketRegime: interpretation.marketRegime, note: 'Volatility context only. Do not change owner risk caps.' };
+  return undefined;
 }
 
 export function recordFromResult(kind: 'pre' | 'post', result: JevCallResult, interpretation: JevInterpretation) {

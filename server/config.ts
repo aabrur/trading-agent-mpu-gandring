@@ -50,7 +50,7 @@ export interface AppConfig {
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
   risk: { minEntryConfidencePct: number; maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number; dailyLossLimitPct: number };
-  debate: { rounds: number; paceMs: number; fightThreshold: number };
+  debate: { rounds: number; paceMs: number; fightThreshold: number; mode: 'normal' | 'fast' };
   jev: JevSettings;
   bridge: { url: string; key: string; enabled: boolean };
 }
@@ -180,7 +180,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     debate: {
       rounds: Math.min(4, Math.max(1, num(env, 'DEBATE_ROUNDS', 2))),
       paceMs: Math.max(0, num(env, 'DEBATE_PACE_MS', 700)),
-      fightThreshold: num(env, 'FIGHT_THRESHOLD', 0.45)
+      fightThreshold: num(env, 'FIGHT_THRESHOLD', 0.45),
+      mode: /^(fast)$/i.test((env.DEBATE_MODE ?? '').trim()) ? 'fast' : 'normal'
     },
     jev: loadJevSettings(env, mode),
     auto: {

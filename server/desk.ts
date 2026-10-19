@@ -28,7 +28,11 @@ import { codeReview } from './providers/mock.js';
 import { OpportunityReviews } from './opportunity-review.js';
 import { entryConfidenceReason, tradingSettingsFromConfig, TradingSettingsSchema, type TradingNetwork, type TradingProfile, type TradingSettings } from './trading-settings.js';
 import { JevService } from './decision/jev.js';
-import { boundedPostState, boundedPreState, conflictQuestions, interpretAnswers, jevMayEnrichAgents, preAnalysisQuestions, recordFromResult } from './decision/evaluation.js';
+import { boundedPostState, boundedPreState, conflictQuestions, interpretAnswers, jevMayEnrichAgents, jevRoleContext, recordFromResult, selectPreQuestions } from './decision/evaluation.js';
+import { CycleTimer, type CycleTiming } from './decision/timing.js';
+import { classifyHoldReason, outcomeFor, type DecisionOutcome, type HoldReasonCode } from './decision/reasons.js';
+import { revalidateEntry, snapshotIsFresh } from './decision/stale.js';
+import { rebuttalRounds } from './decision/pace.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
@@ -75,6 +79,7 @@ export class Desk extends EventEmitter {
   lastScan: { at: number; findings: Finding[] } | null = null;
   jev!: JevService;
   jevLast: Record<string, unknown> | null = null;
+  lastCycle: { symbol: string; durationMs: number; stage: string; verdict: string | null; noTradeReason: string | null; executionStatus: string | null; reasonCode: string | null; outcome: string | null; timing: CycleTiming | null } | null = null;
   /** API, exchange and agent errors, for the scan and the reflection step */
   errors: { at: number; source: string; text: string }[] = [];
   private stopFlag = false;
@@ -215,7 +220,9 @@ export class Desk extends EventEmitter {
       },
       equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-120), chats: this.chats,
       watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold,
-      jev: { ...this.jev.status(), lastDecision: this.jevLast }
+      jev: { ...this.jev.status(), lastDecision: this.jevLast ?? this.jev.lastRecord },
+      debateMode: this.cfg.debate.mode,
+      lastCycle: this.lastCycle
     };
   }
   /** Daily loss stop: once equity falls DAILY_LOSS_LIMIT_PCT below the day's start, no new orders until tomorrow (UTC). */
@@ -451,6 +458,7 @@ export class Desk extends EventEmitter {
     this.emit('debate', { id, symbol, phase: 'opening' });
     const transcript: string[] = [`# Debate ${id} on ${symbol}`, `Mode: ${this.cfg.tradingMode}. Started ${new Date().toISOString()}`];
     const note = (who: string, t: string) => transcript.push(`- **${who}**: ${t}`);
+    const timer = new CycleTimer();
     try {
       for (const a of AGENT_IDS) { this.agents[a].stance = null; this.agents[a].confidence = null; }
       this.setAll('idle');
@@ -459,7 +467,7 @@ export class Desk extends EventEmitter {
       // 1. Market Analyst
       this.setPhase('reading');
       this.setStatus('market', 'reading'); this.changed();
-      const snap = await getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample');
+      const snap = await timer.measure('marketData', () => getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample'));
       this.updateTicker(snap);
       const dataTag = snap.example ? 'sample data (EXAMPLE)' : `${snap.source} public feed`;
       const closes = snap.candles.map((c) => c.c);
@@ -469,7 +477,11 @@ export class Desk extends EventEmitter {
       const c8 = snap.candles.at(-9)?.c, cl = snap.candles.at(-1)?.c;
       const change2h = c8 && cl ? round2(((cl - c8) / c8) * 100) : 0;
       const lastCandles = snap.candles.slice(-8).map((c) => ({ t: new Date(c.t).toISOString(), c: c.c }));
-      const mk = await this.run('market', 'opinion', {
+      const newsP = getNewsFor(symbol, this.cfg).catch(() => getNews(symbol));
+      const whaleP = getWhaleBriefing(symbol).catch(() => ({
+        symbol, providerStatus: 'UNAVAILABLE' as const, providerName: 'Whale Alert', events: [], summary: 'Whale data unavailable', observedAt: Date.now(), disclaimer: ''
+      }));
+      const mk = await timer.measure('marketAnalyst', () => this.run('market', 'opinion', {
         instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, ATR volatility ${atrVal}, relative candle volume ${vol.volRatio}x, and bullish-candle volume share ${(vol.takerBuyPressure * 100).toFixed(0)}% (INFERRED candle proxy, not taker order flow). Be sharp, quantitative, and directional (LONG or SHORT) unless the tape is flat.`,
         data: {
           broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt },
@@ -479,18 +491,16 @@ export class Desk extends EventEmitter {
           externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined
         },
         context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol, temperament: this.agents.market.mood, liveFeed: !snap.example }
-      });
+      }));
       this.setOpinion('market', mk.data.stance, mk.data.confidence);
       await this.say('market', mk.data.argument, mk.example); note('Market Analyst', mk.data.argument);
 
       // 2. Research Analyst (catalysts, verified on-chain intelligence, news normalization)
       this.setStatus('research', 'reading'); this.changed();
-      const news = await getNewsFor(symbol, this.cfg).catch(() => getNews(symbol));
+      const news = await newsP;
       const normalizedEvents = news.map((n) => normalizeLegacyItem(n, symbol));
       const newsBriefing = buildNewsBriefing(symbol, normalizedEvents, this.cfg.news.provider === 'cryptopanic' && this.cfg.news.key ? 'CONFIGURED_LIVE' : 'SAMPLE_FALLBACK');
-      const whaleBriefing = await getWhaleBriefing(symbol).catch(() => ({
-        symbol, providerStatus: 'UNAVAILABLE' as const, providerName: 'Whale Alert', events: [], summary: 'Whale data unavailable', observedAt: Date.now(), disclaimer: ''
-      }));
+      const whaleBriefing = await whaleP;
       const tradeFlowProxy = {
         status: 'INFERRED', method: 'share of recent candle volume on candles closing at or above their open; not taker-side trades',
         bullishCandleVolumeShare: vol.takerBuyPressure, relativeCandleVolume: vol.volRatio,
@@ -498,17 +508,30 @@ export class Desk extends EventEmitter {
         onchainActivity: whaleBriefing.providerStatus
       };
       let jevSidecar: Record<string, unknown> | undefined;
-      if (this.jev.settings.effectiveMode !== 'off') {
-        const pre = await this.jev.evaluate(boundedPreState({
-          symbol, last: snap.last, rsi: rsiVal, atr: atrVal, change24hPct: snap.change24hPct, volumeRatio: vol.volRatio,
-          news: newsBriefing.events.slice(0, 4).map((e) => ({ title: e.title, evidenceStatus: e.evidenceStatus, freshness: e.freshness, category: e.category })),
-          whale: whaleBriefing.events.slice(0, 3).map((e) => ({ classification: e.classification, usdValueOrNull: e.usdValueOrNull, confirmationStatus: e.confirmationStatus, attributionConfidence: e.attributionConfidence }))
-        }), preAnalysisQuestions());
-        const interp = interpretAnswers(pre.response);
-        this.jevLast = recordFromResult('pre', pre, interp);
-        if (jevMayEnrichAgents(this.jev.settings.effectiveMode)) jevSidecar = this.jevLast;
+      let jevInterp: ReturnType<typeof interpretAnswers> | null = null;
+      const preState = boundedPreState({
+        symbol, last: snap.last, rsi: rsiVal, atr: atrVal, change24hPct: snap.change24hPct, volumeRatio: vol.volRatio,
+        news: newsBriefing.events.slice(0, 4).map((e) => ({ title: e.title, evidenceStatus: e.evidenceStatus, freshness: e.freshness, category: e.category })),
+        whale: whaleBriefing.events.slice(0, 3).map((e) => ({ classification: e.classification, usdValueOrNull: e.usdValueOrNull, confirmationStatus: e.confirmationStatus, attributionConfidence: e.attributionConfidence }))
+      });
+      const questions = selectPreQuestions({
+        hasIndicators: Number.isFinite(rsiVal) && Number.isFinite(atrVal),
+        hasNews: newsBriefing.providerStatus === 'CONFIGURED_LIVE' && newsBriefing.events.length > 0,
+        hasWhale: whaleBriefing.providerStatus === 'CONFIGURED_LIVE' && whaleBriefing.events.length > 0
+      });
+      if (this.jev.settings.effectiveMode === 'assist') {
+        const pre = await timer.measure('jevPreAnalysis', () => this.jev.evaluate(preState, questions, 45_000, { timeoutMs: this.jev.settings.assistBudgetMs, decisionId: id }));
+        jevInterp = interpretAnswers(pre.response);
+        this.jevLast = recordFromResult('pre', pre, jevInterp);
+        if (pre.ok) jevSidecar = { ...this.jevLast, role: jevRoleContext(jevInterp, 'research') };
+      } else if (this.jev.settings.effectiveMode === 'shadow') {
+        void this.jev.evaluateBackground(preState, questions, { decisionId: id }).then((result) => {
+          if (!result) return;
+          this.jevLast = recordFromResult('pre', result, interpretAnswers(result.response));
+          this.changed();
+        });
       }
-      const rs = await this.run('research', 'research', {
+      const rs = await timer.measure('researchAnalyst', () => this.run('research', 'research', {
         instruction: `Weigh the sourced catalysts and on-chain intelligence for ${symbol}. Separate VERIFIED on-chain observations, REPORTED news claims, INFERRED candle proxies, and UNAVAILABLE information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. VETO only for verified critical events: delistings, trading halts, exploits, or chain outages. Keyword matches are reported claims, not independent verification. ${newsBriefing.criticalVetoFound ? `CRITICAL VETO (verified): ${newsBriefing.vetoReason}.` : newsBriefing.criticalClaimFound ? `CRITICAL CLAIM (unverified): ${newsBriefing.vetoReason}.` : ''}`,
         data: {
           symbol,
@@ -519,7 +542,7 @@ export class Desk extends EventEmitter {
           news: news.map((n) => ({ id: n.id, headline: n.headline, body: n.body, source: n.source, sentimentTag: n.sentiment, hadInjection: !!n.flagged, status: n.example ? 'UNAVAILABLE' : 'REPORTED', example: n.example }))
         },
         context: { symbol, tradeFlowProxy, newsBriefingSummary: newsBriefing.summary, whaleBriefingSummary: whaleBriefing.summary, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
-      });
+      }));
       const researchVote = (newsBriefing.criticalVetoFound && newsBriefing.providerStatus !== 'SAMPLE_FALLBACK') ? 'VETO' : rs.data.vote;
       this.setOpinion('research', researchVote === 'LONG' || researchVote === 'SHORT' ? researchVote : 'NEUTRAL', rs.data.confidence);
       await this.say('research', `${researchVote}. ${rs.data.argument}`, rs.example); note('Research Analyst', `${researchVote}. ${rs.data.argument}`);
@@ -528,11 +551,11 @@ export class Desk extends EventEmitter {
       // 3. Strategist (rule computed in code, agent explains)
       this.setStatus('strategist', 'reading'); this.changed();
       const rule = strategyVote(snap.candles);
-      const st = await this.run('strategist', 'opinion', {
+      const st = await timer.measure('strategist', () => this.run('strategist', 'opinion', {
         instruction: `The EMA rule on closed 15m bars produced the result below for ${symbol}. Your stance must match the rule side (ABSTAIN means NEUTRAL). Explain it in your voice.`,
-        data: { symbol, rule },
+        data: { symbol, rule, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'strategist') : undefined },
         context: { symbol, rule }
-      });
+      }));
       const ruleStance: Stance = rule.side === 'ABSTAIN' ? 'NEUTRAL' : rule.side;
       // The rule wins over the model if they disagree.
       this.setOpinion('strategist', ruleStance, st.data.stance === ruleStance ? st.data.confidence : 0.5);
@@ -540,8 +563,14 @@ export class Desk extends EventEmitter {
 
       const journal = this.book.closed.slice(0, 5).map((t) => ({ symbol: t.symbol, side: t.side, pnl: t.pnlStatus === 'unknown' ? null : t.realizedPnl, pnlStatus: t.pnlStatus, exitStatus: t.exitStatus, entryStatus: t.entryStatus, remainingQty: t.remainingQty, ownership: t.ownership, reason: t.reason }));
 
-      // 4. Rebuttal rounds
-      for (let round = 1; round <= this.cfg.debate.rounds; round++) {
+      const rounds = rebuttalRounds(this.cfg.debate.mode, this.cfg.debate.rounds, {
+        market: this.agents.market.stance,
+        research: this.agents.research.stance,
+        strategist: this.agents.strategist.stance,
+        researchVote
+      });
+      const rbStart = Date.now();
+      for (let round = 1; round <= rounds; round++) {
         if (this.stopFlag) break;
         this.setPhase(`round ${round}`, round);
         for (const a of DEBATERS) {
@@ -570,6 +599,7 @@ export class Desk extends EventEmitter {
           if (fighting && target) this.setStatus(target, 'arguing');
         }
       }
+      timer.mark('rebuttals', Date.now() - rbStart);
 
       // 5. Desk Lead proposal
       this.setPhase('verdict');
@@ -579,11 +609,11 @@ export class Desk extends EventEmitter {
       const pos = this.book.positions.find((p) => p.symbol === symbol);
       const cautious = this.agents.lead.mood < 0;
       this.setStatus('lead', 'thinking'); this.changed();
-      const ld = await this.run('lead', 'lead', {
+      const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
-        data: { symbol, tradingSettings: tradingSettingsFromConfig(this.cfg), strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal },
+        data: { symbol, tradingSettings: tradingSettingsFromConfig(this.cfg), strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
-      });
+      }));
       let action: Action = ld.data.action;
       let flipNote = '';
       if (pos?.ownership === 'external') action = 'HOLD';
@@ -593,7 +623,7 @@ export class Desk extends EventEmitter {
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
       if (researchVote === 'VETO' && action.startsWith('OPEN')) action = 'HOLD';
       if (this.jev.settings.effectiveMode !== 'off') {
-        const post = await this.jev.evaluate(boundedPostState({
+        this.jev.evaluateBackground(boundedPostState({
           symbol,
           marketStance: this.agents.market.stance,
           researchVote,
@@ -601,8 +631,7 @@ export class Desk extends EventEmitter {
           leadAction: action,
           criticalVetoFound: newsBriefing.criticalVetoFound,
           criticalClaimFound: newsBriefing.criticalClaimFound
-        }), conflictQuestions());
-        this.jevLast = { pre: this.jevLast, post: recordFromResult('post', post, interpretAnswers(post.response)) };
+        }), conflictQuestions(), { decisionId: id });
       }
       const confidenceBlock = action.startsWith('OPEN') ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
       if (confidenceBlock) action = 'HOLD';
@@ -615,11 +644,11 @@ export class Desk extends EventEmitter {
       const finalResearchVote = researchVote === 'VETO' ? 'VETO' : (this.agents.research.stance ?? researchVote);
       const estPrice = roundPrice(action === 'OPEN_LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
       const stopDistancePct = rule.invalidation && estPrice > 0 ? round2(Math.abs((estPrice - rule.invalidation) / estPrice) * 100) : this.cfg.risk.defaultStopPct;
-      const rk = opening ? await this.run('risk', 'risk', {
+      const rk = opening ? await timer.measure('riskManager', () => this.run('risk', 'risk', {
         instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol} at current price ~${estPrice}. Strategist invalidation is ${rule.invalidation} (~${stopDistancePct}% stop). Research debate stance is ${finalResearchVote}. Calculate available allocation, reserved capital, stop distance, fee estimate, and daily loss budget. If within owner caps and stop is valid, APPROVE or REDUCE promptly so the trade can execute. REJECT only when a concrete limit is violated. Caps: max leverage ${this.cfg.risk.maxLeverage}x, stop at most ${this.cfg.risk.defaultStopPct}%, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance. Send decision, sizeFactor (0.1..1), leverage, stopPct, reason.`,
-        data: { caps: this.cfg.risk, account: this.venueAccount ?? { source: 'paper book' }, executionVenue: this.cfg.exchange.name, analyticalPriceSource: snap.source, symbol, action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length },
+        data: { caps: this.cfg.risk, account: this.venueAccount ?? { source: 'paper book' }, executionVenue: this.cfg.exchange.name, analyticalPriceSource: snap.source, symbol, action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'risk') : undefined },
         context: { action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategySide: rule.side, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, temperament: this.agents.risk.mood }
-      }) : { data: { decision: 'APPROVE' as const, sizeFactor: 1, leverage: 1, stopPct: this.cfg.risk.defaultStopPct, reason: 'Not applicable to HOLD/CLOSE' }, example: false };
+      })) : { data: { decision: 'APPROVE' as const, sizeFactor: 1, leverage: 1, stopPct: this.cfg.risk.defaultStopPct, reason: 'Not applicable to HOLD/CLOSE' }, example: false };
       const gate = applyRiskGate(rk.data, this.cfg.risk, this.agents.risk.mood);
 
       this.scorecard.verdict();
@@ -633,23 +662,52 @@ export class Desk extends EventEmitter {
         if (gate.decision === 'REJECT') { verdict.reason = `Risk rejected: ${rk.data.reason}`; this.note('skipped', symbol, verdict.reason); }
         else {
           const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
-          const price = roundPrice(side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
-          const res = await this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, evidence: { action, confidence: ld.data.confidence, reason: ld.data.reason, strategy: rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: snap.source, fetchedAt: snap.fetchedAt } }, snap.example);
-          if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
-          verdict.executed = res.ok;
-          if (res.order) { verdict.order = res.order; verdict.executionStatus = res.order.status; }
-          if (!res.ok) verdict.reason = res.reason;
-          note('Execution Trader', res.line);
+          let execSnap = snap;
+          if (!snapshotIsFresh(snap)) {
+            execSnap = await getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample');
+            this.updateTicker(execSnap);
+          }
+          const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap });
+          if (!reval.ok) {
+            action = 'HOLD';
+            verdict.action = 'HOLD';
+            verdict.reason = reval.reason ?? 'Stale signal.';
+            this.note('skipped', symbol, `HOLD: ${verdict.reason}`);
+          } else {
+            const price = roundPrice(reval.quote);
+            const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, evidence: { action, confidence: ld.data.confidence, reason: ld.data.reason, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
+            if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
+            verdict.executed = res.ok;
+            if (res.order) { verdict.order = res.order; verdict.executionStatus = res.order.status; }
+            if (!res.ok) verdict.reason = res.reason;
+            note('Execution Trader', res.line);
+          }
         }
       } else if (action === 'CLOSE' && pos) {
         const t = await this.executeClose(symbol, snap.last, flipNote ? 'opposite signal' : 'desk verdict CLOSE', true);
         verdict.executed = t.length > 0; verdict.executionStatus = t.some((x) => x.remainingQty) ? 'partial' : t.length ? 'closed' : undefined;
         note('Execution Trader', t.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ') || 'nothing closed');
       }
-      if (action === 'HOLD') this.note('skipped', symbol, `HOLD: ${decisionReason}`);
+      if (verdict.action === 'HOLD' && verdict.reason === decisionReason) this.note('skipped', symbol, `HOLD: ${decisionReason}`);
+      const timing = timer.finish();
+      verdict.reasonCode = classifyHoldReason(verdict.reason) ?? undefined;
+      verdict.outcome = outcomeFor({
+        action: verdict.action,
+        executed: verdict.executed,
+        executionStatus: verdict.executionStatus,
+        blocked: /daily loss|kill switch|paused|already has an open|veto|confidence/i.test(verdict.reason),
+        failed: !verdict.executed && (verdict.action === 'OPEN_LONG' || verdict.action === 'OPEN_SHORT' || verdict.action === 'CLOSE')
+      });
+      verdict.timing = timing;
+      this.lastCycle = {
+        symbol, durationMs: timing.total, stage: 'done', verdict: verdict.action,
+        noTradeReason: verdict.action === 'HOLD' ? verdict.reason : null,
+        executionStatus: verdict.executionStatus ?? (verdict.executed ? 'filled' : null),
+        reasonCode: verdict.reasonCode ?? null, outcome: verdict.outcome ?? null, timing
+      };
       if (!verdict.executed && action !== 'CLOSE') this.opportunityReviews.record({
         id: verdict.id, symbol, side: rule.side === 'LONG' || rule.side === 'SHORT' ? rule.side : null,
-        reasonKind: researchVote === 'VETO' ? 'veto' : opening && gate.decision === 'REJECT' ? 'risk-reject' : opening ? 'execution-failed' : 'hold',
+        reasonKind: researchVote === 'VETO' ? 'veto' : opening && gate.decision === 'REJECT' ? 'risk-reject' : verdict.action === 'HOLD' ? 'hold' : opening ? 'execution-failed' : 'hold',
         reason: researchVote === 'VETO' ? 'Research VETO: ' + rs.data.argument : verdict.reason, at: verdict.at, horizonMs: this.cfg.auto.intervalMin * 60000,
         reference: { price: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example },
         evidence: { strategy: rule, votes: DEBATERS.map((agent) => ({ agent, stance: this.agents[agent].stance })), action }

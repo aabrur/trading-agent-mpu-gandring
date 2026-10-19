@@ -6,7 +6,8 @@ import { JEV_MODEL } from '../decision/schemas.js';
 export const JevSetupBody = z.object({
   enabled: z.boolean(),
   mode: z.enum(['off', 'shadow', 'assist']),
-  key: z.string().max(400).optional()
+  key: z.string().max(400).optional(),
+  allowLive: z.boolean().optional()
 }).strict();
 
 export function jevSetupInfo(env: NodeJS.ProcessEnv, tradingMode: string, metrics: JevMetrics, lastDecision: Record<string, unknown> | null = null) {
@@ -29,6 +30,8 @@ export function saveJevSetup(envFile: string, input: z.infer<typeof JevSetupBody
     JEV_MODEL
   };
   if (input.mode === 'off') updates.JEV_ENABLED = 'false';
+  if (input.allowLive === true) updates.JEV_ALLOW_LIVE = 'yes';
+  if (input.allowLive === false) updates.JEV_ALLOW_LIVE = 'false';
   if (input.key) updates.JEV_OPENROUTER_API_KEY = input.key;
   setEnv(envFile, updates);
   return updates;

@@ -23,6 +23,7 @@ export function JevSetup({ available }: { available: boolean }) {
   const [info, setInfo] = useState<JevInfo | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [mode, setMode] = useState<'off' | 'shadow' | 'assist'>('shadow');
+  const [allowLive, setAllowLive] = useState(false);
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -36,6 +37,7 @@ export function JevSetup({ available }: { available: boolean }) {
       setInfo(d);
       setEnabled(d.enabled);
       setMode((d.configuredMode === 'assist' || d.configuredMode === 'off' ? d.configuredMode : 'shadow'));
+      setAllowLive(!!d.allowLive);
       setKey('');
     } catch {
       setOk(false);
@@ -47,7 +49,7 @@ export function JevSetup({ available }: { available: boolean }) {
   const save = async () => {
     setBusy(true); setMessage('');
     try {
-      const r = await fetch('/api/setup/jev', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled, mode, ...(key.trim() ? { key: key.trim() } : {}) }) });
+      const r = await fetch('/api/setup/jev', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled, mode, allowLive, ...(key.trim() ? { key: key.trim() } : {}) }) });
       const d: JevInfo = await r.json();
       setOk(r.ok && d.ok);
       setMessage(d.detail || (lang === 'id' ? 'Gagal menyimpan Jev.' : 'Unable to save Jev settings.'));
@@ -91,6 +93,7 @@ export function JevSetup({ available }: { available: boolean }) {
         <div className="wallet-pick">
           <label>{t('setupJevMode')}
             <select aria-label="Jev mode" disabled={!available || busy || !enabled} value={mode} onChange={(e) => setMode(e.target.value as 'off' | 'shadow' | 'assist')}>
+              <option value="off">{t('setupJevModeOff')}</option>
               <option value="shadow">{t('setupJevModeShadow')}</option>
               <option value="assist">{t('setupJevModeAssist')}</option>
             </select>
@@ -100,6 +103,16 @@ export function JevSetup({ available }: { available: boolean }) {
           <input aria-label="Jev OpenRouter API key" type="password" disabled={!available || busy} autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} />
         </label>
         {info.liveAssistBlocked && <p className="wallet-msg bad">{t('setupJevLiveAssistBlocked')}</p>}
+        <label><input type="checkbox" disabled={!available || busy || !enabled} checked={allowLive} onChange={(e) => {
+          if (e.target.checked) {
+            const ok = window.confirm(lang === 'id'
+              ? 'Otorisasi LIVE ASSIST? Jev dapat memperkaya analisis LIVE. Jev tidak menempatkan order dan tidak mengubah batas risiko.'
+              : 'Authorize LIVE ASSIST? Jev may enrich LIVE analysis. Jev will not place orders or change risk limits.');
+            if (!ok) return;
+          }
+          setAllowLive(e.target.checked);
+        }} /> {t('setupJevAllowLive')}</label>
+        <p className="field-help">{t('setupJevAllowLiveHelp')}</p>
         <p className="field-help">{t('setupJevHelp')}</p>
         <button type="submit" disabled={!available || busy}>{busy ? t('setupJevSaving') : t('setupJevSave')}</button>
         <button type="button" disabled={!available || busy || !enabled} onClick={() => void test()}>{t('setupJevTest')}</button>

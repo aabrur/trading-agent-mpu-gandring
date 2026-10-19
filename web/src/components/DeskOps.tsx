@@ -229,7 +229,7 @@ export function DeskOps({ state }: { state: DeskState }) {
       </div>
       <section className="auto-setup-box" aria-label="Jev decision monitor">
         <div className="auto-setup-title"><h3>{t('jevMonitorTitle')}</h3><span className="auto-status-pill">{state.jev?.health ?? t('jevNotConfigured')}</span></div>
-        <small className="auto-cycle-meta">{state.jev ? `${state.jev.mode} · ${state.jev.provider} · ${state.jev.model}` : t('jevNotConfigured')}</small>
+        <small className="auto-cycle-meta">{state.jev ? `${state.jev.mode} · ${state.jev.provider} · ${state.jev.model}` : t('jevNotConfigured')}{state.jev?.allowLive ? ' · LIVE ASSIST authorized' : ''}</small>
         <dl className="setup-summary">
           <div><dt>{t('jevRegime')}</dt><dd>{String((state.jev?.lastDecision as { interpretation?: { marketRegime?: string } } | undefined)?.interpretation?.marketRegime ?? (state.jev?.lastDecision as { pre?: { interpretation?: { marketRegime?: string } } } | undefined)?.pre?.interpretation?.marketRegime ?? t('jevNotYetEvaluated'))}</dd></div>
           <div><dt>{t('jevLatency')}</dt><dd>{state.jev?.metrics?.lastLatencyMs == null ? t('jevUnavailable') : `${state.jev.metrics.lastLatencyMs} ms`}</dd></div>
@@ -244,6 +244,20 @@ export function DeskOps({ state }: { state: DeskState }) {
           <span className="auto-slots-pill">{lang === 'id' ? 'Slot' : 'Slots'} {state.paper.positions.length}/{state.paper.n} · ${state.paper.perOrder}/ord</span>
         </div>
         <small className="auto-cycle-meta">{auto?.running ? (auto.trigger === 'manual' ? (lang === 'id' ? 'Siklus manual berjalan' : 'Manual cycle running') : (lang === 'id' ? 'Siklus terjadwal berjalan' : 'Scheduled cycle running')) : auto?.on ? (lang === 'id' ? 'Menunggu siklus berikutnya' : 'Waiting for next cycle') : (lang === 'id' ? 'Penjadwal mati' : 'Scheduler off')}{auto?.stopping ? (lang === 'id' ? ' · berhenti setelah simbol saat ini' : ' · stopping after current symbol') : ''}</small>
+        <div className="auto-quick-actions">
+          <div className="seg auto-toggle-seg" role="group" aria-label="Decision mode">
+            <span className="field-help">{t('opsDebateMode')}</span>
+            <button type="button" className={state.debateMode !== 'fast' ? 'on' : ''} disabled={autoBusy || presetBusy} onClick={() => void post('/api/ops/auto', { debateMode: 'normal' })}>{t('opsDebateNormal')}</button>
+            <button type="button" className={state.debateMode === 'fast' ? 'on' : ''} disabled={autoBusy || presetBusy} onClick={() => void post('/api/ops/auto', { debateMode: 'fast' })}>{t('opsDebateFast')}</button>
+          </div>
+        </div>
+        <dl className="setup-summary">
+          <div><dt>{t('opsCycleStage')}</dt><dd>{state.debate?.phase ?? state.lastCycle?.stage ?? 'idle'}</dd></div>
+          <div><dt>{t('opsLastCycle')}</dt><dd>{state.lastCycle?.durationMs == null ? '—' : `${state.lastCycle.durationMs} ms`}{state.lastCycle?.symbol ? ` · ${state.lastCycle.symbol}` : ''}</dd></div>
+          <div><dt>{t('opsLastVerdict')}</dt><dd>{state.lastCycle?.verdict ?? state.verdicts[0]?.action ?? '—'}</dd></div>
+          <div><dt>{t('opsNoTradeReason')}</dt><dd>{state.lastCycle?.noTradeReason ?? '—'}</dd></div>
+          <div><dt>{t('opsLastExecution')}</dt><dd>{state.lastCycle?.outcome ?? state.lastCycle?.executionStatus ?? '—'}</dd></div>
+        </dl>
         <div className="auto-quick-actions">
           <div className="seg auto-toggle-seg" role="group" aria-label="Auto Trade toggle">
             <button type="button" className={isAutoOn ? 'on auto-on-btn' : ''} disabled={autoBusy || presetBusy} onClick={() => void updateAuto({ on: true })}>{t('autoStartBtn')}</button>

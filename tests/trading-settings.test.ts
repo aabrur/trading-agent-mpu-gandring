@@ -13,7 +13,7 @@ import { readEnv, setEnv } from '../cli/envfile';
 import { Desk } from '../server/desk';
 import { makeCaller } from '../server/providers/index';
 import { loadConfig } from '../server/config';
-import { DEFAULT_TRADING_SETTINGS, entryConfidenceReason, resolveTradingPreset, resolveTradingSettings, TRADING_PRESETS, TRADING_PRESET_IDS, tradingSettingsFromConfig, TradingSettingsSchema } from '../server/trading-settings';
+import { DEFAULT_TRADING_SETTINGS, draftProfile, entryConfidenceReason, resolveTradingPreset, resolveTradingSettings, TRADING_PRESETS, TRADING_PRESET_IDS, tradingSettingsFromConfig, TradingSettingsSchema } from '../server/trading-settings';
 
 describe('network trading settings', () => {
   it('saves only the chosen network without overwriting legacy settings or the other profile', () => {
@@ -161,8 +161,23 @@ describe('network trading settings', () => {
     const base = { ...DEFAULT_TRADING_SETTINGS, minOrderUsdt: 12, safetyNet: 350 };
 
     const def = resolveTradingPreset('default', base);
-    expect(def).toEqual(DEFAULT_TRADING_SETTINGS);
+    expect(def).toMatchObject({
+      dailyLossLimitPct: 3,
+      maxLossPerTradePct: 1,
+      minEntryConfidencePct: 0,
+      maxLeverage: 3,
+      defaultStopPct: 1.5,
+      minStopPct: 0.3,
+      takeProfitR: 2,
+      maxPositions: 4,
+      minOrderUsdt: 12,
+      safetyNet: 350
+    });
     expect(TradingSettingsSchema.safeParse(def).success).toBe(true);
+    expect(draftProfile('profit')).toBe('profit');
+    expect(draftProfile('current')).toBe('manual');
+    expect(draftProfile('manual')).toBe('manual');
+    expect(draftProfile('high_risk')).toBe('high_risk');
 
     const bal = resolveTradingPreset('balance', base);
     expect(bal).toMatchObject({

@@ -77,6 +77,13 @@ export interface Verdict {
   riskDecision: 'APPROVE' | 'REDUCE' | 'REJECT' | 'N/A';
   executed: boolean;
   reason: string;
+  reasonCode?: string;
+  outcome?: 'HOLD' | 'BLOCKED' | 'FAILED' | 'SUBMITTED' | 'PARTIAL' | 'FILLED' | 'CLOSED';
+  timing?: {
+    marketData: number; marketAnalyst: number; researchAnalyst: number; strategist: number;
+    jevPreAnalysis: number; rebuttals: number; deskLead: number; jevReview: number;
+    riskManager: number; orderSubmission: number; fillConfirmation: number; total: number;
+  };
   disagreement: number;
   camps: { bull: AgentId[]; bear: AgentId[]; neutral: AgentId[] };
   order?: { positionId?: string; status?: 'partial' | 'filled'; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number };

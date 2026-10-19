@@ -23,6 +23,7 @@ export interface JevSettings {
   endpoint: string;
   timeoutMs: number;
   allowLive: boolean;
+  assistBudgetMs: number;
   keySource: JevKeySource;
   openrouterKeySet: boolean;
   dedicatedKeySet: boolean;
@@ -81,6 +82,7 @@ export function loadJevSettings(env: NodeJS.ProcessEnv = process.env, tradingMod
   if (!enabled || source === 'none') effectiveMode = 'off';
   else if (mode === 'assist' && tradingMode === 'LIVE' && !allowLive) effectiveMode = 'shadow';
   const timeoutMs = Math.min(60_000, Math.max(2_000, Number(env.JEV_TIMEOUT_MS ?? 15000) || 15000));
+  const assistBudgetMs = Math.min(timeoutMs, Math.max(500, Number(env.JEV_ASSIST_BUDGET_MS ?? 4000) || 4000));
   return {
     enabled,
     provider: JEV_PROVIDER,
@@ -90,6 +92,7 @@ export function loadJevSettings(env: NodeJS.ProcessEnv = process.env, tradingMod
     endpoint: (env.JEV_ENDPOINT ?? JEV_ENDPOINT).trim() || JEV_ENDPOINT,
     timeoutMs,
     allowLive,
+    assistBudgetMs,
     keySource: source,
     openrouterKeySet,
     dedicatedKeySet,
@@ -234,6 +237,9 @@ export class JevService {
   metrics: JevMetrics = { requests: 0, success: 0, errors: 0, timeouts: 0, lastLatencyMs: null, lastModel: null, lastCost: null, lastInputTokens: null, lastError: null };
   lastRecord: Record<string, unknown> | null = null;
   private cache = new Map<string, { at: number; result: JevCallResult }>();
+  private generation = 0;
+  private appliedGeneration = 0;
+  private inflight = new Set<Promise<unknown>>();
   constructor(private env: NodeJS.ProcessEnv, private tradingMode: string, private fetchImpl: typeof fetch = fetch) {
     this.settings = loadJevSettings(env, tradingMode);
   }
@@ -243,6 +249,7 @@ export class JevService {
     this.settings = loadJevSettings(env, tradingMode);
   }
   private key() { return resolveJevKey(this.env).key; }
+  async flush() { await Promise.allSettled([...this.inflight]); }
   status() {
     this.settings = loadJevSettings(this.env, this.tradingMode);
     return publicJevStatus(this.settings, this.metrics, {
@@ -267,22 +274,34 @@ export class JevService {
       if (result.health !== 'DISABLED' && result.health !== 'MISSING_KEY') this.settings.health = result.health;
     }
   }
-  async evaluate(state: unknown, questions: Record<string, Question>, cacheTtlMs = 45_000): Promise<JevCallResult> {
+  async evaluate(state: unknown, questions: Record<string, Question>, cacheTtlMs = 45_000, opts?: { timeoutMs?: number; generation?: number; decisionId?: string }): Promise<JevCallResult> {
     this.settings = loadJevSettings(this.env, this.tradingMode);
     if (this.settings.effectiveMode === 'off') {
       const r: JevCallResult = { ok: false, health: this.settings.health, error: this.settings.health === 'MISSING_KEY' ? 'No OpenRouter API key is configured for Jev.' : 'Jev is off.', response: null, latencyMs: 0, cached: false };
       return r;
     }
+    if (Object.keys(questions).length === 0) {
+      return { ok: false, health: this.settings.health, error: 'No applicable Jev questions.', response: null, latencyMs: 0, cached: false };
+    }
     const cacheKey = createHash('sha256').update(JSON.stringify({ m: this.settings.model, s: sanitizeJevState(state), q: questions })).digest('hex');
     const hit = this.cache.get(cacheKey);
     if (hit && Date.now() - hit.at < cacheTtlMs && hit.result.ok) return { ...hit.result, cached: true };
-    const result = await submitDecisions({ settings: this.settings, key: this.key(), state, questions, fetchImpl: this.fetchImpl });
+    const result = await submitDecisions({ settings: this.settings, key: this.key(), state, questions, fetchImpl: this.fetchImpl, timeoutMs: opts?.timeoutMs });
     this.remember(result);
-    if (result.ok) {
+    const gen = opts?.generation ?? ++this.generation;
+    if (result.ok && gen >= this.appliedGeneration) {
+      this.appliedGeneration = gen;
       this.cache.set(cacheKey, { at: Date.now(), result });
-      this.lastRecord = { at: Date.now(), model: result.response?.model ?? null, answers: result.response?.answers ?? {}, latencyMs: result.latencyMs };
+      this.lastRecord = { at: Date.now(), decisionId: opts?.decisionId ?? null, model: result.response?.model ?? null, answers: result.response?.answers ?? {}, latencyMs: result.latencyMs };
     }
     return result;
+  }
+  evaluateBackground(state: unknown, questions: Record<string, Question>, opts?: { decisionId?: string }) {
+    const generation = ++this.generation;
+    const p = this.evaluate(state, questions, 45_000, { generation, decisionId: opts?.decisionId }).catch(() => null);
+    this.inflight.add(p);
+    void p.finally(() => this.inflight.delete(p));
+    return p;
   }
   async testConnection(): Promise<JevCallResult> {
     this.settings = loadJevSettings(this.env, this.tradingMode);

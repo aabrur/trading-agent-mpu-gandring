@@ -85,13 +85,17 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
 };
 
 export function resolveTradingPreset(preset: TradingPresetId, base: TradingSettings): TradingSettings {
-  if (preset === 'default') return { ...DEFAULT_TRADING_SETTINGS };
-  const p = TRADING_PRESETS[preset];
+  const values = preset === 'default' ? { ...DEFAULT_TRADING_SETTINGS } : { ...TRADING_PRESETS[preset].values };
   return TradingSettingsSchema.parse({
-    ...p.values,
+    ...values,
     minOrderUsdt: base.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
     safetyNet: base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet
   });
+}
+
+export function draftProfile(saved: TradingProfile): TradingPresetId | 'manual' {
+  if (saved === 'default' || saved === 'balance' || saved === 'profit' || saved === 'high_risk' || saved === 'manual') return saved;
+  return 'manual';
 }
 
 export const TRADING_ENV: Record<keyof TradingSettings, string> = { dailyLossLimitPct: 'DAILY_LOSS_LIMIT_PCT', maxLossPerTradePct: 'MAX_LOSS_PER_TRADE_PCT', minEntryConfidencePct: 'MIN_ENTRY_CONFIDENCE_PCT', maxLeverage: 'MAX_LEVERAGE', defaultStopPct: 'DEFAULT_STOP_PCT', minStopPct: 'MIN_STOP_PCT', takeProfitR: 'TAKE_PROFIT_R', minOrderUsdt: 'MIN_ORDER_USDT', safetyNet: 'SAFETY_NET', maxPositions: 'OPEN_ORDERS_N' };

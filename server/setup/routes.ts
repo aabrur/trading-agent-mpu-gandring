@@ -47,7 +47,7 @@ const ModelsBody = z.object({ defaultProvider: Provider, defaultModel: z.string(
 const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(), confidence: z.number().min(0).max(1).optional(), autonomous: z.boolean().optional() }).strict();
 const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
 const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(2).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
-const AutoBody = z.object({ on: z.boolean().optional(), intervalMin: z.number().int().min(1).max(1440).optional(), symbols: z.array(z.string().min(2).max(20)).min(1).max(12).optional(), maxHoldHours: z.number().int().min(0).max(720).optional(), n: z.number().int().min(1).max(4).optional(), runNow: z.boolean().optional() }).strict();
+const AutoBody = z.object({ on: z.boolean().optional(), intervalMin: z.number().int().min(1).max(1440).optional(), symbols: z.array(z.string().min(2).max(20)).min(1).max(12).optional(), maxHoldHours: z.number().int().min(0).max(720).optional(), n: z.number().int().min(1).max(4).optional(), runNow: z.boolean().optional(), debateMode: z.enum(['normal', 'fast']).optional() }).strict();
 
 export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   const writeLim = c.limiter(30, 60_000);
@@ -296,6 +296,7 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     if (Array.isArray(p.data.symbols)) envUpd.AUTO_SYMBOLS = p.data.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean).join(',');
     if (typeof p.data.maxHoldHours === 'number') envUpd.MAX_HOLD_HOURS = String(p.data.maxHoldHours);
     if (typeof p.data.n === 'number') envUpd.OPEN_ORDERS_N = String(p.data.n);
+    if (p.data.debateMode) envUpd.DEBATE_MODE = p.data.debateMode;
     if (Object.keys(envUpd).length > 0) setEnv(c.envFile, envUpd);
     const autoSnap = c.auto
       ? c.auto.configure(p.data)
@@ -308,9 +309,14 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
             c.desk.book.n = p.data.n as 1 | 2 | 3 | 4;
             c.cfg.paper.n = p.data.n as 1 | 2 | 3 | 4;
           }
+          if (p.data.debateMode) c.cfg.debate.mode = p.data.debateMode;
           c.desk.emit('state', c.desk.snapshot());
           return c.desk.snapshot().auto;
         })();
+    if (p.data.debateMode) {
+      c.cfg.debate.mode = p.data.debateMode;
+      c.desk.emit('state', c.desk.snapshot());
+    }
     if (p.data.runNow && !c.desk.killed && c.auto) {
       void c.auto.cycle();
     }

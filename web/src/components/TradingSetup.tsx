@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
 import type { TradingNetwork, TradingPresetId, TradingProfile, TradingSettings } from '../../../server/trading-settings';
-import { TRADING_PRESETS, resolveTradingPreset } from '../../../server/trading-settings';
+import { TRADING_PRESETS, draftProfile, resolveTradingPreset } from '../../../server/trading-settings';
 import { useI18n, type TranslationKey } from '../i18n';
 
 interface TradingInfo {
@@ -25,6 +25,12 @@ function getTradingFields(t: (k: TranslationKey) => string) {
   ];
 }
 
+function profileName(profile: TradingProfile, lang: string) {
+  if (profile === 'current') return lang === 'id' ? 'pengaturan tersimpan' : 'existing settings';
+  if (profile in TRADING_PRESETS) return TRADING_PRESETS[profile as TradingPresetId].name;
+  return profile;
+}
+
 export function TradingSetup({ state, initialProfile }: { state: DeskState; initialProfile?: TradingProfile }) {
   const { t, lang } = useI18n();
   const fields = getTradingFields(t);
@@ -33,16 +39,27 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
   const [profile, setProfile] = useState<TradingProfile>(initialProfile ?? 'manual');
   const [drafts, setDrafts] = useState<Record<TradingNetwork, TradingSettings> | null>(null);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
-  const load = async () => {
+  const honorShortcut = useRef(!!initialProfile);
+  const load = async (refreshDrafts = false) => {
     try {
       const r = await fetch('/api/setup/trading'), d = await r.json();
       if (!r.ok || !d.ok) { setMessage(d.detail || t('tradingUnavailableMsg')); return; }
       const next: TradingInfo = d; setInfo(next);
-      setDrafts((previous) => previous ?? { testnet: next.networks.testnet.manual, mainnet: next.networks.mainnet.manual });
+      setDrafts((previous) => {
+        const manuals = { testnet: next.networks.testnet.manual, mainnet: next.networks.mainnet.manual };
+        if (!previous || refreshDrafts) return manuals;
+        return previous;
+      });
+      if (!honorShortcut.current) setProfile(draftProfile(next.networks[network].profile));
     } catch { setMessage(lang === 'id' ? 'Meja trading tidak dapat dihubungi. Pengaturan tersimpan gagal dimuat.' : 'Office not reachable. Saved settings could not be loaded.'); }
   };
   useEffect(() => { void load(); }, []);
   useEffect(() => { if (initialProfile) setProfile(initialProfile); }, [initialProfile]);
+  useEffect(() => {
+    if (!info) return;
+    honorShortcut.current = false;
+    setProfile(draftProfile(info.networks[network].profile));
+  }, [network]);
   if (!info || !drafts) return <div className="wallet-note" role="status"><p>{message || t('tradingLoadingProfiles')}</p>{message && <button onClick={() => void load()}>{t('tradingRetryBtn')}</button>}</div>;
   const isPreset = profile in TRADING_PRESETS;
   const values = isPreset
@@ -54,18 +71,24 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     try {
       const body = { network, profile, ...(profile === 'manual' ? { values } : {}) };
       const r = await fetch('/api/setup/trading', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), d = await r.json();
-      setMessage(d.detail || (lang === 'id' ? 'Penyimpanan tidak terkonfirmasi.' : 'Saving was not confirmed.')); if (r.ok && d.ok) await load();
+      if (r.ok && d.ok) {
+        setMessage(d.applied ? `${t('tradingAppliedToDesk')}. ${d.detail ?? ''}` : `${t('tradingSavedForNextStart')}. ${d.detail ?? ''}`);
+        await load(true);
+      } else {
+        setMessage(d.detail || (lang === 'id' ? 'Penyimpanan tidak terkonfirmasi.' : 'Saving was not confirmed.'));
+      }
     } catch { setMessage(lang === 'id' ? 'Penyimpanan tidak terkonfirmasi. Muat ulang bagian ini sebelum mencoba lagi.' : 'Saving was not confirmed. Refresh this section before trying again.'); }
     finally { setBusy(false); }
   }
   const savedProfile = info.networks[network].profile;
-  const savedLabel = savedProfile === 'current'
-    ? (lang === 'id' ? 'pengaturan saat ini' : 'existing configuration')
-    : savedProfile in TRADING_PRESETS
-      ? TRADING_PRESETS[savedProfile as TradingPresetId].name
-      : savedProfile;
+  const savedLabel = profileName(savedProfile, lang);
+  const runningLabel = profileName(info.running.profile, lang);
+  const draftDirty = draftProfile(savedProfile) !== profile;
   return <section className="trading-setup">
-    <p className="wallet-note">{lang === 'id' ? 'Berjalan:' : 'Running:'} <b>{info.running.mode}</b>{info.running.network ? ` · ${info.running.network}` : ''} · {info.running.profile === 'current' ? (lang === 'id' ? 'pengaturan tersimpan' : 'existing settings') : (info.running.profile in TRADING_PRESETS ? TRADING_PRESETS[info.running.profile as TradingPresetId].name : info.running.profile)}. {lang === 'id' ? 'Testnet menggunakan dana tes; mainnet LIVE menggunakan uang sungguhan. Memilih profil tidak mengganti mode atau menyambungkan bursa.' : 'Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.'}</p>
+    <p className="wallet-note">{lang === 'id' ? 'Berjalan:' : 'Running:'} <b>{info.running.mode}</b>{info.running.network ? ` · ${info.running.network}` : ''} · {runningLabel}. {lang === 'id' ? 'Testnet menggunakan dana tes; mainnet LIVE menggunakan uang sungguhan. Memilih profil tidak mengganti mode atau menyambungkan bursa.' : 'Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.'}</p>
+    <p className="setup-guide-note"><b>{t('tradingAppliedToDesk')}</b>: {info.running.mode}{info.running.network ? ` · ${info.running.network}` : ''} · {runningLabel}</p>
+    <p className="setup-guide-note"><b>{t('tradingSavedForNextStart')}</b> ({network}): {savedLabel}</p>
+    {draftDirty && <p className="field-help">{t('tradingDraftProfile')}: {profileName(profile, lang)}</p>}
     <div className="wallet-pick">
       <label>{lang === 'id' ? 'Jaringan trading' : 'Trading network'}<select aria-label="Trading network" disabled={busy} value={network} onChange={(e) => { setNetwork(e.target.value as TradingNetwork); setMessage(''); }}><option value="testnet">Testnet · TESTNET</option><option value="mainnet">Mainnet · LIVE</option></select></label>
       <label>{t('tradingProfileLabel')}<select aria-label="Settings profile" disabled={busy} value={profile} onChange={(e) => { setProfile(e.target.value as TradingProfile); setMessage(''); }}>
@@ -81,7 +104,7 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <div className="settings-grid">{fields.map((f) => <label key={f.key}>{f.label}<input aria-label={f.label} type="number" required min={f.min} max={f.max} step={f.step ?? 'any'} disabled={busy || isPreset} value={values[f.key]} onChange={(e) => setDrafts((old) => old ? { ...old, [network]: { ...old[network], [f.key]: Number(e.target.value) } } : old)} /><small className="field-help">{f.help}</small></label>)}</div>
       <p className="field-help">{lang === 'id' ? 'Pengaturan ini diteruskan ke Agen Risiko, sizing bersama, dan pengecekan eksekusi. Tiket manual tetap mematuhi pengaman stop/ukuran; batas keyakinan minimal berlaku untuk entry mandiri agen. Menyimpan tidak mengubah ukuran order terbuka, tidak me-reset batas rugi harian, dan tidak mengaktifkan Auto Trade atau mengganti mode.' : 'These settings feed the Risk Agent, shared sizing and execution checks. Manual tickets keep their stop/size guards; the confidence floor applies to agent entries. Applying does not resize open orders, reset a daily loss stop, enable Auto Trade or switch mode.'}</p>
-      <div className="setup-nav"><button disabled={busy} type="submit">{busy ? t('tradingSavingBtn') : `${active ? (lang === 'id' ? 'Simpan & terapkan' : 'Save and apply') : t('tradingSaveProfileBtn')} ${isPreset ? TRADING_PRESETS[profile as TradingPresetId].name : profile} ${lang === 'id' ? 'untuk' : 'for'} ${network}`}</button>{profile === 'manual' && <button disabled={busy} type="button" onClick={() => { setDrafts({ ...drafts, [network]: info.networks[network].manual }); setMessage(lang === 'id' ? 'Draf dikembalikan ke nilai tersimpan.' : 'Draft restored to saved values.'); }}>{lang === 'id' ? 'Batalkan perubahan' : 'Discard edits'}</button>}</div>
+      <div className="setup-nav"><button disabled={busy} type="submit">{busy ? t('tradingSavingBtn') : `${active ? (lang === 'id' ? 'Simpan & terapkan' : 'Save and apply') : t('tradingSaveProfileBtn')} ${isPreset ? TRADING_PRESETS[profile as TradingPresetId].name : profile} ${lang === 'id' ? 'untuk' : 'for'} ${network}`}</button><button disabled={busy} type="button" onClick={() => { setProfile(draftProfile(savedProfile)); setDrafts({ ...drafts, [network]: info.networks[network].manual }); setMessage(lang === 'id' ? 'Draf dikembalikan ke nilai tersimpan.' : 'Draft restored to saved values.'); }}>{t('tradingDiscardEdits')}</button></div>
       {!active && <p className="field-help">{lang === 'id' ? 'Jaringan ini sedang tidak berjalan. Menyimpan akan mempersiapkannya untuk dijalankan berikutnya; ganti mode di Bursa & Pengamanan.' : 'This network is not running. Saving prepares it for its next start; change mode separately in Exchange & Safety.'}</p>}
     </form>
     {message && <p className="wallet-note" role="status">{message}</p>}
