@@ -7,6 +7,7 @@ import { KerisBlade } from './Keris';
 import { Sparkline } from './MiniCharts';
 import { SEATS, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
 import { useSceneDirector } from '../useSceneDirector';
+import { useI18n } from '../i18n';
 
 const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'tracking execution', journaling: 'journaling' };
 const POW_WORDS = ['GEBUK!', 'POW!', 'BONK!', 'DUAR!', 'PLAK!', 'BLETAK!', 'BAM!', 'AMPUN!', 'HAJAR!', 'JEDER!'];
@@ -92,6 +93,7 @@ function useMovement(pos: Point, desks: Point[]) {
 }
 
 function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selected, activeFight, onSelect }: { a: AgentView; pos: Point; activity: Activity; desks: Point[]; sp?: Speech; fight?: Fight; reaction?: Reaction; inDebate: boolean; selected: boolean; activeFight?: Fight; onSelect: () => void }) {
+  const { t } = useI18n();
   const { anchor, walk } = useMovement(pos, desks);
   let { pose, face } = fight || reaction || activeFight ? poseFor(a, fight, reaction, inDebate, activeFight) : activity;
 
@@ -119,7 +121,7 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
       {sp && (
         <div className={`bubble ${sp.done ? 'done' : 'streaming'}`}>
           <b className="bubble-name">{a.name}</b>
-          <span>{sp.text.length > 150 ? `${sp.text.slice(0, 147)}...` : sp.text}</span><small className="bubble-more">Open agent for full speech</small>{!sp.done && <i className="caret" />}
+          <span>{sp.text.length > 150 ? `${sp.text.slice(0, 147)}...` : sp.text}</span><small className="bubble-more">{t('bubbleMoreText')}</small>{!sp.done && <i className="caret" />}
           {sp.example && <em className="tag-example">EXAMPLE</em>}
         </div>
       )}
@@ -136,6 +138,7 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
 }
 
 export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, children }: Props) {
+  const { t } = useI18n();
   const activities = useSceneDirector(state, sceneEvents);
   const inDebate = !!state.debate;
   const heat = Math.min(1, disagreement);
@@ -268,12 +271,12 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       <div className="prop plant big" style={{ left: '96.5%', top: '97%' }}><i className="leaf l1" /><i className="leaf l2" /><i className="leaf l3" /><i className="leaf l4" /><i className="pot" /></div>
       <div className="prop plant small" style={{ left: '26%', top: '40%' }}><i className="leaf l1" /><i className="leaf l2" /><i className="leaf l3" /><i className="pot" /></div>
 
-      <div className="analysis-board" aria-hidden="true"><span>Analysis</span><svg viewBox="0 0 90 30"><path d="M4 23 L18 16 L31 20 L44 8 L57 13 L70 6 L85 9" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div>
+      <div className="analysis-board" aria-hidden="true"><span>{t('analysisBoardText')}</span><svg viewBox="0 0 90 30"><path d="M4 23 L18 16 L31 20 L44 8 L57 13 L70 6 L85 9" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div>
       {/* debate table */}
       <div className="arena" style={{ left: '50%', top: '72%' }}>
         <div className="arena-table">
           <div className="arena-inlay"><KerisBlade size={120} /></div>
-          <div className="arena-label">{state.debate ? `${state.debate.symbol} · ${state.debate.phase}` : 'debate table'}</div>
+          <div className="arena-label">{state.debate ? `${state.debate.symbol} · ${state.debate.phase}` : t('arenaDebateTable')}</div>
         </div>
       </div>
 

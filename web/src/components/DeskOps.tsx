@@ -10,7 +10,7 @@ const post = (url: string, body: unknown) => fetch(url, { method: 'POST', header
 const num = (s: string) => (s.trim() === '' ? undefined : Number(s));
 
 export function DeskOps({ state }: { state: DeskState }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [symbol, setSymbol] = useState(state.watchlist[0] ?? 'BTCUSDT');
   const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
   const [entry, setEntry] = useState(''); const [stop, setStop] = useState(''); const [tp, setTp] = useState(''); const [lev, setLev] = useState('');
@@ -62,7 +62,9 @@ export function DeskOps({ state }: { state: DeskState }) {
 
       if (isHighRisk || increasesLeverage || increasesDailyLoss) {
         const confirmed = window.confirm(
-          `Switch LIVE to ${TRADING_PRESETS[newPreset].name}? This increases risk limits (max leverage ${targetPresetValues.maxLeverage}x, daily loss ${targetPresetValues.dailyLossLimitPct}%).`
+          lang === 'id'
+            ? `Ganti mode LIVE ke ${TRADING_PRESETS[newPreset].name}? Tindakan ini meningkatkan batas risiko (leverage maks ${targetPresetValues.maxLeverage}x, batas rugi harian ${targetPresetValues.dailyLossLimitPct}%).`
+            : `Switch LIVE to ${TRADING_PRESETS[newPreset].name}? This increases risk limits (max leverage ${targetPresetValues.maxLeverage}x, daily loss ${targetPresetValues.dailyLossLimitPct}%).`
         );
         if (!confirmed) return;
       }
@@ -73,9 +75,9 @@ export function DeskOps({ state }: { state: DeskState }) {
       const r = await post('/api/setup/trading', { network: targetNetwork, profile: newPreset }).catch(() => null);
       if (r?.ok) {
         if (state.mode === 'PAPER') setPaperConfirmedPreset(newPreset);
-        show(true, r.detail || `Preset ${TRADING_PRESETS[newPreset].name} applied.`);
+        show(true, r.detail || `${t('opsPresetUpdated')} ${TRADING_PRESETS[newPreset].name}.`);
       } else {
-        show(false, r?.detail || 'Failed to apply preset.');
+        show(false, r?.detail || t('opsPresetFailed'));
       }
     } finally {
       setPresetBusy(false);
@@ -149,24 +151,24 @@ export function DeskOps({ state }: { state: DeskState }) {
 
   const toggleKillSwitch = async (turnOn: boolean) => {
     if (turnOn) {
-      if (!window.confirm('Kill switch: cancel all orders, close open positions, and stop the desk?')) return;
+      if (!window.confirm(t('opsKillOnConfirm'))) return;
     }
     const r = await post('/api/ops/kill', { on: turnOn }).catch(() => null);
     if (r?.ok) {
       setKill((prev) => (prev ? { ...prev, killed: r.killed } : null));
-      show(true, r.killed ? 'Kill switch is now ON.' : 'Kill switch released. Trading & buttons active.');
+      show(true, r.killed ? t('opsKillNowOn') : t('opsKillReleased'));
     } else {
-      show(false, r?.error ?? 'Could not update kill switch');
+      show(false, r?.error ?? t('cbKillFailedMsg'));
     }
   };
 
   const restartOffice = async () => {
-    show(true, 'Restarting and synchronizing office...');
+    show(true, t('opsRestartingOffice'));
     const r = await post('/api/setup/restart', {}).catch(() => null);
     if (r?.ok) {
-      show(true, r.detail || 'Office restarted successfully.');
+      show(true, r.detail || (lang === 'id' ? 'Meja trading berhasil direstart.' : 'Office restarted successfully.'));
     } else {
-      show(false, r?.detail ?? 'Restart request failed');
+      show(false, r?.detail ?? (lang === 'id' ? 'Gagal merequest restart' : 'Restart request failed'));
     }
   };
 
@@ -218,20 +220,20 @@ export function DeskOps({ state }: { state: DeskState }) {
     <section className="panel desk-ops" aria-label="Desk operations">
       <div className="panel-head"><h2>{t('deskOpsTitle')}</h2><span className="badge">{state.mode} · {state.venue?.label ?? state.marketSource}</span></div>
       <div className="ops-trading-profile">
-        <div><strong>Trading settings</strong><small>{state.trading?.network ?? 'Testnet / mainnet'} · {state.trading?.profile === 'current' || !state.trading ? 'existing settings' : state.trading.profile}</small></div>
-        <div className="setup-nav"><button onClick={() => { window.location.hash = 'setup-trading-default'; }}>Default</button><button onClick={() => { window.location.hash = 'setup-trading-manual'; }}>Manual setup</button></div>
+        <div><strong>{lang === 'id' ? 'Pengaturan trading' : 'Trading settings'}</strong><small>{state.trading?.network ?? 'Testnet / mainnet'} · {state.trading?.profile === 'current' || !state.trading ? (lang === 'id' ? 'pengaturan tersimpan' : 'existing settings') : state.trading.profile}</small></div>
+        <div className="setup-nav"><button onClick={() => { window.location.hash = 'setup-trading-default'; }}>{t('opsPresetDefault')}</button><button onClick={() => { window.location.hash = 'setup-trading-manual'; }}>{t('tradingProfileManual')}</button></div>
       </div>
       <div className={`ops-kill-bar ${state.killed ? 'is-killed' : 'is-active'}`}>
         <div className="kill-status-wrap"><span className="kill-indicator" /><span className="kill-status-label">{state.killed ? t('killSwitchOnLocked') : t('killSwitchOffReady')}</span></div>
-        <button type="button" className={`kill-toggle-btn ${state.killed ? 'release-btn' : 'engage-btn'}`} onClick={() => toggleKillSwitch(!state.killed)} title={state.killed ? 'Release Kill Switch' : 'Emergency stop: cancels orders and closes positions'}>{state.killed ? t('unlockKillBtn') : t('engageKillBtn')}</button>
+        <button type="button" className={`kill-toggle-btn ${state.killed ? 'release-btn' : 'engage-btn'}`} onClick={() => toggleKillSwitch(!state.killed)} title={state.killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}>{state.killed ? t('unlockKillBtn') : t('engageKillBtn')}</button>
       </div>
       <section className={`auto-setup-box ${isAutoOn ? 'is-on' : 'is-off'}`} aria-labelledby="ops-auto-title">
         <div className="auto-setup-title">
           <i className={`auto-dot ${isAutoOn ? 'on' : 'off'} ${auto?.running ? 'pulse' : ''}`} /><h3 id="ops-auto-title">{t('autoTradeTitle')}</h3>
-          <span className={`auto-status-pill ${isAutoOn ? 'on' : 'off'}`}>{auto?.running ? 'Cycle active' : isAutoOn ? 'Scheduled' : 'Off'}</span>
-          <span className="auto-slots-pill">Slots {state.paper.positions.length}/{state.paper.n} · ${state.paper.perOrder}/ord</span>
+          <span className={`auto-status-pill ${isAutoOn ? 'on' : 'off'}`}>{auto?.running ? (lang === 'id' ? 'Siklus aktif' : 'Cycle active') : isAutoOn ? (lang === 'id' ? 'Terjadwal' : 'Scheduled') : (lang === 'id' ? 'Mati' : 'Off')}</span>
+          <span className="auto-slots-pill">{lang === 'id' ? 'Slot' : 'Slots'} {state.paper.positions.length}/{state.paper.n} · ${state.paper.perOrder}/ord</span>
         </div>
-        <small className="auto-cycle-meta">{auto?.running ? (auto.trigger === 'manual' ? 'Manual cycle running' : 'Scheduled cycle running') : auto?.on ? 'Waiting for next cycle' : 'Scheduler off'}{auto?.stopping ? ' · stopping after current symbol' : ''}</small>
+        <small className="auto-cycle-meta">{auto?.running ? (auto.trigger === 'manual' ? (lang === 'id' ? 'Siklus manual berjalan' : 'Manual cycle running') : (lang === 'id' ? 'Siklus terjadwal berjalan' : 'Scheduled cycle running')) : auto?.on ? (lang === 'id' ? 'Menunggu siklus berikutnya' : 'Waiting for next cycle') : (lang === 'id' ? 'Penjadwal mati' : 'Scheduler off')}{auto?.stopping ? (lang === 'id' ? ' · berhenti setelah simbol saat ini' : ' · stopping after current symbol') : ''}</small>
         <div className="auto-quick-actions">
           <div className="seg auto-toggle-seg" role="group" aria-label="Auto Trade toggle">
             <button type="button" className={isAutoOn ? 'on auto-on-btn' : ''} disabled={autoBusy || presetBusy} onClick={() => void updateAuto({ on: true })}>{t('autoStartBtn')}</button>
@@ -246,11 +248,11 @@ export function DeskOps({ state }: { state: DeskState }) {
                 value={activePreset}
                 onChange={(e) => void handlePresetChange(e.target.value as TradingPresetId)}
               >
-                {!activePreset && <option value="" disabled hidden>Custom settings</option>}
-                <option value="default">Default</option>
-                <option value="balance">Balance</option>
-                <option value="profit">Profit</option>
-                <option value="high_risk">High Risk High Reward</option>
+                {!activePreset && <option value="" disabled hidden>{t('opsPresetCustom')}</option>}
+                <option value="default">{t('opsPresetDefault')}</option>
+                <option value="balance">{t('opsPresetBalance')}</option>
+                <option value="profit">{t('opsPresetProfit')}</option>
+                <option value="high_risk">{t('opsPresetHighRisk')}</option>
               </select>
               <span className="auto-preset-chevron" aria-hidden="true">▾</span>
             </div>
@@ -258,35 +260,35 @@ export function DeskOps({ state }: { state: DeskState }) {
           </div>
         </div>
         <div className="auto-setup-controls">
-          <label className="auto-min-field"><span>Every</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>min</span></label>
-          <div className="auto-n-field"><span>Max N</span><div className="seg auto-n-seg" role="group" aria-label="Max open positions">{([1, 2, 3, 4] as const).map((nVal) => <button key={nVal} type="button" className={autoN === nVal ? 'on' : ''} disabled={autoBusy} onClick={() => pickMaxN(nVal)}>{nVal}</button>)}</div></div>
+          <label className="auto-min-field"><span>{t('opsEveryLabel')}</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>{t('opsMinUnit')}</span></label>
+          <div className="auto-n-field"><span>{t('opsMaxNLabel')}</span><div className="seg auto-n-seg" role="group" aria-label="Max open positions">{([1, 2, 3, 4] as const).map((nVal) => <button key={nVal} type="button" className={autoN === nVal ? 'on' : ''} disabled={autoBusy} onClick={() => pickMaxN(nVal)}>{nVal}</button>)}</div></div>
           <button type="button" className="mini" disabled={autoBusy} onClick={() => void updateAuto({})}>{t('autoSaveBtn')}</button>
         </div>
-        <label className="ops-symbols-field">Symbols<input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} /></label>
+        <label className="ops-symbols-field">{t('opsSymbolsLabel')}<input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} /></label>
         <div className="auto-token-bar" role="group" aria-label="Quick symbol selection">{QuickTokens.map((sym) => {
           const active = selectedSyms.includes(sym), hasPos = state.paper.positions.find((p) => p.symbol === sym);
           return <button key={sym} type="button" className={`token-chip ${active ? 'on' : ''} ${hasPos ? `pos-${hasPos.side.toLowerCase()}` : ''}`} aria-pressed={active} disabled={autoBusy} onClick={() => toggleTokenChip(sym)} title={`${sym}${hasPos ? ` (${hasPos.side} open)` : ''} - edit selection, then Save`}>
             {sym.replace('USDT', '')}{hasPos && <b className="chip-pos-tag">{hasPos.side === 'LONG' ? 'L' : 'S'}</b>}
           </button>;
         })}</div>
-        <p className="ops-help">Save applies symbols, interval and N. ON/OFF and Cycle now use saved values.</p>
+        <p className="ops-help">{t('opsAutoHelpText')}</p>
       </section>
-      <div className="ops-position-actions"><strong>Positions {state.paper.positions.length}/{state.paper.n}</strong>{[...new Set(state.paper.positions.map((p) => p.symbol))].map((sym) => <button key={sym} onClick={() => close(sym)}>Close {sym.replace('USDT', '')}</button>)}<button disabled={!state.paper.positions.length} onClick={() => close('all')}>{t('closeAll')}</button></div>
+      <div className="ops-position-actions"><strong>{t('opsPositionsTitle')} {state.paper.positions.length}/{state.paper.n}</strong>{[...new Set(state.paper.positions.map((p) => p.symbol))].map((sym) => <button key={sym} onClick={() => close(sym)}>{t('opsCloseBtn')} {sym.replace('USDT', '')}</button>)}<button disabled={!state.paper.positions.length} onClick={() => close('all')}>{t('closeAll')}</button></div>
       <section className="ops-section" aria-labelledby="ops-ticket-title">
-        <div className="ops-section-heading"><h3 id="ops-ticket-title">Manual ticket</h3><small>Preview → open</small></div>
+        <div className="ops-section-heading"><h3 id="ops-ticket-title">{t('opsManualTicketTitle')}</h3><small>{t('opsPreviewOpenSub')}</small></div>
         <div className="ops-market-row">
-          <label>Symbol<input aria-label="symbol" list="ops-ticket-symbols" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} /></label>
+          <label>{t('opsSymbolLabel')}<input aria-label="symbol" list="ops-ticket-symbols" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} /></label>
           <datalist id="ops-ticket-symbols">{[...new Set([...state.watchlist, ...POPULAR_SYMBOLS])].map((s) => <option key={s} value={s} />)}</datalist>
-          <div className="ops-side-field"><span>Side</span><div className="seg" role="group" aria-label="side">{(['LONG', 'SHORT'] as const).map((s) => <button key={s} className={side === s ? 'on' : ''} aria-pressed={side === s} onClick={() => setSide(s)}>{s}</button>)}</div></div>
+          <div className="ops-side-field"><span>{t('opsSideLabel')}</span><div className="seg" role="group" aria-label="side">{(['LONG', 'SHORT'] as const).map((s) => <button key={s} className={side === s ? 'on' : ''} aria-pressed={side === s} onClick={() => setSide(s)}>{s}</button>)}</div></div>
         </div>
-        <p className="ops-help">Execution: {state.venue?.label ?? state.mode} · Analysis: {state.marketSource}. Prices may differ.</p>
+        <p className="ops-help">{t('opsExecutionPrefix')} {state.venue?.label ?? state.mode} · {t('opsAnalysisPrefix')} {state.marketSource}. {t('opsPricesMayDiffer')}</p>
         <div className="ticket-inputs">
-          <label>Entry<input aria-label="entry" placeholder="Live quote" value={entry} onChange={(e) => setEntry(e.target.value)} /></label>
-          <label>Stop loss<input aria-label="stop" placeholder="Stop price" value={stop} onChange={(e) => setStop(e.target.value)} /></label>
-          <label>Take profit<input aria-label="take profit" placeholder="TP price" value={tp} onChange={(e) => setTp(e.target.value)} /></label>
-          <label>Leverage<input aria-label="leverage" placeholder={`≤ ${state.paper.maxLeverage}x`} value={lev} onChange={(e) => setLev(e.target.value)} /></label>
+          <label>{t('opsEntryLabel')}<input aria-label="entry" placeholder={t('opsLiveQuotePlaceholder')} value={entry} onChange={(e) => setEntry(e.target.value)} /></label>
+          <label>{t('opsStopLossLabel')}<input aria-label="stop" placeholder={t('opsStopPricePlaceholder')} value={stop} onChange={(e) => setStop(e.target.value)} /></label>
+          <label>{t('opsTakeProfitLabel')}<input aria-label="take profit" placeholder={t('opsTpPricePlaceholder')} value={tp} onChange={(e) => setTp(e.target.value)} /></label>
+          <label>{t('opsLeverageLabel')}<input aria-label="leverage" placeholder={`≤ ${state.paper.maxLeverage}x`} value={lev} onChange={(e) => setLev(e.target.value)} /></label>
         </div>
-        <p className="ops-help">Auto Stop: active SL/TP + venue rounding. Size is a preview.</p>
+        <p className="ops-help">{t('opsAutoStopHelpText')}</p>
         <div className="ops-ticket-actions">
           <button type="button" className="auto-stop-pill-btn" onClick={() => void autoFillStop()} disabled={ticketBusy}>{t('calcAutoStopBtn')}</button>
           <button onClick={() => void size()} disabled={ticketBusy}>{t('sizeTicket')}</button>
@@ -294,8 +296,8 @@ export function DeskOps({ state }: { state: DeskState }) {
         </div>
       </section>
       <section className="ops-section" aria-labelledby="ops-maintenance-title">
-        <div className="ops-section-heading"><h3 id="ops-maintenance-title">Maintenance</h3><small>Journal & office</small></div>
-        <div className="ops-lesson-row"><label>Desk lesson<input aria-label="lesson" placeholder="Add a lesson" value={lesson} onChange={(e) => setLesson(e.target.value)} /></label><button disabled={lesson.trim().length < 2} onClick={addLesson}>{t('addLessonBtn')}</button></div>
+        <div className="ops-section-heading"><h3 id="ops-maintenance-title">{t('opsMaintenanceTitle')}</h3><small>{t('opsJournalOfficeSub')}</small></div>
+        <div className="ops-lesson-row"><label>{t('opsDeskLessonLabel')}<input aria-label="lesson" placeholder={t('opsAddLessonPlaceholder')} value={lesson} onChange={(e) => setLesson(e.target.value)} /></label><button disabled={lesson.trim().length < 2} onClick={addLesson}>{t('addLessonBtn')}</button></div>
         <div className="ops-maintenance-actions"><button onClick={scan}>{t('proaktifScan')}</button><button onClick={restartOffice}>{t('restartOfficeBtn')}</button></div>
       </section>
       {out && <p role="status" className={`wallet-msg ${out.ok ? 'ok' : 'bad'}`}>{out.text}</p>}

@@ -74,7 +74,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
   async function connect() {
     setMsg(null);
     const w = eth();
-    if (!w) { setMsg({ ok: false, text: 'No browser wallet found. Install MetaMask or Rabby, or use the manual steps.' }); return; }
+    if (!w) { setMsg({ ok: false, text: t('walletNotFound') }); return; }
     try {
       const [a] = await w.request({ method: 'eth_requestAccounts' });
       setAddress(a);
@@ -85,7 +85,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
       } catch { /* ignore */ }
       window.dispatchEvent(new Event('mg-wallet-updated'));
     }
-    catch (e) { setMsg({ ok: false, text: `Wallet refused: ${(e as Error).message}` }); }
+    catch (e) { setMsg({ ok: false, text: `${t('walletRefusedPrefix')} ${(e as Error).message}` }); }
   }
   async function approve() {
     const w = eth();
@@ -155,11 +155,11 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
             {agent && <p className="wallet-addr">{t('agentAddressLabel')} <code>{agent}</code></p>}
             <p className="wallet-note">{t('walletSafetyNote')} {t('revokeAnyTime')} <a href={v.revokeUrl ?? '#'} target="_blank" rel="noreferrer">{v.label} API wallets</a>.</p>
           </div>
-        ) : <p className="wallet-note">Connect wallet is off: {info.reason}</p>
+        ) : <p className="wallet-note">{t('walletOffPrefix')} {info.reason}</p>
       )}
       <ol className="wallet-steps">{v.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
-      {v.support !== 'signature' && <p className="wallet-note">{v.label} keys are created in the {v.label} app, then entered in Setup. <a href={v.docsUrl} target="_blank" rel="noreferrer">{t('officialDocs')}</a> · <a href={v.depositUrl} target="_blank" rel="noreferrer">{t('depositOfficial')}</a></p>}
-      {state.appMode === 'grokbot' && <p className="wallet-note">Grok Bot mode: use the secret card in Grok Bot for keys.</p>}
+      {v.support !== 'signature' && <p className="wallet-note">{v.label} {t('walletKeysAppNote')} <a href={v.docsUrl} target="_blank" rel="noreferrer">{t('officialDocs')}</a> · <a href={v.depositUrl} target="_blank" rel="noreferrer">{t('depositOfficial')}</a></p>}
+      {state.appMode === 'grokbot' && <p className="wallet-note">{t('walletGrokbotSecretNote')}</p>}
       {msg && <p className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
     </div>
   );

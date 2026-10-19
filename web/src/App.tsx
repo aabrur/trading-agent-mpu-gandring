@@ -107,7 +107,7 @@ function AppInner() {
     return (
       <div className="app">
         <TopBar state={null} connected={connected} />
-        <div className="loading"><div className="loader" /><p>Opening the office... is the backend running? <code>npm run dev</code></p></div>
+        <div className="loading"><div className="loader" /><p>{t('openingOfficeMsg')} <code>npm run dev</code></p></div>
       </div>
     );
   }

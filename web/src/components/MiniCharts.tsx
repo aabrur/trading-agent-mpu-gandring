@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import type { DeskState } from '../types';
 import { fmt } from './format';
+import { useI18n } from '../i18n';
 
 // Equity over time. Plain SVG with gridlines, axis labels, safety net line and a hover readout.
 export function EquityChart({ state }: { state: DeskState }) {
+  const { t } = useI18n();
   const pts = state.equityHistory.length ? state.equityHistory : [{ t: Date.now(), equity: state.paper.equity, balance: state.paper.balance }];
   const [hi, setHi] = useState<number | null>(null);
   const W = 340, H = 130, L = 52, R = 10, T = 12, B = 22;
@@ -22,7 +24,7 @@ export function EquityChart({ state }: { state: DeskState }) {
   const h = hi != null ? pts[hi] : null;
   return (
     <figure className="mini-chart">
-      <figcaption><span>Equity over time</span>{h ? <b>{fmt(h.equity)} USDT · {tm(h.t)}</b> : <b>{fmt(state.paper.equity)} USDT</b>}</figcaption>
+      <figcaption><span>{t('equityOverTime')}</span>{h ? <b>{fmt(h.equity)} USDT · {tm(h.t)}</b> : <b>{fmt(state.paper.equity)} USDT</b>}</figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="paper equity over time"
         onMouseMove={(e) => { const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect(); const px = ((e.clientX - r.left) / r.width) * W; const i = Math.round(((px - L) / (W - L - R)) * (pts.length - 1)); setHi(Math.max(0, Math.min(pts.length - 1, i))); }}
         onMouseLeave={() => setHi(null)}>
@@ -32,11 +34,11 @@ export function EquityChart({ state }: { state: DeskState }) {
             <text x={L - 6} y={y(v) + 4} textAnchor="end" className="axis">{fmt(v, v > 999 ? 0 : 2)}</text>
           </g>
         ))}
-        {net > lo && net < hiV && <g><line x1={L} x2={W - R} y1={y(net)} y2={y(net)} className="net" /><text x={W - R} y={y(net) - 4} textAnchor="end" className="axis net-label">safety net {fmt(net, 0)}</text></g>}
+        {net > lo && net < hiV && <g><line x1={L} x2={W - R} y1={y(net)} y2={y(net)} className="net" /><text x={W - R} y={y(net) - 4} textAnchor="end" className="axis net-label">{t('safetyNet').toLowerCase()} {fmt(net, 0)}</text></g>}
         <path d={area} className="eq-area" />
         <path d={path} className="eq-line" />
         <circle cx={x(pts.length - 1)} cy={y(vals.at(-1)!)} r="3.5" className="eq-dot" />
-        {net <= lo && <text x={W - R} y={H - B - 5} textAnchor="end" className="axis net-label">safety net {fmt(net, 0)} is below this range</text>}
+        {net <= lo && <text x={W - R} y={H - B - 5} textAnchor="end" className="axis net-label">{t('safetyNet').toLowerCase()} {fmt(net, 0)} {t('safetyNetBelowRange')}</text>}
         <text x={L} y={H - 6} className="axis">{tm(pts[0].t)}</text>
         <text x={W - R} y={H - 6} textAnchor="end" className="axis">{tm(pts.at(-1)!.t)}</text>
         {h && hi != null && <g><line x1={x(hi)} x2={x(hi)} y1={T} y2={H - B} className="hover-line" /><circle cx={x(hi)} cy={y(h.equity)} r="4" className="eq-dot" /></g>}
@@ -47,6 +49,7 @@ export function EquityChart({ state }: { state: DeskState }) {
 
 // Money Trade split into N slots. Each bar is one order's allocation; the fill is margin in use.
 export function AllocationBars({ state }: { state: DeskState }) {
+  const { t } = useI18n();
   const p = state.paper;
   const W = 340, H = 140, L = 44, R = 8, T = 14, B = 30;
   const slots = Array.from({ length: p.n }, (_, i) => p.positions[i] ?? null);
@@ -57,7 +60,7 @@ export function AllocationBars({ state }: { state: DeskState }) {
   const [hi, setHi] = useState<number | null>(null);
   return (
     <figure className="mini-chart">
-      <figcaption><span>Allocation per order</span><b>{fmt(p.moneyTrade)} / {p.n} = {fmt(p.perOrder)} USDT</b></figcaption>
+      <figcaption><span>{t('allocationPerOrder')}</span><b>{fmt(p.moneyTrade)} / {p.n} = {fmt(p.perOrder)} USDT</b></figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="allocation per order">
         {[0, 0.5, 1].map((f) => (
           <g key={f}>
@@ -73,7 +76,7 @@ export function AllocationBars({ state }: { state: DeskState }) {
               <rect x={x0} y={y(p.perOrder)} width={bw} height={H - B - y(p.perOrder)} rx="7" className="slot" />
               {pos && <rect x={x0 + 3} y={y(used)} width={bw - 6} height={Math.max(0, H - B - y(used) - 2)} rx="5" className={`slot-fill ${pos.side}`} />}
               <text x={x0 + bw / 2} y={H - B + 14} textAnchor="middle" className="axis strong">#{i + 1}</text>
-              <text x={x0 + bw / 2} y={H - B + 26} textAnchor="middle" className="axis">{pos ? pos.symbol.replace('USDT', '') : 'free'}</text>
+              <text x={x0 + bw / 2} y={H - B + 26} textAnchor="middle" className="axis">{pos ? pos.symbol.replace('USDT', '') : t('slotFree')}</text>
               {(hi === i || pos) && <text x={x0 + bw / 2} y={y(pos ? used : p.perOrder) - 5} textAnchor="middle" className="axis strong">{fmt(pos ? pos.margin : p.perOrder, 0)}</text>}
             </g>
           );

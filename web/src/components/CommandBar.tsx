@@ -41,15 +41,15 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
           <button
             type="button"
             className={`kill ${state.killed ? 'is-released' : ''} ${state.mode !== 'PAPER' ? 'is-live' : ''}`}
-            title={state.killed ? 'Release Kill Switch to re-enable trading' : 'Cancel everything, flatten every position and stop the desk'}
+            title={state.killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}
             onClick={async () => {
               if (state.killed) {
                 const r = await fetch('/api/ops/kill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: false }) }).then((x) => x.json()).catch(() => null);
-                setReply({ ok: !!r?.ok, reply: r?.ok ? 'Kill switch released. Trading resumed.' : 'Failed to release kill switch' });
+                setReply({ ok: !!r?.ok, reply: r?.ok ? t('cbKillReleasedMsg') : (r?.detail || t('cbKillFailedMsg')) });
               } else {
-                if (!window.confirm(`Kill switch: cancel all orders, close every ${state.mode === 'PAPER' ? 'paper' : state.mode} position and stop the desk?`)) return;
+                if (!window.confirm(t('cbKillConfirmPrompt'))) return;
                 const r = await fetch('/api/ops/kill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: true }) }).then((x) => x.json()).catch(() => null);
-                setReply({ ok: !!r?.ok, reply: r?.ok ? 'Kill switch on.' : 'Kill switch request failed' });
+                setReply({ ok: !!r?.ok, reply: r?.ok ? t('cbKillOnMsg') : (r?.detail || t('cbKillFailedMsg')) });
               }
             }}
           >
@@ -58,10 +58,10 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
           <button
             type="button"
             className="restart-btn"
-            title="Reload settings and synchronize office in-place"
+            title={t('cbRestartTitle')}
             onClick={async () => {
               const r = await fetch('/api/setup/restart', { method: 'POST' }).then((x) => x.json()).catch(() => null);
-              setReply({ ok: !!r?.ok, reply: r?.detail || 'Office synchronized.' });
+              setReply({ ok: !!r?.ok, reply: r?.detail || t('cbRestartSuccess') });
             }}
           >
             {t('restartOfficeBtn')}

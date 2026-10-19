@@ -26,8 +26,8 @@ export function Lessons({ state }: { state: DeskState }) {
         <li key={l.id} title={`What happened: ${l.happened}\nRoot cause: ${l.rootCause}`}>
           <span className={`tag ${l.status}`}>{l.status}{l.count > 1 ? ` x${l.count}` : ''}</span> <b>{l.role}</b>{l.symbol ? ` ${l.symbol}` : ''}: {l.lesson}
         </li>))}</ul>
-        : !rules.length && <p className="muted small">No lessons yet. After every cycle, loss, stop, error or correction the desk writes one here. Lessons never loosen a guard.</p>}
-      {state.lessonsRefused > 0 && <p className="muted small">{state.lessonsRefused} lessons refused because they would loosen a guard.</p>}
+        : !rules.length && <p className="muted small">{t('lessonsEmpty')}</p>}
+      {state.lessonsRefused > 0 && <p className="muted small">{state.lessonsRefused} {t('lessonsRefusedText')}</p>}
     </section>
   );
 }

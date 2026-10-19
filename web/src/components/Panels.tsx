@@ -158,7 +158,7 @@ export function TopBar({
                   title={`${t('updateAvailable')}: v${updateInfo?.latestVersion}`}
                 >
                   <i className="update-notif-dot" aria-hidden="true" />
-                  New Update
+                  {t('newUpdateBadge')}
                 </button>
               )}
             </h1>
@@ -304,7 +304,7 @@ export function FightMeter({ state, meter, fighting = false }: { state: DeskStat
   const camps = d?.camps ?? { bull: [], bear: [], neutral: [] };
   const opposing = camps.bull.length > 0 && camps.bear.length > 0;
   const rawKey = fighting ? 'full-brawl' : !d ? 'quiet' : dis >= state.fightThreshold && opposing ? 'fists-out' : dis > 0.25 ? 'heated' : 'mostly-agree';
-  const label = rawKey === 'full-brawl' ? t('fullBrawl') : rawKey === 'fists-out' ? 'Heated opposing views' : rawKey === 'heated' ? (opposing ? 'Opposing views' : 'General tension') : rawKey === 'mostly-agree' ? t('mostlyAgree') : t('quiet');
+  const label = rawKey === 'full-brawl' ? t('fullBrawl') : rawKey === 'fists-out' ? t('meterHeatedViews') : rawKey === 'heated' ? (opposing ? t('meterOpposingViews') : t('meterGeneralTension')) : rawKey === 'mostly-agree' ? t('mostlyAgree') : t('quiet');
   return (
     <section className="panel meter">
       <div className="panel-head"><h2>{t('fightMeter')}</h2><span className={`heat-label h-${rawKey}`}>{label}</span></div>
@@ -491,7 +491,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
               <span>{t('availableUsdt')}: <b>{venueBal.availableUsdt == null ? 'unavailable' : fmt(venueBal.availableUsdt)} USDT</b></span>
               {(venueBal.equityUsdt ?? 0) > 0 && Math.abs((venueBal.equityUsdt ?? 0) - p.balance) > 0.01 && (
                 <button type="button" className="mini" onClick={() => command(`set balance ${venueBal.equityUsdt}`)}>
-                  Sync to book
+                  {t('syncToBookBtn')}
                 </button>
               )}
             </div>
