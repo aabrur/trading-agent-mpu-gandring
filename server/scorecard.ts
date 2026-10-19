@@ -14,7 +14,7 @@ export class Scorecard {
   };
   risk = { approve: 0, reduce: 0, reject: 0 };
   exec = { fills: 0, noFills: 0 };
-  lead = { verdicts: 0, journaled: 0, wins: 0, losses: 0 };
+  lead = { verdicts: 0, journaled: 0, wins: 0, losses: 0, netPnl: 0 };
   private partialPnl = new Map<string, number>();
   private open = new Map<string, OpenCall>();
 
@@ -32,6 +32,7 @@ export class Scorecard {
     const call = this.open.get(positionId); this.open.delete(positionId);
     const win = pnl > 0;
     if (win) { this.lead.wins++; this.s.lead.right++; } else { this.lead.losses++; this.s.lead.wrong++; }
+    this.lead.netPnl = Math.round((this.lead.netPnl + pnl) * 100) / 100;
     if (call) { if (win) this.s.risk.right++; else if (call.riskDecision === 'APPROVE') this.s.risk.wrong++; }
     const wrong: AgentId[] = [];
     for (const [role, st] of Object.entries(call?.stances ?? {}) as [AgentId, Stance | null][]) {
@@ -46,13 +47,14 @@ export class Scorecard {
 
   rows(): RoleScore[] {
     const note: Record<AgentId, string> = {
-      lead: `${this.lead.verdicts} verdicts, ${this.lead.wins} wins, ${this.lead.losses} losses, ${this.lead.journaled} journal entries`,
-      market: 'stance at entry vs outcome; not reasoning quality', research: 'vote at entry vs result', strategist: 'rule side at entry vs result',
+      lead: `${this.lead.verdicts} verdicts, ${this.lead.wins} wins, ${this.lead.losses} losses, net PnL ${this.lead.netPnl >= 0 ? '+' : ''}${this.lead.netPnl} USDT, ${this.lead.journaled} journal entries`,
+      market: 'directional stance at entry vs closed trade outcome', research: 'catalyst vote vs outcome; veto accuracy on severe disruptions', strategist: 'canonical rule alignment vs outcome',
       risk: `${this.risk.approve} approve, ${this.risk.reduce} reduce, ${this.risk.reject} reject`,
       execution: `${this.exec.fills} fills, ${this.exec.noFills} no-fills`
     };
     return (Object.keys(this.s) as AgentId[]).map((role) => ({ role, name: ROLES[role].name, ...this.s[role], note: note[role] }));
   }
+
 }
 
 export function scoreLine(r: RoleScore): string {

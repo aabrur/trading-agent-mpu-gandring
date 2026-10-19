@@ -33,11 +33,14 @@ function approach(f: { x: number; y: number }, t: { x: number; y: number }, gap 
   return { x, y: t.y };
 }
 
-function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | undefined, inDebate: boolean): { pose: Pose; face: Face } {
+function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | undefined, inDebate: boolean, activeFight?: Fight): { pose: Pose; face: Face } {
   if (fight?.from === a.id) return { pose: 'punch', face: 'angry' };
   if (fight?.to === a.id) return { pose: 'guard', face: 'dizzy' };
   if (reaction === 'cheer') return { pose: 'cheer', face: 'happy' };
   if (reaction === 'worried') return { pose: 'think', face: 'worried' };
+  if (activeFight && activeFight.from !== a.id && activeFight.to !== a.id) {
+    return { pose: 'think', face: 'worried' };
+  }
   switch (a.status) {
     case 'reading': return { pose: 'point', face: 'normal' };
     case 'thinking': return { pose: 'think', face: 'normal' };
@@ -47,6 +50,7 @@ function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | un
     default: return { pose: inDebate ? 'idle' : 'idle', face: 'normal' };
   }
 }
+
 
 function useMovement(pos: Point, desks: Point[]) {
   const anchor = useRef<HTMLDivElement>(null);
@@ -87,9 +91,10 @@ function useMovement(pos: Point, desks: Point[]) {
   return { anchor, walk };
 }
 
-function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selected, onSelect }: { a: AgentView; pos: Point; activity: Activity; desks: Point[]; sp?: Speech; fight?: Fight; reaction?: Reaction; inDebate: boolean; selected: boolean; onSelect: () => void }) {
+function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selected, activeFight, onSelect }: { a: AgentView; pos: Point; activity: Activity; desks: Point[]; sp?: Speech; fight?: Fight; reaction?: Reaction; inDebate: boolean; selected: boolean; activeFight?: Fight; onSelect: () => void }) {
   const { anchor, walk } = useMovement(pos, desks);
-  let { pose, face } = fight || reaction ? poseFor(a, fight, reaction, inDebate) : activity;
+  let { pose, face } = fight || reaction || activeFight ? poseFor(a, fight, reaction, inDebate, activeFight) : activity;
+
   if (walk.on && !fight) pose = 'walk';
   // face the opponent when punching, face travel direction when walking
   let flip = false;
@@ -287,8 +292,9 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
 
       {AGENT_ORDER.map((id) => {
         const f = activeFight && (activeFight.from === id || activeFight.to === id) ? activeFight : undefined;
-        return <Agent key={id} a={state.agents[id]} pos={positions[id]} activity={activities[id]} desks={AGENT_ORDER.map((id) => state.agents[id].desk)} sp={visible.has(id) ? speech[id] : undefined} fight={f} reaction={reactions[id]} inDebate={inDebate} selected={selected === id} onSelect={() => onSelect(id)} />;
+        return <Agent key={id} a={state.agents[id]} pos={positions[id]} activity={activities[id]} desks={AGENT_ORDER.map((id) => state.agents[id].desk)} sp={visible.has(id) ? speech[id] : undefined} fight={f} reaction={reactions[id]} inDebate={inDebate} selected={selected === id} activeFight={activeFight} onSelect={() => onSelect(id)} />;
       })}
+
 
       {displayFights.map((f) => {
         const to = SEATS[f.to], from = approach(SEATS[f.from], to);

@@ -78,3 +78,22 @@ export function volumeDelta(candles: Candle[], period = 20): { volRatio: number;
   const takerBuyPressure = totalVol > 0 ? Math.round((buyVol / totalVol) * 100) / 100 : 0.5;
   return { volRatio, takerBuyPressure };
 }
+
+export function atr(candles: Candle[], period = 14): number {
+  if (candles.length < 2) return 0;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const prevC = candles[i - 1].c;
+    const tr = Math.max(c.h - c.l, Math.abs(c.h - prevC), Math.abs(c.l - prevC));
+    trs.push(tr);
+  }
+  if (trs.length < period) {
+    return Math.round((trs.reduce((a, b) => a + b, 0) / trs.length) * 100) / 100;
+  }
+  let a = trs.slice(0, period).reduce((x, y) => x + y, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    a = (a * (period - 1) + trs[i]) / period;
+  }
+  return Math.round(a * 100) / 100;
+}

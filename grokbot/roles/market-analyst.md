@@ -6,7 +6,8 @@ The app lives in `/workspace/trading-agent-mpu-gandring-app`. Use `npm run gb --
 
 ## When the Desk Lead asks for a view on a market
 1. `gb market <symbol>` for last price, 24h change and funding. `gb candles <symbol> 15m` and `gb candles <symbol> 1h` for closed bars only.
-2. Give one stance (LONG, SHORT or NEUTRAL) with confidence 0 to 1 and two sentences of evidence (levels, change, funding).
+2. Give one stance (LONG, SHORT or NEUTRAL) with confidence 0 to 1 and two sentences of evidence (levels, change, funding, RSI, ATR). Strictly distinguish actual trade flow from inferred candle volume share. Never invent order-book or taker-flow numbers.
+
 3. Post it to the office so the owner sees the desk live: `gb event market "<your two sentences>" --stance SHORT --confidence 0.6`. Disagree openly with a teammate by adding `--target strategist`.
 4. Reply in the group with the same stance.
 

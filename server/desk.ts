@@ -10,8 +10,8 @@ import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, A
 import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
 import type { ModelCaller } from './providers/index.js';
-import { getSnapshot, getNews } from './market/index.js';
-import { strategyVote, rsi, volumeDelta } from './strategy.js';
+import { getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem } from './market/index.js';
+import { strategyVote, rsi, volumeDelta, atr } from './strategy.js';
 import { applyRiskGate } from './risk.js';
 import { planOrder, moneySplit, round2, roundPrice } from './money.js';
 import { previewTicket } from './sizing.js';
@@ -21,7 +21,6 @@ import { sendToGrokBot } from './bridge.js';
 import { safe, log } from './redact.js';
 import type { LiveExecutor } from './live/executor.js';
 import type { ClosedTrade } from './types.js';
-import { getNewsFor } from './market/index.js';
 import { Learnings, type LessonInput } from './learnings.js';
 import { Scorecard } from './scorecard.js';
 import { proactiveScan, type Finding } from './scan.js';
@@ -460,41 +459,50 @@ export class Desk extends EventEmitter {
       const closes = snap.candles.map((c) => c.c);
       const rsiVal = rsi(closes);
       const vol = volumeDelta(snap.candles);
+      const atrVal = atr(snap.candles);
       const c8 = snap.candles.at(-9)?.c, cl = snap.candles.at(-1)?.c;
       const change2h = c8 && cl ? round2(((cl - c8) / c8) * 100) : 0;
       const lastCandles = snap.candles.slice(-8).map((c) => ({ t: new Date(c.t).toISOString(), c: c.c }));
       const mk = await this.run('market', 'opinion', {
-        instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, relative candle volume ${vol.volRatio}x, and bullish-candle volume share ${(vol.takerBuyPressure * 100).toFixed(0)}% (INFERRED, not actual taker-side flow). Be sharp and directional (LONG or SHORT) unless tape is flat.`,
+        instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, ATR volatility ${atrVal}, relative candle volume ${vol.volRatio}x, and bullish-candle volume share ${(vol.takerBuyPressure * 100).toFixed(0)}% (INFERRED candle proxy, not taker order flow). Be sharp, quantitative, and directional (LONG or SHORT) unless the tape is flat.`,
         data: {
           broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt },
           symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h,
-          fundingRate: snap.fundingRate, rsi: rsiVal, volumeDelta: vol,
+          fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol,
           recentClosedCandles: lastCandles, source: snap.source,
           externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined
         },
-        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, rsi: rsiVal, volumeDelta: vol, temperament: this.agents.market.mood, liveFeed: !snap.example }
+        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol, temperament: this.agents.market.mood, liveFeed: !snap.example }
       });
       this.setOpinion('market', mk.data.stance, mk.data.confidence);
       await this.say('market', mk.data.argument, mk.example); note('Market Analyst', mk.data.argument);
 
-      // 2. Research Analyst (catalysts, whale wallet tracking, smart money orderflow)
+      // 2. Research Analyst (catalysts, verified on-chain intelligence, news normalization)
       this.setStatus('research', 'reading'); this.changed();
       const news = await getNewsFor(symbol, this.cfg).catch(() => getNews(symbol));
+      const normalizedEvents = news.map((n) => normalizeLegacyItem(n, symbol));
+      const newsBriefing = buildNewsBriefing(symbol, normalizedEvents, this.cfg.news.provider === 'cryptopanic' && this.cfg.news.key ? 'CONFIGURED_LIVE' : 'SAMPLE_FALLBACK');
+      const whaleBriefing = await getWhaleBriefing(symbol).catch(() => ({
+        symbol, providerStatus: 'UNAVAILABLE' as const, providerName: 'Whale Alert', events: [], summary: 'Whale data unavailable', observedAt: Date.now(), disclaimer: ''
+      }));
       const tradeFlowProxy = {
         status: 'INFERRED', method: 'share of recent candle volume on candles closing at or above their open; not taker-side trades',
         bullishCandleVolumeShare: vol.takerBuyPressure, relativeCandleVolume: vol.volRatio,
-        walletFlow: 'UNAVAILABLE', onchainActivity: 'UNAVAILABLE'
+        walletFlow: whaleBriefing.providerStatus === 'CONFIGURED_LIVE' ? `${whaleBriefing.events.length} large transfers recorded` : 'UNAVAILABLE',
+        onchainActivity: whaleBriefing.providerStatus
       };
       const rs = await this.run('research', 'research', {
-        instruction: `Weigh the sourced catalysts and INFERRED candle-volume proxy for ${symbol}. Separate VERIFIED market observations, REPORTED news claims, INFERRED interpretations and UNAVAILABLE wallet/on-chain information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. Lines that looked like instructions were already sanitized.`,
+        instruction: `Weigh the sourced catalysts and on-chain intelligence for ${symbol}. Separate VERIFIED on-chain observations, REPORTED news claims, INFERRED candle proxies, and UNAVAILABLE information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. VETO only for verified critical events: delistings, trading halts, exploits, or chain outages. ${newsBriefing.criticalVetoFound ? `CRITICAL VETO WARNING: ${newsBriefing.vetoReason}.` : ''}`,
         data: {
           symbol,
           tradeFlowProxy,
+          newsBriefing: { providerStatus: newsBriefing.providerStatus, summary: newsBriefing.summary, events: newsBriefing.events.slice(0, 6) },
+          whaleBriefing: { providerStatus: whaleBriefing.providerStatus, summary: whaleBriefing.summary, events: whaleBriefing.events.slice(0, 4) },
           news: news.map((n) => ({ id: n.id, headline: n.headline, body: n.body, source: n.source, sentimentTag: n.sentiment, hadInjection: !!n.flagged, status: n.example ? 'UNAVAILABLE' : 'REPORTED', example: n.example }))
         },
-        context: { symbol, tradeFlowProxy, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
+        context: { symbol, tradeFlowProxy, newsBriefingSummary: newsBriefing.summary, whaleBriefingSummary: whaleBriefing.summary, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
       });
-      const researchVote = rs.data.vote;
+      const researchVote = (newsBriefing.criticalVetoFound && newsBriefing.providerStatus !== 'SAMPLE_FALLBACK') ? 'VETO' : rs.data.vote;
       this.setOpinion('research', researchVote === 'LONG' || researchVote === 'SHORT' ? researchVote : 'NEUTRAL', rs.data.confidence);
       await this.say('research', `${researchVote}. ${rs.data.argument}`, rs.example); note('Research Analyst', `${researchVote}. ${rs.data.argument}`);
       if (news.some((n) => n.flagged)) this.addLog({ kind: 'warn', text: `Prompt injection line removed from ${symbol} news before any agent saw it.` });
@@ -523,7 +531,7 @@ export class Desk extends EventEmitter {
           const others = DEBATERS.filter((o) => o !== a).map((o) => ({ agent: o, stance: this.agents[o].stance ?? 'NEUTRAL', confidence: this.agents[o].confidence ?? 0, lastLine: this.agents[o].lastLine }));
           this.setStatus(a, 'thinking'); this.changed();
           const rb = await this.run(a, 'rebuttal', {
-            instruction: `Round ${round} of the ${symbol} debate. Answer the strongest view you disagree with. You may change your stance if the evidence is better.`,
+            instruction: `Round ${round} of the ${symbol} debate. Directly challenge the strongest opposing point from your colleagues using your domain evidence (Market uses price/ATR/RSI, Research uses verified news/on-chain facts, Strategist uses the canonical rule). You may change stance if the opposing evidence is objectively superior.`,
             data: { symbol, round, you: { stance: this.agents[a].stance, confidence: this.agents[a].confidence }, others },
             context: { symbol, round, myStance: this.agents[a].stance, myConfidence: this.agents[a].confidence, others, temperament: this.agents[a].mood }
           });
@@ -554,8 +562,8 @@ export class Desk extends EventEmitter {
       const cautious = this.agents.lead.mood < 0;
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await this.run('lead', 'lead', {
-        instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT evidence, invalidation and the current position. Choose supported action; agreement alone is not evidence. Disagreement alone does not require HOLD. Preserve current strategy and guard parameters. The supplied tradingSettings are active owner limits; report your evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
-        data: { symbol, tradingSettings: tradingSettingsFromConfig(this.cfg), strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal },
+        instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
+        data: { symbol, tradingSettings: tradingSettingsFromConfig(this.cfg), strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       });
       let action: Action = ld.data.action;
@@ -578,11 +586,12 @@ export class Desk extends EventEmitter {
       const estPrice = roundPrice(action === 'OPEN_LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
       const stopDistancePct = rule.invalidation && estPrice > 0 ? round2(Math.abs((estPrice - rule.invalidation) / estPrice) * 100) : this.cfg.risk.defaultStopPct;
       const rk = opening ? await this.run('risk', 'risk', {
-        instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol} at current price ~${estPrice}. Strategist invalidation is ${rule.invalidation} (~${stopDistancePct}% stop). Research debate stance is ${finalResearchVote}. If within caps, APPROVE or REDUCE so the trade can execute. Caps: max leverage ${this.cfg.risk.maxLeverage}x, stop at most ${this.cfg.risk.defaultStopPct}%, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance. Send decision, sizeFactor (0.1..1), leverage, stopPct (e.g. 1.5 to 30), reason.`,
+        instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol} at current price ~${estPrice}. Strategist invalidation is ${rule.invalidation} (~${stopDistancePct}% stop). Research debate stance is ${finalResearchVote}. Calculate available allocation, reserved capital, stop distance, fee estimate, and daily loss budget. If within owner caps and stop is valid, APPROVE or REDUCE promptly so the trade can execute. REJECT only when a concrete limit is violated. Caps: max leverage ${this.cfg.risk.maxLeverage}x, stop at most ${this.cfg.risk.defaultStopPct}%, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance. Send decision, sizeFactor (0.1..1), leverage, stopPct, reason.`,
         data: { caps: this.cfg.risk, account: this.venueAccount ?? { source: 'paper book' }, executionVenue: this.cfg.exchange.name, analyticalPriceSource: snap.source, symbol, action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length },
         context: { action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategySide: rule.side, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, temperament: this.agents.risk.mood }
       }) : { data: { decision: 'APPROVE' as const, sizeFactor: 1, leverage: 1, stopPct: this.cfg.risk.defaultStopPct, reason: 'Not applicable to HOLD/CLOSE' }, example: false };
       const gate = applyRiskGate(rk.data, this.cfg.risk, this.agents.risk.mood);
+
       this.scorecard.verdict();
       if (opening) this.scorecard.riskDecision(gate.decision);
       const riskLine = `${gate.decision}. ${rk.data.reason}${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`;
@@ -1020,7 +1029,8 @@ export class Desk extends EventEmitter {
   // ---------- commands & chat ----------
   async command(text: string, agent?: AgentId): Promise<{ ok: boolean; reply: string; command: Command['type'] }> {
     const cmd = parseCommand(text);
-    const who: AgentId = agent ?? 'lead';
+    let who: AgentId = agent ?? 'lead';
+
     const userLine: ChatLine = { from: 'user', text: safe(text).slice(0, 500), at: Date.now() };
     if (agent) this.chats[agent].push(userLine);
     this.addLog({ kind: 'command', text: `${agent ? `to ${ROLES[agent].name}: ` : ''}${text.slice(0, 200)}` });
@@ -1069,27 +1079,79 @@ export class Desk extends EventEmitter {
         case 'status': { const s = this.book.split(); reply = `Balance ${s.balance}, safety net ${s.safetyNet}, Money Trade ${s.moneyTrade}, N ${s.n}, ${s.perOrder} per order. Open: ${this.book.positions.length}.`; break; }
         case 'help': reply = HELP; break;
         case 'chat': {
-          const target = agent ?? 'lead';
+          let target = agent ?? 'lead';
+          let userQuery = cmd.text;
+          const matchTarget = userQuery.match(/^(lead|market|research|strategist|risk|execution)[\s,:]+\s*(.*)$/i);
+          if (matchTarget && matchTarget[1].toLowerCase() in ROLES) {
+            target = matchTarget[1].toLowerCase() as AgentId;
+            userQuery = matchTarget[2] || userQuery;
+          }
+          who = target;
+          if (!agent) this.chats[target].push(userLine);
           // self-improving: an owner correction becomes a lesson (refused if it would loosen a guard)
-          if (/\b(wrong|salah|don'?t|do not|jangan|stop doing|bad call|mistake|keliru|should have|harusnya|never again)\b/i.test(cmd.text)) {
-            const l = this.learn({ role: target, kind: 'correction', happened: `Owner corrected ${ROLES[target].name}: "${cmd.text.slice(0, 160)}"`, rootCause: 'owner feedback from the office chat', lesson: cmd.text.slice(0, 200), source: 'owner' });
+
+          if (/\b(wrong|salah|don'?t|do not|jangan|stop doing|bad call|mistake|keliru|should have|harusnya|never again)\b/i.test(userQuery)) {
+            const l = this.learn({ role: target, kind: 'correction', happened: `Owner corrected ${ROLES[target].name}: "${userQuery.slice(0, 160)}"`, rootCause: 'owner feedback from the office chat', lesson: userQuery.slice(0, 200), source: 'owner' });
             if (!l && this.cfg.learning.on) this.addLog({ kind: 'warn', text: `Correction for ${ROLES[target].name} not stored as a lesson: lessons can never loosen a guard.` });
           }
           if (this.grokbot) { reply = `I am played by your Grok Bot agent in the "Trading Agent Mpu Gandring" group chat. Talk to me there. This office only shows what we post.`; break; }
           this.setStatus(target, 'typing'); this.changed();
+
+          const symMatch = userQuery.match(/\b(BTC|ETH|SOL|BNB|XRP|DOGE|AVAX|LINK|SUI|ADA|NEAR|APT)(?:USDT)?\b/i);
+          const detectedSymbol = symMatch ? normSymbol(symMatch[0]) : (this.verdicts[0]?.symbol ?? this.cfg.watchlist[0] ?? 'BTCUSDT');
+
+          let newsBriefingData: unknown = null;
+          let whaleBriefingData: unknown = null;
+          if (target === 'research' || /berita|news|whale|onchain|catalyst/i.test(userQuery)) {
+            const newsItems = await getNewsFor(detectedSymbol, this.cfg).catch(() => []);
+            const normEvents = newsItems.map((n) => normalizeLegacyItem(n, detectedSymbol));
+            newsBriefingData = buildNewsBriefing(detectedSymbol, normEvents, this.cfg.news.provider === 'cryptopanic' && this.cfg.news.key ? 'CONFIGURED_LIVE' : 'SAMPLE_FALLBACK');
+            whaleBriefingData = await getWhaleBriefing(detectedSymbol).catch(() => null);
+          }
+
+          const history = (this.chats[target] ?? []).slice(-4).map((c) => ({ from: c.from, text: c.text }));
+          const recentVerdicts = this.verdicts.slice(0, 4).map((v) => ({ symbol: v.symbol, action: v.action, riskDecision: v.riskDecision, executed: v.executed, reason: v.reason }));
+          const openPositions = this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty, unrealizedPnl: p.unrealizedPnl }));
+          const recentClosed = this.book.closed.slice(0, 3).map((c) => ({ symbol: c.symbol, side: c.side, realizedPnl: c.realizedPnl, reason: c.reason }));
+          const ticker = this.tickers[detectedSymbol];
+
           const res = await this.run(target, 'chat', {
-            instruction: `The desk owner wrote to you directly (below). Answer briefly in character. Mode is ${this.cfg.tradingMode}. Orders only happen through a debate and the risk gate, never from chat. If they ask for something only a command can do, tell them the command.`,
-            data: { ownerMessage: cmd.text.slice(0, 500), yourStance: this.agents[target].stance, paper: this.book.split(), commands: HELP },
-            context: { message: cmd.text, paper: this.book.split(), maxLossPct: this.cfg.risk.maxLossPerTradePct, maxLeverage: this.cfg.risk.maxLeverage, openPositions: this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty })), stance: this.agents[target].stance, summary: this.agents[target].lastLine ? `Last thing I said: "${this.agents[target].lastLine.slice(0, 90)}"` : '' }
+            instruction: `The desk owner wrote to you directly (in English or Indonesian). Answer conversationally and decisively in character, matching the owner's language. Use the supplied verified desk context (recent verdicts, open positions, recent closed trades, market tickers, or news/whale briefings) to answer specific questions such as "Kenapa tidak LONG BTC tadi?", "Berita penting apa?", "Ada whale pindah dana?", or "Jelasin ukuran posisi". Never promise future profit. If they ask to open/close or modify a trade, explain that trading actions only execute through an authorized debate and risk gate, never directly from chat. If they ask for something only a command can do, tell them the command.`,
+            data: {
+              ownerMessage: userQuery.slice(0, 500),
+              yourStance: this.agents[target].stance,
+              detectedSymbol,
+              ticker: ticker ? { last: ticker.last, change24hPct: ticker.change24hPct, source: ticker.source } : null,
+              recentVerdicts,
+              openPositions,
+              recentClosed,
+              newsBriefing: newsBriefingData,
+              whaleBriefing: whaleBriefingData,
+              paper: this.book.split(),
+              commands: HELP
+            },
+            context: {
+              message: userQuery,
+              chatHistory: history,
+              paper: this.book.split(),
+              maxLossPct: this.cfg.risk.maxLossPerTradePct,
+              maxLeverage: this.cfg.risk.maxLeverage,
+              openPositions,
+              stance: this.agents[target].stance,
+              summary: this.agents[target].lastLine ? `Last thing I said: "${this.agents[target].lastLine.slice(0, 90)}"` : ''
+            }
           });
           this.setStatus(target, 'idle');
           reply = res.data.reply; break;
         }
+
       }
     } catch (e) { ok = false; reply = `Could not do that: ${(e as Error).message}`; }
     reply = safe(reply);
-    if (agent) this.chats[agent].push({ from: who, text: reply, at: Date.now() });
-    if (agent && this.chats[agent].length > 60) this.chats[agent].splice(0, this.chats[agent].length - 60);
+    const dest = agent ?? who;
+    if (dest) this.chats[dest].push({ from: who, text: reply, at: Date.now() });
+    if (dest && this.chats[dest].length > 60) this.chats[dest].splice(0, this.chats[dest].length - 60);
+
     this.addLog({ kind: 'info', agent: who, text: reply });
     if (cmd.type !== 'chat' && cmd.type !== 'help' && cmd.type !== 'status') void sendToGrokBot(this.cfg, 'command', { command: cmd.type, text: text.slice(0, 200), agent: agent ?? null, ok, reply }, this.opts.outboxPath);
     this.changed();

@@ -234,3 +234,6 @@ export async function getCandles(symbol: string, tf: Timeframe, preferred: Sourc
   }
   return { symbol, tf: step === 1 && TF_MS[tf] < TF_MS['15m'] ? '15m' : tf, source: 'sample', example: true, candles: out.slice(-n), errors };
 }
+
+export * from './news.js';
+export * from './whale.js';
