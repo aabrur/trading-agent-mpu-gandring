@@ -140,10 +140,7 @@ export function TopBar({
   const account = state?.mode !== 'PAPER' ? state?.venueAccount : null;
   const hasVenueLiveBal = state?.mode !== 'PAPER' && (account != null || liveBal?.equityUsdt != null);
   const rawUsdt = state?.mode === 'PAPER' ? (state.paper.equity ?? 0) : account?.equity ?? liveBal?.equityUsdt ?? state?.paper?.equity ?? 0;
-  const balanceSourceTag = state?.mode === 'PAPER' ? 'Paper equity' : account
-    ? `${state?.venue?.label ?? activeVenue} equity / ${account.status}${account.at ? ` / ${time(account.at)}` : ''}`
-    : liveBal?.equityUsdt != null ? `${liveBal.venueLabel} equity / ${time(liveBal.observedAt)}`
-    : 'Local book / venue equity unverified';
+
 
 
   return (
@@ -186,7 +183,7 @@ export function TopBar({
       </div>
       <div className="topbar-center">
         {state && (
-          <div className={`topbar-balance-pill ${hasVenueLiveBal ? 'is-live-bal' : 'is-paper-bal'}`} title={`${t('topBalanceLabel')}: ${fmt(rawUsdt)} USDT`}>
+          <div className={`topbar-balance-pill ${hasVenueLiveBal ? 'is-live-bal' : 'is-paper-bal'}`} title={`${t('topBalanceLabel')}: ${fmt(rawUsdt)} USDT${!hasVenueLiveBal && state.mode !== 'PAPER' ? ' (local book estimate)' : ''}${curOpt.code !== 'USDT' ? ' / static FX estimate' : ''}`}>
             <strong className="tb-bal-val">{formatCurrencyValue(rawUsdt, curOpt)}</strong>
             <select
               className="tb-cur-select"
@@ -198,7 +195,6 @@ export function TopBar({
                 <option key={c.code} value={c.code}>{c.label}</option>
               ))}
             </select>
-            <small className="balance-provenance">{balanceSourceTag}{curOpt.code !== 'USDT' ? ' / static FX estimate' : ''}</small>
           </div>
         )}
       </div>
