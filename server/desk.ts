@@ -27,6 +27,8 @@ import { proactiveScan, type Finding } from './scan.js';
 import { codeReview } from './providers/mock.js';
 import { OpportunityReviews } from './opportunity-review.js';
 import { entryConfidenceReason, tradingSettingsFromConfig, TradingSettingsSchema, type TradingNetwork, type TradingProfile, type TradingSettings } from './trading-settings.js';
+import { JevService } from './decision/jev.js';
+import { boundedPostState, boundedPreState, conflictQuestions, interpretAnswers, jevMayEnrichAgents, preAnalysisQuestions, recordFromResult } from './decision/evaluation.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
@@ -40,7 +42,7 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'warn'; agent?: AgentId; text: string; example?: boolean }
 
-export interface DeskOptions { opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null }
+export interface DeskOptions { opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action; stop?: number; tp?: number }
@@ -71,6 +73,8 @@ export class Desk extends EventEmitter {
   scorecard = new Scorecard();
   /** proaktif-agent: latest proactive scan */
   lastScan: { at: number; findings: Finding[] } | null = null;
+  jev!: JevService;
+  jevLast: Record<string, unknown> | null = null;
   /** API, exchange and agent errors, for the scan and the reflection step */
   errors: { at: number; source: string; text: string }[] = [];
   private stopFlag = false;
@@ -117,6 +121,7 @@ export class Desk extends EventEmitter {
     this.chats = Object.fromEntries(AGENT_IDS.map((id) => [id, [] as ChatLine[]])) as unknown as Record<AgentId, ChatLine[]>;
     // Tests never touch the real lessons file unless they pass a path.
     this.learnings = new Learnings(opts.learningsPath !== undefined ? opts.learningsPath : process.env.VITEST ? null : cfg.learning.path, cfg.learning.promoteAfter);
+    this.jev = new JevService(opts.jevEnv ?? process.env, cfg.tradingMode, opts.jevFetch);
     if (cfg.appMode === 'grokbot') for (const id of AGENT_IDS) Object.assign(this.agents[id], { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false });
   }
 
@@ -209,7 +214,8 @@ export class Desk extends EventEmitter {
         minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, takeProfitR: this.cfg.risk.takeProfitR
       },
       equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-120), chats: this.chats,
-      watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold
+      watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold,
+      jev: { ...this.jev.status(), lastDecision: this.jevLast }
     };
   }
   /** Daily loss stop: once equity falls DAILY_LOSS_LIMIT_PCT below the day's start, no new orders until tomorrow (UTC). */
@@ -491,6 +497,17 @@ export class Desk extends EventEmitter {
         walletFlow: whaleBriefing.providerStatus === 'CONFIGURED_LIVE' ? `${whaleBriefing.events.length} large transfers recorded` : 'UNAVAILABLE',
         onchainActivity: whaleBriefing.providerStatus
       };
+      let jevSidecar: Record<string, unknown> | undefined;
+      if (this.jev.settings.effectiveMode !== 'off') {
+        const pre = await this.jev.evaluate(boundedPreState({
+          symbol, last: snap.last, rsi: rsiVal, atr: atrVal, change24hPct: snap.change24hPct, volumeRatio: vol.volRatio,
+          news: newsBriefing.events.slice(0, 4).map((e) => ({ title: e.title, evidenceStatus: e.evidenceStatus, freshness: e.freshness, category: e.category })),
+          whale: whaleBriefing.events.slice(0, 3).map((e) => ({ classification: e.classification, usdValueOrNull: e.usdValueOrNull, confirmationStatus: e.confirmationStatus, attributionConfidence: e.attributionConfidence }))
+        }), preAnalysisQuestions());
+        const interp = interpretAnswers(pre.response);
+        this.jevLast = recordFromResult('pre', pre, interp);
+        if (jevMayEnrichAgents(this.jev.settings.effectiveMode)) jevSidecar = this.jevLast;
+      }
       const rs = await this.run('research', 'research', {
         instruction: `Weigh the sourced catalysts and on-chain intelligence for ${symbol}. Separate VERIFIED on-chain observations, REPORTED news claims, INFERRED candle proxies, and UNAVAILABLE information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. VETO only for verified critical events: delistings, trading halts, exploits, or chain outages. Keyword matches are reported claims, not independent verification. ${newsBriefing.criticalVetoFound ? `CRITICAL VETO (verified): ${newsBriefing.vetoReason}.` : newsBriefing.criticalClaimFound ? `CRITICAL CLAIM (unverified): ${newsBriefing.vetoReason}.` : ''}`,
         data: {
@@ -498,6 +515,7 @@ export class Desk extends EventEmitter {
           tradeFlowProxy,
           newsBriefing: { providerStatus: newsBriefing.providerStatus, summary: newsBriefing.summary, events: newsBriefing.events.slice(0, 6) },
           whaleBriefing: { providerStatus: whaleBriefing.providerStatus, summary: whaleBriefing.summary, events: whaleBriefing.events.slice(0, 4) },
+          jevSidecar,
           news: news.map((n) => ({ id: n.id, headline: n.headline, body: n.body, source: n.source, sentimentTag: n.sentiment, hadInjection: !!n.flagged, status: n.example ? 'UNAVAILABLE' : 'REPORTED', example: n.example }))
         },
         context: { symbol, tradeFlowProxy, newsBriefingSummary: newsBriefing.summary, whaleBriefingSummary: whaleBriefing.summary, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
@@ -574,6 +592,18 @@ export class Desk extends EventEmitter {
       if ((action === 'OPEN_LONG' && pos?.side === 'SHORT') || (action === 'OPEN_SHORT' && pos?.side === 'LONG')) { action = 'CLOSE'; flipNote = ' Opposite signal, closing first.'; }
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
       if (researchVote === 'VETO' && action.startsWith('OPEN')) action = 'HOLD';
+      if (this.jev.settings.effectiveMode !== 'off') {
+        const post = await this.jev.evaluate(boundedPostState({
+          symbol,
+          marketStance: this.agents.market.stance,
+          researchVote,
+          strategySide: rule.side,
+          leadAction: action,
+          criticalVetoFound: newsBriefing.criticalVetoFound,
+          criticalClaimFound: newsBriefing.criticalClaimFound
+        }), conflictQuestions());
+        this.jevLast = { pre: this.jevLast, post: recordFromResult('post', post, interpretAnswers(post.response)) };
+      }
       const confidenceBlock = action.startsWith('OPEN') ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
       if (confidenceBlock) action = 'HOLD';
       const decisionReason = confidenceBlock ?? ld.data.reason;
@@ -865,6 +895,7 @@ export class Desk extends EventEmitter {
       this.killedAt = k.at;
     }
     this.addLog({ kind: 'info', text: 'Office settings reloaded and synchronized in-place.' });
+    this.jev.reload(env, this.cfg.tradingMode);
     void this.refreshTickers();
     this.changed();
   }
