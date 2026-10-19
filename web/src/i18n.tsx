@@ -180,11 +180,11 @@ export const en = {
   tour6Title: '6. Portfolio Book & Live Venue Balance',
   tour6Body: 'Monitor Paper or Live balance, Safety Net, Money Trade split, open positions, and official venue deposit links.',
   tour7Title: '7. Desk Ops Manual Ticket',
-  tour7Body: 'Size tickets, open LONG or SHORT positions with a mandatory stop loss, close positions, or run a proactive scan.',
+  tour7Body: 'Size tickets, open LONG or SHORT with a mandatory stop, run Auto Trade, and read the Jev monitor. Jev is optional, off by default, and never places orders.',
   tour8Title: '8. Connect Wallet for DEX',
   tour8Body: 'Connect MetaMask or Rabby for DEX venues, read live DEX balance, or open official DEX deposit pages.',
   tour9Title: '9. Left-Sidebar Setup Wizard',
-  tour9Body: 'Configure AI providers, 200+ models, CEX/DEX keys, TradingView, and notification channels in a clean sidebar layout.',
+  tour9Body: 'Configure AI providers, 200+ models, optional Jev decision intelligence (OpenRouter BYOK), CEX/DEX keys, TradingView, and notification channels in a clean sidebar layout.',
 
   // Trakteer Popup
   trakteerBtn: 'Support on Trakteer',
@@ -668,11 +668,11 @@ export const id: Record<TranslationKey, string> = {
   tour6Title: '6. Buku Portofolio & Saldo Bursa',
   tour6Body: 'Pantau saldo Paper atau Live, Dana Aman, pembagian Modal Trading, posisi terbuka, dan link deposit resmi.',
   tour7Title: '7. Operasi Meja Manual',
-  tour7Body: 'Hitung ukuran order, buka posisi LONG atau SHORT dengan stop loss wajib, tutup posisi, atau jalankan scan proaktif.',
+  tour7Body: 'Hitung ukuran order, buka LONG atau SHORT dengan stop loss wajib, jalankan Auto Trade, dan baca monitor Jev. Jev opsional, mati secara bawaan, dan tidak pernah menempatkan order.',
   tour8Title: '8. Connect Wallet Khusus DEX',
   tour8Body: 'Hubungkan MetaMask atau Rabby ke DEX, baca saldo DEX langsung, atau buka halaman deposit resmi DEX.',
   tour9Title: '9. Menu Pengaturan Sidebar Kiri',
-  tour9Body: 'Atur provider AI, 200+ model, API key CEX/DEX, TradingView, dan channel notifikasi lewat navigasi kiri yang rapi.',
+  tour9Body: 'Atur provider AI, 200+ model, Jev decision intelligence opsional (OpenRouter BYOK), API key CEX/DEX, TradingView, dan channel notifikasi lewat navigasi kiri yang rapi.',
 
   // Trakteer Popup
   trakteerBtn: 'Dukung Saya di Trakteer',

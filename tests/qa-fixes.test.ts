@@ -83,6 +83,15 @@ describe('small fixes', () => {
     const l = lines.find((x) => x.label === 'chat channels');
     expect(l?.detail).toMatch(/telegram; Desk Lead on; chat commands off/);
     expect(lines.some((x) => x.label === 'Telegram reports')).toBe(false);
+    const jev = lines.find((x) => x.label === 'jev');
+    expect(jev?.ok).toBeNull();
+    expect(jev?.detail).toMatch(/off/);
+  });
+  it('doctor flags Jev enabled without an OpenRouter key', async () => {
+    const lines = await doctor({ TRADING_MODE: 'PAPER', EXCHANGE: 'none', JEV_ENABLED: 'true' } as NodeJS.ProcessEnv);
+    const jev = lines.find((x) => x.label === 'jev');
+    expect(jev?.ok).toBe(false);
+    expect(jev?.detail).toMatch(/no OpenRouter key/);
   });
 });
 

@@ -6,6 +6,7 @@ import { exchangeSettings, makeAdapter, ADAPTER_STATUS, VENUE_KIND, VENUE_LABEL,
 import { checkTradingMode, type TradingMode } from '../live/guard.js';
 import { roundTripCheck, localKeyCheck } from '../live/steps.js';
 import { safe } from '../redact.js';
+import { loadJevSettings } from '../decision/jev.js';
 
 type Line = { ok: boolean | null; label: string; detail: string };
 
@@ -82,6 +83,10 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env, fetchImpl: ty
   const ch = cfg.channels; const chOn = (['telegram', 'discord', 'slack', 'whatsapp'] as const).filter((n) => ch[n].enabled);
   add(chOn.length ? true : null, 'chat channels', chOn.length ? `${chOn.join(', ')}; Desk Lead ${ch.supervisor.on ? 'on' : 'off'}; chat commands ${ch.commands ? 'on (allowlisted ids only)' : 'off'}` : 'none (npm run channels -- setup <channel>)');
   add(cfg.news.provider === 'sample' ? null : !!cfg.news.key, 'news plugin', cfg.news.provider === 'sample' ? 'sample news' : cfg.news.key ? 'cryptopanic key set' : 'cryptopanic selected but no key');
+  const jev = loadJevSettings(env, mode);
+  if (!jev.enabled) add(null, 'jev', 'off (optional decision sidecar; enable in Setup > Models)');
+  else if (jev.health === 'MISSING_KEY') add(false, 'jev', 'enabled but no OpenRouter key (OPENROUTER_API_KEY or JEV_OPENROUTER_API_KEY)');
+  else add(true, 'jev', `${jev.effectiveMode} · ${jev.provider} · ${jev.model}; LIVE assist ${jev.allowLive ? 'allowed' : 'blocked'}`);
   return out;
 }
 

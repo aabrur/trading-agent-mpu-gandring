@@ -18,7 +18,7 @@ The wizard asks, one section at a time:
 1. **Who drives the agents**: `local` or `grokbot` ([grokbot-mode.md](grokbot-mode.md)).
 2. **Model keys**: xAI, OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter. Hidden input, Enter skips. Then a default provider and, if you want, one provider per agent so they argue with different brains.
 3. **TradingView**: the chart widget, and the alert webhook (it generates the passphrase).
-4. **Plugins**: an optional news feed.
+4. **Plugins**: an optional news feed, and optional Jev decision intelligence under Setup > Models (OpenRouter BYOK, off by default).
 5. **Venue**, grouped: CEX (Bybit, Binance, OKX) or DEX (Hyperliquid, Aster, dYdX v4, Paradex, Orderly), or none. Then testnet keys and (optionally) mainnet keys. Public addresses are shown as you type; secrets are hidden. A main wallet key or a seed phrase is refused on the spot where it can be detected locally, and again by the venue check.
 6. **Money**: paper balance, safety net, N (1 to 4), daily loss stop.
 7. **Full auto and reports**: `AUTO_TRADING` (off by default; answer yes or pass `--auto on`), minutes between debate cycles, optional max holding time, minutes between reports, and an optional chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp; see [channels.md](channels.md)).

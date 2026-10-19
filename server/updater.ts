@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const APP_VERSION = '0.0.0.3.1';
+export const APP_VERSION = '0.0.0.3.2';
 export const REPO_RAW_PKG_URL = 'https://raw.githubusercontent.com/aabrur/trading-agent-mpu-gandring/main/package.json';
 export const REPO_URL = 'https://github.com/aabrur/trading-agent-mpu-gandring';
 
@@ -54,11 +54,11 @@ export async function checkUpdate(fetchImpl: typeof fetch = fetch, cwd = process
   const currentVersion = readLocalVersion(cwd);
   const commit = getLocalCommit(cwd);
   const defaultNotes = [
+    'Optional Jev decision sidecar over OpenRouter: regime, news, whale and conflict review. Off by default. Never places orders.',
+    'News publication time stays distinct from ingest time. Keyword hits are reported claims, not auto-veto.',
+    'Whale missing USD amounts stay unknown. Provider labels are not automatic high-confidence attribution.',
     'Instant live balance display in TopBar and Portfolio (Paper/Live Book) with multi-country currency converter after Connect Wallet or API Key setup',
-    'Autonomous agent execution (Buy/Long, Sell/Short, Close, Hold) with interactive Token Picker chips and Max Open Positions (N = 1..4) in Desk Ops Auto Trade',
-    'Side-by-side Connect an Agent and External Supervisor tabs in Setup with locked modal scroll',
-    'Mandatory interactive step-by-step tutorial on every fresh session or restart',
-    'Brutal cartoon smoke-cloud fight animation with flying fists, stars, and impact bursts'
+    'Autonomous agent execution (Buy/Long, Sell/Short, Close, Hold) with interactive Token Picker chips and Max Open Positions (N = 1..4) in Desk Ops Auto Trade'
   ];
 
   let timer: NodeJS.Timeout | null = null;
