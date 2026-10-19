@@ -43,7 +43,7 @@ describe('Dual language i18n parity and updater adapter', () => {
   });
 
   it('compares dotted version strings and checks update status at current release version', async () => {
-    expect(APP_VERSION).toBe('0.0.0.2.7');
+    expect(APP_VERSION).toBe('0.0.0.2.8');
     expect(compareVersions('0.0.0.2.6', '0.0.0.2.6')).toBe(0);
     expect(compareVersions('0.0.0.2.6', '0.0.0.2.5')).toBe(1);
     expect(compareVersions('0.0.0.3.0', '0.0.0.2.6')).toBe(1);
@@ -53,12 +53,12 @@ describe('Dual language i18n parity and updater adapter', () => {
       new Response(JSON.stringify({ appVersion: '0.0.0.3.0', changelog: ['New feature'] }), { status: 200 });
     const st = await checkUpdate(fakeNewerFetch as unknown as typeof fetch);
     expect(st.ok).toBe(true);
-    expect(st.currentVersion).toBe('0.0.0.2.7');
+    expect(st.currentVersion).toBe('0.0.0.2.8');
     expect(st.latestVersion).toBe('0.0.0.3.0');
     expect(st.updateAvailable).toBe(true);
 
     const applied = applyUpdate(process.cwd(), () => ({ status: 0, stdout: 'Already up to date.\n', stderr: '' }));
     expect(applied.ok).toBe(true);
-    expect(applied.currentVersion).toBe('0.0.0.2.7');
+    expect(applied.currentVersion).toBe('0.0.0.2.8');
   });
 });

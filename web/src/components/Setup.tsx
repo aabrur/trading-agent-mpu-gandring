@@ -8,6 +8,7 @@ import { ChannelsSetup } from './Channels';
 import { ModelsSetup } from './ModelsSetup';
 import { PreferencesSetup } from './PreferencesSetup';
 import { LocalAgentsSetup } from './LocalAgentsSetup';
+import { TradingSetup } from './TradingSetup';
 
 interface Link { label: string; url: string; login?: boolean; note?: string }
 interface Step { id: string; title: string; text: string; links: Link[] }
@@ -17,12 +18,13 @@ interface SetupInfo { ok: boolean; error?: string; linksCheckedOn: string; modes
 interface Guide { note: string | null; steps: Step[]; fields: Field[]; connectWallet: boolean; docs: Link[] }
 interface DoctorLine { ok: boolean | null; label: string; detail: string }
 
-type SetupTab = 'desk' | 'models' | 'local' | 'exchange' | 'channels';
+type SetupTab = 'desk' | 'trading' | 'models' | 'local' | 'exchange' | 'channels';
 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 
-export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () => void }) {
-  const [activeTab, setActiveTab] = useState<SetupTab>('desk');
+export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskState; onClose: () => void; tradingProfile?: 'default' | 'manual' }) {
+  const [activeTab, setActiveTab] = useState<SetupTab>(tradingProfile ? 'trading' : 'desk');
+  useEffect(() => { if (tradingProfile) setActiveTab('trading'); }, [tradingProfile]);
   const [info, setInfo] = useState<SetupInfo | null>(null);
   const [venue, setVenue] = useState('');
   const [network, setNetwork] = useState<'testnet' | 'mainnet'>(state.mode === 'LIVE' ? 'mainnet' : 'testnet');
@@ -106,6 +108,7 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
 
         <div className="setup-body">
           <nav className="setup-sidebar" aria-label="Setup Sections">
+            <button type="button" className={`setup-tab-btn ${activeTab === 'trading' ? 'active' : ''}`} onClick={() => setActiveTab('trading')}><span>Trading & Risk</span></button>
             <button
               type="button"
               className={`setup-tab-btn ${activeTab === 'desk' ? 'active' : ''}`}
@@ -144,6 +147,7 @@ export function SetupWizard({ state, onClose }: { state: DeskState; onClose: () 
           </nav>
 
           <main className="setup-content"><div className="setup-guide-note">Your setup is retained. Review saved settings below, then Edit the section you want to change. New here? Choose agents, verify the venue, review allocation, then enable Auto Trade.</div>
+            <section className="setup-pane" hidden={activeTab !== 'trading'}><div className="pane-header"><h3>Trading & Risk</h3><p className="wallet-note">Separate testnet and mainnet profiles. Review defaults or edit your manual settings.</p></div><TradingSetup state={state} initialProfile={tradingProfile} /></section>
             <section className="setup-pane" hidden={activeTab !== 'desk'}>
                 <div className="pane-header">
                   <h3>Desk Settings</h3>

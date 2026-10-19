@@ -34,7 +34,8 @@ function AppInner() {
   const [theme, setTheme] = useState<string>(initialTheme);
   const [symbol, setSymbol] = useState<string>('');
   const [candles, setCandles] = useState<CandleData | null>(null);
-  const [setup, setSetup] = useState<boolean>(() => window.location.hash === '#setup');
+  const [setup, setSetup] = useState<boolean>(() => ['#setup', '#setup-trading-default', '#setup-trading-manual'].includes(window.location.hash));
+  const [setupEntry, setSetupEntry] = useState(window.location.hash);
   const [venueKeys, setVenueKeys] = useState<boolean>(() => window.location.hash === '#venue-keys');
   const [tourOpen, setTourOpen] = useState<boolean>(initialTourOpen);
   const [updateOpen, setUpdateOpen] = useState<boolean>(false);
@@ -50,14 +51,14 @@ function AppInner() {
 
   useEffect(() => {
     const h = () => {
-      setSetup(window.location.hash === '#setup');
+      setSetup(['#setup', '#setup-trading-default', '#setup-trading-manual'].includes(window.location.hash)); setSetupEntry(window.location.hash);
       setVenueKeys(window.location.hash === '#venue-keys');
     };
     window.addEventListener('hashchange', h);
     return () => window.removeEventListener('hashchange', h);
   }, []);
 
-  const closeSetup = () => { setSetup(false); if (window.location.hash === '#setup') history.replaceState(null, '', window.location.pathname); };
+  const closeSetup = () => { setSetup(false); if (window.location.hash.startsWith('#setup')) history.replaceState(null, '', window.location.pathname); };
   const closeVenueKeys = () => { setVenueKeys(false); history.replaceState(null, '', window.location.pathname); document.getElementById('venue-keys-trigger')?.focus(); };
   const closeTour = () => {
     setTourOpen(false);
@@ -146,7 +147,7 @@ function AppInner() {
           <Portfolio state={state} command={(cmd) => void command(cmd)} />
         </aside>
       </main>
-      {setup && <DeferredPanel label="Setup"><SetupWizard state={state} onClose={closeSetup} /></DeferredPanel>}
+      {setup && <DeferredPanel label="Setup"><SetupWizard state={state} onClose={closeSetup} tradingProfile={setupEntry === '#setup-trading-default' ? 'default' : setupEntry === '#setup-trading-manual' ? 'manual' : undefined} /></DeferredPanel>}
       {venueKeys && <div className="setup-overlay" role="dialog" aria-modal="true" aria-label={t('connectWallet')} onKeyDown={(e) => {
         if (e.key === 'Escape') closeVenueKeys();
         if (e.key === 'Tab') { const elements = e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled),a[href]'); const first = elements[0], last = elements[elements.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } }

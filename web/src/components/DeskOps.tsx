@@ -162,6 +162,7 @@ export function DeskOps({ state }: { state: DeskState }) {
   return (
     <div className="panel desk-ops">
       <div className="panel-head"><h2>{t('deskOpsTitle')}</h2><span className="badge">{state.mode} · {state.venue?.label ?? state.marketSource}</span></div>
+      <div className="ops-trading-profile"><div><strong>Live trading setup</strong><small>{state.trading?.network ?? 'Testnet / mainnet'} · {state.trading?.profile === 'current' || !state.trading ? 'existing settings' : state.trading.profile}</small></div><div className="setup-nav"><button onClick={() => { window.location.hash = 'setup-trading-default'; }}>Default</button><button onClick={() => { window.location.hash = 'setup-trading-manual'; }}>Manual setup</button></div></div>
 
       <div className={`ops-kill-bar ${state.killed ? 'is-killed' : 'is-active'}`}>
         <div className="kill-status-wrap">

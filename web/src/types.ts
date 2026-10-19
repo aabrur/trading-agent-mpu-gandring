@@ -20,6 +20,7 @@ export interface Verdict {
 export interface LogLine { at: number; kind: string; agent?: AgentId; text: string; example?: boolean }
 export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at: number }
 export interface DeskState {
+  trading?: { network: 'testnet' | 'mainnet' | null; profile: 'current' | 'default' | 'manual'; values: import('../../server/trading-settings').TradingSettings };
   app: string; mode: 'PAPER' | 'TESTNET' | 'LIVE'; appMode: 'local' | 'grokbot'; marketSource: string; bridgeEnabled: boolean; paused: boolean;
   live: { exchange: string; network: string; experimental: boolean } | null; killed: boolean;
   venue?: { name: string; label: string; kind: 'CEX' | 'DEX'; experimental: boolean } | null;

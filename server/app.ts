@@ -67,7 +67,7 @@ export const noModelCaller: ModelCaller = async () => { throw new Error('no mode
 const GbOpenSchema = z.object({
   symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']),
   stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(),
-  agent: z.enum(AGENTS).optional(), reason: z.string().max(300).optional()
+  agent: z.enum(AGENTS).optional(), confidence: z.number().min(0).max(1).optional(), reason: z.string().max(300).optional()
 }).strict();
 const GbLessonSchema = z.object({
   role: z.enum([...AGENTS, 'desk']), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'),
@@ -213,7 +213,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const p = GbOpenSchema.safeParse(req.body);
     if (!p.success) return res.status(400).json({ ok: false, error: 'invalid ticket', issues: p.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 5) });
     if (p.data.reason) await desk.onAgentEvent({ agent: p.data.agent ?? 'lead', kind: 'say', text: sanitizeUntrusted(p.data.reason, 300).text } as never);
-    res.json(await desk.gbOpen(p.data));
+    res.json(await desk.gbOpen(p.data, true));
   });
   app.post('/api/gb/close', async (req, res) => {
     if (!gbAuth(req, res)) return;

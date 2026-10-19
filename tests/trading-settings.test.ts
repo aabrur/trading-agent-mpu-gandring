@@ -1,0 +1,159 @@
+import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import type { AddressInfo } from 'node:net';
+import { createApp } from '../server/app';
+import { gb } from '../cli/gb';
+import { previewTicket } from '../server/sizing';
+import { LiveExecutor } from '../server/live/executor';
+import { MemoryAdapter } from './fakes';
+import { saveTradingProfile } from '../server/setup/trading';
+import { readEnv, setEnv } from '../cli/envfile';
+import { Desk } from '../server/desk';
+import { makeCaller } from '../server/providers/index';
+import { loadConfig } from '../server/config';
+import { DEFAULT_TRADING_SETTINGS, entryConfidenceReason, resolveTradingSettings, tradingSettingsFromConfig, TradingSettingsSchema } from '../server/trading-settings';
+
+describe('network trading settings', () => {
+  it('saves only the chosen network without overwriting legacy settings or the other profile', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'mpu-profile-')), file = path.join(dir, 'settings.env');
+    try {
+      setEnv(file, { TRADING_MODE: 'LIVE', MAX_LEVERAGE: '8', MAINNET_DESK_PROFILE: 'manual', MAINNET_DESK_MAX_LEVERAGE: '5' });
+      saveTradingProfile(file, { network: 'testnet', profile: 'manual', values: { ...DEFAULT_TRADING_SETTINGS, minEntryConfidencePct: 72, maxLeverage: 2 } });
+      const env = readEnv(file);
+      expect(env).toMatchObject({ TRADING_MODE: 'LIVE', MAX_LEVERAGE: '8', MAINNET_DESK_PROFILE: 'manual', MAINNET_DESK_MAX_LEVERAGE: '5', TESTNET_DESK_PROFILE: 'manual', TESTNET_DESK_MIN_ENTRY_CONFIDENCE_PCT: '72' });
+      saveTradingProfile(file, { network: 'testnet', profile: 'default' });
+      expect(readEnv(file).TESTNET_DESK_MIN_ENTRY_CONFIDENCE_PCT).toBe('72');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('applies active-network limits without changing mode, book equity, open positions or a latched daily stop', async () => {
+    const cfg = loadConfig({ TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', MARKET_SOURCE: 'sample' });
+    const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null });
+    d.book.open({ symbol: 'ETHUSDT', side: 'SHORT', qty: 0.01, entry: 3000, stop: 3030, tp: null, margin: 15, leverage: 2 });
+    const positions = structuredClone(d.book.positions);
+    d.checkDay(); d.day.lossHit = true; const day = { ...d.day }, balance = d.book.balance;
+    expect(await d.applyTradingSettings('mainnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, maxLeverage: 2 })).toBe(false);
+    expect(await d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, safetyNet: 25, maxPositions: 2, maxLossPerTradePct: 0.4, minEntryConfidencePct: 70 })).toBe(true);
+    expect(cfg.risk).toMatchObject({ maxLossPerTradePct: 0.4, minEntryConfidencePct: 70 });
+    expect(cfg.tradingMode).toBe('TESTNET'); expect(d.day).toEqual(day); expect(d.book.balance).toBe(balance); expect(d.book.n).toBe(2);
+    expect(d.book.positions).toEqual(positions);
+  });
+  it('turns low-confidence autonomous entries into HOLD without calling Risk, while leaving CLOSE available', async () => {
+    const cfg = loadConfig({ MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0' }); cfg.risk.minEntryConfidencePct = 75;
+    const base = makeCaller(cfg), caller = vi.fn((r: Parameters<typeof base>[0]) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'OPEN_LONG', confidence: 0.74, reason: 'setup' })) : base(r));
+    const d = new Desk(cfg, caller, { reportsDir: null });
+    const verdict = await d.runDebate('BTCUSDT');
+    expect(verdict.action).toBe('HOLD'); expect(verdict.reason).toContain('75%');
+    expect(caller.mock.calls.some(([r]) => r.task === 'risk')).toBe(false);
+    expect(caller.mock.calls.find(([r]) => r.task === 'lead')?.[0].user).toContain('minEntryConfidencePct');
+    const p = d.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 0.001, entry: 60000, stop: 59400, tp: null, margin: 30, leverage: 2 });
+    caller.mockImplementation((r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.1, reason: 'invalidated' })) : base(r));
+    expect((await d.runDebate('BTCUSDT')).action).toBe('CLOSE');
+    expect(d.book.positions.some((row) => row.id === p.id)).toBe(false);
+  });
+  it('preserves existing settings until a network profile is explicitly selected', () => {
+    const env = { TRADING_MODE: 'PAPER', MAX_LEVERAGE: '7', DEFAULT_STOP_PCT: '3', SAFETY_NET: '20', OPEN_ORDERS_N: '2' };
+    const before = { ...env }, base = tradingSettingsFromConfig(loadConfig(env));
+    expect(resolveTradingSettings(env, base, 'mainnet')).toEqual({ profile: 'current', values: base });
+    expect(env).toEqual(before);
+  });
+  it('keeps testnet and mainnet independent and restores the app preset explicitly', () => {
+    const env = { TESTNET_DESK_PROFILE: 'manual', TESTNET_DESK_MAX_LEVERAGE: '2', MAINNET_DESK_PROFILE: 'default', MAINNET_DESK_MAX_LEVERAGE: '9' };
+    const base = { ...DEFAULT_TRADING_SETTINGS, maxLeverage: 6 };
+    expect(resolveTradingSettings(env, base, 'testnet').values.maxLeverage).toBe(2);
+    expect(resolveTradingSettings(env, base, 'mainnet').values).toEqual(DEFAULT_TRADING_SETTINGS);
+  });
+  it('rejects invalid percentages and inconsistent stop distances without zeroing guards', () => {
+    for (const patch of [{ dailyLossLimitPct: 0 }, { dailyLossLimitPct: 21 }, { maxLossPerTradePct: 0 }, { minEntryConfidencePct: 101 }, { minStopPct: 3, defaultStopPct: 1 }, { safetyNet: 0 }, { safetyNet: -1 }]) {
+      expect(TradingSettingsSchema.safeParse({ ...DEFAULT_TRADING_SETTINGS, ...patch }).success).toBe(false);
+    }
+  });
+  it('loads the selected network into the same risk and allocation configuration used by execution', () => {
+    const env = { TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', TESTNET_DESK_PROFILE: 'manual', TESTNET_DESK_DAILY_LOSS_LIMIT_PCT: '2', TESTNET_DESK_MAX_LOSS_PER_TRADE_PCT: '0.6', TESTNET_DESK_MIN_ENTRY_CONFIDENCE_PCT: '75', TESTNET_DESK_SAFETY_NET: '25', TESTNET_DESK_OPEN_ORDERS_N: '2' };
+    const cfg = loadConfig(env);
+    expect(cfg.risk).toMatchObject({ dailyLossLimitPct: 2, maxLossPerTradePct: 0.6, minEntryConfidencePct: 75 });
+    expect(cfg.paper).toMatchObject({ safetyNet: 25, n: 2 });
+    expect(cfg.live?.network).toBe('testnet');
+  });
+  it('accepts the exact confidence boundary and requires evidence only when a floor is enabled', async () => {
+    expect(entryConfidenceReason(75, 0.75)).toBeNull();
+    expect(entryConfidenceReason(0)).toBeNull();
+    expect(entryConfidenceReason(75)).toContain('unavailable');
+    const cfg = loadConfig({ MARKET_SOURCE: 'sample', APP_MODE: 'grokbot', MIN_ENTRY_CONFIDENCE_PCT: '75' });
+    const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null });
+    for (const confidence of [undefined, 0.74]) {
+      expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG', stop: 3000, confidence }, true)).ok).toBe(false);
+    }
+    expect(d.book.positions).toHaveLength(0);
+    // At the boundary the confidence gate passes; the existing mandatory stop guard still runs.
+    expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'SHORT', confidence: 0.75 }, true)).reply).toContain('no stop');
+    expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG', confidence: 0.95 }, true)).reply).toContain('no stop');
+  });
+  it('uses the applied risk cap, reserve, position count, leverage and TP in shared sizing', async () => {
+    const cfg = loadConfig({ TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', MARKET_SOURCE: 'sample' });
+    const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null });
+    await d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, maxLossPerTradePct: 0.2, maxLeverage: 2, safetyNet: 100, maxPositions: 2, takeProfitR: 3 });
+    const result = previewTicket(cfg, { balance: d.book.balance, equity: d.book.balance + d.book.unrealized, safetyNet: d.book.safetyNet, n: d.book.n, open: 0, used: 0, mode: 'TESTNET' }, { symbol: 'ETHUSDT', side: 'LONG', entry: 3000, stop: 2970, leverage: 8 }, { qtyStep: 0.001, minQty: 0.001, tickSize: 0.01, minNotional: 5 });
+    expect(result.ok).toBe(true); expect(result.data).toMatchObject({ leverage: 2, maxLoss: 2, tp: 3090, split: { moneyTrade: 900, perOrder: 450 } });
+    expect(Number(result.data?.riskAtStop)).toBeLessThanOrEqual(2);
+  });
+  it('does not replace an active profile allocation with legacy values during a settings reload', async () => {
+    const cfg = loadConfig({ TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', MARKET_SOURCE: 'sample' });
+    const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null, killFile: null });
+    await d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, safetyNet: 25, maxPositions: 2 });
+    d.book.balance = 900;
+    d.reloadRuntimeConfig({ PAPER_BALANCE: '1000', SAFETY_NET: '200', OPEN_ORDERS_N: '4' });
+    expect(d.book.balance).toBe(900); expect(d.book.safetyNet).toBe(25); expect(d.book.n).toBe(2);
+    expect(cfg.tradingMode).toBe('TESTNET'); d.stop();
+  });
+  it('waits for an in-flight reconciliation before changing active settings', async () => {
+    const cfg = loadConfig({ TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', MARKET_SOURCE: 'sample' });
+    const adapter = new MemoryAdapter();
+    let release!: () => void, entered!: () => void;
+    const waiting = new Promise<void>((r) => { entered = r; });
+    const blocked = new Promise<void>((r) => { release = r; });
+    const positions = adapter.positions.bind(adapter);
+    vi.spyOn(adapter, 'positions').mockImplementationOnce(async () => { entered(); await blocked; return positions(); });
+    const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null, executor: new LiveExecutor(adapter, 0) });
+    const sync = d.syncLive(); await waiting;
+    const change = d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, maxLeverage: 2 });
+    await Promise.resolve(); expect(cfg.risk.maxLeverage).toBe(3);
+    release(); await sync; expect(await change).toBe(true); expect(cfg.risk.maxLeverage).toBe(2);
+    expect(adapter.placed).toHaveLength(0);
+  });
+  it('caps an already-computed agent gate against the profile active when execution starts', async () => {
+    const cfg = loadConfig({ MARKET_SOURCE: 'sample' });
+    cfg.risk.maxLeverage = 2; cfg.risk.minEntryConfidencePct = 75;
+    const adapter = new MemoryAdapter();
+    const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null, executor: new LiveExecutor(adapter, 0) });
+    const result = await d.executeOpen('BTCUSDT', 'LONG', 60000, { sizeFactor: 1, leverage: 8, stopPct: 1.5, autonomous: true, confidence: 0.8 });
+    expect(result.ok).toBe(true); expect(adapter.placed[0]?.leverage).toBe(2);
+  });
+  it('serves saved profiles, rejects cross-origin/invalid writes and saves an inactive network without changing mode', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'mpu-profile-http-')), file = path.join(dir, 'settings.env');
+    const oldEnv = { ...process.env };
+    const built = createApp(loadConfig({ MARKET_SOURCE: 'sample' }), { reportsDir: null, learningsPath: null, killFile: null, envFile: file });
+    try {
+      await new Promise<void>((r) => built.server.listen(0, '127.0.0.1', r));
+      const url = `http://127.0.0.1:${(built.server.address() as AddressInfo).port}/api/setup/trading`;
+      const body = { network: 'mainnet', profile: 'manual', values: { ...DEFAULT_TRADING_SETTINGS, minEntryConfidencePct: 75, safetyNet: 25 } };
+      const post = (value: unknown, headers = {}) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(value) });
+      expect((await post(body, { origin: 'https://evil.example' })).status).toBe(403);
+      expect((await post({ ...body, values: { ...body.values, maxLossPerTradePct: 0 } })).status).toBe(400);
+      expect(await (await post(body)).json()).toMatchObject({ ok: true, applied: false });
+      const info = await (await fetch(url)).json();
+      expect(info.networks.mainnet.manual).toMatchObject({ minEntryConfidencePct: 75, safetyNet: 25 });
+      expect(info.networks.testnet.profile).toBe('current');
+      expect(info.running).toMatchObject({ mode: 'PAPER', profile: 'current' });
+      expect(readEnv(file).TRADING_MODE).toBe('PAPER'); expect(built.desk.book.positions).toHaveLength(0);
+      built.desk.cfg.risk.minEntryConfidencePct = 75;
+      const cli = await gb(['open', 'ETHUSDT', 'LONG', '--stop', '3000'], { env: { APP_MODE: 'local' }, baseUrl: url.replace('/api/setup/trading', '') });
+      expect(cli.ok).toBe(false); expect(cli.text).toContain('confidence is unavailable');
+    } finally {
+      built.desk.stop(); await new Promise((r) => built.server.close(r));
+      for (const key of Object.keys(process.env)) if (!(key in oldEnv)) delete process.env[key];
+      Object.assign(process.env, oldEnv); rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

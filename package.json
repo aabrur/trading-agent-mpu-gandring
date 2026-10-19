@@ -1,15 +1,14 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.2.7",
-  "appVersion": "0.0.0.2.7",
+  "version": "0.2.8",
+  "appVersion": "0.0.0.2.8",
   "changelog": [
-    "Partial closes preserve remaining exposure; cumulative fills and restart ownership are reconciled without duplicate orders",
-    "Protective orders are preserved while exposure remains; settled entries can reconcile subsequent exchange-side exits",
-    "Execution sizing uses venue quotes and active stop/TP configuration; account and PnL displays identify their evidence source",
-    "Auto OFF stops queued symbols, Lead receives strategy invalidation, and HOLD/CLOSE skip unused Risk model calls",
-    "Opportunity ordering uses available momentum, trend and volume evidence; inferred trade-flow metrics no longer claim wallet tracking",
-    "Six-agent office gains event-driven activities, role routines, furniture-aware paths, compact speech and reduced-motion handling",
-    "Visual acceptance, advanced interactions, missed-opportunity tracking and actual fee/funding history remain follow-up work"
+    "Dashboard Default and Manual setup open saved, independent testnet and mainnet trading profiles for review",
+    "Daily loss, per-trade risk, entry confidence, leverage, stops, TP and allocation feed the existing agent and sizing paths",
+    "Active profile changes wait for exchange operations; CLOSE, existing positions and the daily loss latch remain intact",
+    "Setup uses stable modal dimensions, saved Edit flows and clearer operational controls",
+    "Office interactions follow authentic events; skipped-opportunity markouts and scoped financial evidence enrich reports",
+    "Deferred client panels remove the oversized bundle warning; offline CI validates typecheck, tests and build"
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",

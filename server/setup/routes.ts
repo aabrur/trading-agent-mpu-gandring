@@ -20,6 +20,8 @@ import { setEnv } from '../../cli/envfile.js';
 import { localAgentStatus, openAgentLogin, runLocalAgent, localSelection } from '../providers/local.js';
 import { preferencesInfo, savePreferences } from './preferences.js';
 import { extractJson, SCHEMAS } from '../schemas.js';
+import { saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
+import { tradingSettingsFromConfig } from '../trading-settings.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const hostOk = (h: string) => /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(h);
@@ -41,7 +43,7 @@ const ModeBody = z.object({ mode: z.enum(MODES), confirm: z.string().max(100).op
 const Provider = z.enum(['mock', 'local', 'xai', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter']);
 const Selection = z.object({ provider: Provider, model: z.string().min(1).max(200) }).strict();
 const ModelsBody = z.object({ defaultProvider: Provider, defaultModel: z.string().min(1).max(200), agents: z.object({ lead: Selection.optional(), market: Selection.optional(), research: Selection.optional(), strategist: Selection.optional(), risk: Selection.optional(), execution: Selection.optional() }).strict().optional(), keys: z.object({ xai: z.string().max(400).optional(), openai: z.string().max(400).optional(), anthropic: z.string().max(400).optional(), gemini: z.string().max(400).optional(), deepseek: z.string().max(400).optional(), openrouter: z.string().max(400).optional() }).strict().optional() }).strict();
-const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
+const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(), confidence: z.number().min(0).max(1).optional(), autonomous: z.boolean().optional() }).strict();
 const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
 const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(2).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
 const AutoBody = z.object({ on: z.boolean().optional(), intervalMin: z.number().int().min(1).max(1440).optional(), symbols: z.array(z.string().min(2).max(20)).min(1).max(12).optional(), maxHoldHours: z.number().int().min(0).max(720).optional(), n: z.number().int().min(1).max(4).optional(), runNow: z.boolean().optional() }).strict();
@@ -81,6 +83,21 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   app.get('/api/setup/preferences', (req, res) => {
     if (!gate(req, res)) return;
     res.json({ ok: true, values: preferencesInfo(setupEnv(c.envFile)), canRestart: process.env.MPU_MANAGED === '1' && !!process.send });
+  });
+  app.get('/api/setup/trading', (req, res) => {
+    if (!gate(req, res)) return;
+    try { res.json({ ok: true, ...tradingSetupInfo(setupEnv(c.envFile)), running: { mode: c.cfg.tradingMode, network: c.cfg.live?.network ?? null, profile: c.cfg.tradingProfile, values: tradingSettingsFromConfig(c.cfg) } }); }
+    catch { res.status(400).json({ ok: false, detail: 'Saved trading settings are invalid. Check the network profile values.' }); }
+  });
+  app.post('/api/setup/trading', async (req, res) => {
+    if (!gate(req, res)) return;
+    const parsed = TradingProfileBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ ok: false, detail: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') });
+    try {
+      const saved = saveTradingProfile(c.envFile, parsed.data);
+      const applied = await c.desk.applyTradingSettings(saved.network, saved.profile, saved.values);
+      res.json({ ok: true, applied, detail: applied ? `Saved and applied to ${saved.network}. Active orders and the daily loss latch are preserved.` : `Saved for ${saved.network}. The running ${c.cfg.tradingMode} mode is unchanged; this profile applies when that network is started.` });
+    } catch { res.status(500).json({ ok: false, detail: 'Trading settings could not be saved or applied. Refresh to verify the saved profile.' }); }
   });
   app.post('/api/setup/preferences', (req, res) => {
     if (!gate(req, res)) return;
@@ -197,7 +214,7 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     if (!gate(req, res)) return;
     const p = OpenBody.safeParse(req.body);
     if (!p.success) return res.status(400).json({ ok: false, reply: 'no stop: every ticket needs a stop price. Not opening without one.' });
-    res.json(await c.desk.gbOpen({ ...p.data, agent: 'execution' }));
+    res.json(await c.desk.gbOpen({ ...p.data, agent: 'execution' }, p.data.autonomous ?? false));
   });
   app.post('/api/ops/close', async (req, res) => {
     if (!gate(req, res)) return;

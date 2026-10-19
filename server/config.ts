@@ -4,6 +4,7 @@ import { registerSecrets } from './redact.js';
 import { exchangeSettings, exchangeSecrets, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
 import { channelConfig, CHANNEL_SECRET_ENV, type ChannelConfig } from './channels/config.js';
 import { checkTradingMode, type TradingMode } from './live/guard.js';
+import { DEFAULT_TRADING_SETTINGS, TRADING_ENV, resolveTradingSettings, type TradingProfile } from './trading-settings.js';
 
 export type ApiProviderName = 'xai' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter' | 'groq' | 'mistral' | 'together' | 'fireworks';
 export type ProviderName = 'mock' | 'local' | ApiProviderName;
@@ -24,6 +25,7 @@ const num = (env: NodeJS.ProcessEnv, key: string, def: number) => {
 
 export interface AppConfig {
   tradingMode: TradingMode;
+  tradingProfile: TradingProfile;
   appMode: 'local' | 'grokbot';
   host: string;
   live: { exchange: ExchangeName; network: 'testnet' | 'mainnet'; experimental: boolean } | null;
@@ -46,7 +48,7 @@ export interface AppConfig {
   watchlist: string[];
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
-  risk: { maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number; dailyLossLimitPct: number };
+  risk: { minEntryConfidencePct: number; maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number; dailyLossLimitPct: number };
   debate: { rounds: number; paceMs: number; fightThreshold: number };
   bridge: { url: string; key: string; enabled: boolean };
 }
@@ -55,6 +57,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const mode = (env.TRADING_MODE ?? 'PAPER').trim().toUpperCase();
   if (mode !== 'PAPER' && mode !== 'TESTNET' && mode !== 'LIVE') {
     throw new ConfigError(`TRADING_MODE is "${mode}". Use PAPER (default), TESTNET or LIVE. Refusing to start.`, 2);
+  }
+  let tradingProfile: TradingProfile = 'current';
+  if (mode !== 'PAPER') {
+    const base = {
+      ...DEFAULT_TRADING_SETTINGS,
+      ...Object.fromEntries(Object.entries(TRADING_ENV).filter(([, key]) => env[key] != null && env[key] !== '').map(([key, name]) => [key, Number(env[name])]))
+    };
+    try {
+      const selected = resolveTradingSettings(env, base, mode === 'LIVE' ? 'mainnet' : 'testnet');
+      tradingProfile = selected.profile;
+      if (tradingProfile !== 'current') env = { ...env, ...Object.fromEntries(Object.entries(selected.values).map(([key, value]) => [TRADING_ENV[key as keyof typeof TRADING_ENV], String(value)])) };
+    } catch { throw new ConfigError('Invalid saved trading profile: check percentages, allocation and stop distances.'); }
   }
   let live: AppConfig['live'] = null;
   if (mode !== 'PAPER') {
@@ -121,6 +135,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const key = (env.GROKBOT_WEBHOOK_KEY ?? '').trim();
   return {
     tradingMode: mode as AppConfig['tradingMode'],
+    tradingProfile,
     appMode: appMode as AppConfig['appMode'],
     // LIVE always binds to this computer only. PAPER and TESTNET default to it too; set HOST=0.0.0.0 to open the office to your network.
     host: mode === 'LIVE' ? '127.0.0.1' : (env.HOST || '127.0.0.1').trim(),
@@ -149,6 +164,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     tickerRefreshSeconds: Math.max(5, num(env, 'TICKER_REFRESH_SECONDS', 20)),
     paper: { balance, safetyNet, n },
     risk: {
+      minEntryConfidencePct: Math.min(100, Math.max(0, num(env, 'MIN_ENTRY_CONFIDENCE_PCT', DEFAULT_TRADING_SETTINGS.minEntryConfidencePct))),
       maxLeverage: Math.max(1, num(env, 'MAX_LEVERAGE', 3)),
       defaultStopPct: num(env, 'DEFAULT_STOP_PCT', 1.5),
       minStopPct: num(env, 'MIN_STOP_PCT', 0.3),
