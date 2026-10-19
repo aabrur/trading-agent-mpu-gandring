@@ -1,13 +1,13 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.2",
-  "appVersion": "0.0.0.3.2",
+  "version": "0.3.3",
+  "appVersion": "0.0.0.3.3",
   "changelog": [
-    "Optional Jev decision sidecar over OpenRouter (typesafe/jev-1.14). Off by default. Bring your own key. Never places orders.",
-    "News provenance: publishedAt stays source time; keyword matches are reported claims, not verified vetoes.",
-    "Whale unknown USD amounts stay null; unlabeled wallets are not high-confidence.",
-    "Setup Models pane and Desk Ops monitor for Jev shadow/assist. LIVE assist stays blocked unless JEV_ALLOW_LIVE=yes.",
-    "Tutorial and doctor mention optional Jev. TypeSafe Direct is not included."
+    "Trading Setup shows saved vs running vs unsaved draft profiles. Selecting a profile does not change mode or connect an exchange.",
+    "Jev LIVE ASSIST is an explicit Setup authorization. SHADOW no longer blocks verdicts. ASSIST pre-analysis uses a bounded wait.",
+    "FAST debate skips redundant rebuttals when independent analysis agrees. NORMAL keeps full rounds. Default stays NORMAL.",
+    "Stale entry snapshots are revalidated on closed-bar rules before order submission. HOLD has stable reason codes and cycle timings.",
+    "Jev still never places orders or changes risk limits."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",
