@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redact } from '../server/redact.js';
+import { redact, registerSecrets, safe } from '../server/redact.js';
 
 describe('redaction', () => {
   it('removes key-shaped strings', () => {
@@ -13,5 +13,10 @@ describe('redaction', () => {
   });
   it('leaves normal prices alone', () => {
     expect(redact('BTCUSDT 67250.5 stop 66241.2')).toBe('BTCUSDT 67250.5 stop 66241.2');
+  });
+  it('accumulates registered secrets instead of replacing the list', () => {
+    registerSecrets(['secret-alpha-111111']);
+    registerSecrets(['secret-beta-222222']);
+    expect(safe('secret-alpha-111111 and secret-beta-222222')).toBe('[REDACTED] and [REDACTED]');
   });
 });

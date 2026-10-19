@@ -25,7 +25,9 @@ export function redact(input: string, extraSecrets: string[] = []): string {
 
 let known: string[] = [];
 export function registerSecrets(values: (string | undefined)[]) {
-  known = values.filter((v): v is string => !!v && v.length >= 6);
+  for (const v of values) {
+    if (v && v.length >= 6 && !known.includes(v)) known.push(v);
+  }
 }
 export function safe(input: unknown): string {
   const text = typeof input === 'string' ? input : JSON.stringify(input);
