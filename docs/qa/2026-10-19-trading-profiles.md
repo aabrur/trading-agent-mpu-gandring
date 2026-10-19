@@ -32,7 +32,7 @@ Default showed ten disabled preset fields before saving. Manual testnet confiden
 
 Screenshots were saved outside the repository:
 
-- `C:/Users/abrur/AppData/Local/Temp/mpu-trading-profile-night-1366.png`
-- `C:/Users/abrur/AppData/Local/Temp/mpu-trading-profile-mobile-390.png`
+- `<temp-dir>/mpu-trading-profile-night-1366.png`
+- `<temp-dir>/mpu-trading-profile-mobile-390.png`
 
 Browser validation covered configuration UI only. Profile application to a running exchange desk was exercised with mocks, not the owner's LIVE process. No claim is made about profitability or live fills. Previous office-specific fixture limitations remain documented in `2026-10-19-office-acceptance.md`. CI results must be checked against the pushed SHA; the local commands above are not CI evidence.
