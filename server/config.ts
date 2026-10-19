@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import type { AgentId } from './types.js';
 import { registerSecrets } from './redact.js';
+import { loadJevSettings, type JevSettings } from './decision/jev.js';
 import { exchangeSettings, exchangeSecrets, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
 import { channelConfig, CHANNEL_SECRET_ENV, type ChannelConfig } from './channels/config.js';
 import { checkTradingMode, type TradingMode } from './live/guard.js';
@@ -50,6 +51,7 @@ export interface AppConfig {
   paper: { balance: number; safetyNet: number; n: number };
   risk: { minEntryConfidencePct: number; maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number; dailyLossLimitPct: number };
   debate: { rounds: number; paceMs: number; fightThreshold: number };
+  jev: JevSettings;
   bridge: { url: string; key: string; enabled: boolean };
 }
 
@@ -93,7 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gemini: env.GEMINI_API_KEY ?? '', deepseek: env.DEEPSEEK_API_KEY ?? '', openrouter: env.OPENROUTER_API_KEY ?? '',
     groq: env.GROQ_API_KEY ?? '', mistral: env.MISTRAL_API_KEY ?? '', together: env.TOGETHER_API_KEY ?? '', fireworks: env.FIREWORKS_API_KEY ?? ''
   };
-  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, ...CHANNEL_SECRET_ENV.map((k) => env[k]), ...exchangeSecrets(env)]);
+  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, env.JEV_OPENROUTER_API_KEY, ...CHANNEL_SECRET_ENV.map((k) => env[k]), ...exchangeSecrets(env)]);
   const defaultModels: Record<ProviderName, string> = {
     mock: 'mock-desk-v1',
     local: env.LOCAL_MODEL || 'codex:default',
@@ -180,6 +182,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       paceMs: Math.max(0, num(env, 'DEBATE_PACE_MS', 700)),
       fightThreshold: num(env, 'FIGHT_THRESHOLD', 0.45)
     },
+    jev: loadJevSettings(env, mode),
     auto: {
       on: !/^(0|off|no|false)$/i.test((env.AUTO_TRADING ?? 'off').trim()),
       intervalMin: Math.max(0.1, num(env, 'DEBATE_INTERVAL_MIN', 15)),

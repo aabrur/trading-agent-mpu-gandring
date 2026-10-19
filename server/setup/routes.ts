@@ -22,6 +22,7 @@ import { preferencesInfo, savePreferences } from './preferences.js';
 import { extractJson, SCHEMAS } from '../schemas.js';
 import { saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
 import { tradingSettingsFromConfig } from '../trading-settings.js';
+import { JevSetupBody, jevSetupInfo, saveJevSetup } from './jev.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const hostOk = (h: string) => /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(h);
@@ -154,6 +155,29 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
       const missing = Object.entries(MODEL_KEY_ENV).filter(([provider, key]) => (provider === p.data.defaultProvider || Object.values(p.data.agents ?? {}).some((a) => a.provider === provider)) && !(updates[key] || env[key])).map(([provider]) => provider);
       res.json({ ok: true, detail: `Provider and model choices saved. Restart the office to apply.${missing.length ? ` No key set for ${missing.join(', ')}; those agents will use mock.` : ''}` });
     } catch { res.status(400).json({ ok: false, detail: 'Choose a model from the selected provider; keys must not contain whitespace.' }); }
+  });
+  app.get('/api/setup/jev', (req, res) => {
+    if (!gate(req, res)) return;
+    res.json({ ok: true, ...jevSetupInfo(setupEnv(c.envFile), c.cfg.tradingMode, c.desk.jev.metrics, c.desk.jevLast) });
+  });
+  app.post('/api/setup/jev', (req, res) => {
+    if (!gate(req, res, true)) return;
+    const p = JevSetupBody.safeParse(req.body);
+    if (!p.success) return res.status(400).json({ ok: false, detail: 'Invalid Jev settings.' });
+    try {
+      saveJevSetup(c.envFile, p.data);
+      const env = setupEnv(c.envFile);
+      c.desk.jev.reload(env, c.cfg.tradingMode);
+      const info = jevSetupInfo(env, c.cfg.tradingMode, c.desk.jev.metrics, c.desk.jevLast);
+      res.json({ ok: true, detail: 'Jev settings saved. Enabling Jev does not place orders.', ...info });
+    } catch { res.status(400).json({ ok: false, detail: 'Jev settings could not be saved.' }); }
+  });
+  app.post('/api/setup/jev/test', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    if (!testLim('jev-test')) return res.status(429).json({ ok: false, detail: 'Wait a minute before testing again.' });
+    const result = await c.desk.jev.testConnection();
+    const body = { ok: result.ok, health: result.health, detail: result.error ?? (result.ok ? 'Jev Decisions API reachable.' : 'Jev test failed.'), latencyMs: result.latencyMs, model: result.response?.model ?? null };
+    res.status(result.ok ? 200 : 400).json(body);
   });
   // Masked inputs from the Setup wizard. The body is never logged or echoed; the answer names the saved variables only.
   app.post('/api/setup/keys', async (req, res) => {
