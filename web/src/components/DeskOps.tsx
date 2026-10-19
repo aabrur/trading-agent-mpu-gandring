@@ -227,6 +227,16 @@ export function DeskOps({ state }: { state: DeskState }) {
         <div className="kill-status-wrap"><span className="kill-indicator" /><span className="kill-status-label">{state.killed ? t('killSwitchOnLocked') : t('killSwitchOffReady')}</span></div>
         <button type="button" className={`kill-toggle-btn ${state.killed ? 'release-btn' : 'engage-btn'}`} onClick={() => toggleKillSwitch(!state.killed)} title={state.killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}>{state.killed ? t('unlockKillBtn') : t('engageKillBtn')}</button>
       </div>
+      <section className="auto-setup-box" aria-label="Jev decision monitor">
+        <div className="auto-setup-title"><h3>{t('jevMonitorTitle')}</h3><span className="auto-status-pill">{state.jev?.health ?? t('jevNotConfigured')}</span></div>
+        <small className="auto-cycle-meta">{state.jev ? `${state.jev.mode} · ${state.jev.provider} · ${state.jev.model}` : t('jevNotConfigured')}</small>
+        <dl className="setup-summary">
+          <div><dt>{t('jevRegime')}</dt><dd>{String((state.jev?.lastDecision as { interpretation?: { marketRegime?: string } } | undefined)?.interpretation?.marketRegime ?? (state.jev?.lastDecision as { pre?: { interpretation?: { marketRegime?: string } } } | undefined)?.pre?.interpretation?.marketRegime ?? t('jevNotYetEvaluated'))}</dd></div>
+          <div><dt>{t('jevLatency')}</dt><dd>{state.jev?.metrics?.lastLatencyMs == null ? t('jevUnavailable') : `${state.jev.metrics.lastLatencyMs} ms`}</dd></div>
+          <div><dt>{t('jevCost')}</dt><dd>{state.jev?.metrics?.lastCost == null ? t('jevUnavailable') : String(state.jev.metrics.lastCost)}</dd></div>
+          <div><dt>{t('jevAffected')}</dt><dd>{state.jev?.affectedContext ? t('jevYes') : t('jevNo')}</dd></div>
+        </dl>
+      </section>
       <section className={`auto-setup-box ${isAutoOn ? 'is-on' : 'is-off'}`} aria-labelledby="ops-auto-title">
         <div className="auto-setup-title">
           <i className={`auto-dot ${isAutoOn ? 'on' : 'off'} ${auto?.running ? 'pulse' : ''}`} /><h3 id="ops-auto-title">{t('autoTradeTitle')}</h3>

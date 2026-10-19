@@ -9,6 +9,7 @@ import { ModelsSetup } from './ModelsSetup';
 import { PreferencesSetup } from './PreferencesSetup';
 import { LocalAgentsSetup } from './LocalAgentsSetup';
 import { TradingSetup } from './TradingSetup';
+import { JevSetup } from './JevSetup';
 import { useI18n } from '../i18n';
 
 interface Link { label: string; url: string; login?: boolean; note?: string }
@@ -166,6 +167,7 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
                   <p className="wallet-note">{t('setupModelsNote')}</p>
                 </div>
                 <ModelsSetup available={info.keyEntry.available} appMode={info.running.appMode} />
+                <JevSetup available={info.keyEntry.available} />
               </section>
 
             <section className="setup-pane" hidden={activeTab !== 'local'}>

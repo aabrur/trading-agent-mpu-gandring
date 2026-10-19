@@ -38,6 +38,12 @@ export interface DeskState {
   paper: { balance: number; safetyNet: number; n: number; moneyTrade: number; perOrder: number; canOpen: boolean; usedMargin: number; unrealized: number; equity: number; positions: Position[]; closed: ClosedTrade[]; minOrderUsdt: number; maxLeverage: number; defaultStopPct?: number; takeProfitR?: number };
   equityHistory: { t: number; equity: number; balance: number }[];
   verdicts: Verdict[]; logs: LogLine[]; chats: Record<AgentId, ChatLine[]>; watchlist: string[]; fightThreshold: number;
+  jev?: {
+    enabled: boolean; provider: string; model: string; mode: string; configuredMode?: string; health: string;
+    openrouterKeySet?: boolean; dedicatedKeySet?: boolean; keySource?: string; allowLive?: boolean; affectedContext?: boolean;
+    lastDecision?: Record<string, unknown> | null;
+    metrics?: { requests: number; success: number; errors: number; timeouts: number; lastLatencyMs: number | null; lastModel: string | null; lastCost: number | null; lastInputTokens: number | null; lastError: string | null };
+  };
 }
 export interface Lesson { id: string; role: string; kind: string; symbol?: string; happened: string; rootCause: string; lesson: string; status: 'new' | 'confirmed' | 'promoted'; count: number; firstAt: number; lastAt: number; source: string }
 export interface Finding { level: 'ok' | 'info' | 'warn' | 'alert'; code: string; text: string }
