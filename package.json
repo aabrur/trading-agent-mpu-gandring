@@ -1,12 +1,14 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.0",
-  "appVersion": "0.0.0.3.0",
+  "version": "0.3.1",
+  "appVersion": "0.0.0.3.1",
   "changelog": [
-    "Add four recommended trading risk presets (Default, Balance, Profit, High Risk High Reward) with capital preservation",
+    "Six-agent intelligence upgrade: opportunity-seeking execution culture, canonical ATR, news and whale intelligence",
+    "Natural language chat routing to specialized agents with live market, position, and verdict context",
+    "Four recommended trading risk presets (Default, Balance, Profit, High Risk High Reward) with capital preservation",
     "Setup Trading and Risk profile selection with live parameter preview and network-independent persistence",
     "Compact borderless preset dropdown above Cycle now in Desk Ops Auto Trade with LIVE risk confirmation",
-    "Resilient WebSocket server lifecycle cleanup and optimized client bundle splitting"
+    "Spectator bot reactions during active debates and realized net PnL scorecard tracking"
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",
