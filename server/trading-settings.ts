@@ -12,14 +12,32 @@ export const TradingFields = z.object({
   safetyNet: z.number().finite().positive(),
   maxPositions: z.number().int().min(1).max(4)
 }).strict();
-export const TradingSettingsSchema = TradingFields.refine((v) => v.minStopPct <= v.defaultStopPct, { message: 'Minimum stop must not exceed maximum stop.', path: ['minStopPct'] });
+
+export const TradingSettingsSchema = TradingFields.refine(
+  (v) => v.minStopPct <= v.defaultStopPct,
+  { message: 'Minimum stop must not exceed maximum stop.', path: ['minStopPct'] }
+);
+
 export type TradingSettings = z.infer<typeof TradingFields>;
 export type TradingPresetId = 'default' | 'balance' | 'profit' | 'high_risk';
 export type TradingProfile = 'current' | TradingPresetId | 'manual';
+
 export const TRADING_PRESET_IDS: readonly TradingPresetId[] = ['default', 'balance', 'profit', 'high_risk'] as const;
 export const TRADING_PROFILES: readonly TradingProfile[] = ['current', 'default', 'balance', 'profit', 'high_risk', 'manual'] as const;
 export type TradingNetwork = 'testnet' | 'mainnet';
-export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze({ dailyLossLimitPct: 3, maxLossPerTradePct: 1, minEntryConfidencePct: 0, maxLeverage: 3, defaultStopPct: 1.5, minStopPct: 0.3, takeProfitR: 2, minOrderUsdt: 5, safetyNet: 200, maxPositions: 4 });
+
+export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze({
+  dailyLossLimitPct: 4,
+  maxLossPerTradePct: 1,
+  minEntryConfidencePct: 55,
+  maxLeverage: 3,
+  defaultStopPct: 2.5,
+  minStopPct: 1.0,
+  takeProfitR: 2.5,
+  minOrderUsdt: 5,
+  safetyNet: 50,
+  maxPositions: 3
+});
 
 export const TRADING_PRESETS: Record<TradingPresetId, {
   name: string;
@@ -28,58 +46,58 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
 }> = {
   default: {
     name: 'Default',
-    description: 'Default app preset',
+    description: 'Baseline trend positioning with structural breathing room against 15m noise wicks.',
     values: {
-      dailyLossLimitPct: 3,
+      dailyLossLimitPct: 4,
       maxLossPerTradePct: 1,
-      minEntryConfidencePct: 0,
+      minEntryConfidencePct: 55,
       maxLeverage: 3,
-      defaultStopPct: 1.5,
-      minStopPct: 0.3,
-      takeProfitR: 2,
-      maxPositions: 4
+      defaultStopPct: 2.5,
+      minStopPct: 1.0,
+      takeProfitR: 2.5,
+      maxPositions: 3
     }
   },
   balance: {
     name: 'Balance',
-    description: 'Balanced risk and conservative sizing',
+    description: 'Balanced momentum and trend-following with wider stop tolerance and 3R upside.',
     values: {
-      dailyLossLimitPct: 2,
-      maxLossPerTradePct: 0.5,
-      minEntryConfidencePct: 75,
-      maxLeverage: 2,
-      defaultStopPct: 1.5,
-      minStopPct: 0.3,
-      takeProfitR: 2,
-      maxPositions: 2
+      dailyLossLimitPct: 5,
+      maxLossPerTradePct: 1.5,
+      minEntryConfidencePct: 60,
+      maxLeverage: 5,
+      defaultStopPct: 3.0,
+      minStopPct: 1.2,
+      takeProfitR: 3.0,
+      maxPositions: 3
     }
   },
   profit: {
     name: 'Profit',
-    description: 'Growth-oriented risk and 3R targets',
+    description: 'Aggressive momentum hunting combining whale flows, news catalysts, and focused capital.',
     values: {
-      dailyLossLimitPct: 4,
-      maxLossPerTradePct: 1,
-      minEntryConfidencePct: 75,
-      maxLeverage: 4,
-      defaultStopPct: 2,
-      minStopPct: 0.3,
-      takeProfitR: 3,
-      maxPositions: 3
+      dailyLossLimitPct: 8,
+      maxLossPerTradePct: 2.5,
+      minEntryConfidencePct: 65,
+      maxLeverage: 7,
+      defaultStopPct: 3.8,
+      minStopPct: 1.5,
+      takeProfitR: 3.5,
+      maxPositions: 2
     }
   },
   high_risk: {
     name: 'High Risk High Reward',
-    description: 'Aggressive leverage and wider risk cap',
+    description: 'Maximum conviction predator mode with wide structural stops, concentrated slots, and 4.5R targets.',
     values: {
-      dailyLossLimitPct: 6,
-      maxLossPerTradePct: 2,
+      dailyLossLimitPct: 12,
+      maxLossPerTradePct: 4.0,
       minEntryConfidencePct: 70,
-      maxLeverage: 6,
-      defaultStopPct: 2.5,
-      minStopPct: 0.5,
-      takeProfitR: 3,
-      maxPositions: 4
+      maxLeverage: 10,
+      defaultStopPct: 4.5,
+      minStopPct: 1.8,
+      takeProfitR: 4.5,
+      maxPositions: 2
     }
   }
 };
@@ -98,13 +116,27 @@ export function draftProfile(saved: TradingProfile): TradingPresetId | 'manual' 
   return 'manual';
 }
 
-export const TRADING_ENV: Record<keyof TradingSettings, string> = { dailyLossLimitPct: 'DAILY_LOSS_LIMIT_PCT', maxLossPerTradePct: 'MAX_LOSS_PER_TRADE_PCT', minEntryConfidencePct: 'MIN_ENTRY_CONFIDENCE_PCT', maxLeverage: 'MAX_LEVERAGE', defaultStopPct: 'DEFAULT_STOP_PCT', minStopPct: 'MIN_STOP_PCT', takeProfitR: 'TAKE_PROFIT_R', minOrderUsdt: 'MIN_ORDER_USDT', safetyNet: 'SAFETY_NET', maxPositions: 'OPEN_ORDERS_N' };
+export const TRADING_ENV: Record<keyof TradingSettings, string> = {
+  dailyLossLimitPct: 'DAILY_LOSS_LIMIT_PCT',
+  maxLossPerTradePct: 'MAX_LOSS_PER_TRADE_PCT',
+  minEntryConfidencePct: 'MIN_ENTRY_CONFIDENCE_PCT',
+  maxLeverage: 'MAX_LEVERAGE',
+  defaultStopPct: 'DEFAULT_STOP_PCT',
+  minStopPct: 'MIN_STOP_PCT',
+  takeProfitR: 'TAKE_PROFIT_R',
+  minOrderUsdt: 'MIN_ORDER_USDT',
+  safetyNet: 'SAFETY_NET',
+  maxPositions: 'OPEN_ORDERS_N'
+};
+
 export const tradingPrefix = (network: TradingNetwork) => network.toUpperCase() + '_DESK_';
+
 export function selectedTradingProfile(env: Record<string, string | undefined>, network: TradingNetwork): TradingProfile {
   const value = env[tradingPrefix(network) + 'PROFILE'] || 'current';
   if (!TRADING_PROFILES.includes(value as TradingProfile)) throw new Error('Invalid ' + network + ' desk profile');
   return value as TradingProfile;
 }
+
 export function manualTradingOverrides(env: Record<string, string | undefined>, network: TradingNetwork): Partial<TradingSettings> {
   const values: Record<string, number> = {};
   for (const [key, name] of Object.entries(TRADING_ENV)) {
@@ -113,10 +145,12 @@ export function manualTradingOverrides(env: Record<string, string | undefined>, 
   }
   return TradingFields.partial().parse(values);
 }
+
 export function tradingSettingsFromConfig(cfg: { risk: Omit<TradingSettings, 'safetyNet' | 'maxPositions'> & { takerFee: number }; paper: { safetyNet: number; n: number } }): TradingSettings {
   const { takerFee: _fee, ...risk } = cfg.risk;
   return { ...risk, safetyNet: cfg.paper.safetyNet, maxPositions: cfg.paper.n };
 }
+
 export function resolveTradingSettings(env: Record<string, string | undefined>, base: TradingSettings, network: TradingNetwork) {
   const profile = selectedTradingProfile(env, network);
   const overrides = manualTradingOverrides(env, network);
@@ -132,6 +166,7 @@ export function resolveTradingSettings(env: Record<string, string | undefined>, 
       : TradingSettingsSchema.parse({ ...base, ...overrides });
   return { profile, values };
 }
+
 export function entryConfidenceReason(minimumPct: number, confidence?: number): string | null {
   if (minimumPct <= 0) return null;
   if (confidence == null || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) return `Entry requires reported confidence of at least ${minimumPct}%; confidence is unavailable.`;

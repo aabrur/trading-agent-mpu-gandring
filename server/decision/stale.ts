@@ -17,7 +17,7 @@ export interface RevalidateResult {
   usedFreshSnapshot: boolean;
 }
 
-export function snapshotIsFresh(snap: MarketSnapshot, now = Date.now(), maxAgeMs = 15_000): boolean {
+export function snapshotIsFresh(snap: MarketSnapshot, now = Date.now(), maxAgeMs = 30_000): boolean {
   return Number.isFinite(snap.fetchedAt) && now - snap.fetchedAt <= maxAgeMs;
 }
 
@@ -27,17 +27,26 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
     : (input.fresh.bid ?? input.fresh.last);
   const rule = strategyVote(input.fresh.candles);
   const usedFreshSnapshot = input.fresh.fetchedAt !== input.original.fetchedAt;
+
   if (!(quote > 0) || !Number.isFinite(quote)) {
     return { ok: false, reason: 'Execution quote unavailable after revalidation.', quote: 0, rule, usedFreshSnapshot };
   }
   if (input.fresh.example && !input.original.example) {
     return { ok: false, reason: 'Fresh market data fell back to sample data.', quote, rule, usedFreshSnapshot };
   }
-  if (rule.side !== input.side && rule.side !== 'ABSTAIN' && rule.side !== input.originalRule.side) {
-    return { ok: false, reason: `Stale signal: closed-bar rule flipped from ${input.originalRule.side} to ${rule.side}.`, quote, rule, usedFreshSnapshot };
+
+  // Only abort if the closed-bar rule actively flipped to the OPPOSITE directional side (e.g., LONG flipped to SHORT).
+  // Do NOT abort if the bar merely paused into ABSTAIN while whale/news/momentum consensus remains valid.
+  const oppositeSide = input.side === 'LONG' ? 'SHORT' : 'LONG';
+  if (rule.side === oppositeSide && rule.side !== input.originalRule.side) {
+    return {
+      ok: false,
+      reason: `Hard reversal detected: closed-bar rule flipped to opposite side (${rule.side}).`,
+      quote,
+      rule,
+      usedFreshSnapshot
+    };
   }
-  if (input.originalRule.side === input.side && rule.side === 'ABSTAIN') {
-    return { ok: false, reason: `Stale signal: original ${input.side} thesis is no longer present on closed bars.`, quote, rule, usedFreshSnapshot };
-  }
+
   return { ok: true, reason: null, quote, rule, usedFreshSnapshot };
 }
