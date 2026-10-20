@@ -90,6 +90,10 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 
 /* ---------- office ---------- */
 .office { position: relative; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 164px; grid-template-rows: auto 1fr; border-radius: var(--radius-lg); overflow: hidden; border: 2px solid var(--wood); background: var(--panel-2); box-shadow: var(--shadow); }
+/* Reserve space below the full-width office for the complete agent roster. */
+@media (min-width: 769px) {
+  .office .office-world { min-height: 0; max-height: var(--office-fit-height, calc(100dvh - 200px)); }
+}
 .office-world { position: relative; grid-column: 1; grid-row: 1 / 3; width: 100%; min-width: 0; min-height: 390px; aspect-ratio: 1000 / 640; overflow: clip; isolation: isolate; background: var(--floor); }
 .office-world::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(var(--shadow-color), 0.16)); z-index: 1200; }
 [data-theme='night'] .office-world::after { background: radial-gradient(ellipse at 50% 45%, transparent 35%, rgba(20, 10, 30, 0.35)); }

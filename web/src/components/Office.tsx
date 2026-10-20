@@ -148,6 +148,24 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
 }
 
 export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, children }: Props) {
+  const officeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const office = officeRef.current;
+    if (!office) return;
+    const fit = () => {
+      const roster = office.parentElement?.querySelector('.roster');
+      const gap = parseFloat(getComputedStyle(office.parentElement!).rowGap) || 0;
+      const top = office.getBoundingClientRect().top + window.scrollY;
+      const height = window.innerHeight - top - (roster?.getBoundingClientRect().height ?? 0) - gap - 16;
+      office.style.setProperty('--office-fit-height', `${Math.max(240, height - 4)}px`);
+    };
+    const observer = new ResizeObserver(fit);
+    for (const element of document.querySelectorAll('.topbar, .ticker, .roster')) observer.observe(element);
+    window.addEventListener('resize', fit);
+    fit();
+    return () => { observer.disconnect(); window.removeEventListener('resize', fit); };
+  }, []);
+
   const { t } = useI18n();
   const activities = useSceneDirector(state, sceneEvents);
   const inDebate = !!state.debate;
@@ -175,7 +193,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   }, [state.agents, inDebate, activeFight, activities]);
 
   return (
-    <div className={`office ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
+    <div ref={officeRef} className={`office ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
       <output className="office-pnl" aria-label={`Open PnL, ${pnl.source}`} title="Unrealized PnL of open positions in USDT. Local estimates are not confirmed exchange results.">
         <span>Open PnL · {state.mode}</span>
         <strong className={pnl.value == null ? '' : pnl.value >= 0 ? 'up' : 'down'}>{pnl.value == null ? 'Unavailable' : `${pnl.value >= 0 ? '+' : ''}${fmt(pnl.value)}`} <small>USDT</small></strong>
