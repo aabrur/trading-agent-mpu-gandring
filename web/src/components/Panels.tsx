@@ -322,9 +322,9 @@ export function FightMeter({ state, meter, fighting = false }: { state: DeskStat
     <section className="panel meter">
       <div className="panel-head"><h2>{t('fightMeter')}</h2><span className={`heat-label h-${rawKey}`}>{label}</span></div>
       <div className="meter-bar">
-        <div className="meter-fill" style={{ width: `${Math.max(3, Math.round(dis * 100))}%` }} />
-        <div className="meter-pin" style={{ left: `${Math.round(dis * 100)}%` }} title={`${Math.round(dis * 100)}% disagreement`} />
-        <div className="meter-threshold" style={{ left: `${state.fightThreshold * 100}%` }} title="Configured debate escalation threshold" />
+        <div className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, Math.round(dis * 100)))}%` }} />
+        <div className="meter-pin" style={{ left: `clamp(5px, ${Math.round(dis * 100)}%, calc(100% - 5px))` }} title={`${Math.round(dis * 100)}% disagreement`} />
+        <div className="meter-threshold" style={{ left: `clamp(0px, ${state.fightThreshold * 100}%, calc(100% - 2px))` }} title="Configured debate escalation threshold" />
       </div>
       <div className="meter-scale"><span>{t('consensus')}</span><span className="meter-reading-full">{Math.round(dis * 100)}{t('disagreementSuffix')}</span><span className="meter-reading-short" aria-hidden="true">{Math.round(dis * 100)}%</span><span>{t('brawl')}</span></div>
       <div className="tug">

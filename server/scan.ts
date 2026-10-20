@@ -8,6 +8,13 @@ import { round2 } from './money.js';
 
 export interface Finding { level: 'ok' | 'info' | 'warn' | 'alert'; code: string; text: string }
 
+export function capitalFinding(balance: number, safetyNet: number, split: { moneyTrade: number; perOrder: number }, minOrderUsdt: number): Finding | null {
+  if (split.moneyTrade <= 0) return { level: 'alert', code: 'safety_net', text: `Balance ${balance} is at or below the safety net ${safetyNet}. Nothing left to trade.` };
+  if (split.moneyTrade < balance * 0.1) return { level: 'warn', code: 'safety_net', text: `Tradable capital is ${split.moneyTrade} USDT; less than 10% of balance remains above the ${safetyNet} USDT safety net.` };
+  if (split.perOrder < minOrderUsdt) return { level: 'warn', code: 'safety_net', text: `Allocation ${split.perOrder} USDT per order is below the ${minOrderUsdt} USDT minimum. Reduce open-order slots or add capital.` };
+  return null;
+}
+
 export function proactiveScan(desk: Desk, now = Date.now()): Finding[] {
   const cfg = desk.cfg, book = desk.book, out: Finding[] = [];
   // 1. daily loss cap usage
@@ -36,8 +43,8 @@ export function proactiveScan(desk: Desk, now = Date.now()): Finding[] {
   }
   // 5. balance near the safety net
   const split = book.split();
-  if (split.moneyTrade <= 0) out.push({ level: 'alert', code: 'safety_net', text: `Balance ${book.balance} is at or below the safety net ${book.safetyNet}. Nothing left to trade.` });
-  else if (split.moneyTrade < book.balance * 0.1 || split.perOrder < cfg.risk.minOrderUsdt) out.push({ level: 'warn', code: 'safety_net', text: `Money Trade ${split.moneyTrade} is close to the safety net ${book.safetyNet} (per order ${split.perOrder}).` });
+  const capital = capitalFinding(book.balance, book.safetyNet, split, cfg.risk.minOrderUsdt);
+  if (capital) out.push(capital);
   if (desk.killed) out.push({ level: 'alert', code: 'killed', text: 'Kill switch is on. Restart the server to trade again.' });
   else if (desk.paused) out.push({ level: 'info', code: 'paused', text: 'Desk is paused.' });
   if (!out.some((f) => f.level === 'warn' || f.level === 'alert')) out.push({ level: 'ok', code: 'ok', text: 'Scan clean: loss cap fine, every position has a stop, no errors, data fresh.' });

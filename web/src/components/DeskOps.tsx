@@ -23,6 +23,8 @@ export function DeskOps({ state }: { state: DeskState }) {
   const [out, setOut] = useState<{ ok: boolean; text: string } | null>(null);
   const [lesson, setLesson] = useState('');
   const [kill, setKill] = useState<{ killed: boolean; release: string | null; unkillCommand: string } | null>(null);
+  const [killBusy, setKillBusy] = useState(false);
+  const killed = kill?.killed ?? state.killed;
 
   const auto = state.auto;
   const savedSymbols = (auto?.symbols ?? []).join(', ');
@@ -162,12 +164,15 @@ export function DeskOps({ state }: { state: DeskState }) {
   };
 
   const toggleKillSwitch = async (turnOn: boolean) => {
+    if (killBusy) return;
     if (turnOn) {
       if (!window.confirm(t('opsKillOnConfirm'))) return;
     }
+    setKillBusy(true);
     const r = await post('/api/ops/kill', { on: turnOn }).catch(() => null);
+    setKillBusy(false);
     if (r?.ok) {
-      setKill((prev) => (prev ? { ...prev, killed: r.killed } : null));
+      setKill({ killed: r.killed, release: null, unkillCommand: r.unkillCommand });
       show(true, r.killed ? t('opsKillNowOn') : t('opsKillReleased'));
     } else {
       show(false, r?.error ?? t('cbKillFailedMsg'));
@@ -238,9 +243,9 @@ export function DeskOps({ state }: { state: DeskState }) {
   return (
     <section className="panel desk-ops desk-ops-compact" aria-label="Desk operations">
       <div className="panel-head"><h2>{t('deskOpsTitle')}</h2></div>
-      <div className={`ops-kill-bar ${state.killed ? 'is-killed' : 'is-active'}`}>
-        <div className="kill-status-wrap"><span className="kill-indicator" /><span className="kill-status-label">{state.killed ? t('killSwitchOnLocked') : t('killSwitchOffReady')}</span></div>
-        <button type="button" className={`kill-toggle-btn ${state.killed ? 'release-btn' : 'engage-btn'}`} onClick={() => toggleKillSwitch(!state.killed)} title={state.killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}>{state.killed ? t('unlockKillBtn') : t('engageKillBtn')}</button>
+      <div className={`ops-kill-bar ${killed ? 'is-killed' : 'is-active'}`}>
+        <div className="kill-status-wrap"><span className="kill-indicator" /><span className="kill-status-label" role="status">{killed ? t('killSwitchOnLocked') : t('killSwitchOffReady')}</span></div>
+        <button type="button" role="switch" aria-label="Kill switch" aria-checked={killed} aria-busy={killBusy} disabled={killBusy} className={`kill-toggle-btn ${killed ? 'release-btn' : 'engage-btn'}`} onClick={() => void toggleKillSwitch(!killed)} title={killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}>{killBusy ? '…' : killed ? t('unlockKillBtn') : t('engageKillBtn')}</button>
       </div>
       <details className="ops-details" aria-label="Jev decision monitor">
         <summary>{t('jevMonitorTitle')} · {state.jev?.health ?? t('jevNotConfigured')}</summary>

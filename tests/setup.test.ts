@@ -142,7 +142,7 @@ describe('localhost-only setup and ops routes', () => {
     expect((await (await fetch(`${base}/api/setup`)).json()).keyEntry.available).toBe(false);
     expect((await post(`${base}/api/setup/keys`, { venue: 'bybit', network: 'testnet', key: 'KEYAAAAAAAAA', secret: 'SECRETFFFFFFFFFF' })).status).toBe(403);
   });
-  it('ops: open needs a stop, size works, scan, lessons refuse guard loosening, kill status shows the CLI command only', async () => {
+  it('ops: open needs a stop, size works, scan, lessons refuse guard loosening, kill status includes the CLI command', async () => {
     const { base, envFile, built } = await start();
     expect((await post(`${base}/api/ops/open`, { symbol: 'ETHUSDT', side: 'LONG' })).status).toBe(400);
     expect(built.desk.book.positions).toHaveLength(0);
@@ -160,5 +160,14 @@ describe('localhost-only setup and ops routes', () => {
     expect(autoOff.ok).toBe(true);
     expect(autoOff.auto.on).toBe(false);
     expect(readFileSync(envFile, 'utf8')).toContain('AUTO_TRADING=off');
+  });
+  it('toggles the local kill switch on and off without enabling auto trading', async () => {
+    const { base, built } = await start();
+    expect(await (await post(`${base}/api/ops/kill`, { on: true })).json()).toMatchObject({ ok: true, killed: true });
+    expect(built.desk.killed).toBe(true);
+    expect((await post(`${base}/api/ops/auto`, { on: true })).status).toBe(409);
+    expect(await (await post(`${base}/api/ops/kill`, { on: false })).json()).toMatchObject({ ok: true, killed: false });
+    expect(built.desk.killed).toBe(false);
+    expect(built.desk.autoState.on).toBe(false);
   });
 });

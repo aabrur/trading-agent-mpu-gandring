@@ -88,8 +88,8 @@ export function JevSetup({ available }: { available: boolean }) {
         <div><dt>{t('setupJevOpenrouterSet')}</dt><dd>{info.openrouterKeySet ? t('setupJevKeyPresent') : t('setupJevKeyMissing')}</dd></div>
         <div><dt>{t('setupJevDedicatedSet')}</dt><dd>{info.dedicatedKeySet ? t('setupJevKeyPresent') : t('setupJevKeyMissing')}</dd></div>
       </dl>
-      <form autoComplete="off" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-        <label><input type="checkbox" disabled={!available || busy} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> {t('setupJevEnable')}</label>
+      <form className="setup-keys" autoComplete="off" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        <label className="setup-check"><input type="checkbox" disabled={!available || busy} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> {t('setupJevEnable')}</label>
         <div className="wallet-pick">
           <label>{t('setupJevMode')}
             <select aria-label="Jev mode" disabled={!available || busy || !enabled} value={mode} onChange={(e) => setMode(e.target.value as 'off' | 'shadow' | 'assist')}>
@@ -103,7 +103,7 @@ export function JevSetup({ available }: { available: boolean }) {
           <input aria-label="Jev OpenRouter API key" type="password" disabled={!available || busy} autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} />
         </label>
         {info.liveAssistBlocked && <p className="wallet-msg bad">{t('setupJevLiveAssistBlocked')}</p>}
-        <label><input type="checkbox" disabled={!available || busy || !enabled} checked={allowLive} onChange={(e) => {
+        <label className="setup-check"><input type="checkbox" disabled={!available || busy || !enabled} checked={allowLive} onChange={(e) => {
           if (e.target.checked) {
             const ok = window.confirm(lang === 'id'
               ? 'Otorisasi LIVE ASSIST? Jev dapat memperkaya analisis LIVE. Jev tidak menempatkan order dan tidak mengubah batas risiko.'
@@ -114,8 +114,10 @@ export function JevSetup({ available }: { available: boolean }) {
         }} /> {t('setupJevAllowLive')}</label>
         <p className="field-help">{t('setupJevAllowLiveHelp')}</p>
         <p className="field-help">{t('setupJevHelp')}</p>
-        <button type="submit" disabled={!available || busy}>{busy ? t('setupJevSaving') : t('setupJevSave')}</button>
-        <button type="button" disabled={!available || busy || !enabled} onClick={() => void test()}>{t('setupJevTest')}</button>
+        <div className="setup-actions">
+          <button type="submit" disabled={!available || busy}>{busy ? t('setupJevSaving') : t('setupJevSave')}</button>
+          <button type="button" disabled={!available || busy || !enabled} onClick={() => void test()}>{t('setupJevTest')}</button>
+        </div>
       </form>
       {message && <p className={`wallet-msg ${ok ? 'ok' : 'bad'}`}>{message}</p>}
     </section>

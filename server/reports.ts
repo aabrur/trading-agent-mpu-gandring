@@ -7,6 +7,7 @@ import { safe, log } from './redact.js';
 import { round2 } from './money.js';
 import type { RoleScore } from './scorecard.js';
 import type { Finding } from './scan.js';
+import { capitalFinding } from './scan.js';
 
 export interface ReportPosition { ownership?: string; protectionStatus?: string; entryStatus?: string; symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }
 export interface Report {
@@ -36,6 +37,7 @@ export function buildReport(desk: Desk, since: number, at = Date.now()): Report 
   const confirmedRealized = round2(exits.filter((t) => !t.pnlStatus || t.pnlStatus === 'confirmed').reduce((sum, t) => sum + t.realizedPnl, 0));
   const estimatedRealized = round2(exits.filter((t) => t.pnlStatus === 'estimated').reduce((sum, t) => sum + t.realizedPnl, 0));
   const realized = round2(confirmedRealized + estimatedRealized);
+  const capital = capitalFinding(desk.book.balance, desk.book.safetyNet, s, desk.cfg.risk.minOrderUsdt);
   const r: Omit<Report, 'text'> = {
     monitoring: { symbols: [...new Set(desk.autoState.on ? desk.cfg.auto.symbols : desk.cfg.watchlist)], killed: desk.killed, running: desk.autoState.running, current: desk.debate?.symbol ?? null, previous: desk.lastCycle ? `${desk.lastCycle.symbol} · ${desk.lastCycle.verdict ?? desk.lastCycle.stage} · ${desk.lastCycle.outcome ?? desk.lastCycle.executionStatus ?? 'no fill recorded'}` : null },
     id: `rep-${at.toString(36)}`, at, since, mode: desk.cfg.tradingMode, exchange: desk.cfg.live?.exchange ?? null,
@@ -50,7 +52,7 @@ export function buildReport(desk: Desk, since: number, at = Date.now()): Report 
     scorecard: desk.scorecard.rows(),
     lessons: desk.learnings.since(since + 1).slice(0, 20).map((l) => ({ role: l.role, kind: l.kind, status: l.status, count: l.count, symbol: l.symbol, happened: l.happened, rootCause: l.rootCause, lesson: l.lesson })),
     standingRules: desk.learnings.standingRules().map((l) => `${l.role}: ${l.lesson}`).slice(-10),
-    scan: desk.lastScan?.findings ?? []
+    scan: [...(desk.lastScan?.findings ?? []).filter((f) => f.code !== 'safety_net'), ...(capital ? [capital] : [])]
   };
   return { ...r, text: safe(renderText(r)) };
 }
@@ -63,30 +65,46 @@ export function renderText(r: Omit<Report, 'text'>) {
   const alerts = r.scan.filter((f) => f.level === 'alert' || f.level === 'warn');
   const unprotected = r.positions.filter((p) => !(p.stop > 0) || (r.mode !== 'PAPER' && p.protectionStatus !== 'confirmed'));
   const lines = [
-    `☕ Trading Agent Mpu Gandring · ${r.mode}${r.exchange ? ` / ${r.exchange}` : ''}`,
-    `${new Date(r.at).toISOString().slice(0, 10)} · ${hhmm(r.since)}–${hhmm(r.at)} UTC`,
-    `🛡 Kill ${m ? (m.killed ? 'ON' : 'off') : 'unknown'} · Daily loss stop ${r.dailyLoss.hit ? 'HIT' : 'not hit'} / ${r.dailyLoss.limitPct}% · Protection ${unprotected.length ? `${unprotected.length} UNVERIFIED` : r.mode === 'PAPER' ? 'paper' : 'no unverified stops'}`,
-    ...alerts.slice(0, 3).map((f) => `⚠ ${f.level}: ${short(f.text)}`),
-    ...(alerts.length > 3 ? [`⚠ ${alerts.length - 3} more findings in the office.`] : []),
+    `Trading Agent Mpu Gandring | ${r.mode}${r.exchange ? ` / ${r.exchange}` : ''}`,
+    `Period (UTC): ${new Date(r.since).toISOString().slice(0, 10)} ${hhmm(r.since)} to ${new Date(r.at).toISOString().slice(0, 10)} ${hhmm(r.at)}`,
     '',
-    `💰 Equity ${r.equity} USDT · Balance ${r.balance} · Safety net ${r.safetyNet}`,
-    `📈 Period PnL ${signed(r.realized)} · Unrealized ${signed(r.unrealized)} USDT`,
-    ...(r.accounting ? [`Evidence: confirmed ${signed(r.accounting.confirmedRealized)}, estimated ${signed(r.accounting.estimatedRealized)}; unknown exits ${r.accounting.unknownExits}. Fees ${r.accounting.actualFees ?? 'unknown'}, funding ${r.accounting.funding ?? 'unknown'}; managed net ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'} USDT.`] : []),
-    `Allocation ${r.moneyTrade} / ${r.n} = ${r.perOrder} USDT per order`,
+    'STATUS',
+    `Kill ${m ? (m.killed ? 'ON (desk stopped)' : 'OFF') : 'unknown'}`,
+    `Daily loss stop: ${r.dailyLoss.hit ? 'HIT' : 'not hit'} (limit ${r.dailyLoss.limitPct}% per UTC day)`,
+    `Protection ${unprotected.length ? `${unprotected.length} UNVERIFIED` : !r.positions.length ? 'not applicable: no open positions' : r.mode === 'PAPER' ? 'simulated (PAPER)' : 'confirmed on exchange for all open positions'}`,
+    `Auto: ${r.auto.on ? `ON, every ${r.auto.intervalMin} min` : 'OFF'} | ${m?.current ? `Analyzing ${short(m.current, 24)}` : m?.running ? 'Cycle running' : 'Idle'}`,
+    ...(alerts.length ? ['', 'ATTENTION', ...alerts.slice(0, 3).map((f) => `- ${f.level === 'alert' ? 'ALERT' : 'Warning'}: ${short(f.text, 220)}`)] : []),
+    ...(alerts.length > 3 ? [`- ${alerts.length - 3} more findings in the office.`] : []),
     '',
-    `🔎 Watching: ${m?.symbols.length ? m.symbols.slice(0, 12).join(', ') + (m.symbols.length > 12 ? ` +${m.symbols.length - 12}` : '') : 'not recorded'}`,
-    `Auto ${r.auto.on ? `on / ${r.auto.intervalMin}m` : 'off'} · Now ${m?.current ? short(m.current, 24) : m?.running ? 'cycle running' : 'idle'}`,
-    `Previous: ${m?.previous ? short(m.previous) : 'none recorded'}`,
+    'CAPITAL (USDT)',
+    `Equity: ${r.equity} | Balance: ${r.balance}`,
+    `Protected reserve: ${r.safetyNet} | Tradable: ${r.moneyTrade}`,
+    `Allocation: ${r.moneyTrade} / ${r.n} slots = ${r.perOrder} per order`,
+    `Realized this period: ${signed(r.realized)} | Unrealized: ${signed(r.unrealized)}`,
     '',
-    `📌 Open positions (${r.positions.length}):`,
+    `POSITIONS (${r.positions.length})`,
     ...(r.positions.length ? r.positions.slice(0, 6).map((p) => `${short(p.symbol, 24)} ${p.side} ${p.qty} · Entry ${p.entry} · SL ${p.stop > 0 ? p.stop : 'MISSING'} (${p.protectionStatus ?? (r.mode === 'PAPER' ? 'paper' : 'unverified')})${p.tp ? ` · TP ${p.tp}` : ''} · PnL ${signed(p.pnl)}`) : ['None']),
     ...(r.positions.length > 6 ? [`${r.positions.length - 6} more positions in the office.`] : []),
-    `↗ Opened ${r.opened.length} · Closed ${r.closed.length} · Skipped ${r.skipped.length}`,
+    '',
+    'ACTIVITY THIS PERIOD',
+    `Opened ${r.opened.length} | Closed ${r.closed.length} | Skipped ${r.skipped.length}`,
+    `Previous: ${m?.previous ? short([...new Set(m.previous.split(' · '))].join(' · ')) : 'none recorded'}`,
     ...r.closed.slice(-2).map((a) => `✓ ${hhmm(a.at)} ${short(a.symbol, 24)}: ${short(a.detail)}`),
     ...(r.skipped.length ? [`Latest skip: ${short(r.skipped.at(-1)!.symbol, 24)} · ${short(r.skipped.at(-1)!.detail)}`] : []),
-    `Scorecard (Desk Lead): ${r.scorecard.reduce((n, x) => n + x.right, 0)} right / ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0)} scored calls. Details in the office.`,
-    `Lessons this period (${r.lessons.length}): ${r.lessons.length ? short(r.lessons[0].lesson) : 'none'}`,
-    'Full activity and evidence in the office. Not financial advice.'
+    `Watching: ${m?.symbols.length ? m.symbols.slice(0, 12).join(', ') + (m.symbols.length > 12 ? ` +${m.symbols.length - 12}` : '') : 'not recorded'}`,
+    '',
+    'ACCOUNTING (USDT)',
+    ...(r.accounting ? [
+      `Source: ${r.accounting.source} (${r.accounting.status})`,
+      `Realized: confirmed ${signed(r.accounting.confirmedRealized)} | estimated ${signed(r.accounting.estimatedRealized)}`,
+      `Unknown exits: ${r.accounting.unknownExits} | Fees: ${r.accounting.actualFees ?? 'unknown'} | Funding: ${r.accounting.funding ?? 'unknown'}`,
+      `Managed net: ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'}`
+    ] : ['Evidence unavailable']),
+    '',
+    `Scorecard (Desk Lead): ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0) ? `${r.scorecard.reduce((n, x) => n + x.right, 0)} right / ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0)} scored calls` : 'no scored calls yet'}.`,
+    `Lessons this period (${r.lessons.length}): ${r.lessons.length ? [...new Set(r.lessons.map((l) => l.lesson))].slice(0, 2).map((l) => short(l, 100)).join(' / ') : 'none'}`,
+    `Needs you: ${m?.killed ? 'review the cause before releasing the kill switch' : r.dailyLoss.hit ? 'daily loss stop hit; new orders are blocked' : unprotected.length ? 'check unverified position protection now' : alerts.length ? 'review the warnings above' : 'nothing'}.`,
+    'Details in the office. Not financial advice.'
   ];
   return lines.join('\n');
 }
