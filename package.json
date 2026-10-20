@@ -1,13 +1,13 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.3",
-  "appVersion": "0.0.0.3.3",
+  "version": "0.3.4",
+  "appVersion": "0.0.0.3.4",
   "changelog": [
-    "Trading Setup shows saved vs running vs unsaved draft profiles. Selecting a profile does not change mode or connect an exchange.",
-    "Jev LIVE ASSIST is an explicit Setup authorization. SHADOW no longer blocks verdicts. ASSIST pre-analysis uses a bounded wait.",
-    "FAST debate skips redundant rebuttals when independent analysis agrees. NORMAL keeps full rounds. Default stays NORMAL.",
-    "Stale entry snapshots are revalidated on closed-bar rules before order submission. HOLD has stable reason codes and cycle timings.",
-    "Jev still never places orders or changes risk limits."
+    "Desk tools open from compact bubble navigation. Reports sit beside the price chart; Lessons and Log open on demand.",
+    "Office discussion uses an expandable glass bubble at the lower-left corner with an 80 percent surface opacity.",
+    "Wallet controls use an anchored dropdown, explicit EIP-6963 EVM provider selection, and a muted Connected state.",
+    "Account announcements during connection no longer clear the newly connected session. Pending and rejected requests have actionable errors.",
+    "PAPER defaults, venue permissions, exchange-side stops, risk limits, and LIVE confirmation are unchanged."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",

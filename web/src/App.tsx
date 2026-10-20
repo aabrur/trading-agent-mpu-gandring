@@ -5,12 +5,10 @@ import { Office } from './components/Office';
 import { DeferredPanel } from './components/DeferredPanel';
 import { CommandBar } from './components/CommandBar';
 import { Reports } from './components/Reports';
-import { Lessons } from './components/Lessons';
-import { WalletPanel } from './components/Wallet';
-import { DeskOps } from './components/DeskOps';
+import { WorkspaceTools } from './components/WorkspaceTools';
 import { Tour } from './components/Tour';
 import { UpdateModal, type UpdateInfo } from './components/UpdateModal';
-import { TopBar, TickerStrip, FightMeter, Portfolio, Verdicts, TradeLog, Roster, TrakteerPopup } from './components/Panels';
+import { TopBar, TickerStrip, FightMeter, Verdicts, Roster, TrakteerPopup } from './components/Panels';
 import { I18nProvider, useI18n } from './i18n';
 
 const PriceChart = lazy(() => import('./components/PriceChart').then((m) => ({ default: m.PriceChart })));
@@ -65,7 +63,7 @@ function AppInner() {
     try { localStorage.setItem('mpu_tour_done_v1', '1'); } catch { /* ignore */ }
   };
 
-  const anyModalOpen = Boolean(state) && (setup || venueKeys || updateOpen || tourOpen || trakteerOpen || Boolean(selected));
+  const anyModalOpen = Boolean(state) && (setup || updateOpen || tourOpen || trakteerOpen || Boolean(selected));
   useEffect(() => {
     document.documentElement.classList.toggle('modal-open', anyModalOpen);
     document.body.classList.toggle('modal-open', anyModalOpen);
@@ -122,6 +120,8 @@ function AppInner() {
         onTheme={() => setTheme(theme === 'night' ? 'day' : 'night')}
         onSetup={() => { window.location.hash = 'setup'; }}
         onVenueKeys={() => { window.location.hash = 'venue-keys'; }}
+        walletOpen={venueKeys}
+        onCloseWallet={closeVenueKeys}
         onTour={() => setTourOpen(true)}
         updateInfo={updateInfo}
         onOpenUpdate={() => setUpdateOpen(true)}
@@ -136,25 +136,16 @@ function AppInner() {
           </Office>
           <Roster state={state} onSelect={setSelected} />
           <CommandBar state={state} command={(cmd) => command(cmd)} />
-          <DeferredPanel label="Price chart"><PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} /></DeferredPanel>
-          <TradeLog state={state} />
-          <div className="stage-duo">
+          <div className="market-workspace">
+            <DeferredPanel label="Price chart"><PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} /></DeferredPanel>
             <Reports state={state} />
-            <Lessons state={state} />
           </div>
         </section>
         <aside className="side">
-          <DeskOps state={state} />
-          <Portfolio state={state} command={(cmd) => void command(cmd)} />
+          <WorkspaceTools state={state} command={(cmd) => void command(cmd)} />
         </aside>
       </main>
       {setup && <DeferredPanel label="Setup"><SetupWizard state={state} onClose={closeSetup} tradingProfile={setupEntry === '#setup-trading-default' ? 'default' : setupEntry === '#setup-trading-manual' ? 'manual' : undefined} /></DeferredPanel>}
-      {venueKeys && <div className="setup-overlay" role="dialog" aria-modal="true" aria-label={t('connectWallet')} onKeyDown={(e) => {
-        if (e.key === 'Escape') closeVenueKeys();
-        if (e.key === 'Tab') { const elements = e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled),a[href]'); const first = elements[0], last = elements[elements.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } }
-      }}>
-        <div className="panel setup"><div className="panel-head"><h2>{t('connectWallet')}</h2><button autoFocus onClick={closeVenueKeys}>{t('closeModal')}</button></div><WalletPanel state={state} embedded /></div>
-      </div>}
       {updateOpen && <UpdateModal info={updateInfo} onRefresh={refreshUpdate} onClose={() => setUpdateOpen(false)} />}
       {trakteerOpen && !tourOpen && !setup && !venueKeys && !updateOpen && <TrakteerPopup onClose={() => setTrakteerOpen(false)} />}
       {selected && <DeferredPanel label="Agent"><AgentPanel state={state} id={selected} onClose={() => setSelected(null)} command={command} /></DeferredPanel>}

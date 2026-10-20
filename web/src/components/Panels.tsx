@@ -7,7 +7,7 @@ import { EquityChart, AllocationBars } from './MiniCharts';
 import { fmt, fmtPx } from './format';
 import { useI18n } from '../i18n';
 import type { UpdateInfo } from './UpdateModal';
-import { useWalletSession } from '../walletSession';
+import { WalletMenu } from './WalletMenu';
 export { fmt, fmtPx };
 
 const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec' };
@@ -53,6 +53,8 @@ export function TopBar({
   onTheme,
   onSetup,
   onVenueKeys,
+  walletOpen = false,
+  onCloseWallet,
   onTour,
   updateInfo,
   onOpenUpdate,
@@ -64,13 +66,14 @@ export function TopBar({
   onTheme?: () => void;
   onSetup?: () => void;
   onVenueKeys?: () => void;
+  walletOpen?: boolean;
+  onCloseWallet?: () => void;
   onTour?: () => void;
   updateInfo?: UpdateInfo | null;
   onOpenUpdate?: () => void;
   onOpenTrakteer?: () => void;
 }) {
   const { lang, toggleLang, t } = useI18n();
-  const walletAddress = useWalletSession();
   const ver = updateInfo?.currentVersion ?? '0.0.0.2.3';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
   void onOpenTrakteer;
@@ -215,7 +218,7 @@ export function TopBar({
           />
           <span>{t('trakteerBtn')}</span>
         </a>
-        {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title={walletAddress ? 'Manage browser wallet connection' : 'Connect browser wallet for DEX venues'}>{walletAddress ? (lang === 'id' ? 'Terhubung' : 'Connected') : t('connectWallet')}</button>}
+        {state && onVenueKeys && <WalletMenu state={state} open={walletOpen} onOpen={onVenueKeys} onClose={onCloseWallet ?? (() => {})} />}
         {(onSetup || onTour) && <details className="settings-menu">
           <summary id="setup-trigger" className="badge setup-btn" aria-label={lang === 'id' ? 'Pengaturan dan tutorial' : 'Settings and tutorial'}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 1 3h4l1-3 3-1 3-3-2-2 1-3-3-2-1-3Z"/><circle cx="11" cy="12" r="3"/></svg>

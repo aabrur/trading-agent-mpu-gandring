@@ -41,24 +41,26 @@ try {
   await page.addInitScript('window.__name = (target) => target;');
   await page.addInitScript(() => {
     const account = '0x1111111111111111111111111111111111111111';
+    let activeAccount = account;
     const listeners: Record<string, (() => void)[]> = {};
     localStorage.setItem('mg-wallet-address', account);
     Object.assign(window, { ethereum: {
       request: async ({ method }: { method: string }) => {
-        if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [account];
+        if (method === 'eth_requestAccounts') { activeAccount = account; return [account]; }
+        if (method === 'eth_accounts') return activeAccount ? [activeAccount] : [];
         if (method === 'eth_chainId') return '0xa4b1';
         if (method === 'wallet_revokePermissions') return null;
         throw new Error(`Unexpected wallet method: ${method}`);
       },
       on: (event: string, listener: () => void) => { (listeners[event] ??= []).push(listener); },
       removeListener: (event: string, listener: () => void) => { listeners[event] = (listeners[event] ?? []).filter((l) => l !== listener); }
-    }, emitWalletEvent: (event: string) => listeners[event]?.forEach((fn) => fn()) });
+    }, emitWalletEvent: (event: string) => { if (event === 'accountsChanged') activeAccount = ''; listeners[event]?.forEach((fn) => fn()); } });
   });
   await page.goto(process.env.OFFICE_CHECK_URL ?? 'http://127.0.0.1:5178');
   await page.waitForSelector('.office');
   await page.locator('.tour-skip-btn').click();
   await page.locator('.trakteer-close-x').click();
-  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connected');
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connected'));
   assert.equal(await page.locator('.desk-ops .ops-setup-link').count(), 0);
   assert.equal(await page.locator('.side .verdicts').count(), 0);
   assert.equal(await page.locator('.office-hud .verdicts').count(), 1);
@@ -91,10 +93,12 @@ try {
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await assertOfficeSpace();
+  await page.locator('#tool-ops').click();
   const preset = await page.locator('.auto-preset-select').boundingBox();
   const cycle = await page.locator('.auto-run-btn').boundingBox();
   assert(preset && cycle && preset.y + preset.height <= cycle.y, 'Preset must sit above Cycle now.');
   assert(preset.width < 220, 'Preset must not span the panel.');
+  await page.getByRole('button', { name: 'Close tool panel' }).click();
   await page.locator('#setup-trigger').click();
   assert(await page.locator('.settings-popover .tour-trigger-btn').isVisible());
   await page.locator('#setup-trigger').click();
@@ -104,21 +108,25 @@ try {
   assert.equal(await page.locator('.report').count(), 8);
   await page.locator('#venue-keys-trigger').click();
   await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connect Wallet');
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connect Wallet'));
   assert.equal(await page.evaluate(() => localStorage.getItem('mg-wallet-address')), null);
   await page.getByRole('button', { name: 'Connect browser wallet', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connected');
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connected'));
   await page.evaluate(() => (window as unknown as { emitWalletEvent(event: string): void }).emitWalletEvent('accountsChanged'));
-  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connect Wallet');
-  await page.locator('.setup-overlay .panel-head button').click();
-  await page.waitForSelector('.setup-overlay', { state: 'detached' });
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connect Wallet'));
+  await page.getByRole('button', { name: 'Close wallet', exact: true }).click();
+  await page.waitForSelector('.wallet-dropdown', { state: 'detached' });
   const hot = structuredClone(snapshot);
   hot.paper.unrealized = -7.5;
   hot.debate = { id: 'test-hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.9, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
   hot.agents.market.stance = 'LONG'; hot.agents.research.stance = 'SHORT';
   socket!.send(JSON.stringify({ type: 'state', payload: hot }));
   socket!.send(JSON.stringify({ type: 'speech', payload: { agent: 'risk', at: Date.now(), text: 'Long debate text. '.repeat(30), done: true, example: true } }));
-  await page.waitForSelector('.office-dialogue button');
+  await page.waitForSelector('.discussion-bubble i');
+  assert.equal(await page.locator('.office-dialogue').count(), 0);
+  await page.locator('.discussion-bubble').click();
+  assert(await page.locator('.discussion-popover').isVisible());
+  await page.getByRole('button', { name: 'Close discussion' }).click();
   await page.waitForFunction(() => document.querySelector('.office-pnl strong')?.textContent?.includes('-7.50'));
   await assertOfficeSpace();
   assert.equal(await page.locator('.brawl-zone').count(), 0, 'Reduced motion suppresses fights');

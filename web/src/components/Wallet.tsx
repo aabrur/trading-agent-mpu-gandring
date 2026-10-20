@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
 import { useI18n } from '../i18n';
 import { fmt } from './format';
-import { browserWallet as eth, disconnectWallet, saveWalletSession, screenAccount, useWalletSession } from '../walletSession';
+import { browserWallet as eth, disconnectWallet, saveWalletSession, screenAccount, selectWallet, useWalletOptions, useWalletSession } from '../walletSession';
 
 interface VenueInfo { venue: string; label: string; kind: 'CEX' | 'DEX'; support: 'signature' | 'manual' | 'cex'; steps: string[]; revokeUrl: string | null; docsUrl: string; depositUrl: string; status: string }
 interface WalletState { available: boolean; reason: string; appMode: string; current: string | null; venues: VenueInfo[] }
@@ -14,13 +14,15 @@ interface VenueBalance { ok: boolean; venue: string; label: string; kind: 'CEX' 
 export function WalletPanel({ state, embedded = false }: { state: DeskState; embedded?: boolean }) {
   const { t } = useI18n();
   const [info, setInfo] = useState<WalletState | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const wallets = useWalletOptions();
   const [venue, setVenue] = useState<string>(() => {
     try { return localStorage.getItem('mg-wallet-venue') || 'hyperliquid'; } catch { return 'hyperliquid'; }
   });
   const [network, setNetwork] = useState<'testnet' | 'mainnet'>(() => {
     try {
       const saved = localStorage.getItem('mg-wallet-network');
-      return saved === 'mainnet' || saved === 'testnet' ? saved : 'testnet';
+      return saved === 'mainnet' || saved === 'testnet' ? saved : state.mode === 'LIVE' ? 'mainnet' : 'testnet';
     } catch { return 'testnet'; }
   });
   const address = useWalletSession();
@@ -37,6 +39,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
     fetch('/api/wallet')
       .then((r) => r.json())
       .then((d: WalletState) => {
+        if (!Array.isArray(d.venues)) throw new Error('Wallet service is unavailable. Refresh the page to retry.');
         setInfo(d);
         const dexVenues = d.venues.filter((x) => x.kind === 'DEX');
         let savedV = '';
@@ -47,7 +50,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
           ?? 'hyperliquid';
         setVenue(initialDex);
       })
-      .catch(() => {});
+      .catch(() => setLoadError('Wallet service is unavailable. Refresh the page to retry.'));
   }, []);
 
   const loadBalance = useCallback((targetVenue: string, targetNet: 'testnet' | 'mainnet', targetAddr: string) => {
@@ -67,7 +70,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
     if (info && venue) loadBalance(venue, network, address);
   }, [info, venue, network, address, loadBalance]);
 
-  if (!info) return null;
+  if (!info) return <p className="wallet-note" role="status">{loadError || 'Loading wallet options…'}</p>;
   const dex = info.venues.filter((x) => x.kind === 'DEX');
   const v = dex.find((x) => x.venue === venue) ?? dex[0];
   if (!v) return null;
@@ -76,8 +79,10 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
     setBusy(true);
     setMsg(null);
     const w = eth();
-    if (!w) { setMsg({ ok: false, text: t('walletNotFound') }); setBusy(false); return; }
+    if (!w) { setMsg({ ok: false, text: 'No EVM wallet detected. Open this office in the browser where MetaMask or Rabby is enabled, then refresh. Solana-only wallets cannot approve Aster agents.' }); setBusy(false); return; }
     try {
+      const option = wallets.find((option) => option.provider === w);
+      if (option) selectWallet(option.id);
       const accounts = await w.request({ method: 'eth_requestAccounts' });
       const a = screenAccount(Array.isArray(accounts) ? accounts[0] : null);
       try {
@@ -86,7 +91,10 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
       } catch { /* ignore */ }
       saveWalletSession(a);
     }
-    catch (e) { setMsg({ ok: false, text: `${t('walletRefusedPrefix')} ${(e as Error).message}` }); }
+    catch (e) {
+      const error = e as { code?: number; message?: string };
+      setMsg({ ok: false, text: error.code === -32002 ? 'A connection request is already open. Open the selected wallet extension and finish or reject it before retrying.' : error.code === 4001 ? 'Connection declined in the wallet. Select your wallet and connect again when ready.' : `${t('walletRefusedPrefix')} ${error.message ?? 'The selected wallet did not respond. Refresh and retry.'}` });
+    }
     finally { setBusy(false); }
   }
   async function disconnect() {
@@ -131,14 +139,16 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
 
   return (
     <div className={embedded ? 'wallet-panel' : 'panel wallet-panel'}>
-      <div className="panel-head">{!embedded && <h2>{t('connectWallet')}</h2>}<span className="badge">{t('dexOnlyLabel')}</span></div>
+      {!embedded && <div className="panel-head"><h2>{t('connectWallet')}</h2></div>}
+      <label className="wallet-provider">Browser wallet<select aria-label="Browser wallet" disabled={busy || !wallets.length} value={wallets.find((option) => option.provider === eth())?.id ?? ''} onChange={(event) => { selectWallet(event.target.value); setMsg(null); }}>
+        {!wallets.length && <option value="">No EVM wallet detected</option>}
+        {wallets.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+      </select></label>
       <div className="wallet-pick">
         <select value={v.venue} onChange={(e) => { setVenue(e.target.value); setMsg(null); setAgent(''); }} aria-label="venue">
           <optgroup label="DEX">{dex.map((x) => <option key={x.venue} value={x.venue}>{x.label}</option>)}</optgroup>
         </select>
-        <div className="seg" role="group" aria-label="network">
-          {(['testnet', 'mainnet'] as const).map((n) => <button key={n} className={network === n ? 'on' : ''} onClick={() => setNetwork(n)}>{n}</button>)}
-        </div>
+        <select aria-label="Wallet network" value={network} disabled={busy} onChange={(event) => setNetwork(event.target.value as 'testnet' | 'mainnet')}><option value="testnet">Testnet</option><option value="mainnet">Mainnet</option></select>
         <a className="badge deposit-link-btn" href={v.depositUrl} target="_blank" rel="noreferrer">{t('depositOfficial')} ↗</a>
       </div>
 
@@ -152,7 +162,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
         {bal && bal.equityUsdt !== null ? (
           <div className="venue-balance-stats">
             <span>{t('equityUsdt')}: <b>{fmt(bal.equityUsdt)} USDT</b></span>
-            <span>{t('availableUsdt')}: <b>{fmt(bal.availableUsdt ?? 0)} USDT</b></span>
+            <span>{t('availableUsdt')}: <b>{bal.availableUsdt == null ? 'Unknown' : fmt(bal.availableUsdt)} USDT</b></span>
             {bal.address && <code>{bal.address.slice(0, 6)}...{bal.address.slice(-4)}</code>}
           </div>
         ) : (
@@ -167,16 +177,16 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
               ? <button className="wallet-btn" disabled={busy} onClick={connect}>{busy ? t('waitingWallet') : t('connectBrowserWallet')}</button>
               : <><p className="wallet-addr">{t('mainWalletDisplayOnly')} <code>{address.slice(0, 6)}...{address.slice(-4)}</code></p>
                 <button className="wallet-disconnect" disabled={busy} onClick={() => void disconnect()}>Disconnect</button>
-                <button className="wallet-btn" disabled={busy} onClick={approve}>{busy ? t('waitingWallet') : `${t('approveAgentPrefix')} ${v.label}`}</button></>}
+                <details className="wallet-agent-approval"><summary>Venue agent approval</summary><button className="wallet-btn" disabled={busy} onClick={approve}>{busy ? t('waitingWallet') : `${t('approveAgentPrefix')} ${v.label}`}</button></details></>}
             {agent && <p className="wallet-addr">{t('agentAddressLabel')} <code>{agent}</code></p>}
-            <p className="wallet-note">{t('walletSafetyNote')} {t('revokeAnyTime')} <a href={v.revokeUrl ?? '#'} target="_blank" rel="noreferrer">{v.label} API wallets</a>.</p>
+            <p className="wallet-note">Browser connection and exchange agent approval are separate. Disconnecting here does not stop trading or revoke a venue agent.</p>
           </div>
         ) : <p className="wallet-note">{t('walletOffPrefix')} {info.reason}</p>
       )}
-      <ol className="wallet-steps">{v.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+      <details className="wallet-help"><summary>Setup &amp; safety</summary><p className="wallet-note">{t('walletSafetyNote')} {t('revokeAnyTime')} <a href={v.revokeUrl ?? v.docsUrl} target="_blank" rel="noreferrer">{v.label} API wallets</a>.</p><ol className="wallet-steps">{v.steps.map((s, i) => <li key={i}>{s}</li>)}</ol></details>
       {v.support !== 'signature' && <p className="wallet-note">{v.label} {t('walletKeysAppNote')} <a href={v.docsUrl} target="_blank" rel="noreferrer">{t('officialDocs')}</a> · <a href={v.depositUrl} target="_blank" rel="noreferrer">{t('depositOfficial')}</a></p>}
       {state.appMode === 'grokbot' && <p className="wallet-note">{t('walletGrokbotSecretNote')}</p>}
-      {msg && <p className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
+      {msg && <p role={msg.ok ? 'status' : 'alert'} className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { SEATS, WORKSTATIONS, FIGHT_STAGE, SPECTATORS, heatedDebateFight, office
 import { useSceneDirector } from '../useSceneDirector';
 import { useI18n } from '../i18n';
 import { fmt } from './format';
+import { OfficeDiscussion } from './OfficeDiscussion';
 
 const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'tracking execution', journaling: 'journaling' };
 const POW_WORDS = ['GEBUK!', 'POW!', 'BONK!', 'DUAR!', 'PLAK!', 'BLETAK!', 'BAM!', 'AMPUN!', 'HAJAR!', 'JEDER!'];
@@ -349,13 +350,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         );
       })}
 
-      </div>
-      <div className="office-dialogue" aria-live="polite" aria-atomic="true">
-        {latestSpeech && <button onClick={() => onSelect(latestSpeech.agent)} title={t('bubbleMoreText')}>
-          <strong style={{ ['--agent' as string]: state.agents[latestSpeech.agent].color }}>{state.agents[latestSpeech.agent].name}{latestSpeech.example && <em className="tag-example">EXAMPLE</em>}</strong>
-          <span>{latestSpeech.text}</span>
-          <small>{t('bubbleMoreText')}</small>
-        </button>}
+      <OfficeDiscussion state={state} latest={latestSpeech} onSelect={onSelect} />
       </div>
     </div>
   );

@@ -13,8 +13,8 @@ const STEPS: TourStep[] = [
   { selector: '.commandbar', titleKey: 'tour3Title', bodyKey: 'tour3Body' },
   { selector: '.chart-panel', titleKey: 'tour4Title', bodyKey: 'tour4Body' },
   { selector: '.meter', titleKey: 'tour5Title', bodyKey: 'tour5Body' },
-  { selector: '.portfolio', titleKey: 'tour6Title', bodyKey: 'tour6Body' },
-  { selector: '.desk-ops', titleKey: 'tour7Title', bodyKey: 'tour7Body' },
+  { selector: '#tool-book', titleKey: 'tour6Title', bodyKey: 'tour6Body' },
+  { selector: '#tool-ops', titleKey: 'tour7Title', bodyKey: 'tour7Body' },
   { selector: '#venue-keys-trigger', titleKey: 'tour8Title', bodyKey: 'tour8Body' },
   { selector: '#setup-trigger', titleKey: 'tour9Title', bodyKey: 'tour9Body' }
 ];
