@@ -27,7 +27,7 @@ describe('scheduler and decision payload', () => {
     vi.useFakeTimers();
     const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_PROVIDER: 'mock', DEBATE_PACE_MS: '1000' });
     const caller = makeCaller(cfg);
-    const desk = new Desk(cfg, (r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'HOLD', confidence: 0.7, reason: 'No setup' })) : caller(r));
+    const desk = new Desk(cfg, (r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'HOLD', confidence: 0.7, reason: 'No setup' })) : caller(r), { jevEnv: { JEV_ENABLED: 'false' } });
     let completed = false;
     const work = desk.runDebate('BTCUSDT').then(() => { completed = true; });
     try {
