@@ -47,6 +47,7 @@ export function outcomeFor(input: {
   action: 'OPEN_LONG' | 'OPEN_SHORT' | 'CLOSE' | 'HOLD';
   executed: boolean;
   executionStatus?: string;
+  reasonCode?: string | null;
   blocked?: boolean;
   failed?: boolean;
 }): DecisionOutcome {
@@ -54,6 +55,7 @@ export function outcomeFor(input: {
   if (input.executionStatus === 'filled') return 'FILLED';
   if (input.executionStatus === 'closed') return 'CLOSED';
   if (input.executionStatus === 'submitted') return 'SUBMITTED';
+  if (input.reasonCode === HOLD_REASON.RISK_REJECT) return 'BLOCKED';
   if (input.action === 'HOLD') return input.blocked ? 'BLOCKED' : 'HOLD';
   if (input.blocked) return 'BLOCKED';
   if (input.action === 'CLOSE') return input.executed ? 'CLOSED' : 'FAILED';

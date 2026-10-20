@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { AddressInfo } from 'node:net';
+import { createApp } from '../server/app.js';
 
 // Pretend the sample market is real exchange data, so the live executor path (which refuses
 // sample data on purpose) can be exercised against the fake exchange.
@@ -63,6 +65,34 @@ describe('AUTO scheduler (fake exchange, no approval step)', () => {
     await auto.cycle();
     expect(a.placed).toHaveLength(0);
     expect(desk.activity.some((x) => x.kind === 'skipped' && /Daily loss stop/.test(x.detail))).toBe(true);
+  });
+});
+
+describe('Desk Ops consolidation (single Max N path, explicit kill release)', () => {
+  it('keeps book.n and cfg.paper.n in sync through /api/ops/auto and the command path', async () => {
+    const { desk, auto } = mk();
+    expect(desk.book.n).toBe(desk.cfg.paper.n);
+    auto.configure({ n: 2 });
+    expect(desk.book.n).toBe(2);
+    expect(desk.cfg.paper.n).toBe(2);
+    await desk.command('set n 3');
+    expect(desk.book.n).toBe(3);
+    expect(desk.cfg.paper.n).toBe(3);
+  });
+  it('rejects Auto ON while the kill switch is on without clearing the latch', async () => {
+    const { loadConfig } = await import('../server/config.js');
+    const d = mkdtempSync(path.join(tmpdir(), 'mg-ops-kill-'));
+    const envFile = path.join(d, '.env');
+    const built = createApp(loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', HOST: '127.0.0.1', DEBATE_PACE_MS: '0' }), { reportsDir: null, learningsPath: null, envFile });
+    await new Promise<void>((r) => built.server.listen(0, '127.0.0.1', () => r()));
+    try {
+      const base = `http://127.0.0.1:${(built.server.address() as AddressInfo).port}`;
+      await built.desk.kill();
+      const r = await fetch(`${base}/api/ops/auto`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: true }) });
+      expect(r.status).toBe(409);
+      expect(built.desk.killed).toBe(true);
+      expect(built.desk.autoState.on).toBe(false);
+    } finally { built.desk.stop?.(); built.server.close(); }
   });
 });
 

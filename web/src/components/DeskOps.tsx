@@ -1,5 +1,8 @@
-// Desk ops: the office side of `npm run gb`.
+// Desk ops: compact live operational control surface (Mpu Gandring · Quiet Ops).
 // Same backend paths as the CLI: shared sizing module and the desk's one execution path. Localhost only.
+// Information roles: Portfolio owns per-position detail + canonical Max N control (server-confirmed
+// /api/ops/auto N path, persisted to OPEN_ORDERS_N); Desk Ops keeps a read-only slot summary + Close All.
+// Verdicts / Trade Log / Reports keep their own surfaces; Desk Ops shows only the last cycle summary.
 import { useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
 import { POPULAR_SYMBOLS } from '../types';
@@ -22,13 +25,15 @@ export function DeskOps({ state }: { state: DeskState }) {
   const [kill, setKill] = useState<{ killed: boolean; release: string | null; unkillCommand: string } | null>(null);
 
   const auto = state.auto;
-  const savedSymbols = auto?.symbols?.join(', ');
+  const savedSymbols = (auto?.symbols ?? []).join(', ');
   const [autoMin, setAutoMin] = useState(String(auto?.intervalMin || 15));
   const [autoSyms, setAutoSyms] = useState((auto?.symbols ?? state.watchlist).join(', '));
-  const [autoN, setAutoN] = useState<1 | 2 | 3 | 4>((state.paper?.n ?? 4) as 1 | 2 | 3 | 4);
   const [autoBusy, setAutoBusy] = useState(false);
   const [presetBusy, setPresetBusy] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
   const [paperConfirmedPreset, setPaperConfirmedPreset] = useState<TradingPresetId | null>(null);
+  // Canonical Max N lives in Portfolio (server-confirmed /api/ops/auto). Desk Ops shows read-only slots.
+  const confirmedN = (state.paper?.n ?? 4) as 1 | 2 | 3 | 4;
 
   useEffect(() => {
     if (state.mode === 'PAPER') {
@@ -84,15 +89,14 @@ export function DeskOps({ state }: { state: DeskState }) {
     }
   };
 
+  const useEffectAutoSync = (auto?.symbols ?? []).join(', ');
+
   useEffect(() => {
     if (auto?.intervalMin) setAutoMin(String(auto.intervalMin));
   }, [auto?.intervalMin]);
   useEffect(() => {
-    if (savedSymbols) setAutoSyms(savedSymbols);
-  }, [savedSymbols]);
-  useEffect(() => {
-    if (state.paper?.n) setAutoN(Math.min(4, Math.max(1, state.paper.n)) as 1 | 2 | 3 | 4);
-  }, [state.paper?.n]);
+    if (useEffectAutoSync) setAutoSyms(useEffectAutoSync);
+  }, [useEffectAutoSync]);
 
   useEffect(() => { fetch('/api/ops/kill').then((r) => r.json()).then(setKill).catch(() => {}); }, [state.killed]);
   const show = (ok: boolean, text: string) => setOut({ ok, text });
@@ -100,25 +104,24 @@ export function DeskOps({ state }: { state: DeskState }) {
   const parseSyms = (raw = autoSyms) => raw.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
   const selectedSyms = parseSyms();
 
-  const updateAuto = async (patch: { on?: boolean; runNow?: boolean; n?: 1 | 2 | 3 | 4; symbolsOverride?: string[] }) => {
+  const updateAuto = async (patch: { on?: boolean; runNow?: boolean; symbolsOverride?: string[] }) => {
+    if (autoBusy) return;
     setAutoBusy(true);
     try {
+      // Never release the kill switch implicitly. Auto ON while killed must surface the backend 409
+      // and preserve actual state; release stays explicit via the Kill control / CLI.
       if (patch.on && state.killed) {
-        if (window.confirm('Kill switch is currently ON. Release kill switch and enable Auto Trade?')) {
-          await post('/api/ops/kill', { on: false }).catch(() => null);
-        } else {
-          setAutoBusy(false);
-          return;
-        }
+        show(false, lang === 'id'
+          ? 'Kill switch AKTIF. Lepaskan kill switch dulu (tombol Kill / npm run unkill -- --yes), lalu nyalakan Auto Trade.'
+          : 'Kill switch is ON. Release it first (Kill control / npm run unkill -- --yes), then enable Auto Trade.');
+        return;
       }
       const syms = patch.symbolsOverride ?? parseSyms();
       const mins = Math.max(1, Math.min(1440, Number(autoMin) || 15));
-      const nextN = patch.n ?? autoN;
       const schedule = patch.on !== undefined ? { on: patch.on } : patch.runNow ? { runNow: true } : {
         on: patch.on,
         runNow: patch.runNow,
         intervalMin: mins,
-        n: nextN,
         symbols: syms.length ? syms : state.watchlist
       };
       const r = await post('/api/ops/auto', schedule).catch(() => null);
@@ -133,6 +136,20 @@ export function DeskOps({ state }: { state: DeskState }) {
     }
   };
 
+  const setDebateMode = async (mode: 'normal' | 'fast') => {
+    if (modeBusy || autoBusy || presetBusy) return;
+    if ((state.debateMode ?? 'normal') === mode) return;
+    setModeBusy(true);
+    try {
+      const r = await post('/api/ops/auto', { debateMode: mode }).catch(() => null);
+      show(!!r?.ok, r?.ok
+        ? (lang === 'id' ? `Mode debat: ${mode === 'fast' ? 'FAST' : 'NORMAL'}.` : `Debate mode: ${mode === 'fast' ? 'FAST' : 'NORMAL'}.`)
+        : (r?.error ?? 'office not reachable'));
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
   const toggleTokenChip = (sym: string) => {
     const current = parseSyms();
     const exists = current.includes(sym);
@@ -141,11 +158,6 @@ export function DeskOps({ state }: { state: DeskState }) {
       : [...current, sym];
     const nextStr = next.join(', ');
     setAutoSyms(nextStr);
-
-  };
-
-  const pickMaxN = (nVal: 1 | 2 | 3 | 4) => {
-    setAutoN(nVal);
 
   };
 
@@ -206,8 +218,12 @@ export function DeskOps({ state }: { state: DeskState }) {
     } finally { setTicketBusy(false); }
   };
 
-  const close = async (target: string) => {
-    const r = await post('/api/ops/close', { symbol: target }).catch(() => null);
+  const closeAll = async () => {
+    if (!state.paper.positions.length) return;
+    if (!window.confirm(lang === 'id'
+      ? `Tutup SEMUA ${state.paper.positions.length} posisi paper?`
+      : `Close ALL ${state.paper.positions.length} paper position(s)?`)) return;
+    const r = await post('/api/ops/close', { symbol: 'all' }).catch(() => null);
     show(!!r?.ok, r?.reply ?? 'office not reachable');
   };
   const scan = async () => { const r = await post('/api/ops/scan', {}).catch(() => null); show(!!r?.ok, r?.findings?.length ? r.findings.map((f: { level: string; text: string }) => `${f.level}: ${f.text}`).join(' | ') : 'scan: all clear'); };
@@ -216,19 +232,19 @@ export function DeskOps({ state }: { state: DeskState }) {
   const isAutoOn = !!auto?.on;
   const QuickTokens = POPULAR_SYMBOLS.slice(0, 10);
 
+  const busy = autoBusy || presetBusy || modeBusy;
+  const lastOutcome = state.lastCycle?.outcome ?? state.lastCycle?.executionStatus ?? null;
+
   return (
-    <section className="panel desk-ops" aria-label="Desk operations">
+    <section className="panel desk-ops desk-ops-compact" aria-label="Desk operations">
       <div className="panel-head"><h2>{t('deskOpsTitle')}</h2><span className="badge">{state.mode} · {state.venue?.label ?? state.marketSource}</span></div>
-      <div className="ops-trading-profile">
-        <div><strong>{lang === 'id' ? 'Pengaturan trading' : 'Trading settings'}</strong><small>{state.trading?.network ?? 'Testnet / mainnet'} · {state.trading?.profile === 'current' || !state.trading ? (lang === 'id' ? 'pengaturan tersimpan' : 'existing settings') : state.trading.profile}</small></div>
-        <div className="setup-nav"><button onClick={() => { window.location.hash = 'setup-trading-default'; }}>{t('opsPresetDefault')}</button><button onClick={() => { window.location.hash = 'setup-trading-manual'; }}>{t('tradingProfileManual')}</button></div>
-      </div>
+      <p className="ops-setup-link"><span>{state.trading?.network ?? 'Testnet / mainnet'} · {state.trading?.profile ?? 'existing settings'}</span><button type="button" className="mini" onClick={() => { window.location.hash = 'setup-trading-default'; }}>{lang === 'id' ? 'Buka Setup' : 'Open Setup'}</button></p>
       <div className={`ops-kill-bar ${state.killed ? 'is-killed' : 'is-active'}`}>
         <div className="kill-status-wrap"><span className="kill-indicator" /><span className="kill-status-label">{state.killed ? t('killSwitchOnLocked') : t('killSwitchOffReady')}</span></div>
         <button type="button" className={`kill-toggle-btn ${state.killed ? 'release-btn' : 'engage-btn'}`} onClick={() => toggleKillSwitch(!state.killed)} title={state.killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}>{state.killed ? t('unlockKillBtn') : t('engageKillBtn')}</button>
       </div>
-      <section className="auto-setup-box" aria-label="Jev decision monitor">
-        <div className="auto-setup-title"><h3>{t('jevMonitorTitle')}</h3><span className="auto-status-pill">{state.jev?.health ?? t('jevNotConfigured')}</span></div>
+      <details className="ops-details" aria-label="Jev decision monitor">
+        <summary>{t('jevMonitorTitle')} · {state.jev?.health ?? t('jevNotConfigured')}</summary>
         <small className="auto-cycle-meta">{state.jev ? `${state.jev.mode} · ${state.jev.provider} · ${state.jev.model}` : t('jevNotConfigured')}{state.jev?.allowLive ? ' · LIVE ASSIST authorized' : ''}</small>
         <dl className="setup-summary">
           <div><dt>{t('jevRegime')}</dt><dd>{String((state.jev?.lastDecision as { interpretation?: { marketRegime?: string } } | undefined)?.interpretation?.marketRegime ?? (state.jev?.lastDecision as { pre?: { interpretation?: { marketRegime?: string } } } | undefined)?.pre?.interpretation?.marketRegime ?? t('jevNotYetEvaluated'))}</dd></div>
@@ -236,70 +252,72 @@ export function DeskOps({ state }: { state: DeskState }) {
           <div><dt>{t('jevCost')}</dt><dd>{state.jev?.metrics?.lastCost == null ? t('jevUnavailable') : String(state.jev.metrics.lastCost)}</dd></div>
           <div><dt>{t('jevAffected')}</dt><dd>{state.jev?.affectedContext ? t('jevYes') : t('jevNo')}</dd></div>
         </dl>
-      </section>
+      </details>
       <section className={`auto-setup-box ${isAutoOn ? 'is-on' : 'is-off'}`} aria-labelledby="ops-auto-title">
         <div className="auto-setup-title">
           <i className={`auto-dot ${isAutoOn ? 'on' : 'off'} ${auto?.running ? 'pulse' : ''}`} /><h3 id="ops-auto-title">{t('autoTradeTitle')}</h3>
           <span className={`auto-status-pill ${isAutoOn ? 'on' : 'off'}`}>{auto?.running ? (lang === 'id' ? 'Siklus aktif' : 'Cycle active') : isAutoOn ? (lang === 'id' ? 'Terjadwal' : 'Scheduled') : (lang === 'id' ? 'Mati' : 'Off')}</span>
-          <span className="auto-slots-pill">{lang === 'id' ? 'Slot' : 'Slots'} {state.paper.positions.length}/{state.paper.n} · ${state.paper.perOrder}/ord</span>
         </div>
-        <small className="auto-cycle-meta">{auto?.running ? (auto.trigger === 'manual' ? (lang === 'id' ? 'Siklus manual berjalan' : 'Manual cycle running') : (lang === 'id' ? 'Siklus terjadwal berjalan' : 'Scheduled cycle running')) : auto?.on ? (lang === 'id' ? 'Menunggu siklus berikutnya' : 'Waiting for next cycle') : (lang === 'id' ? 'Penjadwal mati' : 'Scheduler off')}{auto?.stopping ? (lang === 'id' ? ' · berhenti setelah simbol saat ini' : ' · stopping after current symbol') : ''}</small>
-        <div className="auto-quick-actions">
-          <div className="seg auto-toggle-seg" role="group" aria-label="Decision mode">
-            <span className="field-help">{t('opsDebateMode')}</span>
-            <button type="button" className={state.debateMode !== 'fast' ? 'on' : ''} disabled={autoBusy || presetBusy} onClick={() => void post('/api/ops/auto', { debateMode: 'normal' })}>{t('opsDebateNormal')}</button>
-            <button type="button" className={state.debateMode === 'fast' ? 'on' : ''} disabled={autoBusy || presetBusy} onClick={() => void post('/api/ops/auto', { debateMode: 'fast' })}>{t('opsDebateFast')}</button>
-          </div>
-        </div>
-        <dl className="setup-summary">
-          <div><dt>{t('opsCycleStage')}</dt><dd>{state.debate?.phase ?? state.lastCycle?.stage ?? 'idle'}</dd></div>
-          <div><dt>{t('opsLastCycle')}</dt><dd>{state.lastCycle?.durationMs == null ? '—' : `${state.lastCycle.durationMs} ms`}{state.lastCycle?.symbol ? ` · ${state.lastCycle.symbol}` : ''}</dd></div>
-          <div><dt>{t('opsLastVerdict')}</dt><dd>{state.lastCycle?.verdict ?? state.verdicts[0]?.action ?? '—'}</dd></div>
-          <div><dt>{t('opsNoTradeReason')}</dt><dd>{state.lastCycle?.noTradeReason ?? '—'}</dd></div>
-          <div><dt>{t('opsLastExecution')}</dt><dd>{state.lastCycle?.outcome ?? state.lastCycle?.executionStatus ?? '—'}</dd></div>
-        </dl>
         <div className="auto-quick-actions">
           <div className="seg auto-toggle-seg" role="group" aria-label="Auto Trade toggle">
-            <button type="button" className={isAutoOn ? 'on auto-on-btn' : ''} disabled={autoBusy || presetBusy} onClick={() => void updateAuto({ on: true })}>{t('autoStartBtn')}</button>
-            <button type="button" className={!isAutoOn ? 'on auto-off-btn' : ''} disabled={autoBusy || presetBusy} onClick={() => void updateAuto({ on: false })}>{t('autoStopBtn')}</button>
+            <button type="button" className={isAutoOn ? 'on auto-on-btn' : ''} disabled={busy} onClick={() => void updateAuto({ on: true })}>{t('autoStartBtn')}</button>
+            <button type="button" className={!isAutoOn ? 'on auto-off-btn' : ''} disabled={busy} onClick={() => void updateAuto({ on: false })}>{t('autoStopBtn')}</button>
           </div>
-          <div className="auto-run-group">
-            <div className="auto-preset-selector">
-              <select
-                className="auto-preset-select"
-                aria-label="Trading risk preset"
-                disabled={presetBusy || autoBusy}
-                value={activePreset}
-                onChange={(e) => void handlePresetChange(e.target.value as TradingPresetId)}
-              >
-                {!activePreset && <option value="" disabled hidden>{t('opsPresetCustom')}</option>}
-                <option value="default">{t('opsPresetDefault')}</option>
-                <option value="balance">{t('opsPresetBalance')}</option>
-                <option value="profit">{t('opsPresetProfit')}</option>
-                <option value="high_risk">{t('opsPresetHighRisk')}</option>
-              </select>
-              <span className="auto-preset-chevron" aria-hidden="true">▾</span>
-            </div>
-            <button type="button" className="mini auto-run-btn" disabled={autoBusy || presetBusy || state.killed || !!auto?.running} onClick={() => void updateAuto({ runNow: true })}>{t('autoRunNowBtn')}</button>
+          <button type="button" className="mini auto-run-btn" disabled={busy || state.killed || !!auto?.running} onClick={() => void updateAuto({ runNow: true })}>{t('autoRunNowBtn')}</button>
+        </div>
+        <div className="auto-run-group">
+          <div className="auto-preset-selector">
+            <select
+              className="auto-preset-select"
+              aria-label="Trading risk preset"
+              disabled={busy}
+              value={activePreset}
+              onChange={(e) => void handlePresetChange(e.target.value as TradingPresetId)}
+            >
+              {!activePreset && <option value="" disabled hidden>{t('opsPresetCustom')}</option>}
+              <option value="default">{t('opsPresetDefault')}</option>
+              <option value="balance">{t('opsPresetBalance')}</option>
+              <option value="profit">{t('opsPresetProfit')}</option>
+              <option value="high_risk">{t('opsPresetHighRisk')}</option>
+            </select>
+            <span className="auto-preset-chevron" aria-hidden="true">▾</span>
+          </div>
+          <div className="seg auto-toggle-seg" role="group" aria-label="Decision mode">
+            <button type="button" className={state.debateMode !== 'fast' ? 'on' : ''} disabled={busy} onClick={() => void setDebateMode('normal')}>{t('opsDebateNormal')}</button>
+            <button type="button" className={state.debateMode === 'fast' ? 'on' : ''} disabled={busy} onClick={() => void setDebateMode('fast')}>{t('opsDebateFast')}</button>
           </div>
         </div>
-        <div className="auto-setup-controls">
-          <label className="auto-min-field"><span>{t('opsEveryLabel')}</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>{t('opsMinUnit')}</span></label>
-          <div className="auto-n-field"><span>{t('opsMaxNLabel')}</span><div className="seg auto-n-seg" role="group" aria-label="Max open positions">{([1, 2, 3, 4] as const).map((nVal) => <button key={nVal} type="button" className={autoN === nVal ? 'on' : ''} disabled={autoBusy} onClick={() => pickMaxN(nVal)}>{nVal}</button>)}</div></div>
-          <button type="button" className="mini" disabled={autoBusy} onClick={() => void updateAuto({})}>{t('autoSaveBtn')}</button>
-        </div>
-        <label className="ops-symbols-field">{t('opsSymbolsLabel')}<input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} /></label>
-        <div className="auto-token-bar" role="group" aria-label="Quick symbol selection">{QuickTokens.map((sym) => {
-          const active = selectedSyms.includes(sym), hasPos = state.paper.positions.find((p) => p.symbol === sym);
-          return <button key={sym} type="button" className={`token-chip ${active ? 'on' : ''} ${hasPos ? `pos-${hasPos.side.toLowerCase()}` : ''}`} aria-pressed={active} disabled={autoBusy} onClick={() => toggleTokenChip(sym)} title={`${sym}${hasPos ? ` (${hasPos.side} open)` : ''} - edit selection, then Save`}>
-            {sym.replace('USDT', '')}{hasPos && <b className="chip-pos-tag">{hasPos.side === 'LONG' ? 'L' : 'S'}</b>}
-          </button>;
-        })}</div>
-        <p className="ops-help">{t('opsAutoHelpText')}</p>
+        <p className="ops-last-cycle" role="status">{t('opsLastCycle')}: {state.lastCycle?.symbol ? `${state.lastCycle.symbol} · ${state.lastCycle.verdict ?? '—'}${lastOutcome ? ` · ${lastOutcome}` : ''}` : (lang === 'id' ? 'Belum ada siklus.' : 'No cycle yet.')}</p>
+        <p className="ops-slots-line">{lang === 'id' ? 'Slot' : 'Slots'} {state.paper.positions.length}/{confirmedN} · ${state.paper.perOrder}/ord</p>
+        <details className="ops-details">
+          <summary>{lang === 'id' ? 'Rincian siklus' : 'Cycle details'}</summary>
+          <dl className="setup-summary">
+            <div><dt>{t('opsCycleStage')}</dt><dd>{state.debate?.phase ?? state.lastCycle?.stage ?? 'idle'}</dd></div>
+            <div><dt>{t('opsLastCycle')}</dt><dd>{state.lastCycle?.durationMs == null ? '—' : `${state.lastCycle.durationMs} ms`}{state.lastCycle?.symbol ? ` · ${state.lastCycle.symbol}` : ''}</dd></div>
+            <div><dt>{t('opsLastVerdict')}</dt><dd>{state.lastCycle?.verdict ?? state.verdicts[0]?.action ?? '—'}</dd></div>
+            <div><dt>{t('opsNoTradeReason')}</dt><dd>{state.lastCycle?.noTradeReason ?? '—'}</dd></div>
+            <div><dt>{t('opsLastExecution')}</dt><dd>{lastOutcome ?? '—'}</dd></div>
+          </dl>
+        </details>
+        <details className="ops-details">
+          <summary>{lang === 'id' ? 'Jadwal & simbol' : 'Schedule & symbols'}</summary>
+          <div className="auto-setup-controls">
+            <label className="auto-min-field"><span>{t('opsEveryLabel')}</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>{t('opsMinUnit')}</span></label>
+            <button type="button" className="mini" disabled={autoBusy} onClick={() => void updateAuto({})}>{t('autoSaveBtn')}</button>
+          </div>
+          <label className="ops-symbols-field">{t('opsSymbolsLabel')}<input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} /></label>
+          <div className="auto-token-bar" role="group" aria-label="Quick symbol selection">{QuickTokens.map((sym) => {
+            const active = selectedSyms.includes(sym), hasPos = state.paper.positions.find((p) => p.symbol === sym);
+            return <button key={sym} type="button" className={`token-chip ${active ? 'on' : ''} ${hasPos ? `pos-${hasPos.side.toLowerCase()}` : ''}`} aria-pressed={active} disabled={autoBusy} onClick={() => toggleTokenChip(sym)} title={`${sym}${hasPos ? ` (${hasPos.side} open)` : ''} - edit selection, then Save`}>
+              {sym.replace('USDT', '')}{hasPos && <b className="chip-pos-tag">{hasPos.side === 'LONG' ? 'L' : 'S'}</b>}
+            </button>;
+          })}</div>
+          <p className="ops-help">{t('opsAutoHelpText')}</p>
+        </details>
       </section>
-      <div className="ops-position-actions"><strong>{t('opsPositionsTitle')} {state.paper.positions.length}/{state.paper.n}</strong>{[...new Set(state.paper.positions.map((p) => p.symbol))].map((sym) => <button key={sym} onClick={() => close(sym)}>{t('opsCloseBtn')} {sym.replace('USDT', '')}</button>)}<button disabled={!state.paper.positions.length} onClick={() => close('all')}>{t('closeAll')}</button></div>
-      <section className="ops-section" aria-labelledby="ops-ticket-title">
-        <div className="ops-section-heading"><h3 id="ops-ticket-title">{t('opsManualTicketTitle')}</h3><small>{t('opsPreviewOpenSub')}</small></div>
+      <div className="ops-position-actions"><strong>{t('opsPositionsTitle')} {state.paper.positions.length}/{confirmedN}</strong><button disabled={!state.paper.positions.length} onClick={() => void closeAll()}>{t('closeAll')}</button></div>
+      <details className="ops-details">
+        <summary>{t('opsManualTicketTitle')}</summary>
         <div className="ops-market-row">
           <label>{t('opsSymbolLabel')}<input aria-label="symbol" list="ops-ticket-symbols" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} /></label>
           <datalist id="ops-ticket-symbols">{[...new Set([...state.watchlist, ...POPULAR_SYMBOLS])].map((s) => <option key={s} value={s} />)}</datalist>
@@ -318,12 +336,12 @@ export function DeskOps({ state }: { state: DeskState }) {
           <button onClick={() => void size()} disabled={ticketBusy}>{t('sizeTicket')}</button>
           <button onClick={() => void open()} disabled={state.killed || ticketBusy}>{t('openWithStop')}</button>
         </div>
-      </section>
-      <section className="ops-section" aria-labelledby="ops-maintenance-title">
-        <div className="ops-section-heading"><h3 id="ops-maintenance-title">{t('opsMaintenanceTitle')}</h3><small>{t('opsJournalOfficeSub')}</small></div>
+      </details>
+      <details className="ops-details">
+        <summary>{t('opsMaintenanceTitle')}</summary>
         <div className="ops-lesson-row"><label>{t('opsDeskLessonLabel')}<input aria-label="lesson" placeholder={t('opsAddLessonPlaceholder')} value={lesson} onChange={(e) => setLesson(e.target.value)} /></label><button disabled={lesson.trim().length < 2} onClick={addLesson}>{t('addLessonBtn')}</button></div>
         <div className="ops-maintenance-actions"><button onClick={scan}>{t('proaktifScan')}</button><button onClick={restartOffice}>{t('restartOfficeBtn')}</button></div>
-      </section>
+      </details>
       {out && <p role="status" className={`wallet-msg ${out.ok ? 'ok' : 'bad'}`}>{out.text}</p>}
     </section>
   );

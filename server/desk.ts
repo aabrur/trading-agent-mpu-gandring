@@ -695,7 +695,8 @@ export class Desk extends EventEmitter {
         action: verdict.action,
         executed: verdict.executed,
         executionStatus: verdict.executionStatus,
-        blocked: /daily loss|kill switch|paused|already has an open|veto|confidence/i.test(verdict.reason),
+        reasonCode: verdict.reasonCode ?? null,
+        blocked: /daily loss|kill switch|paused|already has an open|veto|confidence|risk rejected/i.test(verdict.reason),
         failed: !verdict.executed && (verdict.action === 'OPEN_LONG' || verdict.action === 'OPEN_SHORT' || verdict.action === 'CLOSE')
       });
       verdict.timing = timing;
@@ -1136,7 +1137,7 @@ export class Desk extends EventEmitter {
         case 'resume': this.paused = false; reply = 'Back on. Waiting for the next symbol.'; break;
         case 'set_n':
           if (![1, 2, 3, 4].includes(cmd.n)) { ok = false; reply = 'N has to be 1, 2, 3 or 4.'; break; }
-          this.book.n = cmd.n; reply = `N set to ${cmd.n}. ${this.book.split().note}.`; break;
+          this.book.n = cmd.n; this.cfg.paper.n = cmd.n; reply = `N set to ${cmd.n}. ${this.book.split().note}.`; break;
         case 'set_safety':
           if (cmd.value < 0) { ok = false; reply = 'Safety net cannot be negative.'; break; }
           if (this.cfg.tradingMode !== 'PAPER' && !(cmd.value > 0)) { ok = false; reply = 'Outside PAPER the safety net must stay above zero.'; break; }

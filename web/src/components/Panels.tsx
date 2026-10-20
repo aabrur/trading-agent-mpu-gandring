@@ -363,10 +363,12 @@ const ALL_VENUES: { venue: string; label: string; depositUrl: string }[] = [
 ];
 
 export function Portfolio({ state, command }: { state: DeskState; command: (t: string) => void }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const p = state.paper;
   const [safety, setSafety] = useState(String(p.safetyNet));
   const [balance, setBalance] = useState(String(p.balance));
+  const [nBusy, setNBusy] = useState(false);
+  const [nError, setNError] = useState<string | null>(null);
   const [selectedVenue, setSelectedVenue] = useState<string>(() => {
     try {
       return localStorage.getItem('mg-wallet-venue') || state.venue?.name || state.live?.exchange || 'bybit';
@@ -503,9 +505,17 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
 
       <div className="n-picker">
         <small>{t('openOrdersN')}</small>
-        {[1, 2, 3, 4].map((n) => <button key={n} className={p.n === n ? 'on' : ''} onClick={() => command(`set n ${n}`)}>{n}</button>)}
+        {[1, 2, 3, 4].map((n) => <button key={n} type="button" className={p.n === n ? 'on' : ''} disabled={nBusy} aria-pressed={p.n === n} onClick={() => void (async () => {
+          if (nBusy || p.n === n) return;
+          setNBusy(true); setNError(null);
+          try {
+            const r = await fetch('/api/ops/auto', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ n }) }).then((x) => x.json()).catch(() => null);
+            if (!r?.ok) setNError(r?.error ?? (lang === 'id' ? 'Gagal menyimpan Max N.' : 'Could not save Max N.'));
+          } finally { setNBusy(false); }
+        })()}>{n}</button>)}
         <span className="slots">{p.positions.length}/{p.n} {t('usedSuffix')}</span>
       </div>
+      {nError && <p className="wallet-msg bad" role="status">{nError}</p>}
       <div className="mini-charts"><AllocationBars state={state} /><EquityChart state={state} /></div>
       <p className="formula">{t('moneyTrade')} = {fmt(p.balance)} - {fmt(p.safetyNet)} = <b>{fmt(p.moneyTrade)}</b> · / {p.n} = <b>{fmt(p.perOrder)}</b> {t('perOrder').toLowerCase()}{!p.canOpen && <em> · {t('atSafetyNet')}</em>}</p>
       <div className="positions">

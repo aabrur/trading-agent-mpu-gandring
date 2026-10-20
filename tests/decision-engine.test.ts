@@ -30,9 +30,12 @@ describe('hold reasons', () => {
     expect(classifyHoldReason('Entry confidence 74.0% is below the configured 75% minimum.')).toBe(HOLD_REASON.LOW_CONFIDENCE);
     expect(classifyHoldReason('Daily loss stop is on (3% for today).')).toBe(HOLD_REASON.DAILY_LOSS_CAP);
     expect(classifyHoldReason('Stale signal: closed-bar rule flipped from LONG to SHORT.')).toBe(HOLD_REASON.STALE_SIGNAL);
+    expect(classifyHoldReason('Risk rejected: verdict rejected.')).toBe(HOLD_REASON.RISK_REJECT);
     expect(outcomeFor({ action: 'HOLD', executed: false })).toBe('HOLD');
     expect(outcomeFor({ action: 'HOLD', executed: false, blocked: true })).toBe('BLOCKED');
     expect(outcomeFor({ action: 'OPEN_LONG', executed: false, failed: true })).toBe('FAILED');
+    expect(outcomeFor({ action: 'OPEN_LONG', executed: false, reasonCode: HOLD_REASON.RISK_REJECT })).toBe('BLOCKED');
+    expect(outcomeFor({ action: 'HOLD', executed: false, reasonCode: HOLD_REASON.RISK_REJECT })).toBe('BLOCKED');
     expect(outcomeFor({ action: 'OPEN_LONG', executed: true, executionStatus: 'filled' })).toBe('FILLED');
     expect(outcomeFor({ action: 'OPEN_LONG', executed: true, executionStatus: 'partial' })).toBe('PARTIAL');
   });

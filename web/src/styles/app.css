@@ -644,10 +644,19 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .local-agent-row { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; background: var(--panel); }
 .supervisor-instructions { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); background: var(--bg); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--line); margin: 4px 0 0; }
 
-/* Compact DeskOps + Auto Trade Setup Box */
+/* Compact DeskOps + Auto Trade Setup Box (Mpu Gandring · Quiet Ops: restrained cards, compact controls) */
 .panel.desk-ops { padding: 12px 14px; }
 .panel.desk-ops .panel-head { margin-bottom: 8px; }
 .panel.desk-ops h2 { font-size: 15.5px; }
+.ops-setup-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; font-size: 12px; color: var(--text-dim); }
+.ops-setup-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops-last-cycle { margin: 6px 0 0; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+.ops-slots-line { margin: 2px 0 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--teal); }
+.ops-details { border-top: 1px dashed var(--line); padding: 6px 0 2px; margin-top: 6px; }
+.ops-details > summary { cursor: pointer; font-weight: 800; font-size: 12.5px; color: var(--text-dim); padding: 6px 2px; border-radius: 8px; }
+.ops-details > summary:hover { color: var(--text); }
+.ops-details > summary:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.ops-details[open] > summary { color: var(--text); }
 .auto-setup-box { border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--panel-2); margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
 .auto-setup-box.is-on { border-color: var(--teal); background: color-mix(in srgb, var(--teal) 8%, var(--panel-2)); }
 .auto-setup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
