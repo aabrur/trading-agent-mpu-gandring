@@ -8,11 +8,21 @@ Six AI trading agents share one office. They read the market, argue about it, th
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
 
-![The cozy office with the fight meter, verdicts and paper book with four open LONG positions and the Money Trade / N allocation](docs/screenshot.png)
+![Illustrated office with six workstations, shared discussion table and dashboard](docs/screenshot.png)
 
-![Chatting with the Risk Manager next to the ETH chart, the desk log, and the Reports and Lessons panels side by side](docs/screenshot-chat.png)
+![The office and dashboard in night mode](docs/office-night.png)
 
-Screenshots are taken in PAPER mode with the keyless `mock` provider and live public Bybit prices. Verdict cards from the mock provider are tagged EXAMPLE.
+Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
+
+## Illustrated office (v0.0.0.3.5)
+
+The office uses supplied wood furniture, a shared carved discussion table, a stocked library, sky windows, hanging plants, lamps and a coffee corner. Six animated characters retain their own workstation, role accessories, activity, debate and chat controls. Day and night themes extend across the room, account overview, agent roster, markets and reports.
+
+The account overview shows equity, configured safety net, managed position slots and desk activity. Missing or stale exchange data is labeled. Kill-switch and daily-loss-stop states take priority over ready/scanning labels. Existing trading commands and guards keep their behavior.
+
+Runtime artwork lives in `web/public/office-assets/`: 16 optimized WebP images, about 272 KiB total, with original filenames and archive provenance in `manifest.json`. The supplied `web/public/mpu-gandring-assets/` authoring library stays local and is ignored by Git. Production builds copy only runtime artwork and the two branding images, so clones do not need the original library. Replaced inline room artwork and furniture CSS have been removed.
+
+Validation: typecheck, production build and offline UI checks pass, including desktop, 375px phone, 812px landscape, night mode, loaded artwork, wallet sessions, discussion, daily-stop status and reduced motion. The full suite remains at its pre-existing baseline of **358 passing / 15 failing tests** in trading-default and risk-related tests. See [the verification record](docs/qa/2026-10-21-office-redesign.md). This release does not resolve those failures.
 
 > **Risk warning. Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. If you choose TESTNET or LIVE in setup, the agents trade **on their own** in full auto with no approval step: they open, close, size and set stops without asking you. In LIVE that is real money and you can lose it, quickly. Automatic guards including the no-withdraw key check, stop on every order, daily loss stop, safety net, max N and kill switch limit damage; they do not prevent losses. Read [docs/live-trading.md](docs/live-trading.md) first.
 
@@ -65,17 +75,17 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Periodic reports.** Every `REPORT_INTERVAL_MIN` a report with balance, safety net, Money Trade, N, allocation, open positions with entry, stop, take profit and PnL, plus opened, closed and skipped orders with reasons goes to `reports/`, the Reports panel, the Grok Bot bridge and optionally Telegram.
 - **Daily loss stop, kill switch & instant office restart.** No new orders after `DAILY_LOSS_LIMIT_PCT` of equity is lost in a day. The kill switch cancels, flattens and stops trading. Toggle or release the kill switch directly from **Desk Ops** or **Command Bar** in the UI, or via CLI (`npm run unkill -- --yes`). An in-app **↻ Restart Office** button reloads `.env` configurations and runtime state in-place without dropping your session.
 - **Injection-aware.** News and posts are treated as untrusted data. The sample news even has a planted "ignore previous instructions" line, and a test proves the agents never see it.
-- **A cozy office with brutal cartoon smoke-cloud fights and spectator reactions.** Wood floors, a rug, sunset windows, a kopi corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. When disagreement crosses the threshold, agents dive into a cartoon dust/smoke cloud with flying fists, spinning stars, lightning bolts and impact bursts (`GEBUK!`, `POW!`, `WHAM!`, `BONK!`), while bystander bots react with worried expressions and speech without blocking execution.
+- **A cozy office with brutal cartoon smoke-cloud fights and spectator reactions.** Wood floors, a woven rug, sky windows, a coffee corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. When disagreement crosses the threshold, agents dive into a cartoon dust/smoke cloud with flying fists, spinning stars, lightning bolts and impact bursts (`GEBUK!`, `POW!`, `WHAM!`, `BONK!`), while bystander bots react with worried expressions and speech without blocking execution.
 - **Interactive pop-up tutorial on every start.** A 9-step guided onboarding tour launches automatically on startup (and via **Setup > Tutorial** in the top bar), highlighting each section of the desk with a spotlight and directional arrow.
 - **Dual language mode: EN and ID.** Defaults to English (`EN`) and switches instantly to Bahasa Indonesia (`ID`) from the top bar (`EN ▾ ID`), backed by a strictly synchronized 1:1 translation dictionary verified by automated tests.
-- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.4`).** The lit-up version notification badge (`v0.0.0.3.4 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
+- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.5`).** The lit-up version notification badge (`v0.0.0.3.5 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
 - **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for Money Trade / N, and every desk monitor shows a sparkline.
 - **Day and night.** A toggle in the top bar. All colors and fonts live in `web/src/styles/tokens.css`.
 - **Live office feed.** Status, speech bubbles and fights stream over WebSocket, next to the fight meter, ticker strip, verdict cards and a desk log.
 - **Talk to the agents.** Click an agent to chat or give commands like `analyze ETHUSDT`, `be more cautious` or `close all`.
 - **Optional Grok Bot bridge.** Send verdicts and commands to a Grok Bot webhook routine from the server. Off by default.
 
-## Compact office controls (v0.0.0.3.4)
+## Compact office controls (v0.0.0.3.5)
 
 - Open **Ops**, **Portfolio**, **Lessons**, or **Log** from the bubble menu at the right. Panels stay closed until selected. Close with the same bubble, the close button, Escape, or a click outside. On phones the menu sits at the bottom-right.
 - **Reports** sits beside the price chart on desktop and below it on narrow screens. Open activity and evidence only when needed.
@@ -127,7 +137,7 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 | Interactive onboarding tour | N/A | Launches on every start, or open **Setup > Tutorial** in the top bar |
 | Optional Jev decision sidecar | Setup > Models, `JEV_ENABLED=true` | Shadow does not block. LIVE ASSIST needs Setup authorization. Never places orders |
 | Switch UI language (`EN` default / `ID`) | N/A | **EN ▾ ID** toggle in top bar |
-| Check version (`v0.0.0.3.4`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.4 · Update ↑** button in top bar |
+| Check version (`v0.0.0.3.5`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.5 · Update ↑** button in top bar |
 | Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup > Exchange & Safety **Run doctor** |
 | Switch mode to TESTNET or LIVE | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup > Exchange & Safety |
 | What is configured with secrets masked | `npm run setup -- status` | Setup header and status lines |
@@ -403,7 +413,7 @@ server/            Express + WebSocket backend
   exchange/        adapter interface; Bybit implemented; Binance, OKX, Hyperliquid, Aster, dYdX, Paradex, Orderly experimental
   live/            automatic key guard, optional testnet round trip, live executor
   wallet.ts        Connect wallet: DEX agent key + one signed approval + live venue balance + official deposit links
-  updater.ts       in-app version check (v0.0.0.3.4) and one-click git fast-forward updater
+  updater.ts       in-app version check (v0.0.0.3.5) and one-click git fast-forward updater
   auto.ts          full auto scheduler
   reports.ts       periodic reports to files, UI, bridge and Telegram
   learnings.ts     self-improving lessons store and the guard-loosening block
@@ -441,7 +451,7 @@ Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang
    mpu
    ```
 3. Ketik `mpu` kapan saja di terminal untuk langsung menjalankan desk dan membuka Web UI secara otomatis, atau `mpu setup` untuk langsung membuka menu pengaturan bernavigasi sidebar kiri. Di halaman Setup, Anda bisa mengatur saldo paper, safety net, memilih model untuk setiap agent dari 10 provider yang masing-masing menyediakan 20 model AI sehingga 1 API key bisa dipakai untuk banyak model, atau langsung menghubungkan agent CLI yang sudah terpasang di laptop Anda seperti Codex, Claude Code, Pi, Kimi Code, Kilo, Cline dan Grok Build maupun supervisor eksternal seperti Antigravity dan Grok Bot.
-4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia dropdown **Connect Wallet** khusus wallet EVM DEX, tombol **Setup**, menu **Setup > Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.3.4** untuk cek & klik update versi secara langsung, serta tombol **EN ▾ ID** untuk mengganti bahasa tampilan antara Bahasa Inggris dan Bahasa Indonesia. Tersedia pula 4 preset risiko trading bawaan (Default, Balance, Profit, High Risk High Reward) yang dapat dipilih langsung dari Setup atau dropdown ringkas di atas tombol Cycle now pada Desk Ops Auto Trade.
+4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia dropdown **Connect Wallet** khusus wallet EVM DEX, tombol **Setup**, menu **Setup > Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.3.5** untuk cek & klik update versi secara langsung, serta tombol **EN ▾ ID** untuk mengganti bahasa tampilan antara Bahasa Inggris dan Bahasa Indonesia. Tersedia pula 4 preset risiko trading bawaan (Default, Balance, Profit, High Risk High Reward) yang dapat dipilih langsung dari Setup atau dropdown ringkas di atas tombol Cycle now pada Desk Ops Auto Trade.
 5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order dari 1 sampai 4. Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss. Anda juga bisa memilih token perp apa saja lewat dropdown Watchlist, Popular Perps, atau `+ Custom token...` di Price Chart, Command Bar, dan Desk Ops.
 6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `mpu setup` atau `npm run setup` atau klik tombol **Setup** di kanan atas office: pilih venue dan mode, ikuti link langsung satu per satu untuk daftar, dana tes, halaman pembuatan key dan izin yang dicentang, lalu ketik key di input tersembunyi. Key masuk ke `.env` dengan chmod 600, tidak pernah ke chat. Izin: trade saja, withdraw dan transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Untuk DEX (`Hyperliquid`, `Aster`, `dYdX v4`, `Paradex`, `Orderly`) bisa melalui tombol **Connect Wallet** yang juga menampilkan saldo USDT secara live serta tombol **Halaman deposit resmi** untuk setiap DEX/CEX. Setelah itu jalankan `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
 7. Pakai agen AI sendiri? Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md), jalan di komputer Grok Bot, bukan laptop kamu. Muse Code: [docs/muse-code.md](docs/muse-code.md) dan [MUSE.md](MUSE.md). Claude Code, Codex, Antigravity, Cursor atau Copilot: [AGENTS.md](AGENTS.md) dan [docs/local-agents.md](docs/local-agents.md).

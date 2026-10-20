@@ -1,0 +1,77 @@
+.office-v2.office .office-world { background: #cfb18a; aspect-ratio: 1000 / 640; max-height: none; min-height: 390px; }
+.studio-room { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.studio-wall { position: absolute; inset: 0 0 70%; background: repeating-linear-gradient(90deg, transparent 0 27px, #b7946c12 27px 28px), linear-gradient(#f3e8d2, #e4d2b4); border-bottom: 8px solid #9c704b; box-shadow: inset 0 -6px #c3986b; }
+.studio-wall::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 18%; border-top: 2px solid #b68c60; background: repeating-linear-gradient(90deg, #c9b08a 0 62px, #ac875e 63px 65px); }
+.studio-floor { position: absolute; inset: 30% 0 0; background: repeating-linear-gradient(0deg, transparent 0 39px, #92704d30 40px 41px), repeating-linear-gradient(90deg, transparent 0 143px, #92704d19 144px 146px), linear-gradient(125deg, #ddc39a, #c9aa80); box-shadow: inset 0 12px 22px #724d2420; }
+.studio-window { position: absolute; top: 3%; width: 11%; height: 24%; }
+.studio-window img { width: 100%; height: 100%; object-fit: fill; position: relative; z-index: 1; filter: drop-shadow(0 4px 3px #725c4230); }
+.studio-window span { position: absolute; inset: 13% 15% 16%; z-index: 2; }
+.studio-window span::before, .studio-window span::after { content: ''; position: absolute; top: 0; bottom: 0; width: 43%; background: #c2d9d9 url('/office-assets/147_sky.webp') center / cover; }
+.studio-window span::before { left: 0; }.studio-window span::after { right: 0; background-position: right; }
+.window-west { left: 29%; }.window-east { right: 27%; }
+.studio-sign { position: absolute; left: 43%; top: 7%; width: 16%; color: #68513b; text-align: center; display: grid; gap: 4px; }
+.studio-sign > span { font-size: clamp(7px, .8vw, 10px); letter-spacing: .12em; text-transform: uppercase; }
+.studio-sign strong { font-family: var(--font-head); font-size: clamp(13px, 1.8vw, 23px); line-height: 1.05; }
+.studio-sign i { font-size: clamp(5px, .55vw, 8px); font-style: normal; white-space: nowrap; }
+.studio-library { position: absolute; left: 4%; top: 3%; height: 29%; width: 14%; }
+.studio-shelf { width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(1px 5px 3px #63492d33); }
+.studio-books { position: absolute; left: 12%; right: 11%; height: 19%; display: flex; align-items: end; justify-content: center; gap: 2%; }
+.studio-books img { width: 11%; object-fit: fill; }
+.books-0 { top: 10%; }.books-1 { top: 36%; }.books-2 { top: 63%; }
+.studio-coffee { position: absolute; right: 3%; top: 19%; width: 17%; height: 15%; }
+.studio-coffee > img:first-child { width: 100%; height: 100%; object-fit: fill; }
+.studio-coffee .coffee-cup { position: absolute; width: 17%; height: auto; right: 29%; top: -20%; }
+.studio-coffee > span { position: absolute; top: -46%; width: 100%; text-align: center; font-size: clamp(7px, .8vw, 11px); font-family: var(--font-head); color: #735738; }
+.studio-vine { position: absolute; top: -5%; height: 25%; object-fit: contain; }
+.vine-west { left: 19%; }.vine-east { right: 17%; }
+.studio-pendant { position: absolute; left: 50%; top: 0; width: 5%; height: 10%; transform: translateX(-50%); opacity: .9; }
+.studio-pendant i { display: block; height: 40%; width: 1px; background: #9d7e58; margin: 0 auto; }
+.studio-pendant span { display: block; height: 40%; border-radius: 50% 50% 15% 15%; background: linear-gradient(#cfb285, #f9eac5); box-shadow: 0 14px 28px #fff0ba; }
+.studio-sunlight { position: absolute; left: 29%; top: 26%; height: 70%; width: 45%; background: linear-gradient(135deg, #fff7cd50, #fff7cd00 75%); clip-path: polygon(0 0, 75% 0, 100% 100%, 25% 100%); mix-blend-mode: soft-light; }
+.studio-rug { position: absolute; left: 23%; top: 49%; width: 54%; height: 43%; border-radius: 50%; background: repeating-radial-gradient(ellipse at center, #91a69b 0 5px, #90a196 6px 7px); border: 5px solid #798b7a; box-shadow: 0 4px 0 #6d725529, inset 0 0 0 5px #c6c7ab; transform: rotate(-2deg); }
+.studio-rug span { position: absolute; inset: 12%; border: 2px dashed #d8d5b6; border-radius: 50%; opacity: .65; }
+.studio-lamp { position: absolute; width: 5%; height: 26%; object-fit: contain; filter: drop-shadow(0 1px 12px #fff0b64a); }
+.lamp-west { left: 3%; top: 31%; }.lamp-east { right: 3%; top: 31%; }
+.studio-plant { position: absolute; bottom: 1%; height: 25%; width: 11%; object-fit: contain; filter: drop-shadow(0 5px 3px #5d4d3330); }
+.plant-west { left: 1%; }.plant-east { right: 1%; }
+.studio-wall-board { position: absolute; left: 61%; top: 30%; width: 13%; height: 7%; background: #f5e9cc; border: 4px solid #b48c5e; color: #797d60; box-shadow: 0 4px 5px #6d502b24; display: flex; align-items: center; gap: 7%; padding: 1%; }
+.studio-wall-board > span { font-size: clamp(6px, .7vw, 10px); max-width: 55%; line-height: 1.25; }
+.studio-wall-board svg { width: 45%; height: 100%; }
+.studio-meeting { position: absolute; width: 31%; aspect-ratio: 1.8; transform: translate(-50%, -50%); z-index: 720; pointer-events: none; }
+.studio-meeting > img { position: absolute; width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(0 9px 5px #69503138); }
+.studio-table-inlay { position: absolute; top: 17%; left: 50%; transform: translateX(-50%) rotate(90deg); opacity: .42; }
+.studio-meeting-label { position: absolute; top: 15%; left: 50%; transform: translateX(-50%); white-space: nowrap; max-width: 95%; overflow: hidden; text-overflow: ellipsis; color: #59422e; background: #f7e5bfeb; font-size: clamp(7px, .8vw, 11px); font-weight: 700; padding: 3px 9px; border-radius: 4px; box-shadow: 0 1px 2px #68402133; }
+.studio-desk { position: absolute; transform: translate(-50%, -50%); width: 15%; aspect-ratio: 1.8; pointer-events: none; }
+.studio-desk-wood { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 6px 4px #67462c33); }
+.studio-chair { position: absolute; top: 10%; right: -14%; width: 26%; height: 70%; background: linear-gradient(90deg, #566d66, #8fa59a 65%, #668274); border: 2px solid #567064; border-radius: 42% 42% 25% 25%; box-shadow: 0 7px 0 -3px #6d513d; }
+.studio-desk:nth-of-type(even) .studio-chair { right: auto; left: -14%; }
+.studio-monitor { position: absolute; left: 24%; top: -48%; width: 51%; height: 75%; }
+.studio-monitor > img { height: 100%; width: 100%; object-fit: fill; }
+.studio-screen { position: absolute; inset: 12% 13% 28%; overflow: hidden; background: #eff0d2; transform: rotate(-1deg); }
+.studio-screen .spark { width: 100%; height: 100%; }
+.studio-desk.is-busy .studio-screen { box-shadow: 0 0 14px color-mix(in srgb, var(--agent), transparent 20%); }
+.studio-keyboard { position: absolute; top: 19%; left: 32%; width: 37%; height: 13%; }
+.studio-mug { position: absolute; top: -10%; left: 7%; width: 14%; height: 26%; object-fit: contain; }
+.studio-notebook { position: absolute; top: -10%; right: 4%; width: 16%; height: 32%; object-fit: contain; transform: rotate(12deg); }
+.studio-desk-name { position: absolute; top: 39%; left: 50%; transform: translateX(-50%); color: #f7ebd4; font-size: clamp(6px, .65vw, 9px); font-weight: 600; white-space: nowrap; background: #765238b8; padding: 2px 6px; border-radius: 3px; }
+.office-v2 .agent .nametag strong { border-radius: 5px; padding: 2px 7px; background: #fbf2dd; border-color: #9d815d; box-shadow: 0 2px 2px #76533222; }
+.office-v2 .agent .nametag .status { border-radius: 4px; background: #fbf2dde8; color: #5b4b39; }
+.office-v2 .agent.is-selected .nametag strong { outline: 2px solid var(--teal); outline-offset: 2px; }
+.office-v2.is-brawling .studio-meeting > img { animation: table-shake .16s ease-in-out infinite alternate; }
+[data-theme='night'] .office-v2 .studio-room { filter: brightness(.72) saturate(.8); }
+[data-theme='night'] .office-v2 .studio-window span { filter: brightness(.6) saturate(.65); }
+@media (max-width: 768px) {
+  .office-v2.office .office-world { aspect-ratio: 1.24; min-height: 350px; }
+  .studio-sign strong { font-size: 13px; }
+  .studio-sign i { display: none; }
+  .studio-sign { top: 10%; }
+  .studio-desk-name { display: none; }
+  .studio-wall-board > span { font-size: 6px; }
+  .studio-meeting-label { font-size: 7px; padding: 2px 5px; }
+  .office-v2 .agent .bot { width: 48px; height: auto; }
+  .office-v2 .agent .nametag strong { font-size: 8px; padding: 1px 4px; }
+  .office-v2 .agent .nametag .status { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .office-v2.is-brawling .studio-meeting > img { animation: none; }
+}

@@ -1,5 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { cpSync, copyFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -11,7 +13,18 @@ export default defineConfig(({ mode }) => {
   const webHost = live ? '127.0.0.1' : (env.HOST || '127.0.0.1').trim();
   return {
     root: 'web',
-    plugins: [react()],
+    plugins: [react(), {
+      name: 'office-runtime-assets',
+      apply: 'build',
+      closeBundle() {
+        const output = path.resolve('dist/web');
+        mkdirSync(output, { recursive: true });
+        for (const file of ['favicon.webp', 'mpu-gandring-logo.webp']) {
+          copyFileSync(path.resolve('web/public', file), path.join(output, file));
+        }
+        cpSync(path.resolve('web/public/office-assets'), path.join(output, 'office-assets'), { recursive: true });
+      }
+    }],
     // Only expose non-secret values to the browser. Keys never get a VITE_ prefix.
     envPrefix: 'PUBLIC_',
     server: {
@@ -23,6 +36,8 @@ export default defineConfig(({ mode }) => {
       }
     },
     build: {
+      // The supplied authoring library stays local; ship only optimized room assets.
+      copyPublicDir: false,
       outDir: '../dist/web',
       emptyOutDir: true,
       rollupOptions: {

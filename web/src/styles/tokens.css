@@ -2,29 +2,29 @@
 :root,
 [data-theme='day'] {
   /* page and panels */
-  --bg: #f4ead7;
-  --bg-2: #efe2c8;
-  --panel: #fffaf1;
-  --panel-2: #f8efdf;
-  --line: #e6d5b8;
+  --bg: #f2efe6;
+  --bg-2: #e8e4d8;
+  --panel: #fffcf5;
+  --panel-2: #f1eee3;
+  --line: #ddd8c9;
   --shadow-color: 92, 58, 30;
 
   /* text */
   --ink: #3b2a1e;
-  --text: #3b2a1e;
-  --text-dim: #7a6450;
-  --text-faint: #a8927a;
+  --text: #343d32;
+  --text-dim: #646957;
+  --text-faint: #707462;
 
   /* warm accents */
   --cream: #fff6e6;
   --cream-deep: #f1dfbd;
   --wood: #c08552;
-  --wood-dark: #8b5a33;
+  --wood-dark: #795135;
   --sage: #8fb39a;
-  --sage-deep: #5f8a6c;
+  --sage-deep: #45684c;
   --terracotta: #d9774f;
   --rose: #e8a3a0;
-  --teal: #3ea99f;
+  --teal: #397970;
   --brass: #c99a3b;
   --long: #3f9a6b;
   --short: #d0583f;
@@ -61,7 +61,7 @@
 
   /* type */
   --font-ui: 'Nunito', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-head: 'Fredoka', 'Nunito', system-ui, sans-serif;
+  --font-head: 'Outfit', 'Nunito', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
   --font-comic: 'Bangers', 'Impact', 'Arial Black', sans-serif;
   --fs-xs: 11.5px;
@@ -82,16 +82,19 @@
 }
 
 [data-theme='night'] {
-  --bg: #2a2130;
-  --bg-2: #241c2a;
-  --panel: #33293a;
-  --panel-2: #3b3043;
-  --line: #4b3e52;
+  --bg: #202a25;
+  --bg-2: #1b241f;
+  --panel: #29362e;
+  --panel-2: #324036;
+  --line: #495a4b;
   --shadow-color: 10, 5, 15;
   --ink: #2a1d14;
-  --text: #f6ead8;
-  --text-dim: #cdb9a3;
-  --text-faint: #9a8673;
+  --text: #f2eddd;
+  --text-dim: #c5ccb9;
+  --text-faint: #adb79f;
+  --wood-dark: #d5b18b;
+  --sage-deep: #a9c8a5;
+  --teal: #92ccc0;
   --cream: #f3e4c8;
   --wall: #4a3a4c;
   --wall-dot: #574657;

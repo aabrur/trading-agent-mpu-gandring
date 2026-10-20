@@ -1,13 +1,13 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.4",
-  "appVersion": "0.0.0.3.4",
+  "version": "0.3.5",
+  "appVersion": "0.0.0.3.5",
   "changelog": [
-    "Desk tools open from compact bubble navigation. Reports sit beside the price chart; Lessons and Log open on demand.",
-    "Office discussion uses an expandable glass bubble at the lower-left corner with an 80 percent surface opacity.",
-    "Wallet controls use an anchored dropdown, explicit EIP-6963 EVM provider selection, and a muted Connected state.",
-    "Account announcements during connection no longer clear the newly connected session. Pending and rejected requests have actionable errors.",
-    "PAPER defaults, venue permissions, exchange-side stops, risk limits, and LIVE confirmation are unchanged."
+    "Illustrated virtual office built from supplied furniture assets: six workstations, a shared discussion table, library, coffee corner and plants.",
+    "Refined role-specific characters, botanical day and night themes, and responsive office and dashboard layouts.",
+    "Account overview shows equity, safety net, managed positions and desk status with explicit missing or stale exchange data.",
+    "Optimized WebP room assets replace inline furniture artwork; unused authoring originals are excluded from production builds.",
+    "Trading behavior, PAPER defaults, keys, stops and risk controls remain unchanged."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",

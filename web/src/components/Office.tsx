@@ -10,10 +10,11 @@ import { useSceneDirector } from '../useSceneDirector';
 import { useI18n } from '../i18n';
 import { fmt } from './format';
 import { OfficeDiscussion } from './OfficeDiscussion';
+import '../styles/office-v2.css';
 
-const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'tracking execution', journaling: 'journaling' };
 const POW_WORDS = ['GEBUK!', 'POW!', 'BONK!', 'DUAR!', 'PLAK!', 'BLETAK!', 'BAM!', 'AMPUN!', 'HAJAR!', 'JEDER!'];
-const BRAWL_PROPS = ['🥊', '👊', '💥', '⚡', '💫', '🩹', '👟', '🔥'];
+const asset = (name: string) => `/office-assets/${name}.webp`;
+const DESK_LABEL: Record<AgentId, string> = { lead: 'Desk lead', market: 'Market watch', research: 'Research library', strategist: 'Strategy desk', risk: 'Risk review', execution: 'Execution desk' };
 
 interface Props {
   children?: ReactNode;
@@ -148,24 +149,6 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
 }
 
 export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, children }: Props) {
-  const officeRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const office = officeRef.current;
-    if (!office) return;
-    const fit = () => {
-      const roster = office.parentElement?.querySelector('.roster');
-      const gap = parseFloat(getComputedStyle(office.parentElement!).rowGap) || 0;
-      const top = office.getBoundingClientRect().top + window.scrollY;
-      const height = window.innerHeight - top - (roster?.getBoundingClientRect().height ?? 0) - gap - 16;
-      office.style.setProperty('--office-fit-height', `${Math.max(240, height - 4)}px`);
-    };
-    const observer = new ResizeObserver(fit);
-    for (const element of document.querySelectorAll('.topbar, .ticker, .roster')) observer.observe(element);
-    window.addEventListener('resize', fit);
-    fit();
-    return () => { observer.disconnect(); window.removeEventListener('resize', fit); };
-  }, []);
-
   const { t } = useI18n();
   const activities = useSceneDirector(state, sceneEvents);
   const inDebate = !!state.debate;
@@ -193,7 +176,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   }, [state.agents, inDebate, activeFight, activities]);
 
   return (
-    <div ref={officeRef} className={`office ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
+    <div className={`office office-v2 ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
       <output className="office-pnl" aria-label={`Open PnL, ${pnl.source}`} title="Unrealized PnL of open positions in USDT. Local estimates are not confirmed exchange results.">
         <span>Open PnL · {state.mode}</span>
         <strong className={pnl.value == null ? '' : pnl.value >= 0 ? 'up' : 'down'}>{pnl.value == null ? 'Unavailable' : `${pnl.value >= 0 ? '+' : ''}${fmt(pnl.value)}`} <small>USDT</small></strong>
@@ -201,130 +184,47 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       </output>
       <div className="office-hud">{children}</div>
       <div className="office-world">
-      <svg className="office-scene" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden>
-        <defs>
-          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--sky-top)" /><stop offset="1" stopColor="var(--sky-bottom)" /></linearGradient>
-          <radialGradient id="sun" cx=".5" cy=".5" r=".5"><stop offset="0" stopColor="var(--sun)" /><stop offset="1" stopColor="var(--sun)" stopOpacity="0" /></radialGradient>
-          <radialGradient id="lampglow" cx=".5" cy=".5" r=".5"><stop offset="0" stopColor="var(--lamp-glow)" stopOpacity=".55" /><stop offset="1" stopColor="var(--lamp-glow)" stopOpacity="0" /></radialGradient>
-          <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--sun)" stopOpacity=".28" /><stop offset="1" stopColor="var(--sun)" stopOpacity="0" /></linearGradient>
-          <pattern id="planks" width="160" height="34" patternUnits="userSpaceOnUse">
-            <rect width="160" height="34" fill="var(--floor)" />
-            <rect y="0" width="160" height="2" fill="var(--floor-line)" />
-            <rect x="70" y="0" width="2" height="34" fill="var(--floor-line)" opacity=".7" />
-            <rect y="17" width="160" height="17" fill="var(--floor-alt)" opacity=".45" />
-            <rect y="17" width="160" height="1.5" fill="var(--floor-line)" />
-            <rect x="140" y="17" width="2" height="17" fill="var(--floor-line)" opacity=".7" />
-          </pattern>
-          <pattern id="wallpaper" width="28" height="28" patternUnits="userSpaceOnUse">
-            <rect width="28" height="28" fill="var(--wall)" />
-            <circle cx="14" cy="14" r="1.6" fill="var(--wall-dot)" />
-          </pattern>
-          <clipPath id="frame-clip">
-            <rect x="458" y="30" width="84" height="74" rx="3" />
-          </clipPath>
-        </defs>
-
-        {/* wall */}
-        <rect width="1000" height="168" fill="url(#wallpaper)" />
-        <rect y="132" width="1000" height="40" fill="var(--wainscot)" />
-        <rect y="130" width="1000" height="5" fill="var(--wood-dark)" opacity=".55" />
-        {/* windows */}
-        {[300, 600].map((x) => (
-          <g key={x}>
-            <rect x={x} y="18" width="120" height="100" rx="10" fill="url(#sky)" />
-            <circle cx={x + 82} cy="86" r="34" fill="url(#sun)" />
-            <path d={`M${x} 104 q25 -18 50 -6 t70 -8 v28 h-120z`} fill="var(--hill)" opacity=".75" />
-            <rect x={x} y="18" width="120" height="100" rx="10" fill="none" stroke="var(--wood)" strokeWidth="7" />
-            <line x1={x + 60} y1="18" x2={x + 60} y2="118" stroke="var(--wood)" strokeWidth="5" />
-            <line x1={x} y1="68" x2={x + 120} y2="68" stroke="var(--wood)" strokeWidth="5" />
-            <rect x={x - 6} y="116" width="132" height="8" rx="3" fill="var(--wood-dark)" />
-            <path d={`M${x + 10} 124 L${x + 110} 124 L${x + 200} 560 L${x - 80} 560 Z`} fill="url(#beam)" className="sunbeam" />
-          </g>
-        ))}
-        {/* bookshelf */}
-        <g>
-          <rect x="40" y="20" width="150" height="150" rx="6" fill="var(--wood-dark)" />
-          {[30, 76, 122].map((yy, r) => (
-            <g key={yy}>
-              <rect x="48" y={yy} width="134" height="40" fill="var(--shelf-back)" />
-              {Array.from({ length: 9 }).map((_, i) => {
-                const h = 26 + ((i * 7 + r * 5) % 12);
-                const cols = ['var(--terracotta)', 'var(--sage)', 'var(--teal)', 'var(--cream-deep)', 'var(--brass)', 'var(--rose)'];
-                return <rect key={i} x={52 + i * 14} y={yy + 40 - h} width="11" height={h} rx="2" fill={cols[(i + r) % cols.length]} transform={i === 7 ? `rotate(12 ${58 + i * 14} ${yy + 40})` : undefined} />;
-              })}
-              <rect x="44" y={yy + 40} width="142" height="5" fill="var(--wood)" />
-            </g>
-          ))}
-        </g>
-        {/* framed logo and plaque */}
-        <g>
-          <rect x="450" y="22" width="100" height="90" rx="6" fill="var(--sage)" stroke="var(--wood)" strokeWidth="6" />
-          <rect x="458" y="30" width="84" height="74" rx="3" fill="var(--cream)" />
-          <image href="/mpu-gandring-logo.webp" x="460" y="32" width="80" height="70" preserveAspectRatio="xMidYMid meet" clipPath="url(#frame-clip)" />
-          <rect x="448" y="112" width="104" height="15" rx="4" fill="var(--wood-dark)" />
-          <text x="500" y="122.5" textAnchor="middle" className="plaque">MPU GANDRING</text>
-        </g>
-        {/* clock */}
-        <g transform="translate(740 56)">
-          <circle r="22" fill="var(--cream)" stroke="var(--wood)" strokeWidth="5" />
-          <line x1="0" y1="0" x2="0" y2="-13" stroke="var(--ink)" strokeWidth="3" strokeLinecap="round" className="clock-min" />
-          <line x1="0" y1="0" x2="9" y2="4" stroke="var(--ink)" strokeWidth="3" strokeLinecap="round" />
-          <circle r="2.5" fill="var(--terracotta)" />
-        </g>
-        {/* coffee corner */}
-        <g>
-          <rect x="820" y="104" width="160" height="66" rx="6" fill="var(--wood)" />
-          <rect x="816" y="98" width="168" height="10" rx="4" fill="var(--wood-dark)" />
-          <rect x="840" y="46" width="52" height="54" rx="8" fill="var(--machine)" />
-          <rect x="848" y="54" width="36" height="14" rx="3" fill="var(--teal)" opacity=".8" />
-          <circle cx="856" cy="78" r="3.5" fill="var(--terracotta)" />
-          <circle cx="868" cy="78" r="3.5" fill="var(--sage)" />
-          <rect x="858" y="86" width="16" height="12" rx="2" fill="var(--cream)" />
-          <path className="steam" d="M862 84 q-3 -6 1 -10 M869 84 q-3 -6 1 -10" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" opacity=".8" />
-          {[915, 940].map((x) => <g key={x}><rect x={x} y="84" width="14" height="14" rx="3" fill={x === 915 ? 'var(--terracotta)' : 'var(--sage)'} /><path d={`M${x + 14} 88 q5 2 0 7`} stroke={x === 915 ? 'var(--terracotta)' : 'var(--sage)'} strokeWidth="2" fill="none" /></g>)}
-          <text x="900" y="140" textAnchor="middle" className="plaque dark">kopi corner</text>
-        </g>
-
-        {/* floor */}
-        <rect y="170" width="1000" height="390" fill="url(#planks)" />
-        <rect y="168" width="1000" height="8" fill="var(--wood-dark)" opacity=".35" />
-        {/* rug */}
-        <ellipse cx="500" cy="400" rx="300" ry="130" fill="var(--rug-edge)" />
-        <ellipse cx="500" cy="400" rx="286" ry="128" fill="var(--rug)" />
-        <ellipse cx="500" cy="400" rx="250" ry="108" fill="none" stroke="var(--rug-pattern)" strokeWidth="4" strokeDasharray="2 10" strokeLinecap="round" />
-        <ellipse cx="500" cy="400" rx="210" ry="88" fill="none" stroke="var(--rug-pattern)" strokeWidth="2" opacity=".7" />
-        <ellipse cx="500" cy="400" rx="300" ry="138" fill="var(--hit)" className="rug-heat" />
-        {/* lamp glows */}
-        <circle cx="60" cy="300" r="140" fill="url(#lampglow)" className="lamp-glow" />
-        <circle cx="940" cy="300" r="140" fill="url(#lampglow)" className="lamp-glow" />
-      </svg>
-
-      {/* props in front of the floor */}
-      <div className="prop lamp" style={{ left: '6%', top: '58%' }}><i className="shade" /><i className="pole" /><i className="base" /></div>
-      <div className="prop lamp" style={{ left: '94%', top: '58%' }}><i className="shade" /><i className="pole" /><i className="base" /></div>
-      <div className="prop plant big" style={{ left: '3.5%', top: '97%' }}><i className="leaf l1" /><i className="leaf l2" /><i className="leaf l3" /><i className="leaf l4" /><i className="pot" /></div>
-      <div className="prop plant big" style={{ left: '96.5%', top: '97%' }}><i className="leaf l1" /><i className="leaf l2" /><i className="leaf l3" /><i className="leaf l4" /><i className="pot" /></div>
-      <div className="prop plant small" style={{ left: '26%', top: '40%' }}><i className="leaf l1" /><i className="leaf l2" /><i className="leaf l3" /><i className="pot" /></div>
-
-      <div className="analysis-board" aria-hidden="true"><span>{t('analysisBoardText')}</span><svg viewBox="0 0 90 30"><path d="M4 23 L18 16 L31 20 L44 8 L57 13 L70 6 L85 9" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div>
-      {/* debate table */}
-      <div className="arena" style={{ left: '50%', top: '72%' }}>
-        <div className="arena-table">
-          <div className="arena-inlay"><KerisBlade size={120} /></div>
-          <div className="arena-label">{state.debate ? `${state.debate.symbol} · ${state.debate.phase}` : t('arenaDebateTable')}</div>
+      <div className="studio-room" aria-hidden="true">
+        <div className="studio-wall" />
+        <div className="studio-floor" />
+        <div className="studio-window window-west"><img src={asset('023_keyboard_window-1')} alt="" /><span /></div>
+        <div className="studio-window window-east"><img src={asset('023_keyboard_window-1')} alt="" /><span /></div>
+        <div className="studio-sign"><span>Trading Agent</span><strong>Mpu Gandring</strong><i>research · debate · discipline</i></div>
+        <div className="studio-library">
+          <img className="studio-shelf" src={asset('011_red-books_wooden-bookshelf-1')} alt="" />
+          {[0, 1, 2].map((row) => <div className={`studio-books books-${row}`} key={row}>{Array.from({ length: 7 }, (_, i) => <img key={i} src={asset('011_red-books_1')} alt="" style={{ filter: `hue-rotate(${(i * 43 + row * 17) % 180}deg)`, height: `${74 + (i * 7 % 25)}%` }} />)}</div>)}
         </div>
+        <div className="studio-coffee"><img src={asset('023_keyboard_office-desk-7')} alt="" /><img className="coffee-cup" src={asset('012_coffee-cup')} alt="" /><span>the coffee corner</span></div>
+        <img className="studio-vine vine-west" src={asset('023_keyboard_hanging-plant')} alt="" />
+        <img className="studio-vine vine-east" src={asset('023_keyboard_hanging-plant')} alt="" />
+        <div className="studio-pendant"><i /><span /></div>
+        <div className="studio-sunlight" />
+        <div className="studio-rug"><span /></div>
+        <img className="studio-lamp lamp-west" src={asset('023_keyboard_floor-lamp-1')} alt="" />
+        <img className="studio-lamp lamp-east" src={asset('023_keyboard_floor-lamp-1')} alt="" />
+        <img className="studio-plant plant-west" src={asset('019_soil_potted-plant')} alt="" />
+        <img className="studio-plant plant-east" src={asset('022_soil_potted-plant')} alt="" />
+        <div className="studio-wall-board"><span>{t('analysisBoardText')}</span><svg viewBox="0 0 90 30"><path d="M4 23 L18 16 L31 20 L44 8 L57 13 L70 6 L85 9" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div>
+      </div>
+      <div className="studio-meeting" style={{ left: '50%', top: '72%' }} aria-label="Agent discussion table">
+        <img src={asset('023_keyboard_round-coffee-table')} alt="" />
+        <div className="studio-table-inlay"><KerisBlade size={60} /></div>
+        <div className="studio-meeting-label">{state.debate ? `${state.debate.symbol} · ${state.debate.phase}` : t('arenaDebateTable')}</div>
       </div>
 
-      {/* desks */}
       {AGENT_ORDER.map((id) => {
         const a = state.agents[id];
         const desk = WORKSTATIONS[id];
         const busy = !inDebate && a.status !== 'idle';
         return (
-          <div key={`desk-${id}`} data-desk={id} className={`desk ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, ['--agent' as string]: a.color }}>
-            <div className={`monitor${id === 'execution' ? ' monitor-execution' : ''}`}><div className="screen"><Sparkline values={spark} up={up} /></div></div>
-            <div className="desk-top"><i className="mug" /><i className="keyboard" />{id === 'research' && <i className="papers" />}{id === 'lead' && <i className="papers" />}{(id === 'lead' || id === 'strategist') && <i className="desk-plant" />}</div>
-            <div className="desk-front"><span>{a.name}</span></div>
+          <div key={`desk-${id}`} data-desk={id} className={`studio-desk ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, ['--agent' as string]: a.color }} aria-hidden="true">
+            <div className="studio-chair" />
+            <img className="studio-desk-wood" src={asset('023_keyboard_computer-desk-5')} alt="" />
+            <div className="studio-monitor"><img src={asset('023_keyboard_computer-monitor-1')} alt="" /><div className="studio-screen"><Sparkline values={spark} up={up} /></div></div>
+            <img className="studio-keyboard" src={asset('004_keyboard')} alt="" />
+            <img className="studio-mug" src={asset('001_ceramic-mug')} alt="" />
+            {(id === 'lead' || id === 'research') && <img className="studio-notebook" src={asset('030_closed-book')} alt="" />}
+            <span className="studio-desk-name">{DESK_LABEL[id]}</span>
           </div>
         );
       })}
@@ -353,8 +253,8 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
               <i className="smoke-puff p6" />
               <i className="smoke-swirl s1" />
               <i className="smoke-swirl s2" />
-              {BRAWL_PROPS.map((prop, idx) => (
-                <span key={idx} className={`brawl-limb l-${idx + 1}`}>{prop}</span>
+              {Array.from({ length: 8 }, (_, idx) => (
+                <svg key={idx} className={`brawl-limb l-${idx + 1}`} viewBox="0 0 24 24"><path d="m12 1 3 7 8 4-8 3-3 8-3-8-8-3 8-4z" fill="currentColor" /></svg>
               ))}
             </div>
             <div className="pow pow-main">

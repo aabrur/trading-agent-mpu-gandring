@@ -1,0 +1,146 @@
+[
+  {
+    "file": "001_ceramic-mug.webp",
+    "source": "001_ceramic-mug.png",
+    "sourceArchive": "segments (1).zip",
+    "sourcePath": "ceramic-mug.png",
+    "sourceWidth": 959,
+    "sourceHeight": 821,
+    "bytes": 32046
+  },
+  {
+    "file": "004_keyboard.webp",
+    "source": "004_keyboard.png",
+    "sourceArchive": "segments (4).zip",
+    "sourcePath": "keyboard.png",
+    "sourceWidth": 397,
+    "sourceHeight": 112,
+    "bytes": 8188
+  },
+  {
+    "file": "011_red-books_1.webp",
+    "source": "011_red-books_1.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "red-books/red-books-1.png",
+    "sourceWidth": 61,
+    "sourceHeight": 181,
+    "bytes": 1286
+  },
+  {
+    "file": "011_red-books_wooden-bookshelf-1.webp",
+    "source": "011_red-books_wooden-bookshelf-1.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "wooden-bookshelf/wooden-bookshelf-1.png",
+    "sourceWidth": 771,
+    "sourceHeight": 1172,
+    "bytes": 32010
+  },
+  {
+    "file": "012_coffee-cup.webp",
+    "source": "012_coffee-cup.png",
+    "sourceArchive": "segments (12).zip",
+    "sourcePath": "coffee-cup.png",
+    "sourceWidth": 99,
+    "sourceHeight": 79,
+    "bytes": 2114
+  },
+  {
+    "file": "019_soil_potted-plant.webp",
+    "source": "019_soil_potted-plant.png",
+    "sourceArchive": "segments (19).zip",
+    "sourcePath": "potted-plant.png",
+    "sourceWidth": 882,
+    "sourceHeight": 1144,
+    "bytes": 66090
+  },
+  {
+    "file": "022_soil_potted-plant.webp",
+    "source": "022_soil_potted-plant.png",
+    "sourceArchive": "segments (22).zip",
+    "sourcePath": "potted-plant.png",
+    "sourceWidth": 624,
+    "sourceHeight": 852,
+    "bytes": 37388
+  },
+  {
+    "file": "023_keyboard_computer-desk-5.webp",
+    "source": "023_keyboard_computer-desk-5.png",
+    "sourceArchive": "segments (23).zip",
+    "sourcePath": "computer-desk/computer-desk-5.png",
+    "sourceWidth": 198,
+    "sourceHeight": 115,
+    "bytes": 3038
+  },
+  {
+    "file": "023_keyboard_computer-monitor-1.webp",
+    "source": "023_keyboard_computer-monitor-1.png",
+    "sourceArchive": "segments (23).zip",
+    "sourcePath": "computer-monitor/computer-monitor-1.png",
+    "sourceWidth": 82,
+    "sourceHeight": 72,
+    "bytes": 1400
+  },
+  {
+    "file": "023_keyboard_floor-lamp-1.webp",
+    "source": "023_keyboard_floor-lamp-1.png",
+    "sourceArchive": "segments (23).zip",
+    "sourcePath": "floor-lamp/floor-lamp-1.png",
+    "sourceWidth": 73,
+    "sourceHeight": 208,
+    "bytes": 1818
+  },
+  {
+    "file": "023_keyboard_hanging-plant.webp",
+    "source": "023_keyboard_hanging-plant.png",
+    "sourceArchive": "segments (23).zip",
+    "sourcePath": "hanging-plant.png",
+    "sourceWidth": 138,
+    "sourceHeight": 226,
+    "bytes": 5550
+  },
+  {
+    "file": "023_keyboard_office-desk-7.webp",
+    "source": "023_keyboard_office-desk-7.png",
+    "sourceArchive": "segments (23).zip",
+    "sourcePath": "office-desk/office-desk-7.png",
+    "sourceWidth": 169,
+    "sourceHeight": 131,
+    "bytes": 3028
+  },
+  {
+    "file": "023_keyboard_round-coffee-table.webp",
+    "source": "023_keyboard_round-coffee-table.png",
+    "sourceArchive": "segments (23).zip",
+    "sourcePath": "round-coffee-table.png",
+    "sourceWidth": 168,
+    "sourceHeight": 117,
+    "bytes": 2746
+  },
+  {
+    "file": "023_keyboard_window-1.webp",
+    "source": "023_keyboard_window-1.png",
+    "sourceArchive": "segments (23).zip",
+    "sourcePath": "window/window-1.png",
+    "sourceWidth": 179,
+    "sourceHeight": 187,
+    "bytes": 2040
+  },
+  {
+    "file": "030_closed-book.webp",
+    "source": "030_closed-book.png",
+    "sourceArchive": "segments (30).zip",
+    "sourcePath": "closed-book.png",
+    "sourceWidth": 776,
+    "sourceHeight": 900,
+    "bytes": 63682
+  },
+  {
+    "file": "147_sky.webp",
+    "source": "147_sky.png",
+    "sourceArchive": "segments - 2026-10-21T020027.883.zip",
+    "sourcePath": "sky.png",
+    "sourceWidth": 1147,
+    "sourceHeight": 597,
+    "bytes": 15510
+  }
+]

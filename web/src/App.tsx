@@ -10,6 +10,7 @@ import { Tour } from './components/Tour';
 import { UpdateModal, type UpdateInfo } from './components/UpdateModal';
 import { TopBar, TickerStrip, FightMeter, Verdicts, Roster, TrakteerPopup } from './components/Panels';
 import { I18nProvider, useI18n } from './i18n';
+import './styles/dashboard-v2.css';
 
 const PriceChart = lazy(() => import('./components/PriceChart').then((m) => ({ default: m.PriceChart })));
 const SetupWizard = lazy(() => import('./components/Setup').then((m) => ({ default: m.SetupWizard })));
@@ -26,7 +27,7 @@ function initialTourOpen() {
 }
 
 function AppInner() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { state, connected, speech, fights, meter, reactions, sceneEvents, command } = useDesk();
   const [selected, setSelected] = useState<AgentId | null>(null);
   const [theme, setTheme] = useState<string>(initialTheme);
@@ -103,7 +104,7 @@ function AppInner() {
 
   if (!state) {
     return (
-      <div className="app">
+      <div className="app dashboard">
         <TopBar state={null} connected={connected} />
         <div className="loading"><div className="loader" /><p>{t('openingOfficeMsg')} <code>npm run dev</code></p></div>
       </div>
@@ -111,8 +112,14 @@ function AppInner() {
   }
   const dis = meter?.disagreement ?? state.debate?.disagreement ?? 0;
   const spark = candles && candles.symbol === sym ? candles.candles.slice(-40).map((c) => c.close) : [];
+  const id = lang === 'id';
+  const amount = (value: number) => new Intl.NumberFormat(id ? 'id-ID' : 'en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(value);
+  const account = state.mode === 'PAPER' ? null : state.venueAccount;
+  const equity = state.mode === 'PAPER' ? state.paper.equity : account?.equity;
+  const deskStatus = state.killed ? (id ? 'Kill switch aktif' : 'Kill switch on') : state.dailyLoss.hit ? (id ? 'Batas rugi harian tercapai' : 'Daily loss stop hit') : !connected ? (id ? 'Menghubungkan kembali' : 'Reconnecting') : state.paused ? (id ? 'Dijeda' : 'Paused') : state.debate ? `${id ? 'Diskusi' : 'Discussing'} ${state.debate.symbol}` : state.auto.running ? (id ? 'Memindai pasar' : 'Scanning markets') : (id ? 'Siap bekerja' : 'Ready at the desk');
   return (
-    <div className="app">
+    <div className="app dashboard">
+      <a className="skip-office" href="#office-workspace">{id ? 'Ke ruang kerja' : 'Skip to workspace'}</a>
       <TopBar
         state={state}
         connected={connected}
@@ -127,16 +134,32 @@ function AppInner() {
         onOpenUpdate={() => setUpdateOpen(true)}
         onOpenTrakteer={() => setTrakteerOpen(true)}
       />
+      <div className="workspace-heading">
+        <div className="workspace-title"><span className="workspace-kicker">{id ? 'Ruang kerja bersama' : 'The shared workspace'}</span><h2>{id ? 'Pasar bergerak. Tim tetap dekat.' : 'A busy market. A grounded team.'}</h2></div>
+        <nav className="workspace-nav" aria-label={id ? 'Area ruang kerja' : 'Workspace areas'}>
+          <a href="#office-workspace">{id ? 'Kantor' : 'Office'}</a>
+          <a href="#desk-team">{id ? 'Tim' : 'Team'}</a>
+          <a href="#market-workspace">{id ? 'Pasar & laporan' : 'Markets & reports'}</a>
+        </nav>
+      </div>
       <TickerStrip state={state} />
-      <main className="layout">
+      <section className="desk-overview" aria-label={id ? 'Ringkasan meja trading' : 'Trading desk overview'}>
+        <div className="overview-metric"><span>{state.mode === 'PAPER' ? (id ? 'Ekuitas simulasi' : 'Paper equity') : (id ? 'Ekuitas venue' : 'Venue equity')}</span><strong>{equity == null ? '—' : amount(equity)} <small>USDT</small></strong><small>{state.mode === 'PAPER' ? (id ? 'Dana simulasi' : 'Simulated funds') : account?.status === 'stale' ? (id ? 'Data venue belum diperbarui' : 'Venue snapshot is stale') : account ? (id ? 'Snapshot venue' : 'Venue account snapshot') : (id ? 'Menunggu data venue' : 'Awaiting venue data')}</small></div>
+        <div className="overview-metric"><span>{id ? 'Dana terlindungi' : 'Safety net'}</span><strong>{amount(state.paper.safetyNet)} <small>USDT</small></strong><small>{id ? 'Dicadangkan dari ukuran order' : 'Reserved from order sizing'}</small></div>
+        <div className="overview-metric"><span>{id ? 'Posisi terkelola' : 'Managed positions'}</span><strong>{state.paper.positions.filter((position) => position.ownership !== 'external').length}<small> / {state.paper.n}</small></strong><small>{id ? 'Slot order terkonfigurasi' : 'Configured order slots'}</small></div>
+        <div className={`overview-metric overview-status${state.killed || state.dailyLoss.hit || !connected ? ' needs-attention' : ''}`}><span>{id ? 'Aktivitas meja' : 'Desk activity'}</span><strong><i aria-hidden="true" />{deskStatus}</strong><small>{state.auto.on ? `${id ? 'Siklus otomatis' : 'Automatic cycle'} · ${state.auto.intervalMin} min` : (id ? 'Diskusi atas permintaan' : 'Debate on demand')}</small></div>
+      </section>
+      <main className="layout" id="office-workspace" tabIndex={-1}>
         <section className="stage">
+          <div className="workspace-section-title"><h2>{id ? 'Di kantor' : 'Around the office'}</h2><span>{id ? 'Pilih karakter untuk berbicara' : 'Select a character to talk'}</span></div>
           <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected}>
             <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
             <Verdicts state={state} compact />
           </Office>
-          <Roster state={state} onSelect={setSelected} />
+          <section className="desk-team" id="desk-team" aria-label={id ? 'Tim agen' : 'Agent team'}><Roster state={state} onSelect={setSelected} /></section>
           <CommandBar state={state} command={(cmd) => command(cmd)} />
-          <div className="market-workspace">
+          <div className="workspace-section-title market-section-title"><h2>{id ? 'Pasar & catatan meja' : 'Markets & desk notes'}</h2><span>{id ? 'Harga, keputusan, dan laporan' : 'Prices, decisions, and reports'}</span></div>
+          <div className="market-workspace" id="market-workspace">
             <DeferredPanel label="Price chart"><PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} /></DeferredPanel>
             <Reports state={state} />
           </div>

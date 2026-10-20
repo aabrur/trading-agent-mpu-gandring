@@ -92,6 +92,7 @@ try {
     assert.deepEqual(problems, []);
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('.office-world img')].every((img) => img.complete && img.naturalWidth > 0));
   await assertOfficeSpace();
   await page.locator('#tool-ops').click();
   const preset = await page.locator('.auto-preset-select').boundingBox();
@@ -116,6 +117,10 @@ try {
   await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connect Wallet'));
   await page.getByRole('button', { name: 'Close wallet', exact: true }).click();
   await page.waitForSelector('.wallet-dropdown', { state: 'detached' });
+  const stopped = structuredClone(snapshot);
+  stopped.dailyLoss.hit = true;
+  socket!.send(JSON.stringify({ type: 'state', payload: stopped }));
+  await page.waitForFunction(() => document.querySelector('.overview-status.needs-attention')?.textContent?.includes('Daily loss stop hit'));
   const hot = structuredClone(snapshot);
   hot.paper.unrealized = -7.5;
   hot.debate = { id: 'test-hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.9, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
