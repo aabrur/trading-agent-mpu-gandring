@@ -1,6 +1,6 @@
 # BOOTSTRAP: steps a Grok Bot follows to set up Trading Agent Mpu Gandring
 
-Follow these steps in order. Use only the name "Trading Agent Mpu Gandring". Keep the owner informed in short plain messages. Never ask for, accept or store an exchange key with withdrawal permission. Collect keys only through the platform secret request card, never in chat, never in a file you write from a chat message.
+Follow these steps in order **on this Grok Bot computer**. Never clone, install, or start the office on the owner's laptop. The owner's laptop can stay off. Use only the name "Trading Agent Mpu Gandring". Keep the owner informed in short plain messages. Never ask for, accept or store an exchange key with withdrawal permission. Collect keys only through the platform secret request card, never in chat, never in a file you write from a chat message.
 
 ## 1. Get the app
 
@@ -102,20 +102,20 @@ Create two routines owned by the Desk Lead.
 
 When the owner asks to see the web UI (the virtual office with the six agents):
 
-1. Start it on your own computer in the background and leave it running:
+1. Start the production office **on this Grok Bot computer** in the background and leave it running. Do not start it on the owner's laptop.
 
    ```bash
    cd /workspace/trading-agent-mpu-gandring-app
-   npm run office:status || (APP_MODE=grokbot nohup npm run office > office.log 2>&1 &)
-   sleep 8 && npm run office:status
+   curl -s http://127.0.0.1:8787/api/health || (APP_MODE=grokbot nohup npm start > office.log 2>&1 &)
+   sleep 3 && curl -s http://127.0.0.1:8787/api/health
    ```
 
-   `npm run office` starts the backend (port 8787) and the UI (port 5173) together. If the office from step 4 (`npm start`) is already running on 8787, stop it first or the backend port is taken; the UI on 5173 talks to whichever backend is on 8787.
-2. Open http://localhost:5173 in your desktop browser, wait until the agents are drawn, and send the owner a screenshot.
+   `npm start` serves the built office on port 8787. Do not use `npm run office` or port 5173 for this mode (those are local-dev on a laptop).
+2. Open http://127.0.0.1:8787 in your desktop browser, wait until the agents are drawn, and send the owner a screenshot.
 3. For live viewing, tell the owner to open your desktop view; the office keeps updating as the agents post `npm run gb -- event ...` lines.
 
-Never expose the office to the internet. It binds locally in LIVE.
+Never expose the office to the public internet. It binds locally in LIVE.
 
 ## 7. Hand over
 
-Tell the owner: the mode and venue, the markets, the money split (Money Trade = balance - safety net, per order = Money Trade / N), the report cadence, how to watch the office (port 8787 on this box), and how to stop: say "kill switch" to the Desk Lead. It runs `curl -s -X POST http://127.0.0.1:8787/api/kill` (cancels, flattens and stops the desk; it stays on across restarts until the owner runs `npm run unkill -- --yes` in a terminal and restarts the office) and pauses the routines. The Desk Lead never releases the kill switch itself. Automatic guards: no-withdraw key check at setup and every start, stop loss on every order, daily loss stop until the next UTC day, safety net untouched, max N positions, no blind retries, reconcile from the exchange, kill switch.
+Tell the owner: the mode and venue, the markets, the money split (Money Trade = balance - safety net, per order = Money Trade / N), the report cadence, how to watch the office (port 8787 on this Grok Bot computer, via your desktop view), and how to stop: say "kill switch" to the Desk Lead. It runs `curl -s -X POST http://127.0.0.1:8787/api/kill` on this computer (cancels, flattens and stops the desk; it stays on across restarts until the owner tells you to run `npm run unkill -- --yes` in this workspace and restart `npm start`) and pauses the routines. The Desk Lead never releases the kill switch itself. Automatic guards: no-withdraw key check at setup and every start, stop loss on every order, daily loss stop until the next UTC day, safety net untouched, max N positions, no blind retries, reconcile from the exchange, kill switch.

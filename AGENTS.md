@@ -2,13 +2,13 @@
 
 You are setting up **Trading Agent Mpu Gandring** for a person on their own computer. Follow these steps in order. Keep the person informed in plain words.
 
-## 0. Setup protocol for any AI agent (Grok Bot, Claude Code, Codex, Cursor, Copilot and others)
+## 0. Setup protocol for any AI agent (Grok Bot, Muse Code, Claude Code, Codex, Cursor, Copilot and others)
 
 The person brings their **own** venue account and keys. Nothing from the maintainer is used or needed. Guide them simply:
 
 1. **Run the interview, one question at a time.** "Which venue?" (show the list from `docs/setup/README.md`; Bybit is the only non-experimental one). "Which mode?" Always start in **PAPER** (no key), then **TESTNET**, **LIVE** last and only when they ask for it.
 2. **Give one direct link per step, and wait.** Print the steps with `npm run setup -- guide <venue> --network testnet` (or `--network mainnet` for LIVE) and hand them over one at a time: sign-up, test funds, the key / API wallet / agent / subkey page, the permissions to tick. Say "sign in first" for pages that need it. Wait for "done" before the next step.
-3. **Keys go on the person's computer, never into the chat.** They type them into `npm run setup` (hidden prompts), the office Setup wizard (masked inputs, `http://localhost:5173/#setup`), or straight into `.env`. On platforms with a secret mechanism (Grok Bot secret request cards, your CI/secret store), use that, with the exact `.env` names from the guide. If a key appears in the chat anyway, tell them to revoke it and make a new one.
+3. **Keys never go into the chat.** Local mode: they type them into `npm run setup` (hidden prompts), the office Setup wizard (masked inputs, `http://localhost:5173/#setup`), or straight into `.env` on **this** computer. Grok Bot mode: only the Grok Bot secret request card on **Grok Bot's** computer, with the exact `.env` names from the guide. If a key appears in the chat anyway, tell them to revoke it and make a new one.
 4. **Refuse** main wallet private keys, seed phrases and any key that can withdraw or transfer. Only delegated trade-only keys: CEX API key with trading only, Hyperliquid / Aster agent wallet, dYdX API Trading Key, Paradex subkey, Orderly key (read,trading). The app refuses them too; never work around it.
 5. **Hyperliquid and Aster:** offer Connect wallet (MetaMask or Rabby, one signature approving a fresh trade-only agent made on their computer). It works in local mode with the office on 127.0.0.1.
 6. **Verify:** run `npm run doctor`. It must say the key can trade and cannot withdraw. Then switch mode (`--trading-mode testnet`; LIVE also needs `--confirm-live "I understand LIVE trades real money"` typed by the person), restart, and after the first order **confirm the stop loss is resting on the exchange** (an open trigger order on the venue; `npm run gb -- positions` shows the stop). If it is not there, the desk closes the position; tell the person.
@@ -47,7 +47,7 @@ Everything can be done in the terminal or in the office, through the same code (
 
 The desk has one supervisor role, the **Desk Lead** (`server/channels/supervisor.ts`). It checks health, positions, stops, the daily loss cap, the safety net and errors every `SUPERVISOR_INTERVAL_MIN`, and sends alerts and scheduled reports to the chat channel the person chose ([docs/channels.md](docs/channels.md)). From chat, allowlisted ids can send only `status`, `report`, `positions`, `kill`.
 
-An external AI agent can play the same head-supervisor role from outside: Grok Bot, Claude Code, Codex, Cursor, Cline, Kilo Code, Google Antigravity, Hermes Agent (Nous Research), OpenClaw, or any agent that can run a terminal command or an HTTP GET on the desk's computer. This repo ships no plugin or MCP server for any of them and does not guess their config formats. Use what every one of them has: **a shell**. If your agent only speaks MCP, give it a shell or fetch MCP server from its own catalog and point it at the commands below.
+An external AI agent can play the same head-supervisor role from outside: Grok Bot, Muse Code, Claude Code, Codex, Cursor, Cline, Kilo Code, Google Antigravity, Hermes Agent (Nous Research), OpenClaw, or any agent that can run a terminal command or an HTTP GET on the desk's computer. This repo ships no plugin or MCP server for any of them and does not guess their config formats. Use what every one of them has: **a shell**. If your agent only speaks MCP, give it a shell or fetch MCP server from its own catalog and point it at the commands below.
 
 **Poll (read only, on the desk's computer):**
 
@@ -202,7 +202,7 @@ Only if the person asks. Follow [docs/grokbot-bridge.md](docs/grokbot-bridge.md)
 ## 7b. Learning, Grok Bot install, agent CLI
 
 - The proaktif-agent scan and self-improving reflection run on their own in the auto loop (`LEARNING=on`, `PROACTIVE_SCAN=on` by default). Do not turn them off unless the person asks. Lessons live in `data/learnings.json`; never edit them to loosen a guard (the app refuses such lessons and drops them on load).
-- Installing inside Grok Bot: follow [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md). No model keys are needed in that mode. Exchange keys only through the platform secret request card, never with `--keys-from-env` into `.env` there.
+- Installing inside Grok Bot: follow [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md) **on Grok Bot's computer**. No model keys are needed in that mode. Exchange keys only through the platform secret request card, never with `--keys-from-env` into `.env` there. Do not run that install on the owner's laptop.
 - Agents can trade and report through `npm run gb -- <cmd> --json` (see [docs/grokbot-mode.md](docs/grokbot-mode.md)). In the Grok Bot trading loop, run `gb scan` first and `gb lessons add` last, every cycle.
 
 ## 8. Hand over

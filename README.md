@@ -20,19 +20,20 @@ Screenshots are taken in PAPER mode with the keyless `mock` provider and live pu
 
 | | Grok Bot mode | Local mode |
 | --- | --- | --- |
+| Where it runs | Grok Bot's computer. Your laptop can stay off | This computer |
 | Who plays the agents | Your own Grok Bot trading team | Model APIs or local CLI agents you pick, per agent |
-| How turns arrive | `POST /api/agent-event` with a shared secret | The server calls the models or local CLIs |
-| Commands and verdicts out | Grok Bot webhook bridge | Optional, same bridge |
-| Setup | `npm run setup -- --yes --app-mode grokbot --generate-agent-secret` | `mpu setup` or `npm run setup` |
-| Guide | [docs/grokbot-mode.md](docs/grokbot-mode.md) | [docs/local-mode.md](docs/local-mode.md) |
+| How turns arrive | Grok Bot employees post through `npm run gb` on that machine | The server calls the models or local CLIs |
+| Commands and verdicts out | Group chat and reports on Grok Bot | Optional Grok Bot webhook bridge |
+| Setup | Grok Bot follows [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md) | `mpu setup` or `npm run setup` |
+| Guide | [grokbot/INSTALL.md](grokbot/INSTALL.md) | [docs/local-mode.md](docs/local-mode.md) |
 
 Both modes share the office, the risk gate, the money split and the paper book.
 
 ## Install in Grok Bot
 
-**One click:** open the [Trading Agent Mpu Gandring template](https://x.ai/bot/fX91UALWOlFMk_Oj2LBjn) and add it to your Grok Bot. It creates the six employees and their group, then asks for the one-time setup.
+**One click:** open the [Trading Agent Mpu Gandring template](https://x.ai/bot/fX91UALWOlFMk_Oj2LBjn) and add it to your Grok Bot. It creates the six employees and their group, then asks for the one-time setup. Everything runs on Grok Bot's computer.
 
-No model API keys needed: six Grok Bot agents are the employees and the brains, in one group chat named "Trading Agent Mpu Gandring". A template bot or your own Grok Bot follows [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md): it clones this repo, creates the six agents from [grokbot/roles/](grokbot/roles/), saves the [proaktif-agent](grokbot/skills/proaktif-agent.md) and [self-improving](grokbot/skills/self-improving.md) skills, asks you the one-time setup questions with the exchange key entered only through the secret request card, and starts a 15 minute trading loop plus reports. Start here: [grokbot/INSTALL.md](grokbot/INSTALL.md).
+No model API keys needed: six Grok Bot agents are the employees and the brains, in one group chat named "Trading Agent Mpu Gandring". A template bot or your own Grok Bot follows [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md) **on its own computer**: it clones this repo, creates the six agents from [grokbot/roles/](grokbot/roles/), saves the [proaktif-agent](grokbot/skills/proaktif-agent.md) and [self-improving](grokbot/skills/self-improving.md) skills, asks you the one-time setup questions with the exchange key entered only through the secret request card, and starts a 15 minute trading loop plus reports. Do not run that path on your laptop. Start here: [grokbot/INSTALL.md](grokbot/INSTALL.md).
 
 ## The desk learns in both modes
 
@@ -45,9 +46,9 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 ## What it does
 
 - **A real desk, not one bot.** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager and Execution Trader each have a job, a personality and their own model. The Desk Lead also keeps the trade journal: it grades every closed trade, writes one lesson and owns the periodic report.
-- **Bring your own brains.** Every agent can run on a different provider across 10 API providers with 20 AI models each: xAI, OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Groq, Mistral, Together and Fireworks, or a signed-in local agent CLI on your computer: Codex, Claude Code, Pi, Kimi Code, Kilo, Cline and Grok Build. Mix them so the arguments get interesting, or use a single provider API key across all six agents with different models.
+- **Bring your own brains.** Every agent can run on a different provider across 10 API providers with 20 AI models each: xAI, OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Groq, Mistral, Together and Fireworks, or a signed-in local agent CLI on your computer: Codex, Claude Code, Muse Code, Pi, Kimi Code, Kilo, Cline and Grok Build. Mix them so the arguments get interesting, or use a single provider API key across all six agents with different models.
 - **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
-- **Optional Jev decision sidecar.** TypeSafe Jev (`typesafe/jev-1.14`) over OpenRouter can classify market regime, news relevance, whale significance and debate conflicts. Off by default. Bring your own OpenRouter key. Shadow records only. Assist may enrich PAPER/TESTNET analysis. Jev never places, cancels or resizes orders. TypeSafe Direct is not included.
+- **Optional Jev decision sidecar.** TypeSafe Jev (`typesafe/jev-1.14`) over OpenRouter can classify market regime, news relevance, whale significance and debate conflicts. Off by default. Bring your own OpenRouter key. Shadow records only and does not block trading. Assist may enrich PAPER, TESTNET and LIVE analysis after an explicit Setup authorization. Jev never places, cancels or resizes orders. TypeSafe Direct is not included.
 - **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
 - **Risk can only tighten.** The Risk Manager can approve, reduce or reject. Hard caps in code clip leverage, stop distance and loss per trade, whatever any model says.
 - **Boss's money split.** You set a total balance, a safety net and N open orders from 1 to 4. Money Trade = balance minus safety net, and each order gets Money Trade / N. The safety net is never touched.
@@ -94,7 +95,7 @@ Save each setup section, then **Apply saved settings and restart**. **Connect Wa
 
 - **By hand, in a terminal:** `npm install`, then `npm run setup`. It asks the venue and mode, shows the direct links one step at a time for sign-up, test funds, key page and permissions, reads keys with hidden input into `.env` with chmod 600, offers Connect wallet for Hyperliquid and Aster, and runs the doctor check.
 - **By hand, in the office:** `npm run dev`, open http://localhost:5173 and click **Setup** at the top right. Same steps, same links, masked key inputs, doctor button, and mode switch where LIVE needs a typed confirmation.
-- **With your own AI agent** such as Grok Bot, Claude Code, Codex, Antigravity, Cursor or Copilot: point it at [AGENTS.md](AGENTS.md) with pointers in `CLAUDE.md`, `.cursor/rules/` and `.github/copilot-instructions.md`. It runs the interview, gives you one link per step and never asks for keys in chat. Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md).
+- **With your own AI agent** such as Grok Bot, Muse Code, Claude Code, Codex, Antigravity, Cursor or Copilot: Grok Bot follows [grokbot/INSTALL.md](grokbot/INSTALL.md) on Grok Bot's computer. Muse Code and other local CLIs follow [AGENTS.md](AGENTS.md) (Muse: [docs/muse-code.md](docs/muse-code.md)). Pointers live in `CLAUDE.md`, `MUSE.md`, `.cursor/rules/` and `.github/copilot-instructions.md`. They run the interview, give you one link per step and never ask for keys in chat.
 - **Chat channel:** the Desk Lead sends alerts and reports to Telegram, Discord, Slack or WhatsApp through official APIs only and accepts only `status`, `report`, `positions`, `kill` from allowlisted ids. Run `npm run channels -- setup telegram` or open Setup, section 7. Details: [docs/channels.md](docs/channels.md). MiChat has no official bot API, so it is not supported.
 - **Per-venue guides** with testnet and mainnet sections: [docs/setup/](docs/setup/README.md) covering [Bybit](docs/setup/bybit.md), [Binance](docs/setup/binance.md), [OKX](docs/setup/okx.md), [Hyperliquid](docs/setup/hyperliquid.md), [Aster](docs/setup/aster.md), [dYdX](docs/setup/dydx.md), [Paradex](docs/setup/paradex.md) and [Orderly](docs/setup/orderly.md). Print one in the terminal: `npm run setup -- guide bybit`.
 
@@ -104,7 +105,7 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 
 | Action | CLI | Office web UI |
 | --- | --- | --- |
-| Start the desk and open the web UI | `mpu` or `npm run mpu` | Opens automatically; `mpu setup` opens `#setup` |
+| Start the desk and open the web UI | `mpu` (after `npm link`) or `npx mpu` | Opens automatically; `mpu setup` opens `#setup` |
 | Setup wizard: desk, models, local agents, venue, mode | `npm run setup` | **Setup** button at top right (left-sidebar menu), or open `/#setup` |
 | Direct links for a venue, step by step | `npm run setup -- guide <venue> [--network mainnet]` | Setup > Exchange & Safety |
 | Enter keys into `.env` with chmod 600 | `npm run setup` hidden prompts | Setup > Exchange & Safety masked inputs |
@@ -112,7 +113,7 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 | Live venue USDT balance + multi-country currency converter | `npm run gb -- account` | Top bar balance pill (`USDT`, `IDR`, `USD`, `EUR`, etc.), Portfolio panel (`Paper book`), & **Connect Wallet** modal |
 | Auto Trade ON/OFF + Token Picker + Presets (Default, Balance, Profit, High Risk) | `npm run trade` | **Desk Ops > Auto Trade** card (Presets dropdown, `Start Auto` / `Stop`, `Max Pos (N)`, token chips, `▶ Run now`) |
 | Interactive onboarding tour | N/A | Launches on every start, or click **? Tutorial** in top bar |
-| Optional Jev decision sidecar | Setup > Models, `JEV_ENABLED=true` | Shadow records only. Assist may enrich PAPER/TESTNET. Never places orders |
+| Optional Jev decision sidecar | Setup > Models, `JEV_ENABLED=true` | Shadow does not block. LIVE ASSIST needs Setup authorization. Never places orders |
 | Switch UI language (`EN` default / `ID`) | N/A | **EN ▾ ID** toggle in top bar |
 | Check version (`v0.0.0.3.3`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.3 · Update ↑** button in top bar |
 | Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup > Exchange & Safety **Run doctor** |
@@ -174,7 +175,7 @@ npm run debate -- --symbol SOLUSDT --json     # machine readable verdict
 
 | Command | What it does |
 | --- | --- |
-| `mpu` / `npm run mpu` | Builds if needed, starts the desk, and opens the web UI; `mpu setup` opens `#setup`, `mpu --no-open` skips opening the browser |
+| `mpu` / `npx mpu` | Builds if needed, starts the desk, and opens the web UI; `mpu setup` opens `#setup`, `mpu --no-open` skips opening the browser |
 | `npm run dev` | Backend Express + WebSocket and frontend Vite + React together |
 | `npm run build` | Compiles the server and builds the UI into `dist/` |
 | `npm start` | Runs the built server, which also serves the built UI on port 8787 |
@@ -407,7 +408,7 @@ web/               Vite + React virtual office (Tour.tsx interactive guide, Upda
 skills/            desk role notes for agents
 data/sample/       sample news with a planted injection line
 tests/             vitest suite
-docs/              screenshots, money split, Grok Bot bridge and mode, local mode, local agents, live trading, venues
+docs/              screenshots, money split, Grok Bot, Muse Code, local mode, local agents, live trading, venues
 ```
 
 ## Setting it up with an agent
@@ -431,7 +432,7 @@ Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang
 4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia tombol hijau **Connect Wallet** khusus DEX, tombol **Setup**, tombol **? Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.3.3** untuk cek & klik update versi secara langsung, serta tombol **EN ▾ ID** untuk mengganti bahasa tampilan antara Bahasa Inggris dan Bahasa Indonesia. Tersedia pula 4 preset risiko trading bawaan (Default, Balance, Profit, High Risk High Reward) yang dapat dipilih langsung dari Setup atau dropdown ringkas di atas tombol Cycle now pada Desk Ops Auto Trade.
 5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order dari 1 sampai 4. Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss. Anda juga bisa memilih token perp apa saja lewat dropdown Watchlist, Popular Perps, atau `+ Custom token...` di Price Chart, Command Bar, dan Desk Ops.
 6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `mpu setup` atau `npm run setup` atau klik tombol **Setup** di kanan atas office: pilih venue dan mode, ikuti link langsung satu per satu untuk daftar, dana tes, halaman pembuatan key dan izin yang dicentang, lalu ketik key di input tersembunyi. Key masuk ke `.env` dengan chmod 600, tidak pernah ke chat. Izin: trade saja, withdraw dan transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Untuk DEX (`Hyperliquid`, `Aster`, `dYdX v4`, `Paradex`, `Orderly`) bisa melalui tombol **Connect Wallet** yang juga menampilkan saldo USDT secara live serta tombol **Halaman deposit resmi** untuk setiap DEX/CEX. Setelah itu jalankan `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
-7. Pakai agen AI sendiri seperti Grok Bot, Claude Code, Codex, Antigravity, Cursor atau Copilot? Suruh dia membaca [AGENTS.md](AGENTS.md) dan [docs/local-agents.md](docs/local-agents.md).
+7. Pakai agen AI sendiri? Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md), jalan di komputer Grok Bot, bukan laptop kamu. Muse Code: [docs/muse-code.md](docs/muse-code.md) dan [MUSE.md](MUSE.md). Claude Code, Codex, Antigravity, Cursor atau Copilot: [AGENTS.md](AGENTS.md) dan [docs/local-agents.md](docs/local-agents.md).
 8. Mau notifikasi di chat? Jalankan `npm run channels -- setup telegram` atau Discord, Slack dan WhatsApp Cloud API resmi, atau buka **Setup > Channels**. Desk Lead mengirim peringatan dan laporan. Dari chat hanya bisa `status`, `report`, `positions`, `kill`; buka order, pindah ke LIVE, un-kill dan ganti key tidak bisa dari chat. MiChat tidak punya API bot resmi, jadi tidak didukung. Panduan: [docs/channels.md](docs/channels.md).
 
 Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `set n 3`, `set safety 150`, `close all`, `be more cautious`.
