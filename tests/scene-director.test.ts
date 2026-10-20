@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ambientActivity, eventActivity, route, blocked, directScene, verdictReactions } from '../web/src/sceneDirector';
+import { ambientActivity, eventActivity, route, blocked, directScene, verdictReactions, heatedDebateFight, officePnl } from '../web/src/sceneDirector';
 import { AGENT_ORDER } from '../web/src/types';
 import type { DeskState, Verdict } from '../web/src/types';
 import { Desk } from '../server/desk';
@@ -13,6 +13,40 @@ function sceneFixture() {
 }
 
 describe('office director', () => {
+  it('repeats hot opposing rounds without changing the debate or trading settings', () => {
+    const { state } = sceneFixture();
+    state.debate = { id: 'hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.8, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
+    state.agents.market.stance = 'LONG'; state.agents.research.stance = 'SHORT';
+    const before = structuredClone(state);
+    expect(heatedDebateFight(state, 0)).toMatchObject({ from: 'market', to: 'research' });
+    expect(heatedDebateFight(state, 2600)).toBeNull();
+    expect(heatedDebateFight(state, 4800)).toMatchObject({ from: 'research', to: 'market' });
+    expect(state).toEqual(before);
+    state.fightThreshold = 0.9;
+    expect(heatedDebateFight(state, 4800)).toBeNull();
+  });
+  it('does not stage fights for calm, one-sided, stopped or risk-gate activity', () => {
+    const { state } = sceneFixture();
+    expect(heatedDebateFight(state, 0)).toBeNull();
+    state.debate = { id: 'hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 1, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
+    state.agents.market.stance = 'LONG'; state.agents.research.stance = 'SHORT';
+    for (const patch of [{ killed: true }, { paused: true }, { debate: { ...state.debate, phase: 'risk gate' } }, { debate: { ...state.debate, disagreement: 0.1 } }, { debate: { ...state.debate, camps: { bull: ['market'] as const, bear: [], neutral: [] } } }]) {
+      expect(heatedDebateFight({ ...state, ...patch } as DeskState, 0)).toBeNull();
+    }
+  });
+  it('uses exchange open PnL in LIVE and labels local or stale estimates', () => {
+    const { state } = sceneFixture();
+    state.paper.unrealized = 12;
+    expect(officePnl(state)).toEqual({ value: 12, source: 'Paper' });
+    state.mode = 'LIVE';
+    expect(officePnl(state)).toEqual({ value: 12, source: 'Local estimate' });
+    state.venueAccount = { equity: 100, available: 80, unrealized: -3, at: 1, status: 'confirmed' };
+    expect(officePnl(state)).toEqual({ value: -3, source: 'Exchange' });
+    state.venueAccount.status = 'stale';
+    expect(officePnl(state).source).toContain('stale');
+    state.venueAccount.unrealized = Number.NaN;
+    expect(officePnl(state).value).toBeNull();
+  });
   it('never lets a partial or unknown verdict override execution tracking with cheers', () => {
     const verdict: Verdict = { id: 'v', symbol: 'BTCUSDT', action: 'OPEN_LONG', riskDecision: 'APPROVE', executed: true, reason: 'test', disagreement: 0, camps: { bull: ['market'], bear: [], neutral: [] }, order: { status: 'partial', side: 'LONG', qty: 1, entry: 100, stop: 98, tp: null, margin: 50, leverage: 2 }, example: true, at: 1000 };
     expect(Object.values(verdictReactions(verdict))).not.toContain('cheer');

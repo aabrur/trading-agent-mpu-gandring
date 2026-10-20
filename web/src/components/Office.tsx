@@ -5,9 +5,10 @@ import { AGENT_ORDER } from '../types';
 import { Bot, type Face, type Pose } from './Bot';
 import { KerisBlade } from './Keris';
 import { Sparkline } from './MiniCharts';
-import { SEATS, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
+import { SEATS, WORKSTATIONS, FIGHT_STAGE, SPECTATORS, heatedDebateFight, officePnl, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
 import { useSceneDirector } from '../useSceneDirector';
 import { useI18n } from '../i18n';
+import { fmt } from './format';
 
 const STATUS_LABEL: Record<string, string> = { idle: 'coffee break', reading: 'reading charts', thinking: 'thinking', typing: 'typing', arguing: 'arguing', fighting: 'fighting', executing: 'tracking execution', journaling: 'journaling' };
 const POW_WORDS = ['GEBUK!', 'POW!', 'BONK!', 'DUAR!', 'PLAK!', 'BLETAK!', 'BAM!', 'AMPUN!', 'HAJAR!', 'JEDER!'];
@@ -26,12 +27,20 @@ interface Props {
   onSelect: (id: AgentId) => void;
 }
 
-// The puncher charges right into the target's space so both tumble inside the cartoon dust cloud.
-function approach(f: { x: number; y: number }, t: { x: number; y: number }, gap = 5.5) {
-  const side = f.x > t.x ? 1 : -1;
-  let x = t.x + side * gap;
-  if (x < 6 || x > 94) x = t.x - side * gap;
-  return { x, y: t.y };
+function useOfficeFight(state: DeskState, fights: Fight[]) {
+  const [clock, setClock] = useState({ now: 0, reduced: true, hidden: true });
+  const debating = Boolean(state.debate);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setClock({ now: Date.now(), reduced: media.matches, hidden: document.hidden });
+    update();
+    const timer = debating ? window.setInterval(update, 500) : undefined;
+    media.addEventListener('change', update);
+    document.addEventListener('visibilitychange', update);
+    return () => { window.clearInterval(timer); media.removeEventListener('change', update); document.removeEventListener('visibilitychange', update); };
+  }, [debating]);
+  if (!debating || ['opening', 'reading', 'verdict', 'risk gate', 'done'].includes(state.debate?.phase ?? '') || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
+  return fights.at(-1) ?? heatedDebateFight(state, clock.now) ?? undefined;
 }
 
 function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | undefined, inDebate: boolean, activeFight?: Fight): { pose: Pose; face: Face } {
@@ -53,9 +62,10 @@ function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | un
 }
 
 
-function useMovement(pos: Point, desks: Point[]) {
+function useMovement(pos: Point, desks: Point[], staged = false) {
   const anchor = useRef<HTMLDivElement>(null);
   const previous = useRef(pos);
+  const wasStaged = useRef(false);
   const [walk, setWalk] = useState({ on: false, left: false });
   const geometry = desks.map((d) => `${d.x},${d.y}`).join(';');
   useEffect(() => {
@@ -63,6 +73,13 @@ function useMovement(pos: Point, desks: Point[]) {
     if (!el) return;
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const from = previous.current;
+    if (staged || wasStaged.current) {
+      wasStaged.current = staged;
+      previous.current = pos;
+      el.style.transform = `translate(${pos.x}%, ${pos.y}%)`;
+      setWalk({ on: false, left: false });
+      return;
+    }
     if (from.x === pos.x && from.y === pos.y) { el.style.transform = `translate(${pos.x}%, ${pos.y}%)`; return; }
     const path = route(from, pos, desks);
     const target = path.at(-1)!;
@@ -88,20 +105,19 @@ function useMovement(pos: Point, desks: Point[]) {
       animation.cancel(); media.removeEventListener('change', reduce);
       document.removeEventListener('visibilitychange', reduce);
     };
-  }, [pos.x, pos.y, geometry]);
+  }, [pos.x, pos.y, geometry, staged]);
   return { anchor, walk };
 }
 
 function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selected, activeFight, onSelect }: { a: AgentView; pos: Point; activity: Activity; desks: Point[]; sp?: Speech; fight?: Fight; reaction?: Reaction; inDebate: boolean; selected: boolean; activeFight?: Fight; onSelect: () => void }) {
-  const { t } = useI18n();
-  const { anchor, walk } = useMovement(pos, desks);
+  const { anchor, walk } = useMovement(pos, desks, Boolean(activeFight));
   let { pose, face } = fight || reaction || activeFight ? poseFor(a, fight, reaction, inDebate, activeFight) : activity;
 
   if (walk.on && !fight) pose = 'walk';
   // face the opponent when punching, face travel direction when walking
   let flip = false;
   if (fight) {
-    const hit = SEATS[fight.to], from = approach(SEATS[fight.from], hit);
+    const hit = FIGHT_STAGE.to, from = FIGHT_STAGE.from;
     if (fight.from === a.id) flip = hit.x < from.x;
     else if (fight.to === a.id) flip = from.x < hit.x;
   }
@@ -111,22 +127,15 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
   const isPunching = fight?.from === a.id;
   const isHit = fight?.to === a.id;
   return (
-    <div ref={anchor} className="agent-anchor" style={{ zIndex: Math.round(pos.y * 10) + (sp ? 600 : 0) }}>
+    <div ref={anchor} className="agent-anchor" data-agent={a.id} style={{ zIndex: Math.round(pos.y * 10) + 100 }}>
     <button
       className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${isPunching ? 'is-punching' : ''} ${isHit ? 'is-hit' : ''} ${(isPunching || isHit) ? 'in-dust-brawl' : ''} ${!inDebate && pose === 'idle' ? 'at-desk' : ''} ${pos.y < 48 ? 'bubble-below' : ''} ${pos.x < 25 ? 'bubble-left' : pos.x > 75 ? 'bubble-right' : ''}`}
       style={{ zIndex: Math.round(pos.y * 10) + (sp ? 400 : 0) + (isPunching || isHit ? 250 : 0), ['--agent' as string]: a.color }}
       onClick={onSelect}
       aria-label={`${a.name}, ${walk.on ? 'walking' : activity.label}`}
     >
-      {sp && (
-        <div className={`bubble ${sp.done ? 'done' : 'streaming'}`}>
-          <b className="bubble-name">{a.name}</b>
-          <span>{sp.text.length > 150 ? `${sp.text.slice(0, 147)}...` : sp.text}</span><small className="bubble-more">{t('bubbleMoreText')}</small>{!sp.done && <i className="caret" />}
-          {sp.example && <em className="tag-example">EXAMPLE</em>}
-        </div>
-      )}
       {a.status === 'thinking' && !sp && <div className="think"><i /><i /><i /></div>}
-      <div className={`bot-wrap ${flip ? 'flip' : ''}`}><Bot id={a.id} size={84} pose={pose} face={face} talking={talking} /></div>
+      <div className={`bot-wrap ${flip ? 'flip' : ''}`}><Bot id={a.id} size={62} pose={pose} face={face} talking={talking} /></div>
       <div className="nametag">
         <strong>{a.name}</strong>
         <span className="status"><i className="dot" />{walk.on ? 'walking' : activity.label}</span>
@@ -143,21 +152,22 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   const inDebate = !!state.debate;
   const heat = Math.min(1, disagreement);
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
-  const visible = new Set((Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at).slice(0, 1).map((s) => s.agent));
-
-  const displayFights = fights.slice(-1);
-  const activeFight = displayFights.at(-1);
+  const latestSpeech = (Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at)[0];
+  const activeFight = useOfficeFight(state, fights);
+  const displayFights = activeFight ? [activeFight] : [];
+  const pnl = officePnl(state);
 
   const positions = useMemo(() => {
     const out = {} as Record<AgentId, { x: number; y: number }>;
     for (const id of AGENT_ORDER) {
-      const a = state.agents[id];
+      const desk = WORKSTATIONS[id];
       // at the desk they stand beside it, on the side that faces the room
-      out[id] = inDebate ? { ...SEATS[id] } : { x: a.desk.x + (a.desk.x <= 50 ? 7.8 : -7.8), y: a.desk.y + 5.5 };
+      out[id] = inDebate ? { ...SEATS[id] } : { x: desk.x + (desk.x <= 50 ? 7.8 : -7.8), y: desk.y + 5.5 };
     }
     if (inDebate && activeFight) {
-      const f = SEATS[activeFight.from], t = SEATS[activeFight.to];
-      out[activeFight.from] = approach(f, t);
+      for (const id of AGENT_ORDER) out[id] = { ...SPECTATORS[id] };
+      out[activeFight.from] = FIGHT_STAGE.from;
+      out[activeFight.to] = FIGHT_STAGE.to;
     }
     for (const id of AGENT_ORDER) if ((!inDebate || (!activeFight && activities[id].partner)) && activities[id].destination) out[id] = activities[id].destination!;
     return out;
@@ -165,7 +175,13 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
 
   return (
     <div className={`office ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
+      <output className="office-pnl" aria-label={`Open PnL, ${pnl.source}`} title="Unrealized PnL of open positions in USDT. Local estimates are not confirmed exchange results.">
+        <span>Open PnL · {state.mode}</span>
+        <strong className={pnl.value == null ? '' : pnl.value >= 0 ? 'up' : 'down'}>{pnl.value == null ? 'Unavailable' : `${pnl.value >= 0 ? '+' : ''}${fmt(pnl.value)}`} <small>USDT</small></strong>
+        <small>{pnl.source}</small>
+      </output>
       <div className="office-hud">{children}</div>
+      <div className="office-world">
       <svg className="office-scene" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden>
         <defs>
           <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--sky-top)" /><stop offset="1" stopColor="var(--sky-bottom)" /></linearGradient>
@@ -283,10 +299,11 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       {/* desks */}
       {AGENT_ORDER.map((id) => {
         const a = state.agents[id];
+        const desk = WORKSTATIONS[id];
         const busy = !inDebate && a.status !== 'idle';
         return (
-          <div key={`desk-${id}`} className={`desk ${busy ? 'is-busy' : ''}`} style={{ left: `${a.desk.x}%`, top: `${a.desk.y}%`, zIndex: Math.round(a.desk.y * 10) + 5, ['--agent' as string]: a.color }}>
-            <div className="monitor"><div className="screen"><Sparkline values={spark} up={up} /></div></div>
+          <div key={`desk-${id}`} data-desk={id} className={`desk ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, ['--agent' as string]: a.color }}>
+            <div className={`monitor${id === 'execution' ? ' monitor-execution' : ''}`}><div className="screen"><Sparkline values={spark} up={up} /></div></div>
             <div className="desk-top"><i className="mug" /><i className="keyboard" />{id === 'research' && <i className="papers" />}{id === 'lead' && <i className="papers" />}{(id === 'lead' || id === 'strategist') && <i className="desk-plant" />}</div>
             <div className="desk-front"><span>{a.name}</span></div>
           </div>
@@ -295,18 +312,19 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
 
       {AGENT_ORDER.map((id) => {
         const f = activeFight && (activeFight.from === id || activeFight.to === id) ? activeFight : undefined;
-        return <Agent key={id} a={state.agents[id]} pos={positions[id]} activity={activities[id]} desks={AGENT_ORDER.map((id) => state.agents[id].desk)} sp={visible.has(id) ? speech[id] : undefined} fight={f} reaction={reactions[id]} inDebate={inDebate} selected={selected === id} activeFight={activeFight} onSelect={() => onSelect(id)} />;
+        return <Agent key={id} a={state.agents[id]} pos={positions[id]} activity={activities[id]} desks={AGENT_ORDER.map((id) => WORKSTATIONS[id])} sp={latestSpeech?.agent === id ? latestSpeech : undefined} fight={f} reaction={reactions[id]} inDebate={inDebate} selected={selected === id} activeFight={activeFight} onSelect={() => onSelect(id)} />;
       })}
 
 
       {displayFights.map((f) => {
-        const to = SEATS[f.to], from = approach(SEATS[f.from], to);
+        const to = FIGHT_STAGE.to, from = FIGHT_STAGE.from;
         const cx = (from.x + to.x) / 2;
         const cy = to.y - 12;
-        const word1 = POW_WORDS[f.id % POW_WORDS.length];
-        const word2 = POW_WORDS[(f.id + 3) % POW_WORDS.length];
+        const word1 = POW_WORDS[Math.abs(f.id) % POW_WORDS.length];
+        const word2 = POW_WORDS[(Math.abs(f.id) + 3) % POW_WORDS.length];
         return (
           <div key={f.id} className="brawl-zone" style={{ left: `${cx}%`, top: `${cy}%`, ['--i' as string]: f.intensity }}>
+            <div className="brawl-art">
             <div className="brawl-dust-cloud" aria-hidden="true">
               <i className="smoke-puff p1" />
               <i className="smoke-puff p2" />
@@ -326,10 +344,19 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
             <div className="pow pow-sub">
               <span>{word2}</span>
             </div>
+            </div>
           </div>
         );
       })}
 
+      </div>
+      <div className="office-dialogue" aria-live="polite" aria-atomic="true">
+        {latestSpeech && <button onClick={() => onSelect(latestSpeech.agent)} title={t('bubbleMoreText')}>
+          <strong style={{ ['--agent' as string]: state.agents[latestSpeech.agent].color }}>{state.agents[latestSpeech.agent].name}{latestSpeech.example && <em className="tag-example">EXAMPLE</em>}</strong>
+          <span>{latestSpeech.text}</span>
+          <small>{t('bubbleMoreText')}</small>
+        </button>}
+      </div>
     </div>
   );
 }

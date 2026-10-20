@@ -52,6 +52,7 @@ export interface Finding { level: 'ok' | 'info' | 'warn' | 'alert'; code: string
 export interface RoleScore { role: string; name: string; calls: number; right: number; wrong: number; note: string }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface Report {
+  monitoring?: { symbols: string[]; killed: boolean; running: boolean; current: string | null; previous: string | null };
   opportunityReviews?: { observed: number; pending: number; unavailable: number; items: { id: string; symbol: string; side: string | null; reasonKind: string; reason: string; status: string; directionalMovePct: number | null; reference: { source: string } }[] };
   accounting?: { source: string; status: string; observedAt: number | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: number | null; funding: number | null; financialEvidence?: { coverage: string; confirmedNetRealized: number | null; unattributedRecords: number; observedAt: number | null } };
   id: string; at: number; since: number; mode: string; exchange: string | null;

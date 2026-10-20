@@ -1,0 +1,145 @@
+// Offline browser checks. Every API and WebSocket response is simulated; no trading server is contacted.
+import { chromium } from 'playwright-core';
+import { existsSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { Desk } from '../server/desk.js';
+import { loadConfig } from '../server/config.js';
+import { makeCaller } from '../server/providers/index.js';
+import { buildReport } from '../server/reports.js';
+import type { WebSocketRoute } from 'playwright-core';
+
+const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_PROVIDER: 'mock', AUTO_TRADING: 'off' });
+const desk = new Desk(cfg, makeCaller(cfg), { reportsDir: null, learningsPath: null });
+const at = Date.now();
+for (let i = 0; i < 50; i++) desk.activity.push({ at: at - i - 1, kind: 'skipped', symbol: 'ETHUSDT', detail: 'Waiting for a closed candle above resistance.' });
+const report = buildReport(desk, at - 60_000, at);
+desk.reports = Array.from({ length: 8 }, (_, i) => ({ ...report, id: `report-${i}`, at: at - i * 60_000 }));
+const snapshot = desk.snapshot();
+snapshot.verdicts = [{ id: 'preview-hold', at, symbol: 'ETHUSDT', action: 'HOLD', riskDecision: 'REJECT', executed: false, reason: 'Waiting for a closed candle. No valid entry is available.', disagreement: 0.1, weighted: 0, camps: { bull: [], bear: [], neutral: [] }, order: null, example: true }];
+
+const executablePath = [process.env.CHROME_PATH, 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].find((p) => p && existsSync(p));
+if (!executablePath) throw new Error('Set CHROME_PATH to a Chromium browser.');
+const output = process.env.OFFICE_CHECK_OUTPUT ?? path.join(process.env.TEMP ?? '.', 'mpu-office-ui');
+mkdirSync(output, { recursive: true });
+const browser = await chromium.launch({ executablePath, headless: true });
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  let socket: WebSocketRoute;
+  await page.route('**/api/**', (route) => {
+    const url = new URL(route.request().url());
+    const data = url.pathname === '/api/wallet' ? { available: true, current: 'hyperliquid', venues: [{ venue: 'hyperliquid', label: 'Hyperliquid', kind: 'DEX', support: 'signature', steps: [], depositUrl: 'https://app.hyperliquid.xyz', revokeUrl: 'https://app.hyperliquid.xyz/API', docsUrl: 'https://hyperliquid.gitbook.io' }] }
+      : url.pathname === '/api/wallet/balance' ? { ok: true, equityUsdt: null }
+      : url.pathname === '/api/setup/trading' ? { ok: true, networks: { testnet: { profile: 'default' } } }
+      : url.pathname === '/api/candles' ? { symbol: snapshot.watchlist[0], source: 'sample', example: true, last: 100, change24hPct: 0, candles: [] }
+      : { ok: true, killed: false };
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
+  });
+  await page.routeWebSocket('**/ws', (ws) => { socket = ws; ws.send(JSON.stringify({ type: 'state', payload: snapshot })); });
+  await page.addInitScript('window.__name = (target) => target;');
+  await page.addInitScript(() => {
+    const account = '0x1111111111111111111111111111111111111111';
+    const listeners: Record<string, (() => void)[]> = {};
+    localStorage.setItem('mg-wallet-address', account);
+    Object.assign(window, { ethereum: {
+      request: async ({ method }: { method: string }) => {
+        if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [account];
+        if (method === 'eth_chainId') return '0xa4b1';
+        if (method === 'wallet_revokePermissions') return null;
+        throw new Error(`Unexpected wallet method: ${method}`);
+      },
+      on: (event: string, listener: () => void) => { (listeners[event] ??= []).push(listener); },
+      removeListener: (event: string, listener: () => void) => { listeners[event] = (listeners[event] ?? []).filter((l) => l !== listener); }
+    }, emitWalletEvent: (event: string) => listeners[event]?.forEach((fn) => fn()) });
+  });
+  await page.goto(process.env.OFFICE_CHECK_URL ?? 'http://127.0.0.1:5178');
+  await page.waitForSelector('.office');
+  await page.locator('.tour-skip-btn').click();
+  await page.locator('.trakteer-close-x').click();
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connected');
+  assert.equal(await page.locator('.desk-ops .ops-setup-link').count(), 0);
+  assert.equal(await page.locator('.side .verdicts').count(), 0);
+  assert.equal(await page.locator('.office-hud .verdicts').count(), 1);
+  assert.equal(await page.locator('.report').count(), 5);
+  assert.equal(await page.locator('.report-evidence[open]').count(), 0);
+  async function assertOfficeSpace() {
+    const problems = await page.evaluate(() => {
+      const world = document.querySelector('.office-world')!.getBoundingClientRect();
+      const hud = document.querySelector('.office-hud')!.getBoundingClientRect();
+      const pnl = document.querySelector('.office-pnl')!.getBoundingClientRect();
+      const overlaps = (a: DOMRect, b: DOMRect) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+      const errors: string[] = [];
+      if (overlaps(world, hud)) errors.push('HUD covers the room');
+      if (overlaps(world, pnl)) errors.push('PnL covers the room');
+      for (const element of document.querySelectorAll('.office-world .agent .bot')) {
+        const box = element.getBoundingClientRect();
+        if (box.left < world.left || box.right > world.right || box.top < world.top || box.bottom > world.bottom) errors.push('Agent outside room');
+        if (overlaps(box, hud)) errors.push('Agent hidden behind HUD');
+      }
+      if (!document.querySelector('.brawl-zone')) {
+        const avatars = [...document.querySelectorAll('.office-world .agent .bot')];
+        for (let i = 0; i < avatars.length; i++) for (let j = i + 1; j < avatars.length; j++) {
+          if (overlaps(avatars[i].getBoundingClientRect(), avatars[j].getBoundingClientRect())) errors.push('Agents overlap outside a fight');
+        }
+      }
+      if (document.querySelector('.office-world .bubble')) errors.push('Speech still overlays the room');
+      return errors;
+    });
+    assert.deepEqual(problems, []);
+  }
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await assertOfficeSpace();
+  const preset = await page.locator('.auto-preset-select').boundingBox();
+  const cycle = await page.locator('.auto-run-btn').boundingBox();
+  assert(preset && cycle && preset.y + preset.height <= cycle.y, 'Preset must sit above Cycle now.');
+  assert(preset.width < 220, 'Preset must not span the panel.');
+  await page.locator('#setup-trigger').click();
+  assert(await page.locator('.settings-popover .tour-trigger-btn').isVisible());
+  await page.locator('#setup-trigger').click();
+  await page.screenshot({ path: path.join(output, 'office-desktop.png'), fullPage: true });
+  await page.locator('.office').screenshot({ path: path.join(output, 'office-room.png') });
+  await page.getByRole('button', { name: 'Show older reports', exact: true }).click();
+  assert.equal(await page.locator('.report').count(), 8);
+  await page.locator('#venue-keys-trigger').click();
+  await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connect Wallet');
+  assert.equal(await page.evaluate(() => localStorage.getItem('mg-wallet-address')), null);
+  await page.getByRole('button', { name: 'Connect browser wallet', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connected');
+  await page.evaluate(() => (window as unknown as { emitWalletEvent(event: string): void }).emitWalletEvent('accountsChanged'));
+  await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent === 'Connect Wallet');
+  await page.locator('.setup-overlay .panel-head button').click();
+  await page.waitForSelector('.setup-overlay', { state: 'detached' });
+  const hot = structuredClone(snapshot);
+  hot.paper.unrealized = -7.5;
+  hot.debate = { id: 'test-hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.9, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
+  hot.agents.market.stance = 'LONG'; hot.agents.research.stance = 'SHORT';
+  socket!.send(JSON.stringify({ type: 'state', payload: hot }));
+  socket!.send(JSON.stringify({ type: 'speech', payload: { agent: 'risk', at: Date.now(), text: 'Long debate text. '.repeat(30), done: true, example: true } }));
+  await page.waitForSelector('.office-dialogue button');
+  await page.waitForFunction(() => document.querySelector('.office-pnl strong')?.textContent?.includes('-7.50'));
+  await assertOfficeSpace();
+  assert.equal(await page.locator('.brawl-zone').count(), 0, 'Reduced motion suppresses fights');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.waitForSelector('.brawl-zone', { timeout: 8000 });
+  await page.locator('.office').screenshot({ path: path.join(output, 'office-hot-debate.png') });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForSelector('.brawl-zone', { state: 'detached' });
+  for (const viewport of [{ width: 375, height: 812 }, { width: 812, height: 375 }]) {
+    await page.setViewportSize(viewport);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.screenshot({ path: path.join(output, `office-${viewport.width}.png`), fullPage: true });
+    if (viewport.width === 375) await page.screenshot({ path: path.join(output, 'office-mobile-top.png') });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Overflow at ${viewport.width}px`);
+    await assertOfficeSpace();
+    if (viewport.width === 375) await page.locator('.office-pnl').screenshot({ path: path.join(output, 'office-pnl-mobile.png') });
+    await page.locator('.office').screenshot({ path: path.join(output, `office-room-${viewport.width}.png`) });
+  }
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'night'; });
+  await page.screenshot({ path: path.join(output, 'office-night.png'), fullPage: true });
+  assert.deepEqual(errors, []);
+  console.log(`Office layout and wallet session checks passed. Screenshots: ${output}`);
+} finally { await browser.close(); }

@@ -132,6 +132,7 @@ function AppInner() {
         <section className="stage">
           <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected}>
             <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
+            <Verdicts state={state} compact />
           </Office>
           <Roster state={state} onSelect={setSelected} />
           <CommandBar state={state} command={(cmd) => command(cmd)} />
@@ -144,7 +145,6 @@ function AppInner() {
         </section>
         <aside className="side">
           <DeskOps state={state} />
-          <Verdicts state={state} />
           <Portfolio state={state} command={(cmd) => void command(cmd)} />
         </aside>
       </main>

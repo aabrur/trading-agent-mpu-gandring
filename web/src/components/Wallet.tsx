@@ -1,16 +1,15 @@
 // Connect wallet. Local mode only.
 // Uses the injected browser wallet to read the MAIN address and to sign ONE agent approval.
 // It never asks for, exports or stores the main wallet private key or seed.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
 import { useI18n } from '../i18n';
 import { fmt } from './format';
+import { browserWallet as eth, disconnectWallet, saveWalletSession, screenAccount, useWalletSession } from '../walletSession';
 
 interface VenueInfo { venue: string; label: string; kind: 'CEX' | 'DEX'; support: 'signature' | 'manual' | 'cex'; steps: string[]; revokeUrl: string | null; docsUrl: string; depositUrl: string; status: string }
 interface WalletState { available: boolean; reason: string; appMode: string; current: string | null; venues: VenueInfo[] }
 interface VenueBalance { ok: boolean; venue: string; label: string; kind: 'CEX' | 'DEX'; network: string; configured: boolean; address: string | null; equityUsdt: number | null; availableUsdt: number | null; depositUrl: string; note?: string; error?: string }
-interface Eip1193 { request(a: { method: string; params?: unknown[] }): Promise<any> }
-const eth = () => (window as unknown as { ethereum?: Eip1193 }).ethereum;
 
 export function WalletPanel({ state, embedded = false }: { state: DeskState; embedded?: boolean }) {
   const { t } = useI18n();
@@ -24,14 +23,15 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
       return saved === 'mainnet' || saved === 'testnet' ? saved : 'testnet';
     } catch { return 'testnet'; }
   });
-  const [address, setAddress] = useState<string>(() => {
-    try { return localStorage.getItem('mg-wallet-address') || ''; } catch { return ''; }
-  });
+  const address = useWalletSession();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [agent, setAgent] = useState<string>('');
   const [bal, setBal] = useState<VenueBalance | null>(null);
   const [balBusy, setBalBusy] = useState(false);
+  const balanceRequest = useRef(0);
+
+  useEffect(() => { ++balanceRequest.current; setAgent(''); setMsg(null); setBal(null); }, [address, venue, network]);
 
   useEffect(() => {
     fetch('/api/wallet')
@@ -52,14 +52,15 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
 
   const loadBalance = useCallback((targetVenue: string, targetNet: 'testnet' | 'mainnet', targetAddr: string) => {
     if (!targetVenue) return;
+    const request = ++balanceRequest.current;
     setBalBusy(true);
     const qs = new URLSearchParams({ venue: targetVenue, network: targetNet });
     if (targetAddr) qs.set('address', targetAddr);
     fetch(`/api/wallet/balance?${qs.toString()}`)
       .then((r) => r.json())
-      .then((d: VenueBalance) => setBal(d))
+      .then((d: VenueBalance) => { if (request === balanceRequest.current) setBal(d); })
       .catch(() => {})
-      .finally(() => setBalBusy(false));
+      .finally(() => { if (request === balanceRequest.current) setBalBusy(false); });
   }, []);
 
   useEffect(() => {
@@ -72,39 +73,53 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
   if (!v) return null;
 
   async function connect() {
+    setBusy(true);
     setMsg(null);
     const w = eth();
-    if (!w) { setMsg({ ok: false, text: t('walletNotFound') }); return; }
+    if (!w) { setMsg({ ok: false, text: t('walletNotFound') }); setBusy(false); return; }
     try {
-      const [a] = await w.request({ method: 'eth_requestAccounts' });
-      setAddress(a);
+      const accounts = await w.request({ method: 'eth_requestAccounts' });
+      const a = screenAccount(Array.isArray(accounts) ? accounts[0] : null);
       try {
-        localStorage.setItem('mg-wallet-address', a);
         localStorage.setItem('mg-wallet-venue', v.venue);
         localStorage.setItem('mg-wallet-network', network);
       } catch { /* ignore */ }
-      window.dispatchEvent(new Event('mg-wallet-updated'));
+      saveWalletSession(a);
     }
     catch (e) { setMsg({ ok: false, text: `${t('walletRefusedPrefix')} ${(e as Error).message}` }); }
+    finally { setBusy(false); }
+  }
+  async function disconnect() {
+    setBusy(true);
+    const revoked = await disconnectWallet();
+    setAgent(''); setBal(null);
+    setMsg({ ok: true, text: revoked
+      ? 'Browser wallet disconnected. Exchange agent approvals remain active; revoke them on the venue if needed.'
+      : 'Logged out locally. Remove this site in your wallet to revoke browser access. Exchange agent approvals remain active.' });
+    setBusy(false);
   }
   async function approve() {
     const w = eth();
     if (!w || !address) return;
     setBusy(true); setMsg(null); setAgent('');
     try {
-      if (v.venue === 'aster') { try { await w.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x38' }] }); } catch { /* user can switch by hand */ } }
-      const chainId = parseInt(await w.request({ method: 'eth_chainId' }), 16);
+      const accounts = await w.request({ method: 'eth_accounts' });
+      if (!Array.isArray(accounts) || screenAccount(accounts[0]) !== address) throw new Error('Wallet account changed. Reconnect before approving.');
+      const chainId = Number(await w.request({ method: 'eth_chainId' }));
+      if (v.venue === 'aster' && chainId !== 56) throw new Error('Switch your wallet to BNB Smart Chain, then reconnect before approving Aster.');
       const start = await fetch('/api/wallet/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ venue: v.venue, network, mainAddress: address, chainId }) }).then((r) => r.json());
       if (!start.ok) throw new Error(start.error);
       setAgent(start.agentAddress);
       const td = start.typedData;
       const types = { EIP712Domain: [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }, { name: 'verifyingContract', type: 'address' }], ...td.types };
       const signature = await w.request({ method: 'eth_signTypedData_v4', params: [address, JSON.stringify({ ...td, types })] });
+      const currentAccounts = await w.request({ method: 'eth_accounts' });
+      if (!Array.isArray(currentAccounts) || screenAccount(currentAccounts[0]) !== address || Number(await w.request({ method: 'eth_chainId' })) !== chainId || localStorage.getItem('mg-wallet-address') !== address) throw new Error('Wallet session changed. Reconnect and approve again.');
       const done = await fetch('/api/wallet/approve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: start.id, signature }) }).then((r) => r.json());
       if (!done.ok) throw new Error(done.error);
+      if (localStorage.getItem('mg-wallet-address') !== address) return;
       setMsg({ ok: true, text: done.note });
       try {
-        localStorage.setItem('mg-wallet-address', address);
         localStorage.setItem('mg-wallet-venue', v.venue);
         localStorage.setItem('mg-wallet-network', network);
       } catch { /* ignore */ }
@@ -149,8 +164,9 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
         info.available ? (
           <div className="wallet-actions">
             {!address
-              ? <button className="wallet-btn" onClick={connect}>{t('connectBrowserWallet')}</button>
+              ? <button className="wallet-btn" disabled={busy} onClick={connect}>{busy ? t('waitingWallet') : t('connectBrowserWallet')}</button>
               : <><p className="wallet-addr">{t('mainWalletDisplayOnly')} <code>{address.slice(0, 6)}...{address.slice(-4)}</code></p>
+                <button className="wallet-disconnect" disabled={busy} onClick={() => void disconnect()}>Disconnect</button>
                 <button className="wallet-btn" disabled={busy} onClick={approve}>{busy ? t('waitingWallet') : `${t('approveAgentPrefix')} ${v.label}`}</button></>}
             {agent && <p className="wallet-addr">{t('agentAddressLabel')} <code>{agent}</code></p>}
             <p className="wallet-note">{t('walletSafetyNote')} {t('revokeAnyTime')} <a href={v.revokeUrl ?? '#'} target="_blank" rel="noreferrer">{v.label} API wallets</a>.</p>

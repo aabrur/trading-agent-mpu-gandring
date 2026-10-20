@@ -237,8 +237,7 @@ export function DeskOps({ state }: { state: DeskState }) {
 
   return (
     <section className="panel desk-ops desk-ops-compact" aria-label="Desk operations">
-      <div className="panel-head"><h2>{t('deskOpsTitle')}</h2><span className="badge">{state.mode} · {state.venue?.label ?? state.marketSource}</span></div>
-      <p className="ops-setup-link"><span>{state.trading?.network ?? 'Testnet / mainnet'} · {state.trading?.profile ?? 'existing settings'}</span><button type="button" className="mini" onClick={() => { window.location.hash = 'setup-trading-default'; }}>{lang === 'id' ? 'Buka Setup' : 'Open Setup'}</button></p>
+      <div className="panel-head"><h2>{t('deskOpsTitle')}</h2></div>
       <div className={`ops-kill-bar ${state.killed ? 'is-killed' : 'is-active'}`}>
         <div className="kill-status-wrap"><span className="kill-indicator" /><span className="kill-status-label">{state.killed ? t('killSwitchOnLocked') : t('killSwitchOffReady')}</span></div>
         <button type="button" className={`kill-toggle-btn ${state.killed ? 'release-btn' : 'engage-btn'}`} onClick={() => toggleKillSwitch(!state.killed)} title={state.killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}>{state.killed ? t('unlockKillBtn') : t('engageKillBtn')}</button>
@@ -263,9 +262,7 @@ export function DeskOps({ state }: { state: DeskState }) {
             <button type="button" className={isAutoOn ? 'on auto-on-btn' : ''} disabled={busy} onClick={() => void updateAuto({ on: true })}>{t('autoStartBtn')}</button>
             <button type="button" className={!isAutoOn ? 'on auto-off-btn' : ''} disabled={busy} onClick={() => void updateAuto({ on: false })}>{t('autoStopBtn')}</button>
           </div>
-          <button type="button" className="mini auto-run-btn" disabled={busy || state.killed || !!auto?.running} onClick={() => void updateAuto({ runNow: true })}>{t('autoRunNowBtn')}</button>
-        </div>
-        <div className="auto-run-group">
+          <div className="auto-run-group">
           <div className="auto-preset-selector">
             <select
               className="auto-preset-select"
@@ -282,6 +279,10 @@ export function DeskOps({ state }: { state: DeskState }) {
             </select>
             <span className="auto-preset-chevron" aria-hidden="true">▾</span>
           </div>
+          <button type="button" className="mini auto-run-btn" disabled={busy || state.killed || !!auto?.running} onClick={() => void updateAuto({ runNow: true })}>{t('autoRunNowBtn')}</button>
+          </div>
+        </div>
+        <div className="auto-mode-row">
           <div className="seg auto-toggle-seg" role="group" aria-label="Decision mode">
             <button type="button" className={state.debateMode !== 'fast' ? 'on' : ''} disabled={busy} onClick={() => void setDebateMode('normal')}>{t('opsDebateNormal')}</button>
             <button type="button" className={state.debateMode === 'fast' ? 'on' : ''} disabled={busy} onClick={() => void setDebateMode('fast')}>{t('opsDebateFast')}</button>

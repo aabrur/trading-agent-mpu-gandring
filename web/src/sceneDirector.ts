@@ -1,9 +1,38 @@
-import { AGENT_ORDER, type AgentId, type DeskState, type Verdict, type Reaction } from './types';
+import { AGENT_ORDER, type AgentId, type DeskState, type Verdict, type Reaction, type Fight } from './types';
 import type { Pose, Face } from './components/Bot';
 
 export interface Point { x: number; y: number }
 export interface SceneEvent { id: string; kind: 'execution' | 'report' | 'verdict' | 'speech'; status?: string; agent?: AgentId; target?: AgentId; at: number }
 export interface Activity { pose: Pose; face: Face; label: string; destination?: Point; facing?: 'left' | 'right'; partner?: AgentId }
+// Presentation geometry stays separate from venue configuration and trading decisions.
+export const WORKSTATIONS: Record<AgentId, Point> = {
+  lead: { x: 50, y: 39 }, market: { x: 15, y: 48 }, research: { x: 84, y: 43 },
+  strategist: { x: 17, y: 78 }, risk: { x: 83, y: 68 }, execution: { x: 45, y: 91 }
+};
+export const FIGHT_STAGE = { from: { x: 43, y: 70 }, to: { x: 57, y: 70 } };
+export const SPECTATORS: Record<AgentId, Point> = {
+  lead: { x: 50, y: 40 }, market: { x: 23, y: 60 }, research: { x: 78, y: 51 },
+  strategist: { x: 26, y: 86 }, risk: { x: 78, y: 80 }, execution: { x: 50, y: 96 }
+};
+
+/** Repeat cartoon sparring only while an actual opposing debate meets the configured heat threshold. */
+export function heatedDebateFight(state: DeskState, now: number): Fight | null {
+  const debate = state.debate;
+  if (!debate || state.killed || state.paused || !/^round \d+$/.test(debate.phase) || debate.disagreement < Math.max(0.25, state.fightThreshold)) return null;
+  const bulls = debate.camps.bull.filter((id) => state.agents[id]?.stance === 'LONG');
+  const bears = debate.camps.bear.filter((id) => state.agents[id]?.stance === 'SHORT');
+  if (!bulls.length || !bears.length || now % 4800 >= 2400) return null;
+  const slot = Math.floor(now / 4800);
+  const pair = [bulls[slot % bulls.length], bears[slot % bears.length]];
+  return { id: -slot - 1, from: pair[slot % 2], to: pair[(slot + 1) % 2], intensity: Math.min(1, debate.disagreement), punches: 2, at: slot * 4800 };
+}
+
+export function officePnl(state: DeskState) {
+  const account = state.mode === 'PAPER' ? null : state.venueAccount;
+  const value = account ? account.unrealized : state.paper.unrealized;
+  const source = state.mode === 'PAPER' ? 'Paper' : account ? (account.status === 'confirmed' ? 'Exchange' : 'Exchange · stale') : 'Local estimate';
+  return { value: Number.isFinite(value) ? value : null, source };
+}
 export function verdictReactions(v: Verdict): Partial<Record<AgentId, Reaction>> {
   const reactions: Partial<Record<AgentId, Reaction>> = {};
   if (v.executed && v.order && (v.executionStatus ?? v.order.status) === 'filled' && v.order.status !== 'partial') {
@@ -16,8 +45,8 @@ export function verdictReactions(v: Verdict): Partial<Record<AgentId, Reaction>>
   return reactions;
 }
 export const SEATS: Record<AgentId, Point> = {
-  lead: { x: 50, y: 55 }, market: { x: 31, y: 63 }, research: { x: 69, y: 63 },
-  strategist: { x: 31, y: 84 }, risk: { x: 69, y: 84 }, execution: { x: 50, y: 94 }
+  lead: { x: 50, y: 48 }, market: { x: 24, y: 63 }, research: { x: 76, y: 61 },
+  strategist: { x: 25, y: 85 }, risk: { x: 76, y: 83 }, execution: { x: 50, y: 95 }
 };
 const destinations = { coffee: { x: 88, y: 37 }, bookshelf: { x: 12, y: 37 }, analysis: { x: 59, y: 52 }, window: { x: 36, y: 37 } };
 const routines: Record<AgentId, Activity[]> = {
@@ -40,7 +69,7 @@ export function directScene(input: { state: DeskState; events: SceneEvent[]; tic
   const visitor = tick % 15 < 11 && !hidden && !reducedMotion && !state.debate && !state.killed && !recent.length ? AGENT_ORDER[slot % AGENT_ORDER.length] : null;
   const frame = Object.fromEntries(AGENT_ORDER.map((id) => [id, activityFor(state, id, slot, visitor, important)])) as Record<AgentId, Activity>;
   const speech = recent.find((e) => e.kind === 'speech' && (e.agent === 'research' || e.agent === 'risk'));
-  if (!hidden && !reducedMotion && !state.killed && !important && speech?.agent) {
+  if (!hidden && !reducedMotion && !state.killed && !state.debate && !important && speech?.agent) {
     const from = speech.agent, to = from === 'risk' ? 'execution' : 'lead';
     const available = [from, to].every((id) => !['executing', 'fighting'].includes(state.agents[id as AgentId].status));
     if (available) {

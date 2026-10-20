@@ -7,6 +7,7 @@ import { EquityChart, AllocationBars } from './MiniCharts';
 import { fmt, fmtPx } from './format';
 import { useI18n } from '../i18n';
 import type { UpdateInfo } from './UpdateModal';
+import { useWalletSession } from '../walletSession';
 export { fmt, fmtPx };
 
 const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec' };
@@ -69,6 +70,7 @@ export function TopBar({
   onOpenTrakteer?: () => void;
 }) {
   const { lang, toggleLang, t } = useI18n();
+  const walletAddress = useWalletSession();
   const ver = updateInfo?.currentVersion ?? '0.0.0.2.3';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
   void onOpenTrakteer;
@@ -213,9 +215,17 @@ export function TopBar({
           />
           <span>{t('trakteerBtn')}</span>
         </a>
-        {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title="Connect browser wallet for DEX venues">{t('connectWallet')}</button>}
-        {onSetup && <button id="setup-trigger" className="badge setup-btn" onClick={onSetup} title="Setup wizard: venue, mode, keys, doctor">{t('setup')}</button>}
-        {onTour && <button className="badge setup-btn tour-trigger-btn" onClick={onTour} title="Interactive UI guide">? {t('tutorial')}</button>}
+        {onVenueKeys && <button id="venue-keys-trigger" className="badge setup-btn connect-wallet-btn" onClick={onVenueKeys} title={walletAddress ? 'Manage browser wallet connection' : 'Connect browser wallet for DEX venues'}>{walletAddress ? (lang === 'id' ? 'Terhubung' : 'Connected') : t('connectWallet')}</button>}
+        {(onSetup || onTour) && <details className="settings-menu">
+          <summary id="setup-trigger" className="badge setup-btn" aria-label={lang === 'id' ? 'Pengaturan dan tutorial' : 'Settings and tutorial'}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 1 3h4l1-3 3-1 3-3-2-2 1-3-3-2-1-3Z"/><circle cx="11" cy="12" r="3"/></svg>
+            {t('setup')}
+          </summary>
+          <div className="settings-popover">
+            {onSetup && <button onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); onSetup(); }}>{t('setup')}</button>}
+            {onTour && <button className="tour-trigger-btn" onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); onTour(); }}>{t('tutorial')}</button>}
+          </div>
+        </details>}
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">{t('paused')}</span>}
         {!connected && <span className="badge warn" role="status">{t('reconnecting')}</span>}
@@ -537,14 +547,14 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
 }
 
 const ACTION_LABEL: Record<Verdict['action'], string> = { OPEN_LONG: 'OPEN LONG', OPEN_SHORT: 'OPEN SHORT', CLOSE: 'CLOSE', HOLD: 'HOLD' };
-export function Verdicts({ state }: { state: DeskState }) {
+export function Verdicts({ state, compact = false }: { state: DeskState; compact?: boolean }) {
   const { t } = useI18n();
   return (
-    <section className="panel verdicts">
+    <section className={`panel verdicts${compact ? ' verdicts-compact' : ''}`}>
       <div className="panel-head"><h2>{t('verdictsTitle')}</h2><small className="muted">{t('verdictsSub')}</small></div>
       {state.verdicts.length === 0 && <p className="muted">{t('noVerdictYet')}</p>}
       <div className="verdict-list">
-        {state.verdicts.slice(0, 6).map((v) => (
+        {state.verdicts.slice(0, compact ? 1 : 6).map((v) => (
           <article key={v.id} className={`verdict a-${v.action}`}>
             <div className="v-top">
               <span className="v-action">{ACTION_LABEL[v.action]}</span>
@@ -552,7 +562,7 @@ export function Verdicts({ state }: { state: DeskState }) {
               {v.example && <em className="tag-example">EXAMPLE</em>}
               <time>{time(v.at)}</time>
             </div>
-            <p>{v.reason}</p>
+            {compact ? <details><summary>{v.reason.slice(0, 82)}{v.reason.length > 82 ? '…' : ''}</summary><p>{v.reason}</p></details> : <p>{v.reason}</p>}
             <div className="v-meta">
               <span>risk {v.riskDecision}</span>
               <span>heat {Math.round(v.disagreement * 100)}%</span>

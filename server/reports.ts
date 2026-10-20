@@ -5,11 +5,12 @@ import type { AppConfig } from './config.js';
 import { sendToGrokBot } from './bridge.js';
 import { safe, log } from './redact.js';
 import { round2 } from './money.js';
-import { scoreLine, type RoleScore } from './scorecard.js';
+import type { RoleScore } from './scorecard.js';
 import type { Finding } from './scan.js';
 
 export interface ReportPosition { ownership?: string; protectionStatus?: string; entryStatus?: string; symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null; mark: number; pnl: number; openedAt: number }
 export interface Report {
+  monitoring?: { symbols: string[]; killed: boolean; running: boolean; current: string | null; previous: string | null };
   opportunityReviews?: { observed: number; pending: number; unavailable: number; items: import('./opportunity-review.js').OpportunityReview[] };
   id: string; at: number; since: number; mode: string; exchange: string | null;
   accounting?: { source: string; status: string; observedAt: number | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: number | null; funding: number | null; financialEvidence?: import('./live/financial-evidence.js').FinancialSummary };
@@ -36,6 +37,7 @@ export function buildReport(desk: Desk, since: number, at = Date.now()): Report 
   const estimatedRealized = round2(exits.filter((t) => t.pnlStatus === 'estimated').reduce((sum, t) => sum + t.realizedPnl, 0));
   const realized = round2(confirmedRealized + estimatedRealized);
   const r: Omit<Report, 'text'> = {
+    monitoring: { symbols: [...new Set(desk.autoState.on ? desk.cfg.auto.symbols : desk.cfg.watchlist)], killed: desk.killed, running: desk.autoState.running, current: desk.debate?.symbol ?? null, previous: desk.lastCycle ? `${desk.lastCycle.symbol} · ${desk.lastCycle.verdict ?? desk.lastCycle.stage} · ${desk.lastCycle.outcome ?? desk.lastCycle.executionStatus ?? 'no fill recorded'}` : null },
     id: `rep-${at.toString(36)}`, at, since, mode: desk.cfg.tradingMode, exchange: desk.cfg.live?.exchange ?? null,
     accounting: { source: desk.venueAccount ? 'exchange' : 'local book', status: desk.venueAccount?.status ?? (desk.cfg.tradingMode === 'PAPER' ? 'paper' : 'unverified'), observedAt: desk.venueAccount?.at ?? null, confirmedRealized, estimatedRealized, unknownExits: exits.filter((t) => t.pnlStatus === 'unknown').length, actualFees: financial?.actualFees ?? null, funding: financial?.funding ?? null, financialEvidence: financial },
     opportunityReviews: { observed: reviews.filter((r) => r.status === 'observed').length, pending: reviews.filter((r) => r.status === 'pending').length, unavailable: reviews.filter((r) => r.status === 'unavailable').length, items: reviews.slice(-10) },
@@ -54,32 +56,37 @@ export function buildReport(desk: Desk, since: number, at = Date.now()): Report 
 }
 
 const hhmm = (t: number) => new Date(t).toISOString().slice(11, 16);
-function renderText(r: Omit<Report, 'text'>) {
+export function renderText(r: Omit<Report, 'text'>) {
+  const short = (value: string, max = 130) => value.replace(/\s+/g, ' ').slice(0, max);
+  const signed = (n: number) => `${n >= 0 ? '+' : ''}${round2(n)}`;
+  const m = r.monitoring;
+  const alerts = r.scan.filter((f) => f.level === 'alert' || f.level === 'warn');
+  const unprotected = r.positions.filter((p) => !(p.stop > 0) || (r.mode !== 'PAPER' && p.protectionStatus !== 'confirmed'));
   const lines = [
-    `Trading Agent Mpu Gandring report (${r.mode}${r.exchange ? ` on ${r.exchange}` : ''})`,
-    `${new Date(r.since).toISOString().slice(0, 16)}Z to ${new Date(r.at).toISOString().slice(0, 16)}Z`,
+    `☕ Trading Agent Mpu Gandring · ${r.mode}${r.exchange ? ` / ${r.exchange}` : ''}`,
+    `${new Date(r.at).toISOString().slice(0, 10)} · ${hhmm(r.since)}–${hhmm(r.at)} UTC`,
+    `🛡 Kill ${m ? (m.killed ? 'ON' : 'off') : 'unknown'} · Daily loss stop ${r.dailyLoss.hit ? 'HIT' : 'not hit'} / ${r.dailyLoss.limitPct}% · Protection ${unprotected.length ? `${unprotected.length} UNVERIFIED` : r.mode === 'PAPER' ? 'paper' : 'no unverified stops'}`,
+    ...alerts.slice(0, 3).map((f) => `⚠ ${f.level}: ${short(f.text)}`),
+    ...(alerts.length > 3 ? [`⚠ ${alerts.length - 3} more findings in the office.`] : []),
     '',
-    `Balance ${r.balance} USDT, equity ${r.equity}, safety net ${r.safetyNet}`,
-    `Money Trade ${r.moneyTrade} / N ${r.n} = ${r.perOrder} per order`,
-    `Realized this period ${r.realized >= 0 ? '+' : ''}${r.realized}, unrealized ${r.unrealized >= 0 ? '+' : ''}${r.unrealized}`,
-    ...(r.accounting ? [`Accounting: ${r.accounting.source} (${r.accounting.status}). Realized confirmed ${r.accounting.confirmedRealized}, estimated ${r.accounting.estimatedRealized}; exits with unknown PnL ${r.accounting.unknownExits}. Account fees ${r.accounting.actualFees ?? 'unknown'} USDT; funding ${r.accounting.funding ?? 'unknown'} USDT; confirmed managed net ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'} USDT.`] : []),
-    `Daily loss stop ${r.dailyLoss.limitPct}%${r.dailyLoss.hit ? ' (HIT, no new orders until next UTC day)' : ''}. Auto ${r.auto.on ? `on, every ${r.auto.intervalMin} min, ${r.auto.cycles} cycles` : 'off'}`,
+    `💰 Equity ${r.equity} USDT · Balance ${r.balance} · Safety net ${r.safetyNet}`,
+    `📈 Period PnL ${signed(r.realized)} · Unrealized ${signed(r.unrealized)} USDT`,
+    ...(r.accounting ? [`Evidence: confirmed ${signed(r.accounting.confirmedRealized)}, estimated ${signed(r.accounting.estimatedRealized)}; unknown exits ${r.accounting.unknownExits}. Fees ${r.accounting.actualFees ?? 'unknown'}, funding ${r.accounting.funding ?? 'unknown'}; managed net ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'} USDT.`] : []),
+    `Allocation ${r.moneyTrade} / ${r.n} = ${r.perOrder} USDT per order`,
     '',
-    `Open positions (${r.positions.length}):`,
-    ...(r.positions.length ? r.positions.map((p) => `- ${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} mark ${p.mark} (${p.ownership ?? 'managed'}, protection ${p.protectionStatus ?? 'paper'}, entry ${p.entryStatus ?? 'paper'}) PnL ${p.pnl >= 0 ? '+' : ''}${p.pnl}`) : ['- none']),
+    `🔎 Watching: ${m?.symbols.length ? m.symbols.slice(0, 12).join(', ') + (m.symbols.length > 12 ? ` +${m.symbols.length - 12}` : '') : 'not recorded'}`,
+    `Auto ${r.auto.on ? `on / ${r.auto.intervalMin}m` : 'off'} · Now ${m?.current ? short(m.current, 24) : m?.running ? 'cycle running' : 'idle'}`,
+    `Previous: ${m?.previous ? short(m.previous) : 'none recorded'}`,
     '',
-    `Opened (${r.opened.length}):`, ...(r.opened.length ? r.opened.map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
-    `Closed (${r.closed.length}):`, ...(r.closed.length ? r.closed.map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
-    `Skipped (${r.skipped.length}):`, ...(r.skipped.length ? r.skipped.slice(-12).map((a) => `- ${hhmm(a.at)} ${a.symbol}: ${a.detail}`) : ['- none']),
-    '',
-    'Scorecard (Desk Lead):', ...r.scorecard.map((x) => `- ${scoreLine(x)}`),
-    ...(r.opportunityReviews ? ['', 'Skipped opportunity observations (analytical movement, not profit):', ...r.opportunityReviews.items.map((x) => `- ${x.symbol} ${x.side ?? 'no side'} / ${x.reasonKind}: ${x.status}; ${x.directionalMovePct == null ? 'movement unavailable' : x.directionalMovePct + '% directional movement'} (${x.reference.source})`)] : []),
-    '',
-    `Lessons this period (${r.lessons.length}):`, ...(r.lessons.length ? r.lessons.map((l) => `- [${l.status}${l.count > 1 ? ` x${l.count}` : ''}] ${l.role}${l.symbol ? ` ${l.symbol}` : ''}: ${l.lesson} (cause: ${l.rootCause})`) : ['- none']),
-    ...(r.standingRules.length ? ['Standing rules:', ...r.standingRules.map((x) => `- ${x}`)] : []),
-    ...(r.scan.length ? ['', 'Last scan:', ...r.scan.map((f) => `- ${f.level}: ${f.text}`)] : []),
-    '',
-    'Not financial advice.'
+    `📌 Open positions (${r.positions.length}):`,
+    ...(r.positions.length ? r.positions.slice(0, 6).map((p) => `${short(p.symbol, 24)} ${p.side} ${p.qty} · Entry ${p.entry} · SL ${p.stop > 0 ? p.stop : 'MISSING'} (${p.protectionStatus ?? (r.mode === 'PAPER' ? 'paper' : 'unverified')})${p.tp ? ` · TP ${p.tp}` : ''} · PnL ${signed(p.pnl)}`) : ['None']),
+    ...(r.positions.length > 6 ? [`${r.positions.length - 6} more positions in the office.`] : []),
+    `↗ Opened ${r.opened.length} · Closed ${r.closed.length} · Skipped ${r.skipped.length}`,
+    ...r.closed.slice(-2).map((a) => `✓ ${hhmm(a.at)} ${short(a.symbol, 24)}: ${short(a.detail)}`),
+    ...(r.skipped.length ? [`Latest skip: ${short(r.skipped.at(-1)!.symbol, 24)} · ${short(r.skipped.at(-1)!.detail)}`] : []),
+    `Scorecard (Desk Lead): ${r.scorecard.reduce((n, x) => n + x.right, 0)} right / ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0)} scored calls. Details in the office.`,
+    `Lessons this period (${r.lessons.length}): ${r.lessons.length ? short(r.lessons[0].lesson) : 'none'}`,
+    'Full activity and evidence in the office. Not financial advice.'
   ];
   return lines.join('\n');
 }
