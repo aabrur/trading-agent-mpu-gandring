@@ -610,7 +610,7 @@ export class Desk extends EventEmitter {
       const cautious = this.agents.lead.mood < 0;
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
-        instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
+        instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, CLOSE requires strategyInvalidated=true (opposite closed-bar direction beyond EMA21 with opposing five-bar momentum), or a verified critical event. A minor EMA9 crossing, unrealized loss, or changed agent vote alone is insufficient. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
         data: { symbol, tradingSettings: tradingSettingsFromConfig(this.cfg), strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       }));
@@ -622,6 +622,14 @@ export class Desk extends EventEmitter {
       if ((action === 'OPEN_LONG' && pos?.side === 'SHORT') || (action === 'OPEN_SHORT' && pos?.side === 'LONG')) { action = 'CLOSE'; flipNote = ' Opposite signal, closing first.'; }
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
       if (researchVote === 'VETO' && action.startsWith('OPEN')) action = 'HOLD';
+      let exitBlock: string | null = null;
+      const verifiedCritical = newsBriefing.criticalVetoFound && newsBriefing.providerStatus !== 'SAMPLE_FALLBACK';
+      if (action === 'CLOSE' && pos && !verifiedCritical &&
+        (!this.invalidated(pos.side, rule) || !snapshotIsFresh(snap) || (!!this.opts.executor && snap.example))) {
+        action = 'HOLD';
+        flipNote = '';
+        exitBlock = 'No confirmed structural reversal on fresh closed bars; keep existing exchange stop and take profit.';
+      }
       if (this.jev.settings.effectiveMode !== 'off') {
         this.jev.evaluateBackground(boundedPostState({
           symbol,
@@ -635,7 +643,7 @@ export class Desk extends EventEmitter {
       }
       const confidenceBlock = action.startsWith('OPEN') ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
       if (confidenceBlock) action = 'HOLD';
-      const decisionReason = confidenceBlock ?? ld.data.reason;
+      const decisionReason = exitBlock ?? confidenceBlock ?? ld.data.reason;
       await this.say('lead', `${action.replace('_', ' ')}. ${decisionReason}${flipNote}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
 
       // 6. Risk gate
@@ -645,8 +653,8 @@ export class Desk extends EventEmitter {
       const estPrice = roundPrice(action === 'OPEN_LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
       const stopDistancePct = rule.invalidation && estPrice > 0 ? round2(Math.abs((estPrice - rule.invalidation) / estPrice) * 100) : this.cfg.risk.defaultStopPct;
       const rk = opening ? await timer.measure('riskManager', () => this.run('risk', 'risk', {
-        instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol} at current price ~${estPrice}. Strategist invalidation is ${rule.invalidation} (~${stopDistancePct}% stop). Research debate stance is ${finalResearchVote}. Calculate available allocation, reserved capital, stop distance, fee estimate, and daily loss budget. If within owner caps and stop is valid, APPROVE or REDUCE promptly so the trade can execute. REJECT only when a concrete limit is violated. Caps: max leverage ${this.cfg.risk.maxLeverage}x, stop at most ${this.cfg.risk.defaultStopPct}%, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance. Send decision, sizeFactor (0.1..1), leverage, stopPct, reason.`,
-        data: { caps: this.cfg.risk, account: this.venueAccount ?? { source: 'paper book' }, executionVenue: this.cfg.exchange.name, analyticalPriceSource: snap.source, symbol, action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'risk') : undefined },
+        instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol} at current price ~${estPrice}. EMA9 signal reference is ${rule.invalidation} (~${stopDistancePct}% away), not a mandatory execution stop. Research debate stance is ${finalResearchVote}. Use candle structure and ATR to select a viable stop within the owner's ${this.cfg.risk.minStopPct}%..${this.cfg.risk.defaultStopPct}% range; do not reject solely because EMA9 is closer than that floor. If no structural stop fits the range, REJECT with the concrete reason. Calculate available allocation, reserved capital, stop distance, fee estimate, and daily loss budget. If within owner caps and stop is valid, APPROVE or REDUCE promptly so the trade can execute. REJECT only when a concrete limit is violated. Caps: max leverage ${this.cfg.risk.maxLeverage}x, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance. Send decision, sizeFactor (0.1..1), leverage, stopPct in percentage points (2 means 2%), reason.`,
+        data: { caps: this.cfg.risk, account: this.venueAccount ?? { source: 'paper book' }, executionVenue: this.cfg.exchange.name, analyticalPriceSource: snap.source, symbol, action, entryPrice: estPrice, stopDistancePct, atr: atrVal, recentClosedCandles: lastCandles, disagreement, researchVote: finalResearchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: moneySplit({ balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n }), openPositions: this.book.positions.length, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'risk') : undefined },
         context: { action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategySide: rule.side, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, temperament: this.agents.risk.mood }
       })) : { data: { decision: 'APPROVE' as const, sizeFactor: 1, leverage: 1, stopPct: this.cfg.risk.defaultStopPct, reason: 'Not applicable to HOLD/CLOSE' }, example: false };
       const gate = applyRiskGate(rk.data, this.cfg.risk, this.agents.risk.mood);
@@ -1047,8 +1055,10 @@ export class Desk extends EventEmitter {
   }
 
   private invalidated(side: 'LONG' | 'SHORT', rule: ReturnType<typeof strategyVote>) {
-    if (!Number.isFinite(rule.ema9)) return false;
-    return side === 'LONG' ? rule.close < rule.ema9 : rule.close > rule.ema9;
+    if (![rule.close, rule.ema21, rule.change5Pct].every(Number.isFinite) || rule.barTime == null) return false;
+    return side === 'LONG'
+      ? rule.side === 'SHORT' && rule.close < rule.ema21 && rule.change5Pct < 0
+      : rule.side === 'LONG' && rule.close > rule.ema21 && rule.change5Pct > 0;
   }
   private setPhase(phase: string, round = this.debate?.round ?? 0) {
     if (this.debate) { this.debate.phase = phase; this.debate.round = round; }

@@ -162,7 +162,9 @@ export function resolveTradingSettings(env: Record<string, string | undefined>, 
   const values = profile === 'current'
     ? { ...base }
     : profile in TRADING_PRESETS
-      ? resolveTradingPreset(profile as TradingPresetId, networkBase)
+      ? env[tradingPrefix(network) + 'SAVED_PROFILE'] === profile
+        ? TradingSettingsSchema.parse(Object.fromEntries(Object.entries(TRADING_ENV).map(([key, name]) => [key, Number(env[tradingPrefix(network) + 'SAVED_' + name])])))
+        : resolveTradingPreset(profile as TradingPresetId, networkBase)
       : TradingSettingsSchema.parse({ ...base, ...overrides });
   return { profile, values };
 }

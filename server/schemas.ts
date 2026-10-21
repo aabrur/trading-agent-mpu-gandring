@@ -29,18 +29,24 @@ export const LeadSchema = z.object({
   reason: text
 });
 
-export const RiskSchema = z.object({
-  decision: z.enum(['APPROVE', 'REDUCE', 'REJECT']),
+const RiskSizing = z.object({
+  decision: z.enum(['APPROVE', 'REDUCE']),
   sizeFactor: z.number().min(0).max(1),
   leverage: z.number().min(1).max(125),
-  stopPct: z.preprocess((val) => {
-    if (typeof val !== 'number' || !Number.isFinite(val)) return 1.5;
-    if (val <= 0) return 0;
-    if (val > 0 && val < 0.05) return val * 100;
-    return val;
-  }, z.number().min(0).max(50)),
+  stopPct: z.number().finite().positive().max(50),
   reason: text
 });
+
+export const RiskSchema = z.discriminatedUnion('decision', [
+  RiskSizing,
+  z.object({
+    decision: z.literal('REJECT'),
+    sizeFactor: z.number().min(0).max(1).default(0),
+    leverage: z.number().min(1).max(125).default(1),
+    stopPct: z.number().finite().nonnegative().max(50).default(0),
+    reason: text
+  }).transform((reply) => ({ ...reply, sizeFactor: 0 }))
+]);
 
 export const ReviewSchema = z.object({
   lesson: text,
@@ -66,7 +72,7 @@ export const SCHEMA_HINTS: Record<TaskKind, string> = {
   research: '{"vote":"LONG|SHORT|ABSTAIN|VETO","confidence":0..1,"argument":"max 2 sentences","sources":["id or source name"]}',
   rebuttal: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"target":"agent id you answer or none","rebuttal":"max 2 sentences, direct and in character"}',
   lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences"}',
-  risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":number,"stopPct":0..30,"reason":"max 2 sentences"}',
+  risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":1..125,"stopPct":positive percentage points up to 50 (2 means 2%),"reason":"1..700 characters"}. APPROVE/REDUCE require all numeric fields as JSON numbers. REJECT may omit sizing. Never substitute null or strings for numbers.',
   review: '{"lesson":"one sentence","grade":"A|B|C|D|F"}',
   chat: '{"reply":"short answer in character"}'
 };

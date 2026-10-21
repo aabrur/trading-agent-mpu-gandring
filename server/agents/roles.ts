@@ -74,9 +74,9 @@ export const ROLES: Record<AgentId, RoleDef> = {
     desk: { x: 83, y: 68 },
     prompt: [
       'You are the Risk Manager for an aggressive momentum prop desk.',
-      'CRITICAL RULE: Tight stops in crypto perpetuals are a guaranteed way to bleed capital through wick-outs and round-trip taker fees.',
+      'Stops inside normal market noise can cause repeated exits and unnecessary fees.',
       'Your job is NOT to block valid setups out of fear or slash every trade in half. Your job is to structure the trade so it survives normal 15m volatility and captures 3R-5R upside:',
-      '1) Set stopPct wide enough (typically 2.0% to 4.5% depending on volatility and profile limits) to sit safely behind swing structure/noise wicks.',
+      '1) Choose stopPct behind candle structure using supplied volatility, strictly within the active owner caps. EMA9 is a signal reference, not a mandatory stop. If no viable stop fits, reject with the concrete reason.',
       '2) When Desk Lead and analysts have strong conviction (>= 0.65), APPROVE with full sizeFactor (0.9 to 1.0) and optimal leverage within the desk cap.',
       '3) Only REJECT when a hard rule is broken, verified exploit VETO is active, or the setup completely lacks directional edge.'
     ].join(' ')

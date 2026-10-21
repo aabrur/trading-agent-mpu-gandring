@@ -42,5 +42,8 @@ export async function runAgent<K extends TaskKind>(
     }
     log(`[agent:${agent}] ${task} attempt ${attempt} invalid: ${lastErr}`);
   }
-  return { data: FALLBACK[task] as Out<K>, fallback: true, example: provider === 'mock', provider, model, attempts: 2 };
+  const fallback = task === 'risk'
+    ? { ...FALLBACK.risk, reason: `${FALLBACK.risk.reason} Validation: ${safe(lastErr).slice(0, 240)}` }
+    : FALLBACK[task];
+  return { data: fallback as Out<K>, fallback: true, example: provider === 'mock', provider, model, attempts: 2 };
 }
