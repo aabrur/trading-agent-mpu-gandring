@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AgentId, AgentView, DeskState, Fight, Reaction, Speech } from '../types';
 import { AGENT_ORDER } from '../types';
 import { Bot, type Face, type Pose } from './Bot';
 import { Sparkline } from './MiniCharts';
-import { SEATS, WORKSTATIONS, FIGHT_STAGE, SPECTATORS, heatedDebateFight, officePnl, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
+import { WORKSTATIONS, FIGHT_STAGE, officePositions, heatedDebateFight, officePnl, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
 import { useSceneDirector } from '../useSceneDirector';
+import { DESK_SETS } from '../officeSets';
 import { useI18n } from '../i18n';
 import { fmt } from './format';
 import { OfficeDiscussion } from './OfficeDiscussion';
@@ -41,7 +42,8 @@ function useOfficeFight(state: DeskState, fights: Fight[]) {
     return () => { window.clearInterval(timer); media.removeEventListener('change', update); document.removeEventListener('visibilitychange', update); };
   }, [debating]);
   if (!debating || ['opening', 'reading', 'verdict', 'risk gate', 'done'].includes(state.debate?.phase ?? '') || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
-  return fights.at(-1) ?? heatedDebateFight(state, clock.now) ?? undefined;
+  const recent = fights.at(-1);
+  return recent && clock.now >= recent.at && clock.now - recent.at < 2400 ? recent : heatedDebateFight(state, clock.now) ?? undefined;
 }
 
 function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | undefined, inDebate: boolean, activeFight?: Fight): { pose: Pose; face: Face } {
@@ -74,20 +76,15 @@ function useMovement(pos: Point, desks: Point[], staged = false) {
     if (!el) return;
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const from = previous.current;
-    if (staged || wasStaged.current) {
-      wasStaged.current = staged;
-      previous.current = pos;
-      el.style.transform = `translate(${pos.x}%, ${pos.y}%)`;
-      setWalk({ on: false, left: false });
-      return;
-    }
+    const changingStage = staged || wasStaged.current;
+    wasStaged.current = staged;
     if (from.x === pos.x && from.y === pos.y) { el.style.transform = `translate(${pos.x}%, ${pos.y}%)`; return; }
-    const path = route(from, pos, desks);
+    const path = changingStage ? [from, pos] : route(from, pos, desks);
     const target = path.at(-1)!;
     previous.current = target;
     const distance = path.slice(1).reduce((d, p, i) => d + Math.hypot(p.x - path[i].x, p.y - path[i].y), 0);
-    const duration = media.matches || document.hidden ? 0 : Math.max(600, distance * 65);
-    setWalk({ on: duration > 0 && path.length > 1, left: target.x < from.x });
+    const duration = media.matches || document.hidden ? 0 : changingStage ? 400 : Math.max(600, distance * 65);
+    setWalk({ on: duration > 0 && path.length > 1 && !staged, left: target.x < from.x });
     let travelled = 0;
     const frames = path.map((p, i) => {
       if (i) travelled += Math.hypot(p.x - path[i - 1].x, p.y - path[i - 1].y);
@@ -127,19 +124,20 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
   const talking = !!sp && !sp.done;
   const isPunching = fight?.from === a.id;
   const isHit = fight?.to === a.id;
+  const label = walk.on ? 'walking' : fight ? 'cartoon sparring' : activeFight ? 'watching the debate' : activity.label;
   return (
     <div ref={anchor} className="agent-anchor" data-agent={a.id} style={{ zIndex: Math.round(pos.y * 10) + 100 }}>
     <button
       className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${isPunching ? 'is-punching' : ''} ${isHit ? 'is-hit' : ''} ${(isPunching || isHit) ? 'in-dust-brawl' : ''} ${!inDebate && pose === 'idle' ? 'at-desk' : ''} ${pos.y < 48 ? 'bubble-below' : ''} ${pos.x < 25 ? 'bubble-left' : pos.x > 75 ? 'bubble-right' : ''}`}
       style={{ zIndex: Math.round(pos.y * 10) + (sp ? 400 : 0) + (isPunching || isHit ? 250 : 0), ['--agent' as string]: a.color }}
       onClick={onSelect}
-      aria-label={`${a.name}, ${walk.on ? 'walking' : activity.label}`}
+      aria-label={`${a.name}, ${label}`} data-activity={pose}
     >
       {a.status === 'thinking' && !sp && <div className="think"><i /><i /><i /></div>}
       <div className={`bot-wrap ${flip ? 'flip' : ''}`}><Bot id={a.id} size={62} pose={pose} face={face} talking={talking} /></div>
       <div className="nametag">
         <strong>{a.name}</strong>
-        <span className="status"><i className="dot" />{walk.on ? 'walking' : activity.label}</span>
+        <span className="status"><i className="dot" />{label}</span>
         {a.stance && inDebate && <span className={`stance s-${a.stance}`}>{a.stance}{a.confidence != null ? ` ${Math.round(a.confidence * 100)}%` : ''}</span>}
       </div>
     </button>
@@ -172,6 +170,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   }, []);
   const activities = useSceneDirector(state, sceneEvents);
   const inDebate = !!state.debate;
+  const atTable = inDebate && !['reading', 'opening', 'done'].includes(state.debate!.phase);
   const heat = Math.min(1, disagreement);
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
   const latestSpeech = (Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at)[0];
@@ -179,21 +178,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   const displayFights = activeFight ? [activeFight] : [];
   const pnl = officePnl(state);
 
-  const positions = useMemo(() => {
-    const out = {} as Record<AgentId, { x: number; y: number }>;
-    for (const id of AGENT_ORDER) {
-      const desk = WORKSTATIONS[id];
-      // at the desk they stand beside it, on the side that faces the room
-      out[id] = inDebate ? { ...SEATS[id] } : { x: desk.x + (desk.x <= 50 ? 7.8 : -7.8), y: desk.y + 5.5 };
-    }
-    if (inDebate && activeFight) {
-      for (const id of AGENT_ORDER) out[id] = { ...SPECTATORS[id] };
-      out[activeFight.from] = FIGHT_STAGE.from;
-      out[activeFight.to] = FIGHT_STAGE.to;
-    }
-    for (const id of AGENT_ORDER) if ((!inDebate || (!activeFight && activities[id].partner)) && activities[id].destination) out[id] = activities[id].destination!;
-    return out;
-  }, [state.agents, inDebate, activeFight, activities]);
+  const positions = officePositions(state, activities, activeFight);
 
   return (
     <div ref={officeRef} className={`office office-v2 ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
@@ -207,49 +192,42 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       <div className="studio-room" aria-hidden="true">
         <div className="studio-wall" />
         <div className="studio-floor" />
-        <div className="studio-window window-west"><img src={asset('023_keyboard_window-1')} alt="" /><span /></div>
-        <div className="studio-window window-east"><img src={asset('023_keyboard_window-1')} alt="" /><span /></div>
+        <div className="studio-window window-west"><img src={asset('mg_prop_window_frame')} alt="" /><span /></div>
+        <div className="studio-window window-east"><img src={asset('mg_prop_window_frame')} alt="" /><span /></div>
         <div className="studio-sign"><img src="/mpu-gandring-logo.webp" alt="" /></div>
-        <div className="studio-library">
-          <img className="studio-shelf" src={asset('011_red-books_wooden-bookshelf-1')} alt="" />
-          {[[11, 8], [3, 1, 5], [2, 4, 9], [12]].map((books, row) => <div className={`studio-books books-${row}`} key={row}>{books.map((book) => <img key={book} src={asset(`011_red-books_stacked-books-${book}`)} alt="" />)}</div>)}
-        </div>
-        <div className="studio-coffee"><img src={asset('023_keyboard_office-desk-7')} alt="" /><img className="coffee-machine" src={asset('051_red-mug_espresso-machine')} alt="" /><img className="coffee-cup" src={asset('012_coffee-cup')} alt="" /></div>
-        <img className="studio-vine vine-west" src={asset('023_keyboard_hanging-plant')} alt="" />
-        <img className="studio-vine vine-east" src={asset('023_keyboard_hanging-plant')} alt="" />
-        <div className="studio-pendant"><i /><span /></div>
+        <div className="studio-library"><img className="studio-shelf" src={asset('mg_prop_bookshelf')} alt="" /></div>
+        <div className="studio-coffee"><img src={asset('mg_prop_coffee_counter')} alt="" /><img className="coffee-cup" src={asset('mg_item_coffee_mug_dustyblue')} alt="" /></div>
+        <img className="studio-vine vine-west" src={asset('mg_prop_plant_hanging')} alt="" />
+        <img className="studio-vine vine-east" src={asset('mg_prop_plant_hanging')} alt="" />
+        <img className="studio-pendant" src={asset('mg_env_pendant_lamp')} alt="" />
         <div className="studio-sunlight" />
-        <div className="studio-rug"><span /></div>
-        <img className="studio-lamp lamp-west" src={asset('023_keyboard_floor-lamp-1')} alt="" />
-        <img className="studio-lamp lamp-east" src={asset('023_keyboard_floor-lamp-1')} alt="" />
-        <img className="studio-plant plant-west" src={asset('019_soil_potted-plant')} alt="" />
-        <img className="studio-plant plant-east" src={asset('022_soil_potted-plant')} alt="" />
-        <div className="studio-wall-board"><span>{t('analysisBoardText')}</span><svg viewBox="0 0 90 30"><path d="M4 23 L18 16 L31 20 L44 8 L57 13 L70 6 L85 9" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div>
+        <div className="studio-rug"><img src={asset('mg_prop_office_rug')} alt="" /></div>
+        <img className="studio-lamp lamp-west" src={asset('mg_prop_floor_lamp')} alt="" />
+        <img className="studio-lamp lamp-east" src={asset('mg_prop_floor_lamp')} alt="" />
+        <img className="studio-plant plant-west" src={asset('mg_prop_plant_floor')} alt="" />
+        <img className="studio-plant plant-east" src={asset('mg_prop_plant_desktop')} alt="" />
+        <div className="studio-wall-board"><img src={asset('mg_prop_whiteboard')} alt="" /><div><span>{t('analysisBoardText')}</span>{spark.length > 1 ? <Sparkline values={spark} up={up} /> : <img className="board-reference" src={asset('mg_icon_trend_analysis')} alt="" />}<i /><i /></div></div>
       </div>
       <div className="studio-meeting" style={{ left: '50%', top: '65%' }} aria-label="Agent discussion table">
-        <img src={asset('023_keyboard_round-coffee-table')} alt="" />
-        <div className="studio-table-inlay">
-          <img className="keris-blade" src={asset('026_curved-blade_ornate-dagger')} alt="" width={337} height={940} />
-          <img className="keris-stand" src={asset('026_curved-blade_wooden-display-stand')} alt="" width={579} height={459} />
-        </div>
-        <img className="meeting-cup cup-left" src={asset('012_coffee-cup')} alt="" />
-        <img className="meeting-cup cup-right" src={asset('001_ceramic-mug')} alt="" />
-        <img className="meeting-book" src={asset('030_closed-book')} alt="" />
-        <img className="meeting-plant" src={asset('012_coffee-cup_potted-plant')} alt="" />
+        <img src={asset('mg_prop_debate_table')} alt="" />
+        <div className="studio-table-inlay"><img src={asset('mg_item_keris_ornament')} alt="" /></div>
+        <img className="meeting-cup cup-left" src={asset('mg_item_coffee_mug_sage')} alt="" />
+        <img className="meeting-cup cup-right" src={asset('mg_item_coffee_mug_terracotta')} alt="" />
+        <img className="meeting-book" src={asset('mg_item_strategy_notebook')} alt="" />
+        <img className="meeting-plant" src={asset('mg_prop_plant_succulent')} alt="" />
       </div>
 
       {AGENT_ORDER.map((id) => {
         const a = state.agents[id];
         const desk = WORKSTATIONS[id];
-        const busy = !inDebate && a.status !== 'idle';
+        const busy = !atTable && a.status !== 'idle';
+        const set = DESK_SETS[id];
         return (
-          <div key={`desk-${id}`} data-desk={id} className={`studio-desk ${desk.x > 50 ? 'desk-east' : 'desk-west'} ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, ['--agent' as string]: a.color }} aria-hidden="true">
+          <div key={`desk-${id}`} data-desk={id} className={`studio-desk ${desk.x > 50 ? 'desk-east' : 'desk-west'} ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, width: `${set.width ?? 17}%`, ['--agent' as string]: a.color }} aria-hidden="true">
             <div className="studio-chair" />
-            <img className="studio-desk-wood" src={asset('023_keyboard_computer-desk-5')} alt="" />
-            <div className="studio-monitor"><img src={asset('023_keyboard_computer-monitor-1')} alt="" /><div className="studio-screen"><Sparkline values={spark} up={up} /></div></div>
-            <img className="studio-keyboard" src={asset('004_keyboard')} alt="" />
-            <img className="studio-mug" src={asset('001_ceramic-mug')} alt="" />
-            {(id === 'lead' || id === 'research') && <img className="studio-notebook" src={asset('030_closed-book')} alt="" />}
+            <img className="studio-desk-wood" src={asset(set.base)} alt="" />
+            {set.monitor && <div className="studio-monitor" style={{ left: `${set.monitor.x}%`, top: `${set.monitor.y}%`, width: `${set.monitor.width}%` }}><img src={asset('mg_item_market_tablet')} alt="" />{spark.length > 1 && <div className="studio-screen"><Sparkline values={spark} up={up} /></div>}</div>}
+            {set.props.map((prop) => <img key={prop.asset} className="studio-desk-prop" src={asset(prop.asset)} alt="" style={{ left: `${prop.x}%`, top: `${prop.y}%`, width: `${prop.width}%` }} />)}
             <span className="studio-desk-name">{DESK_LABEL[id]}</span>
           </div>
         );
@@ -271,16 +249,12 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
           <div key={f.id} className="brawl-zone" style={{ left: `${cx}%`, top: `${cy}%`, ['--i' as string]: f.intensity }}>
             <div className="brawl-art">
             <div className="brawl-dust-cloud" aria-hidden="true">
-              <i className="smoke-puff p1" />
-              <i className="smoke-puff p2" />
-              <i className="smoke-puff p3" />
-              <i className="smoke-puff p4" />
-              <i className="smoke-puff p5" />
-              <i className="smoke-puff p6" />
-              <i className="smoke-swirl s1" />
-              <i className="smoke-swirl s2" />
+              <img className="combat-cloud cloud-main" src={asset('mg_fx_fight_smoke_soft')} alt="" />
+              <img className="combat-cloud cloud-roll" src={asset('mg_fx_fight_smoke_brawl')} alt="" />
+              <img className="combat-impact impact-left" src={asset('mg_fx_thinking_sparkles')} alt="" />
+              <img className="combat-impact impact-right" src={asset('mg_fx_execution_flash')} alt="" />
               {Array.from({ length: 8 }, (_, idx) => (
-                <svg key={idx} className={`brawl-limb l-${idx + 1}`} viewBox="0 0 24 24"><path d="m12 1 3 7 8 4-8 3-3 8-3-8-8-3 8-4z" fill="currentColor" /></svg>
+                <img key={idx} className={`brawl-limb l-${idx + 1}`} src={asset('mg_fx_thinking_sparkles')} alt="" />
               ))}
             </div>
             <div className="pow pow-main">

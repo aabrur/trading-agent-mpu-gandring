@@ -48,28 +48,39 @@ export const SEATS: Record<AgentId, Point> = {
   lead: { x: 50, y: 41 }, market: { x: 27, y: 57 }, research: { x: 73, y: 57 },
   strategist: { x: 27, y: 80 }, risk: { x: 73, y: 80 }, execution: { x: 50, y: 92 }
 };
-const destinations = { coffee: { x: 88, y: 37 }, bookshelf: { x: 12, y: 37 }, analysis: { x: 66, y: 43 }, window: { x: 36, y: 37 } };
-const routines: Record<AgentId, Activity[]> = {
-  lead: [{ pose: 'read', face: 'normal', label: 'checking the journal' }, { pose: 'observe', face: 'normal', label: 'visiting analysis', destination: destinations.analysis }, { pose: 'drink', face: 'happy', label: 'coffee break', destination: destinations.coffee }],
-  market: [{ pose: 'point', face: 'normal', label: 'checking the chart' }, { pose: 'observe', face: 'normal', label: 'looking out the window', destination: destinations.window }, { pose: 'stretch', face: 'normal', label: 'stretching' }],
-  research: [{ pose: 'read', face: 'normal', label: 'checking a reference', destination: destinations.bookshelf }, { pose: 'read', face: 'normal', label: 'reading reports' }, { pose: 'drink', face: 'happy', label: 'coffee break', destination: destinations.coffee }],
-  strategist: [{ pose: 'point', face: 'normal', label: 'studying the analysis board', destination: destinations.analysis }, { pose: 'think', face: 'normal', label: 'checking patterns' }, { pose: 'stretch', face: 'normal', label: 'stretching' }],
-  risk: [{ pose: 'read', face: 'normal', label: 'reviewing tickets' }, { pose: 'stretch', face: 'normal', label: 'stretching' }, { pose: 'drink', face: 'happy', label: 'coffee break', destination: destinations.coffee }],
-  execution: [{ pose: 'type', face: 'normal', label: 'checking the terminal' }, { pose: 'drink', face: 'happy', label: 'coffee break', destination: destinations.coffee }, { pose: 'read', face: 'normal', label: 'organizing tickets' }]
-};
+const breaks: Activity[] = [
+  { pose: 'read', face: 'normal', label: 'browsing the library', destination: { x: 13, y: 36 } },
+  { pose: 'drink', face: 'happy', label: 'coffee break', destination: { x: 90, y: 39 } },
+  { pose: 'observe', face: 'normal', label: 'looking out the window', destination: { x: 36, y: 38 } },
+  { pose: 'point', face: 'normal', label: 'studying the analysis board', destination: { x: 60, y: 47 } },
+  { pose: 'read', face: 'happy', label: 'reading in the lounge', destination: { x: 50, y: 94 } }
+];
 export function ambientActivity(id: AgentId, slot: number): Activity {
-  return routines[id][Math.abs(slot + id.length) % routines[id].length];
+  return { ...breaks[(AGENT_ORDER.indexOf(id) + Math.abs(slot)) % breaks.length] };
+}
+export function workstationPoint(id: AgentId): Point {
+  const desk = WORKSTATIONS[id];
+  return { x: desk.x + (desk.x <= 50 ? 7.8 : -7.8), y: desk.y + 5.5 };
+}
+export function officePositions(state: DeskState, activities: Record<AgentId, Activity>, fight?: Fight): Record<AgentId, Point> {
+  const atTable = state.debate && !['opening', 'reading', 'done'].includes(state.debate.phase);
+  return Object.fromEntries(AGENT_ORDER.map((id) => {
+    if (fight) return [id, fight.from === id ? FIGHT_STAGE.from : fight.to === id ? FIGHT_STAGE.to : SPECTATORS[id]];
+    if (!state.debate && activities[id].destination) return [id, activities[id].destination!];
+    return [id, atTable ? SEATS[id] : workstationPoint(id)];
+  })) as Record<AgentId, Point>;
 }
 
 export function directScene(input: { state: DeskState; events: SceneEvent[]; tick: number; now: number; hidden: boolean; reducedMotion: boolean }): Record<AgentId, Activity> {
   const { state, events, tick, now, hidden, reducedMotion } = input;
-  const slot = Math.floor(tick / 15);
+  const slot = Math.floor(tick / 18);
   const recent = events.filter((e) => e.at <= now && now - e.at < 7000).sort((a, b) => b.at - a.at);
   const important = recent.find((e) => e.kind === 'execution') ?? recent.find((e) => e.kind !== 'speech');
-  const visitor = tick % 15 < 11 && !hidden && !reducedMotion && !state.debate && !state.killed && !recent.length ? AGENT_ORDER[slot % AGENT_ORDER.length] : null;
-  const frame = Object.fromEntries(AGENT_ORDER.map((id) => [id, activityFor(state, id, slot, visitor, important)])) as Record<AgentId, Activity>;
+  const resting = !hidden && !reducedMotion && !state.debate && !state.killed && !state.paused && !recent.length;
+  const visitors = new Set(resting ? [tick % 18 < 13 ? AGENT_ORDER[slot % AGENT_ORDER.length] : null, tick % 18 >= 4 ? AGENT_ORDER[(slot + 3) % AGENT_ORDER.length] : null] : []);
+  const frame = Object.fromEntries(AGENT_ORDER.map((id) => [id, activityFor(state, id, slot, visitors.has(id) ? id : null, important)])) as Record<AgentId, Activity>;
   const speech = recent.find((e) => e.kind === 'speech' && (e.agent === 'research' || e.agent === 'risk'));
-  if (!hidden && !reducedMotion && !state.killed && !state.debate && !important && speech?.agent) {
+  if (!hidden && !reducedMotion && !state.killed && !state.paused && !state.debate && !important && speech?.agent) {
     const from = speech.agent, to = from === 'risk' ? 'execution' : 'lead';
     const available = [from, to].every((id) => !['executing', 'fighting'].includes(state.agents[id as AgentId].status));
     if (available) {
@@ -88,6 +99,7 @@ export function eventActivity(event: SceneEvent): Activity {
   return { pose: 'type', face: 'normal', label: event.status === 'partial' ? 'tracking a partial fill' : event.status === 'reconciled' ? 'reconciling the book' : 'tracking the order' };
 }
 export function activityFor(state: DeskState, id: AgentId, slot: number, visitor: AgentId | null, event?: SceneEvent): Activity {
+  if (state.killed || state.paused) return { pose: 'think', face: state.killed ? 'worried' : 'normal', label: state.killed ? 'desk stopped' : 'desk paused' };
   if (event && (event.kind === 'execution' ? id === 'execution' : id === 'lead')) return eventActivity(event);
   const status = state.agents[id].status;
   const busy: Partial<Record<typeof status, Activity>> = {
@@ -104,7 +116,7 @@ export function activityFor(state: DeskState, id: AgentId, slot: number, visitor
 
 export function blocked(p: Point, desks: Point[]) {
   if (p.x < 8 || p.x > 92 || p.y < 34 || p.y > 97) return true;
-  if (p.x > 36 && p.x < 64 && p.y > 53 && p.y < 76) return true;
+  if (p.x > 35 && p.x < 65 && p.y > 49 && p.y < 82) return true;
   return desks.some((d) => Math.abs(p.x - d.x) < 6.5 && p.y > d.y - 5 && p.y < d.y + 2);
 }
 const clear = (a: Point, b: Point, desks: Point[]) => {

@@ -73,8 +73,12 @@ try {
   assert.equal(await page.locator('.office-orders .mini-chart, .office-orders .formula, .office-orders .positions').count(), 0);
   assert.equal(await page.locator('.portfolio .order-details .mini-chart').count(), 2);
   assert.equal(await page.locator('.studio-sign img[src="/mpu-gandring-logo.webp"]').count(), 1);
+  assert.equal(await page.locator('.studio-desk-wood').evaluateAll((desks) => new Set(desks.map((desk) => (desk as HTMLImageElement).getAttribute('src'))).size), 6, 'Each agent has a distinct supplied desk set');
   assert.equal(await page.locator('.studio-meeting-label').count(), 0);
-  assert.equal(await page.locator('.coffee-machine, .meeting-book, .meeting-plant').count(), 3);
+  assert.equal(await page.locator('.studio-coffee > img[src="/office-assets/mg_prop_coffee_counter.webp"]').count(), 1);
+  assert.equal(await page.locator('.meeting-book, .meeting-plant').count(), 2);
+  assert(await page.locator('[data-desk="risk"] .studio-desk-wood').getAttribute('src') === '/office-assets/mg_prop_risk_desk.webp');
+  assert(await page.locator('[data-desk="execution"] .studio-desk-wood').getAttribute('src') === '/office-assets/mg_prop_execution_terminal.webp');
   assert.equal((await page.locator('.office-pnl').innerText()).includes('PAPER'), false);
   assert.equal(await page.locator('.report').count(), 5);
   assert.equal(await page.locator('.report-evidence[open]').count(), 0);
@@ -97,11 +101,10 @@ try {
       for (let i = 0; i < decor.length; i++) for (let j = i + 1; j < decor.length; j++) {
         if (overlaps(decor[i].getBoundingClientRect(), decor[j].getBoundingClientRect())) errors.push('Table decorations overlap');
       }
-      const shelves = [...document.querySelectorAll('.studio-books')];
-      if (shelves.length !== 4) errors.push('Bookshelf must have four stocked levels');
-      for (const shelf of shelves) {
-        const books = [...shelf.children];
-        for (let i = 1; i < books.length; i++) if (overlaps(books[i - 1].getBoundingClientRect(), books[i].getBoundingClientRect())) errors.push('Bookshelf groups overlap');
+      if (document.querySelectorAll('.studio-library img').length !== 1 || !document.querySelector('.studio-library img[src="/office-assets/mg_prop_bookshelf.webp"]')) errors.push('Bookshelf must use the complete stocked bundle');
+      for (const img of document.querySelectorAll('.studio-desk-wood, .studio-shelf, .studio-coffee > img:first-child, .studio-meeting > img:first-child')) {
+        const bounds = img.getBoundingClientRect();
+        if (bounds.left < world.left - 1 || bounds.right > world.right + 1 || bounds.top < world.top - 1 || bounds.bottom > world.bottom + 1) errors.push('Furniture is clipped by the room');
       }
       if (overlaps(world, hud)) errors.push('HUD covers the room');
       if (overlaps(world, pnl)) errors.push('PnL covers the room');
@@ -138,7 +141,7 @@ try {
     assert(await page.locator('.roster').evaluate((roster) => roster.scrollWidth <= roster.clientWidth), 'All six desktop agent buttons fit the row');
     assert(geometry.office.height >= viewport.height * .6, 'Room must retain most of the viewport height');
     assert(await page.locator('.office-hud').evaluate((hud) => hud.getBoundingClientRect().width <= 200), 'Map indicators remain compact');
-    assert(await page.locator('.office-world .agent .bot').evaluateAll((bots) => bots.every((bot) => bot.getBoundingClientRect().width <= 40)), 'Scene agents stay small');
+    assert(await page.locator('.office-world .agent .bot').evaluateAll((bots) => bots.every((bot) => bot.getBoundingClientRect().width >= 48 && bot.getBoundingClientRect().width <= 60)), 'Scene agents stay readable at 48 to 60px');
     await page.screenshot({ path: path.join(output, `office-fit-${viewport.width}.png`) });
   }
   await page.setViewportSize({ width: 1440, height: 1100 });
@@ -200,6 +203,13 @@ try {
   socket!.send(JSON.stringify({ type: 'state', payload: live }));
   await page.waitForFunction(() => document.querySelector('.live-badge') != null);
   assert(!/LIVE|Exchange/.test(await page.locator('.office-pnl').innerText()), 'Map PnL omits mode and exchange source labels.');
+  const reading = structuredClone(snapshot);
+  reading.debate = { id: 'test-reading', symbol: 'ETHUSDT', phase: 'reading', round: 0, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
+  reading.agents.research.status = 'reading';
+  socket!.send(JSON.stringify({ type: 'state', payload: reading }));
+  await page.waitForSelector('[data-agent="research"] [data-activity="read"]');
+  await assertOfficeSpace();
+  await page.locator('.office').screenshot({ path: path.join(output, 'office-analysis.png') });
   const hot = structuredClone(snapshot);
   hot.paper.unrealized = -7.5;
   hot.paper.positions = Array.from({ length: 4 }, (_, i) => ({ id: `position-${i}`, symbol: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'][i], side: 'LONG' as const, qty: 1, entry: 100, stop: 95, tp: 110, margin: 200, leverage: 1, openedAt: Date.now(), mark: 101, unrealizedPnl: 1 }));
@@ -217,6 +227,9 @@ try {
   assert.equal(await page.locator('.brawl-zone').count(), 0, 'Reduced motion suppresses fights');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.waitForSelector('.brawl-zone', { timeout: 8000 });
+  assert.equal(await page.locator('.brawl-zone .combat-cloud').count(), 2);
+  assert.equal(await page.locator('.brawl-zone .brawl-limb').evaluateAll((limbs) => limbs.every((limb) => limb.tagName === 'IMG')), true);
+  assert.equal(await page.locator('[data-activity="punch"], [data-activity="guard"]').count(), 2);
   await page.locator('.office').screenshot({ path: path.join(output, 'office-hot-debate.png') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.waitForSelector('.brawl-zone', { state: 'detached' });
@@ -239,8 +252,14 @@ try {
     await page.locator('.office').screenshot({ path: path.join(output, `office-room-${viewport.width}.png`) });
   }
   await page.setViewportSize({ width: 1440, height: 1100 });
+  socket!.send(JSON.stringify({ type: 'state', payload: snapshot }));
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.waitForSelector('[data-activity="walk"]', { timeout: 20000 });
+  await page.locator('.office').screenshot({ path: path.join(output, 'office-idle-activities.png') });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'night'; });
   await page.screenshot({ path: path.join(output, 'office-night.png'), fullPage: true });
+  await page.locator('.office').screenshot({ path: path.join(output, 'office-night-room.png') });
   assert.deepEqual(errors, []);
   console.log(`Office layout and wallet session checks passed. Screenshots: ${output}`);
 } finally { await browser.close(); }

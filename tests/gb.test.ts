@@ -46,14 +46,14 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
   });
   it('open goes through the risk gate caps, money split and mandatory stop; close all flattens', async () => {
     // A stop wider than DEFAULT_STOP_PCT is refused, never tightened or moved, and nothing reaches the exchange.
-    const wide = await run('open', 'ETHUSDT', 'SHORT', '--stop', '3600', '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop far above the range.');
+    const wide = await run('open', 'ETHUSDT', 'SHORT', '--confidence', '0.8', '--stop', '3600', '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop far above the range.');
     expect(wide.ok).toBe(false);
     expect(wide.text).toMatch(/wider than the 1.5% limit/);
     expect(adapter.placed).toHaveLength(0);
     const mk = (await run('market', 'ETHUSDT')).data as { last?: number; bid?: number | null };
     const px = Number(mk.bid ?? mk.last);
     const stop = Math.round(px * 1.012); // 1.2% above the bid, inside the 1.5% limit, on the fake tick
-    const r = await run('open', 'ETHUSDT', 'SHORT', '--stop', String(stop), '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop above the range.');
+    const r = await run('open', 'ETHUSDT', 'SHORT', '--confidence', '0.8', '--stop', String(stop), '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop above the range.');
     expect(r.ok).toBe(true);
     const notes = (r.data as { notes: string[] }).notes.join(' ');
     expect(notes).toMatch(/capped to 3x/);
@@ -65,14 +65,14 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect((pos.data as unknown[]).length).toBe(1);
     const acc = await run('account');
     expect((acc.data as { appMode: string }).appMode).toBe('grokbot');
-    const dup = await run('open', 'ETHUSDT', 'SHORT', '--stop', '3200');
+    const dup = await run('open', 'ETHUSDT', 'SHORT', '--confidence', '0.8', '--stop', '3200');
     expect(dup.ok).toBe(false);
     const cl = await run('close', 'all');
     expect(cl.ok).toBe(true);
     expect(adapter.closes).toBe(1);
   });
   it('refuses a stop on the wrong side', async () => {
-    const r = await run('open', 'SOLUSDT', 'LONG', '--stop', '999999');
+    const r = await run('open', 'SOLUSDT', 'LONG', '--confidence', '0.8', '--stop', '999999');
     expect(r.ok).toBe(false);
     expect(r.text).toMatch(/wrong side/);
   });

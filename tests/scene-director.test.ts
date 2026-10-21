@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WORKSTATIONS, ambientActivity, eventActivity, route, blocked, directScene, verdictReactions, heatedDebateFight, officePnl } from '../web/src/sceneDirector';
+import { WORKSTATIONS, SEATS, officePositions, workstationPoint, ambientActivity, eventActivity, route, blocked, directScene, verdictReactions, heatedDebateFight, officePnl } from '../web/src/sceneDirector';
 import { AGENT_ORDER } from '../web/src/types';
 import type { DeskState, Verdict } from '../web/src/types';
 import { Desk } from '../server/desk';
@@ -99,4 +99,46 @@ describe('office director', () => {
       }
     }
   });
+  it('keeps independent analysis at the desk and gathers only for discussion', () => {
+    const input = sceneFixture();
+    input.events = [];
+    input.state.debate = { id: 'phases', symbol: 'ETHUSDT', phase: 'reading', round: 0, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
+    input.state.agents.research.status = 'reading';
+    const activities = directScene(input);
+    expect(activities.research.pose).toBe('read');
+    expect(officePositions(input.state, activities).research).toEqual(workstationPoint('research'));
+    input.state.debate.phase = 'round 1';
+    expect(officePositions(input.state, activities)).toEqual(SEATS);
+  });
+  it('gives every idle role reachable breaks without crowding the same destination', () => {
+    const input = sceneFixture(); input.events = [];
+    const desks = AGENT_ORDER.map((id) => WORKSTATIONS[id]);
+    for (const id of AGENT_ORDER) {
+      const visited = new Set<string>();
+      for (let slot = 0; slot < 5; slot++) {
+        const destination = ambientActivity(id, slot).destination!;
+        expect(blocked(destination, desks)).toBe(false);
+        expect(route(workstationPoint(id), destination, desks).at(-1)).toEqual(destination);
+        visited.add(JSON.stringify(destination));
+      }
+      expect(visited.size).toBe(5);
+    }
+    for (let tick = 0; tick < 108; tick++) {
+      const visiting = Object.values(directScene({ ...input, tick })).filter((activity) => activity.destination);
+      expect(visiting.length).toBeLessThanOrEqual(2);
+      expect(new Set(visiting.map((activity) => JSON.stringify(activity.destination))).size).toBe(visiting.length);
+    }
+  });
+  it('never sends working, stopped or paused agents on a break', () => {
+    const input = sceneFixture(); input.events = [];
+    input.state.agents.lead.status = 'journaling';
+    expect(directScene(input).lead).toMatchObject({ pose: 'read', label: 'writing the journal' });
+    expect(directScene(input).lead.destination).toBeUndefined();
+    for (const patch of [{ killed: true }, { paused: true }]) {
+      expect(Object.values(directScene({ ...input, state: { ...input.state, ...patch } })).every((activity) => !activity.destination && activity.pose === 'think')).toBe(true);
+      const speech = [{ id: 'late-speech', kind: 'speech' as const, agent: 'research' as const, at: input.now }];
+      expect(Object.values(directScene({ ...input, events: speech, state: { ...input.state, ...patch } })).every((activity) => !activity.destination && activity.pose === 'think')).toBe(true);
+    }
+  });
+
 });

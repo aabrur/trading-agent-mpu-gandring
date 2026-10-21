@@ -43,7 +43,7 @@ describe('Grok Bot mode regressions', () => {
       expect((await run('event', 'lead', t)).ok).toBe(true);
     const mk = (await run('market', 'ETHUSDT')).data as { last?: number; bid?: number | null };
     const stop = Math.round(Number(mk.bid ?? mk.last) * 1.012);
-    const r = await run('open', 'ETHUSDT', 'SHORT', '--stop', String(stop), '--reason', 'Desk Lead: OPEN_SHORT, not a hold, threshold met.');
+    const r = await run('open', 'ETHUSDT', 'SHORT', '--confidence', '0.8', '--stop', String(stop), '--reason', 'Desk Lead: OPEN_SHORT, not a hold, threshold met.');
     expect(r.ok).toBe(true);
     expect(adapter.placed).toHaveLength(1);
     await run('close', 'all');

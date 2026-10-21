@@ -31,11 +31,11 @@ describe('CLI parity in local mode (no AGENT_EVENT_SECRET)', () => {
     const env = { PORT: '1' } as NodeJS.ProcessEnv; // no secret
     const price = desk.tickers.BTCUSDT.last;
     expect((await gb(['open', 'BTCUSDT', 'LONG'], { env, baseUrl: base })).text).toMatch(/no stop/);
-    const o = await gb(['open', 'BTCUSDT', 'LONG', '--stop', String(Math.round(price * 0.99))], { env, baseUrl: base });
+    const o = await gb(['open', 'BTCUSDT', 'LONG', '--confidence', '0.8', '--stop', String(Math.round(price * 0.99))], { env, baseUrl: base });
     expect(o.text).not.toMatch(/AGENT_EVENT_SECRET/);
     expect(o.ok).toBe(true);
     expect((await gb(['positions'], { env, baseUrl: base })).text).toMatch(/BTCUSDT/);
-    const wide = await gb(['open', 'ETHUSDT', 'LONG', '--stop', String(desk.tickers.ETHUSDT.last * 0.9)], { env, baseUrl: base });
+    const wide = await gb(['open', 'ETHUSDT', 'LONG', '--confidence', '0.8', '--stop', String(desk.tickers.ETHUSDT.last * 0.9)], { env, baseUrl: base });
     expect(wide.ok).toBe(false); // the same planner refuses a stop wider than DEFAULT_STOP_PCT
     expect((await gb(['close', 'BTCUSDT'], { env, baseUrl: base })).ok).toBe(true);
     expect((await gb(['scan'], { env, baseUrl: base })).ok).toBe(true);

@@ -16,8 +16,9 @@ import { strategyVote } from '../server/strategy.js';
 import { sampleCandles } from '../server/market/sample.js';
 
 describe('decision pace', () => {
-  it('keeps full rounds in NORMAL and skips redundant FAST rebuttals when independent analysis agrees', () => {
-    expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(2);
+  it('skips redundant consensus rounds and keeps full NORMAL rebuttals for opposing analysis', () => {
+    expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(0);
+    expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'SHORT', strategist: 'LONG', researchVote: 'SHORT' })).toBe(2);
     expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(0);
     expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'SHORT', strategist: 'LONG', researchVote: 'SHORT' })).toBe(1);
     expect(rebuttalRounds('fast', 2, { market: 'NEUTRAL', research: 'NEUTRAL', strategist: 'NEUTRAL', researchVote: 'ABSTAIN' })).toBe(0);
@@ -95,7 +96,8 @@ describe('FAST debate and SHADOW Jev', () => {
     const nDesk = new Desk(normal, nCaller, { reportsDir: null });
     await nDesk.runDebate('ETHUSDT');
     const normalRebuttals = nCaller.mock.calls.filter(([r]) => r.task === 'rebuttal').length;
-    expect(rebuttals).toBeLessThan(normalRebuttals);
+    expect(rebuttals).toBe(0);
+    expect(normalRebuttals).toBe(0);
   });
 
   it('does not block SHADOW Jev on verdict generation', async () => {
@@ -119,22 +121,24 @@ describe('FAST debate and SHADOW Jev', () => {
 
 describe('stale signal revalidation', () => {
   it('rejects entries when the snapshot is stale and the closed-bar rule flips', () => {
-    const candles = sampleCandles('ETHUSDT');
+    const now = Date.now();
+    const candles = sampleCandles('ETHUSDT').map((c, index) => ({ ...c, c: 100 + index }));
     const last = candles.at(-1)!.c;
     const original = {
       symbol: 'ETHUSDT', source: 'sample' as const, example: true, last, change24hPct: 0, fundingRate: null,
-      bid: last, ask: last, candles, fetchedAt: Date.now() - 20_000
+      bid: last, ask: last, candles, fetchedAt: now - 30_001
     };
-    expect(snapshotIsFresh(original)).toBe(false);
+    expect(snapshotIsFresh(original, now)).toBe(false);
+    expect(snapshotIsFresh({ ...original, fetchedAt: now - 30_000 }, now)).toBe(true);
     const originalRule = strategyVote(candles);
-    const flipped = candles.map((c, i) => i === candles.length - 1 ? { ...c, c: originalRule.side === 'LONG' ? c.c * 0.5 : c.c * 2 } : c);
+    expect(originalRule.side).toBe('LONG');
+    const flipped = candles.map((c, i) => ({ ...c, c: 500 - i }));
     const fresh = { ...original, fetchedAt: Date.now(), candles: flipped, last: flipped.at(-1)!.c, bid: flipped.at(-1)!.c, ask: flipped.at(-1)!.c };
     const side = originalRule.side === 'SHORT' ? 'SHORT' : 'LONG';
     const result = revalidateEntry({ original, originalRule: { ...originalRule, side }, side, fresh });
-    if (strategyVote(flipped).side !== side && strategyVote(flipped).side !== 'ABSTAIN') {
-      expect(result.ok).toBe(false);
-      expect(result.reason).toMatch(/Stale signal/);
-    }
+    expect(strategyVote(flipped).side).toBe('SHORT');
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/Hard reversal/);
     expect(revalidateEntry({ original, originalRule, side, fresh: { ...original, fetchedAt: Date.now(), ask: 0, bid: 0, last: 0 } }).ok).toBe(false);
   });
 });

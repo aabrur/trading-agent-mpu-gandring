@@ -14,12 +14,17 @@ export interface Lesson {
 }
 export interface LessonInput { role: LessonRole; kind: LessonKind; symbol?: string; happened: string; rootCause: string; lesson: string; source?: Lesson['source']; key?: string }
 
-// Only block hard security/ruin violations (trading without any stop at all, disabling kill switch,
-// martingale revenge loops, or leaking keys). Allow lessons that calibrate stop width and conviction!
+// Lessons are advice, never authorization to raise configured guards or spend reserved capital.
+// Explicit risk-profile settings remain separate from automatically learned text.
 const LOOSEN: RegExp[] = [
   /\b(no|skip|skipping|remove|removing|disable|disabling|without|ignore|ignoring|bypass|bypassing|turn off|drop|cancel)\s+(the\s+|a\s+|our\s+|any\s+)?(stops?|stop[- ]loss(es)?|sl|risk gate|risk manager|risk check|daily loss( stop| limit)?|daily stop|safety net|kill switch)\b/i,
   /\b(stops?|stop[- ]loss|safety net|risk gate|daily loss|kill switch)\s+(is|are)\s+(not needed|unnecessary|optional|useless)\b/i,
-  /\b([2-9]\d|\d{3,})\s?x\b/i, // Only block insane >20x leverage hallucinations, allow 5x-15x profile lessons
+  /\b([2-9]\d|\d{3,})\s?x\b/i, // Reject extreme leverage mentions even without an instruction verb.
+  /\b(use|set|raise|increase|apply|switch to)\b.{0,24}\b([4-9]|[1-9]\d+)\s?x\b/i,
+  /\b(increase|raise|double)\b.{0,24}\b(position size|size|position)\b.{0,24}\b(after|following|on)\b.{0,12}\bloss\b/i,
+  /\b(trade|spend|use|risk|allocate|dip into)\b.{0,24}\bsafety net\b/i,
+  /\b(widen|loosen|increase)\b.{0,16}\bstop(s|[- ]loss)?\b/i,
+  /\bset\s+n\s+(to\s+)?([5-9]|\d{2,})\b/i,
   /\b(all[- ]in|martingale|average down|averaging down|revenge trad(e|ing)|retry (the )?order|resend)\b/i,
   /\b(withdraw|transfer funds|send funds|private key|seed phrase)\b/i
 ];

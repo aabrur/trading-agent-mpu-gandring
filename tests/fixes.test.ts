@@ -112,7 +112,7 @@ describe('bug 6: kill switch survives a restart until the owner releases it', ()
     const d2 = new Desk(c, makeCaller(c), { reportsDir: null, killFile }); // "restart"
     expect(d2.killed).toBe(true);
     expect((await d2.executeOpen('BTCUSDT', 'LONG', 60000, { sizeFactor: 1, leverage: 2, stopPct: 1 })).ok).toBe(false);
-    expect((await d2.gbOpen({ symbol: 'BTCUSDT', side: 'LONG', stop: 59500 })).reply).toMatch(/kill switch/);
+    expect((await d2.gbOpen({ symbol: 'BTCUSDT', side: 'LONG', confidence: 0.8, stop: 59500 })).reply).toMatch(/kill switch/);
     expect(unkill([], killFile).ok).toBe(false); // no --yes: refuses
     expect(existsSync(killFile)).toBe(true);
     expect(unkill(['--yes'], killFile).ok).toBe(true);
@@ -134,11 +134,11 @@ describe('bug 7: every ticket needs a stop; one log line per fill', () => {
   it('desk.gbOpen and a Desk Lead proposal without a stop are refused; with a stop it opens once and logs the fill once', async () => {
     const c = loadConfig({ TRADING_MODE: 'PAPER', APP_MODE: 'grokbot', AGENT_EVENT_SECRET: 'y'.repeat(32), MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0' });
     const d = new Desk(c, makeCaller(c), { reportsDir: null });
-    expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG' })).reply).toMatch(/no stop/);
-    expect((await d.onAgentEvent({ agent: 'lead', kind: 'proposal', symbol: 'ETHUSDT', action: 'OPEN_LONG' })).reply).toMatch(/no stop/);
+    expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG', confidence: 0.8 })).reply).toMatch(/no stop/);
+    expect((await d.onAgentEvent({ agent: 'lead', kind: 'proposal', symbol: 'ETHUSDT', action: 'OPEN_LONG', confidence: 0.8 })).reply).toMatch(/no stop/);
     expect(d.book.positions).toHaveLength(0);
     const last = (await getSnapshot('ETHUSDT', 'sample')).last;
-    const r = await d.onAgentEvent({ agent: 'lead', kind: 'proposal', symbol: 'ETHUSDT', action: 'OPEN_LONG', stop: Math.round(last * 0.99) });
+    const r = await d.onAgentEvent({ agent: 'lead', kind: 'proposal', symbol: 'ETHUSDT', action: 'OPEN_LONG', confidence: 0.8, stop: Math.round(last * 0.99) });
     expect(r.ok).toBe(true);
     expect(d.book.positions).toHaveLength(1);
     expect(d.logs.filter((l) => /Paper fill/.test(l.text))).toHaveLength(1);
