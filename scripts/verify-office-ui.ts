@@ -70,6 +70,8 @@ try {
   assert.equal(await page.getByRole('heading', { name: 'Around the office', exact: true }).count(), 0);
   assert.equal(await page.locator('.office-hud .office-orders .n-picker').count(), 1);
   assert.equal(await page.locator('.portfolio .n-picker').count(), 0);
+  assert.equal(await page.locator('.office-orders .mini-chart, .office-orders .formula, .office-orders .positions').count(), 0);
+  assert.equal(await page.locator('.portfolio .order-details .mini-chart').count(), 2);
   assert.equal(await page.locator('.studio-sign img[src="/mpu-gandring-logo.webp"]').count(), 1);
   assert.equal(await page.locator('.studio-meeting-label').count(), 0);
   assert.equal(await page.locator('.coffee-machine, .meeting-book, .meeting-plant').count(), 3);
@@ -83,6 +85,12 @@ try {
       const pnl = document.querySelector('.office-pnl')!.getBoundingClientRect();
       const overlaps = (a: DOMRect, b: DOMRect) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
       const errors: string[] = [];
+      for (const panel of document.querySelectorAll<HTMLElement>('.office-hud, .office-hud .verdict-list, .office-orders')) {
+        if (panel.scrollHeight > panel.clientHeight + 1) errors.push(`Map indicator content overflows vertically: ${panel.className} ${panel.scrollHeight}/${panel.clientHeight}`);
+        if (panel.scrollWidth > panel.clientWidth + 1) errors.push('Map indicator content overflows horizontally');
+        if (['auto', 'scroll'].includes(getComputedStyle(panel).overflowY)) errors.push('Map indicators still scroll');
+      }
+      if (innerWidth > 768 && innerHeight >= 600 && hud.bottom > world.bottom + 1) errors.push('Map indicators extend below the room');
       const table = document.querySelector('.studio-meeting')!.getBoundingClientRect();
       if (Math.abs(table.x + table.width / 2 - (world.x + world.width / 2)) > 1 || Math.abs(table.y + table.height / 2 - (world.y + world.height * .65)) > 1) errors.push('Table is not centered on the floor');
       const decor = [...document.querySelectorAll('.studio-table-inlay, .meeting-cup, .meeting-book, .meeting-plant')];
@@ -134,6 +142,13 @@ try {
     await page.screenshot({ path: path.join(output, `office-fit-${viewport.width}.png`) });
   }
   await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.locator('.verdict-reason-trigger').click();
+  assert(await page.locator('.office-verdict-popover:popover-open').isVisible());
+  await assertOfficeSpace();
+  await page.locator('.office-verdict-popover button').click();
+  const nRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/ops/auto' && request.method() === 'POST');
+  await page.locator('.office-orders .n-picker button').filter({ hasText: /^2$/ }).click();
+  assert.deepEqual((await nRequest).postDataJSON(), { n: 2 });
   await page.locator('#tool-ops').click();
   await page.locator('.tool-flyout').hover();
   await page.waitForFunction(() => document.documentElement.style.overflow === 'hidden');
@@ -187,7 +202,8 @@ try {
   assert(!/LIVE|Exchange/.test(await page.locator('.office-pnl').innerText()), 'Map PnL omits mode and exchange source labels.');
   const hot = structuredClone(snapshot);
   hot.paper.unrealized = -7.5;
-  hot.debate = { id: 'test-hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.9, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
+  hot.paper.positions = Array.from({ length: 4 }, (_, i) => ({ id: `position-${i}`, symbol: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'][i], side: 'LONG' as const, qty: 1, entry: 100, stop: 95, tp: 110, margin: 200, leverage: 1, openedAt: Date.now(), mark: 101, unrealizedPnl: 1 }));
+  hot.debate = { id: 'test-hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.9, weighted: 0, camps: { bull: ['market', 'strategist'], bear: ['research', 'risk'], neutral: ['lead', 'execution'] } };
   hot.agents.market.stance = 'LONG'; hot.agents.research.stance = 'SHORT';
   socket!.send(JSON.stringify({ type: 'state', payload: hot }));
   socket!.send(JSON.stringify({ type: 'speech', payload: { agent: 'risk', at: Date.now(), text: 'Long debate text. '.repeat(30), done: true, example: true } }));
@@ -204,6 +220,12 @@ try {
   await page.locator('.office').screenshot({ path: path.join(output, 'office-hot-debate.png') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.waitForSelector('.brawl-zone', { state: 'detached' });
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.screenshot({ path: path.join(output, 'office-busy-1024.png') });
+  await assertOfficeSpace();
+  await page.locator('#tool-book').click();
+  assert.equal(await page.locator('.portfolio .order-details .pos').count(), 4);
+  await page.getByRole('button', { name: 'Close tool panel' }).click();
   for (const viewport of [{ width: 375, height: 812 }, { width: 812, height: 375 }]) {
     await page.setViewportSize(viewport);
     await page.emulateMedia({ reducedMotion: 'reduce' });

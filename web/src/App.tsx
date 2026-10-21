@@ -136,7 +136,7 @@ function AppInner() {
           <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected}>
             <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
             <Verdicts state={state} compact />
-            <OpenOrders state={state} command={(cmd) => void command(cmd)} />
+            <OpenOrders state={state} />
           </Office>
           <section className="desk-team" id="desk-team" aria-label={id ? 'Tim agen' : 'Agent team'}><Roster state={state} onSelect={setSelected} /></section>
           <CommandBar state={state} command={(cmd) => command(cmd)} />

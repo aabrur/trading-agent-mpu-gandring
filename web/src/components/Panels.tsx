@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { AgentId, DeskState, Verdict } from '../types';
 import { AGENT_ORDER } from '../types';
 import { PamorPattern } from './Keris';
@@ -533,18 +533,19 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
           )}
         </div>
       </div>
+      <OrderDetails state={state} command={command} />
     </section>
   );
 }
 
-export function OpenOrders({ state, command }: { state: DeskState; command: (text: string) => void }) {
+export function OpenOrders({ state }: { state: DeskState }) {
   const { t, lang } = useI18n();
   const p = state.paper;
   const [nBusy, setNBusy] = useState(false);
   const [nError, setNError] = useState<string | null>(null);
   return <section className="office-orders" aria-label={t('openOrdersN')}>
-      <div className="n-picker">
-        <small>{t('openOrdersN')}</small>
+      <div className="order-heading"><strong>{t('openOrdersN')}</strong><span>{p.positions.length}/{p.n} {t('usedSuffix')}</span></div>
+      <div className="n-picker" role="group" aria-label={t('openOrdersN')}>
         {[1, 2, 3, 4].map((n) => <button key={n} type="button" className={p.n === n ? 'on' : ''} disabled={nBusy} aria-pressed={p.n === n} onClick={() => void (async () => {
           if (nBusy || p.n === n) return;
           setNBusy(true); setNError(null);
@@ -553,9 +554,21 @@ export function OpenOrders({ state, command }: { state: DeskState; command: (tex
             if (!r?.ok) setNError(r?.error ?? (lang === 'id' ? 'Gagal menyimpan Max N.' : 'Could not save Max N.'));
           } finally { setNBusy(false); }
         })()}>{n}</button>)}
-        <span className="slots">{p.positions.length}/{p.n} {t('usedSuffix')}</span>
       </div>
       {nError && <p className="wallet-msg bad" role="status">{nError}</p>}
+      <div className="order-allocation"><span>{t('perOrder')}</span><strong>{fmt(p.perOrder)} <small>USDT</small></strong></div>
+      <dl className="order-budget">
+        <div><dt>{t('moneyTrade')}</dt><dd>{fmt(p.moneyTrade)}</dd></div>
+        <div><dt>{t('safetyNet')}</dt><dd>{fmt(p.safetyNet)}</dd></div>
+      </dl>
+      {!p.canOpen && <p className="order-warning">{t('atSafetyNet')}</p>}
+  </section>;
+}
+
+function OrderDetails({ state, command }: { state: DeskState; command: (text: string) => void }) {
+  const { t } = useI18n();
+  const p = state.paper;
+  return <div className="order-details">
       <div className="mini-charts"><AllocationBars state={state} /><EquityChart state={state} /></div>
       <p className="formula">{t('moneyTrade')} = {fmt(p.balance)} - {fmt(p.safetyNet)} = <b>{fmt(p.moneyTrade)}</b> · / {p.n} = <b>{fmt(p.perOrder)}</b> {t('perOrder').toLowerCase()}{!p.canOpen && <em> · {t('atSafetyNet')}</em>}</p>
       <div className="positions">
@@ -572,26 +585,33 @@ export function OpenOrders({ state, command }: { state: DeskState; command: (tex
         ))}
       </div>
       <div className="foot"><span>{t('equityLabel')} {fmt(p.equity)}</span><span>{t('usedMarginLabel')} {fmt(p.usedMargin)}</span><span>{t('closedLabel')} {p.closed.length}</span></div>
-  </section>;
+  </div>;
 }
 
 const ACTION_LABEL: Record<Verdict['action'], string> = { OPEN_LONG: 'OPEN LONG', OPEN_SHORT: 'OPEN SHORT', CLOSE: 'CLOSE', HOLD: 'HOLD' };
 export function Verdicts({ state, compact = false }: { state: DeskState; compact?: boolean }) {
   const { t } = useI18n();
+  const detailId = useId();
   return (
     <section className={`panel verdicts${compact ? ' verdicts-compact' : ''}`}>
       <div className="panel-head"><h2>{t('verdictsTitle')}</h2><small className="muted">{t('verdictsSub')}</small></div>
       {state.verdicts.length === 0 && <p className="muted">{t('noVerdictYet')}</p>}
       <div className="verdict-list">
         {state.verdicts.slice(0, compact ? 1 : 6).map((v) => (
-          <article key={v.id} className={`verdict a-${v.action}`}>
+          <article key={v.id} className={`verdict a-${v.action}`} title={time(v.at)}>
             <div className="v-top">
               <span className="v-action">{ACTION_LABEL[v.action]}</span>
               <b>{v.symbol}</b>
               {v.example && <em className="tag-example">EXAMPLE</em>}
               <time>{time(v.at)}</time>
             </div>
-            {compact ? <details><summary>{v.reason.slice(0, 82)}{v.reason.length > 82 ? '…' : ''}</summary><p>{v.reason}</p></details> : <p>{v.reason}</p>}
+            {compact ? <>
+              <button className="verdict-reason-trigger" type="button" popoverTarget={detailId}>{v.reason}</button>
+              <div id={detailId} popover="auto" className="office-verdict-popover" role="dialog" aria-label={t('verdictsTitle')}>
+                <strong>{ACTION_LABEL[v.action]} · {v.symbol}</strong><p>{v.reason}</p>
+                <button type="button" popoverTarget={detailId} popoverTargetAction="hide">{t('closeBtn')}</button>
+              </div>
+            </> : <p>{v.reason}</p>}
             <div className="v-meta">
               <span>risk {v.riskDecision}</span>
               <span>heat {Math.round(v.disagreement * 100)}%</span>

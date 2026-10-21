@@ -1,18 +1,25 @@
 .office-v2.office .office-world { background: #cfb18a; aspect-ratio: 1000 / 640; max-height: none; min-height: 390px; }
 .office-v2.office { container-type: inline-size; grid-template-columns: minmax(0, 1fr) 200px; grid-template-rows: auto minmax(0, 1fr); }
-.office-v2 .office-hud { align-self: stretch; align-content: start; min-height: 0; max-height: calc(max(390px, (100cqw - 200px) * .64) - 90px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--sage-deep) var(--panel); }
+.office-v2 .office-hud { align-self: stretch; align-content: start; min-height: 0; overflow: visible; }
 .office-v2 .office-orders { min-width: 0; padding: 9px; border-top: 1px solid var(--line); }
-.office-orders .n-picker { flex-wrap: wrap; margin: 0 0 8px; gap: 6px; }
-.office-orders .n-picker small { flex: 1 0 100%; color: var(--text); }
-.office-orders .n-picker button { width: 38px; height: 36px; }
-.office-orders .mini-chart { border-radius: 8px; padding: 8px; }
-.office-orders .mini-chart figcaption { flex-wrap: wrap; font-size: 11px; gap: 3px; }
-.office-orders .mini-chart figcaption b { font-size: 10px; }
-.office-orders .formula { font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
-.office-orders .safety-strip { font-size: 9px; }
-.office-orders .safety-strip span { min-width: 0; padding-inline: 5px; }
-.office-orders .positions .pos { grid-template-columns: 1fr; gap: 4px; font-size: 11px; }
-.office-orders .foot { flex-wrap: wrap; gap: 5px 10px; font-size: 10px; }
+.office-orders .order-heading { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; font-size: 10px; }
+.office-orders .order-heading span { color: var(--text-dim); white-space: nowrap; font-size: 9px; }
+.office-orders .n-picker { display: flex; flex-wrap: nowrap; margin: 5px 0; gap: 4px; }
+.office-orders .n-picker button { flex: 1; min-width: 0; width: auto; height: 28px; min-height: 28px; padding: 2px; font-size: 12px; }
+.office-orders .order-allocation { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; padding-block: 4px; border-bottom: 1px solid var(--line); font-size: 10px; }
+.office-orders .order-allocation strong { font-family: var(--font-mono); font-size: 12px; }
+.office-orders .order-allocation small { font-size: 9px; font-weight: 400; }
+.office-orders .order-budget { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 5px 0 0; }
+.office-orders .order-budget div { min-width: 0; }
+.office-orders .order-budget dt { color: var(--text-dim); font-size: 9px; }
+.office-orders .order-budget dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 11px; overflow-wrap: anywhere; }
+.office-orders .order-warning { margin: 4px 0 0; color: var(--short); font-size: 10px; }
+.office-v2 .office-hud .verdict-list { max-height: none; overflow: visible; }
+.office-v2 .office-hud .verdicts-compact .panel-head small { display: none; }
+.order-details { margin-top: 12px; }
+.order-details .pos { grid-template-columns: 1fr; gap: 4px; }
+.order-details .formula { overflow-wrap: anywhere; }
+.order-details .foot { flex-wrap: wrap; gap: 6px; }
 .dashboard .tool-flyout { overscroll-behavior: contain; }
 .studio-room { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .studio-wall { position: absolute; inset: 0 0 70%; background: repeating-linear-gradient(90deg, transparent 0 27px, #b7946c12 27px 28px), linear-gradient(#f3e8d2, #e4d2b4); border-bottom: 8px solid #9c704b; box-shadow: inset 0 -6px #c3986b; }
@@ -106,10 +113,21 @@
   .office-v2 .office-pnl { margin: 6px; padding: 5px; }
   .office-v2 .office-pnl strong { font-size: 16px; }
   .office-v2 .office-hud { margin: 4px; }
-  .office-v2 .office-orders { padding: 6px; }
+  .office-v2 .office-orders { padding: 4px 6px; }
   .office-v2 .office-orders .n-picker { gap: 4px; font-size: 10px; }
   .office-v2 .office-orders .n-picker button { width: 28px; height: 28px; min-height: 28px; padding: 2px; font-size: 12px; }
   .office-v2 .office-hud .verdicts-compact h2 { font-size: 13px; }
   .dashboard .desk-team .roster-item { flex: 1 1 0; height: 36px; min-height: 36px; padding: 4px 6px; grid-template-columns: 20px minmax(0, 1fr) auto; font-size: 10px; }
   .dashboard .desk-team .roster-item .bot { width: 20px; height: 24px; }
 }
+
+.office-v2 .verdicts-compact .v-top time { display: none; }
+.office-v2 .verdict-reason-trigger { display: block; width: 100%; min-width: 0; border: 0; padding: 2px 0; background: transparent; color: var(--text-dim); text-align: left; font: inherit; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.office-verdict-popover { position: fixed; inset: 0; width: min(400px, calc(100vw - 32px)); height: fit-content; max-height: calc(100dvh - 40px); overflow: auto; margin: auto; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: var(--shadow); font-size: 13px; }
+.office-verdict-popover::backdrop { background: #0004; }
+.office-verdict-popover p { line-height: 1.6; overflow-wrap: anywhere; }
+
+.office-v2 .office-hud .meter .panel-head { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; margin-bottom: 3px; }
+.office-v2 .office-hud .heat-label { font-size: 9px; line-height: 1.15; overflow-wrap: anywhere; }
+.office-v2 .office-hud .chip { font-size: 8px; line-height: 1.3; padding: 0 2px; }
+.office-v2 .office-hud .panel.meter { padding: 4px 9px; }
