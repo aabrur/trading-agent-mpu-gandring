@@ -49,7 +49,7 @@ export interface AppConfig {
   watchlist: string[];
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
-  risk: { minEntryConfidencePct: number; maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitR: number; dailyLossLimitPct: number };
+  risk: { minEntryConfidencePct: number; maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitPct?: number; takeProfitR: number; dailyLossLimitPct: number };
   debate: { rounds: number; paceMs: number; fightThreshold: number; mode: 'normal' | 'fast' };
   jev: JevSettings;
   bridge: { url: string; key: string; enabled: boolean };
@@ -173,7 +173,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', 1),
       minOrderUsdt: num(env, 'MIN_ORDER_USDT', 5),
       takerFee: num(env, 'TAKER_FEE', 0.00055),
-      takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 2)),
+      takeProfitPct: num(env, 'TAKE_PROFIT_PCT', 60),
+      takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 3)),
       // cannot be switched off: clamped to 0.5..20 percent
       dailyLossLimitPct: Math.min(20, Math.max(0.5, num(env, 'DAILY_LOSS_LIMIT_PCT', 3)))
     },

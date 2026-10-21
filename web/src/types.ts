@@ -9,7 +9,7 @@ export interface AgentView {
 }
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface Position {
-  decisionEvidence?: Record<string, unknown>; ownership?: 'managed' | 'recovered' | 'external'; protectionStatus?: 'confirmed' | 'missing' | 'unknown'; entryStatus?: 'confirmed' | 'estimated'; id: string; symbol: string; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number; openedAt: number; mark: number; unrealizedPnl: number }
+  decisionEvidence?: Record<string, unknown>; ownership?: 'managed' | 'recovered' | 'external'; protectionStatus?: 'confirmed' | 'missing' | 'unknown'; entryStatus?: 'confirmed' | 'estimated'; isHedge?: boolean; id: string; symbol: string; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number; openedAt: number; mark: number; unrealizedPnl: number }
 export interface ClosedTrade { pnlStatus?: 'confirmed' | 'estimated' | 'unknown'; remainingQty?: number; exitStatus?: 'confirmed' | 'estimated'; id: string; symbol: string; side: 'LONG' | 'SHORT'; qty: number; entry: number; exit: number; realizedPnl: number; reason: string; closedAt: number }
 export interface Verdict {
   executionStatus?: 'partial' | 'filled' | 'closed';

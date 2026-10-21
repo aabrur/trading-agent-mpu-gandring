@@ -7,6 +7,7 @@ export const TradingFields = z.object({
   maxLeverage: z.number().int().min(1).max(100),
   defaultStopPct: z.number().finite().positive().lt(100),
   minStopPct: z.number().finite().positive().lt(100),
+  takeProfitPct: z.number().finite().positive().optional(),
   takeProfitR: z.number().finite().nonnegative(),
   minOrderUsdt: z.number().finite().positive(),
   safetyNet: z.number().finite().positive(),
@@ -31,11 +32,12 @@ export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze
   maxLossPerTradePct: 1,
   minEntryConfidencePct: 55,
   maxLeverage: 3,
-  defaultStopPct: 2.5,
+  defaultStopPct: 20,
   minStopPct: 1.0,
-  takeProfitR: 2.5,
+  takeProfitPct: 60,
+  takeProfitR: 3.0,
   minOrderUsdt: 5,
-  safetyNet: 50,
+  safetyNet: 8,
   maxPositions: 3
 });
 
@@ -46,57 +48,61 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
 }> = {
   default: {
     name: 'Default',
-    description: 'Baseline trend positioning with structural breathing room against 15m noise wicks.',
+    description: 'Baseline auto-trading mode with TP 60% and SL 20%.',
     values: {
       dailyLossLimitPct: 4,
       maxLossPerTradePct: 1,
       minEntryConfidencePct: 55,
       maxLeverage: 3,
-      defaultStopPct: 2.5,
+      defaultStopPct: 20,
       minStopPct: 1.0,
-      takeProfitR: 2.5,
+      takeProfitPct: 60,
+      takeProfitR: 3.0,
       maxPositions: 3
     }
   },
   balance: {
     name: 'Balance',
-    description: 'Balanced momentum and trend-following with wider stop tolerance and 3R upside.',
+    description: 'Balanced auto-trading mode with TP 60% and SL 30%.',
     values: {
       dailyLossLimitPct: 5,
       maxLossPerTradePct: 1.5,
       minEntryConfidencePct: 60,
       maxLeverage: 5,
-      defaultStopPct: 3.0,
+      defaultStopPct: 30,
       minStopPct: 1.2,
-      takeProfitR: 3.0,
+      takeProfitPct: 60,
+      takeProfitR: 2.0,
       maxPositions: 3
     }
   },
   profit: {
-    name: 'Profit',
-    description: 'Aggressive momentum hunting combining whale flows, news catalysts, and focused capital.',
+    name: 'Profile',
+    description: 'Profile momentum mode with TP 70% and SL 40%.',
     values: {
       dailyLossLimitPct: 8,
       maxLossPerTradePct: 2.5,
       minEntryConfidencePct: 65,
       maxLeverage: 7,
-      defaultStopPct: 3.8,
+      defaultStopPct: 40,
       minStopPct: 1.5,
-      takeProfitR: 3.5,
+      takeProfitPct: 70,
+      takeProfitR: 1.75,
       maxPositions: 2
     }
   },
   high_risk: {
     name: 'High Risk High Reward',
-    description: 'Maximum conviction predator mode with wide structural stops, concentrated slots, and 4.5R targets.',
+    description: 'High risk high reward mode with TP 80% and SL 50%.',
     values: {
       dailyLossLimitPct: 12,
       maxLossPerTradePct: 4.0,
       minEntryConfidencePct: 70,
       maxLeverage: 10,
-      defaultStopPct: 4.5,
+      defaultStopPct: 50,
       minStopPct: 1.8,
-      takeProfitR: 4.5,
+      takeProfitPct: 80,
+      takeProfitR: 1.6,
       maxPositions: 2
     }
   }
@@ -123,6 +129,7 @@ export const TRADING_ENV: Record<keyof TradingSettings, string> = {
   maxLeverage: 'MAX_LEVERAGE',
   defaultStopPct: 'DEFAULT_STOP_PCT',
   minStopPct: 'MIN_STOP_PCT',
+  takeProfitPct: 'TAKE_PROFIT_PCT',
   takeProfitR: 'TAKE_PROFIT_R',
   minOrderUsdt: 'MIN_ORDER_USDT',
   safetyNet: 'SAFETY_NET',

@@ -18,6 +18,7 @@ function getTradingFields(t: (k: TranslationKey) => string) {
     { key: 'maxLeverage' as const, label: t('tradingMaxLeverage'), min: 1, max: 100, step: 1, help: t('tradingHelpMaxLeverage') },
     { key: 'defaultStopPct' as const, label: t('tradingDefaultStop'), min: 0, max: 100, help: t('tradingHelpDefaultStop') },
     { key: 'minStopPct' as const, label: t('tradingMinStop'), min: 0, max: 100, help: t('tradingHelpMinStop') },
+    { key: 'takeProfitPct' as const, label: t('tradingTakeProfitPct'), min: 0, max: 1000, help: t('tradingHelpTakeProfitPct') },
     { key: 'takeProfitR' as const, label: t('tradingTakeProfitR'), min: 0, help: t('tradingHelpTakeProfitR') },
     { key: 'minOrderUsdt' as const, label: t('tradingMinOrderUsdt'), min: 0, help: t('tradingHelpMinOrderUsdt') },
     { key: 'safetyNet' as const, label: t('tradingSafetyNet'), min: 0, help: t('tradingHelpSafetyNet') },
@@ -46,7 +47,7 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
       if (!r.ok || !d.ok) { setMessage(d.detail || t('tradingUnavailableMsg')); return; }
       const next: TradingInfo = d; setInfo(next);
       setDrafts((previous) => {
-        const manuals = { testnet: next.networks.testnet.manual, mainnet: next.networks.mainnet.manual };
+        const manuals = { testnet: next.networks.testnet.values, mainnet: next.networks.mainnet.values };
         if (!previous || refreshDrafts) return manuals;
         return previous;
       });
@@ -62,9 +63,7 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
   }, [network]);
   if (!info || !drafts) return <div className="wallet-note" role="status"><p>{message || t('tradingLoadingProfiles')}</p>{message && <button onClick={() => void load()}>{t('tradingRetryBtn')}</button>}</div>;
   const isPreset = profile in TRADING_PRESETS;
-  const values = isPreset
-    ? profile === info.networks[network].profile ? info.networks[network].values : resolveTradingPreset(profile as TradingPresetId, drafts[network])
-    : drafts[network];
+  const values = drafts[network];
   const active = info.running.network === network;
   async function save() {
     setBusy(true); setMessage('');
@@ -92,7 +91,15 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     {profile === 'manual' && info.running.profile !== 'manual' && active && <p className="field-help">{lang === 'id' ? 'Nilai manual ini belum aktif. Simpan dan terapkan untuk mengganti preset yang berjalan.' : 'These manual values are not active. Save and apply to replace the running preset.'}</p>}
     <div className="wallet-pick">
       <label>{lang === 'id' ? 'Jaringan trading' : 'Trading network'}<select aria-label="Trading network" disabled={busy} value={network} onChange={(e) => { setNetwork(e.target.value as TradingNetwork); setMessage(''); }}><option value="testnet">Testnet · TESTNET</option><option value="mainnet">Mainnet · LIVE</option></select></label>
-      <label>{t('tradingProfileLabel')}<select aria-label="Settings profile" disabled={busy} value={profile} onChange={(e) => { setProfile(e.target.value as TradingProfile); setMessage(''); }}>
+      <label>{t('tradingProfileLabel')}<select aria-label="Settings profile" disabled={busy} value={profile} onChange={(e) => {
+        const next = e.target.value as TradingProfile;
+        setProfile(next);
+        setMessage('');
+        if (next in TRADING_PRESETS) {
+          const presetVals = resolveTradingPreset(next as TradingPresetId, drafts[network]);
+          setDrafts((old) => old ? { ...old, [network]: presetVals } : old);
+        }
+      }}>
         <option value="default">{t('tradingProfileDefault')}</option>
         <option value="balance">{t('tradingProfileBalance')}</option>
         <option value="profit">{t('tradingProfileProfit')}</option>
@@ -103,7 +110,19 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     <p className="setup-guide-note">{t('tradingSavedProfilePrefix')} {network}: <b>{savedLabel}</b>. {isPreset ? `${lang === 'id' ? 'Tinjau preset' : 'Review the'} ${TRADING_PRESETS[profile as TradingPresetId].name} ${t('tradingPresetBanner')}` : (lang === 'id' ? 'Edit hanya nilai yang ingin kamu ubah. Nilai manual sebelumnya disimpan terpisah untuk tiap jaringan.' : 'Edit only the values you want to change. The previous manual values are retained separately for each network.')}</p>
     <p className="field-help">{isPreset ? (lang === 'id' ? 'Nilai preset ditetapkan berdasarkan rekomendasi. Dana aman dan nominal minimal order mengikuti konfigurasi akun kamu.' : 'Preset values are fixed by recommendation. Capital reserves and order minimums reflect your network configuration.') : (lang === 'id' ? 'Semua kolom manual wajib diisi.' : 'All manual fields are required.')}</p>
     <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
-      <div className="settings-grid">{fields.map((f) => <label key={f.key}>{f.label}<input aria-label={f.label} type="number" required min={f.min} max={f.max} step={f.step ?? 'any'} disabled={busy || isPreset} value={values[f.key]} onChange={(e) => setDrafts((old) => old ? { ...old, [network]: { ...old[network], [f.key]: Number(e.target.value) } } : old)} /><small className="field-help">{f.help}{active ? ` ${lang === 'id' ? 'Aktif' : 'Active'}: ${info.running.values[f.key]}.` : ''}</small></label>)}</div>
+      <div className="settings-grid">{fields.map((f) => <label key={f.key}>{f.label}<input aria-label={f.label} type="number" required min={f.min} max={f.max} step={f.step ?? 'any'} disabled={busy} value={values[f.key] ?? ''} onChange={(e) => {
+        const val = Number(e.target.value);
+        setDrafts((old) => {
+          if (!old) return old;
+          const current = { ...old[network], [f.key]: val };
+          if (f.key === 'takeProfitPct' && current.defaultStopPct > 0) {
+            current.takeProfitR = Math.round((val / current.defaultStopPct) * 100) / 100;
+          } else if (f.key === 'defaultStopPct' && (current.takeProfitPct ?? 0) > 0) {
+            current.takeProfitR = Math.round(((current.takeProfitPct ?? 0) / Math.max(0.1, val)) * 100) / 100;
+          }
+          return { ...old, [network]: current };
+        });
+      }} /><small className="field-help">{f.help}{active ? ` ${lang === 'id' ? 'Aktif' : 'Active'}: ${info.running.values[f.key]}.` : ''}</small></label>)}</div>
       <p className="field-help">{lang === 'id' ? 'Pengaturan ini diteruskan ke Agen Risiko, sizing bersama, dan pengecekan eksekusi. Tiket manual tetap mematuhi pengaman stop/ukuran; batas keyakinan minimal berlaku untuk entry mandiri agen. Menyimpan tidak mengubah ukuran order terbuka, tidak me-reset batas rugi harian, dan tidak mengaktifkan Auto Trade atau mengganti mode.' : 'These settings feed the Risk Agent, shared sizing and execution checks. Manual tickets keep their stop/size guards; the confidence floor applies to agent entries. Applying does not resize open orders, reset a daily loss stop, enable Auto Trade or switch mode.'}</p>
       <div className="setup-nav"><button disabled={busy} type="submit">{busy ? t('tradingSavingBtn') : `${active ? (lang === 'id' ? 'Simpan & terapkan' : 'Save and apply') : t('tradingSaveProfileBtn')} ${isPreset ? TRADING_PRESETS[profile as TradingPresetId].name : profile} ${lang === 'id' ? 'untuk' : 'for'} ${network}`}</button><button disabled={busy} type="button" onClick={() => { setProfile(draftProfile(savedProfile)); setDrafts({ ...drafts, [network]: info.networks[network].manual }); setMessage(lang === 'id' ? 'Draf dikembalikan ke nilai tersimpan.' : 'Draft restored to saved values.'); }}>{t('tradingDiscardEdits')}</button></div>
       {!active && <p className="field-help">{lang === 'id' ? 'Jaringan ini sedang tidak berjalan. Menyimpan akan mempersiapkannya untuk dijalankan berikutnya; ganti mode di Bursa & Pengamanan.' : 'This network is not running. Saving prepares it for its next start; change mode separately in Exchange & Safety.'}</p>}

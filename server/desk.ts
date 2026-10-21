@@ -13,7 +13,7 @@ import type { ModelCaller } from './providers/index.js';
 import { getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem } from './market/index.js';
 import { strategyVote, rsi, volumeDelta, atr } from './strategy.js';
 import { applyRiskGate } from './risk.js';
-import { planOrder, moneySplit, round2, roundPrice } from './money.js';
+import { planOrder, moneySplit, round2, roundPrice, evaluateAutoHedge, type AutoHedgeResult } from './money.js';
 import { previewTicket } from './sizing.js';
 import { PaperBook } from './paper.js';
 import { parseCommand, HELP, normSymbol, type Command } from './commands.js';
@@ -309,6 +309,7 @@ export class Desk extends EventEmitter {
       this.note('closed', t.symbol, `${t.side} at ${t.exit}, PnL ${t.realizedPnl} USDT (${t.reason})`);
       void this.review(t);
     }
+    void this.checkAutoHedge();
   }
 
   /** LIVE: pull balance and positions from the exchange. Positions gone on the venue were closed there (stop, take profit or by hand). */
@@ -794,7 +795,7 @@ export class Desk extends EventEmitter {
       price, side, sizeFactor: gate.sizeFactor, leverage: Math.max(1, Math.floor(Math.min(gate.leverage, this.cfg.risk.maxLeverage))),
       // A given stop (Strategist / Grok Bot ticket) is used exactly. Only the internal debate falls back to stopPct.
       stop: gate.stop ?? null, stopPct: gate.stopPct, minStopPct: this.cfg.risk.minStopPct, maxStopPct: this.cfg.risk.defaultStopPct,
-      minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takerFee: this.cfg.risk.takerFee, rules, takeProfitR: this.cfg.risk.takeProfitR
+      minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takerFee: this.cfg.risk.takerFee, rules, takeProfitR: this.cfg.risk.takeProfitR, takeProfitPct: this.cfg.risk.takeProfitPct
     });
     if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
     // A take profit from a Grok Bot agent is accepted only on the right side of the entry (the adapter rounds it to the tick). The stop is never theirs to widen.
@@ -825,6 +826,74 @@ export class Desk extends EventEmitter {
     this.note('opened', symbol, `${side} ${p.qty} at ${p.entry}, SL ${p.stop}${p.tp ? `, TP ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x`);
     await this.say('execution', line, false, 'idle', false); // already logged above as a trade line
     return { ok: true, line, reason: '', order: { positionId: p.id, status: qty < plan.qty ? 'partial' : 'filled', side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage } };
+  }
+
+  /** Auto-hedge: locks loss when unrealized loss reaches L_trigger. */
+  async checkAutoHedge(): Promise<AutoHedgeResult | null> {
+    if (this.killed || this.paused) return null;
+    if (this.book.positions.length === 0) return null;
+
+    const currentUnrealized = this.venueAccount?.status === 'confirmed'
+      ? this.venueAccount.unrealized
+      : this.book.unrealized;
+    const balance = this.book.balance;
+    const safetyNet = this.book.safetyNet || round2(balance * 0.40);
+
+    const hedge = evaluateAutoHedge(balance, safetyNet, currentUnrealized, this.book.positions);
+    if (!hedge.triggered || !hedge.direction || hedge.vHedge <= 1e-9) return hedge;
+
+    const symbols = [...new Set(this.book.positions.map((p) => p.symbol))];
+    let targetSymbol = symbols[0];
+    for (const s of symbols) {
+      const symPositions = this.book.positions.filter((p) => p.symbol === s);
+      const buyVol = symPositions.filter((p) => p.side === 'LONG').reduce((sum, p) => sum + p.qty, 0);
+      const sellVol = symPositions.filter((p) => p.side === 'SHORT').reduce((sum, p) => sum + p.qty, 0);
+      if (hedge.direction === 'SELL' && buyVol > sellVol) { targetSymbol = s; break; }
+      if (hedge.direction === 'BUY' && sellVol > buyVol) { targetSymbol = s; break; }
+    }
+
+    const price = this.tickers[targetSymbol]?.last ?? this.book.positions.find((p) => p.symbol === targetSymbol)?.entry ?? 0;
+    if (!(price > 0)) return hedge;
+
+    const hedgeSide: 'LONG' | 'SHORT' = hedge.direction === 'BUY' ? 'LONG' : 'SHORT';
+    const stopDistance = price * (this.cfg.risk.defaultStopPct / 100);
+    const stop = roundPrice(hedgeSide === 'LONG' ? price - stopDistance : price + stopDistance);
+    const margin = round2((hedge.vHedge * price) / Math.max(1, this.cfg.risk.maxLeverage));
+
+    const live = this.opts.executor;
+    if (live && live.adapter.exchangeStops) {
+      try {
+        const fill = await live.open({ symbol: targetSymbol, side: hedgeSide, qty: hedge.vHedge, stop, tp: null, leverage: this.cfg.risk.maxLeverage });
+        if (!fill.ok) {
+          this.recordError('exchange', `Auto-hedge ${targetSymbol} ${hedgeSide} not filled: ${fill.note}`);
+          return hedge;
+        }
+      } catch (err) {
+        this.recordError('exchange', `Auto-hedge error: ${safe((err as Error).message)}`);
+        return hedge;
+      }
+    }
+
+    const p = this.book.open({
+      symbol: targetSymbol,
+      side: hedgeSide,
+      qty: hedge.vHedge,
+      entry: price,
+      stop,
+      margin,
+      leverage: this.cfg.risk.maxLeverage,
+      isHedge: true
+    });
+    p.ownership = 'managed';
+
+    const line = `Auto-hedge triggered: loss ${currentUnrealized} USDT reached L_trigger ${hedge.triggerLoss} USDT. Executed ${hedgeSide} ${hedge.vHedge} ${targetSymbol} to lock losses. Buffer remaining: ${hedge.marginBuffer} USDT.`;
+    this.addLog({ kind: 'trade', agent: 'risk', text: line });
+    this.note('opened', targetSymbol, `Auto-hedge ${hedgeSide} ${hedge.vHedge} at ${price} (loss locked)`);
+    await this.say('risk', line, false, 'idle', false);
+    this.recordEquity();
+    this.changed();
+
+    return hedge;
   }
 
   /** Closes every position on a symbol. LIVE: one reduce-only send each, reconciled from the exchange record. */

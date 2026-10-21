@@ -16,11 +16,11 @@ export class PaperBook {
   get unrealized() { return round2(this.positions.reduce((s, p) => s + p.unrealizedPnl, 0)); }
   split() { return moneySplit({ balance: this.balance, safetyNet: this.safetyNet, n: this.n }); }
 
-  open(o: { symbol: string; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp?: number | null; margin: number; leverage: number }): Position {
+  open(o: { symbol: string; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp?: number | null; margin: number; leverage: number; isHedge?: boolean }): Position {
     if (!(o.stop > 0)) throw new Error('refusing a paper order without a stop loss');
-    if (this.positions.length >= this.n) throw new Error('N limit reached');
+    if (!o.isHedge && this.positions.filter((p) => !p.isHedge).length >= this.n) throw new Error('N limit reached');
     if ((o.side === 'LONG' && o.stop >= o.entry) || (o.side === 'SHORT' && o.stop <= o.entry)) throw new Error('stop is on the wrong side of entry');
-    const pos: Position = { id: id('pos'), ...o, tp: o.tp ?? null, openedAt: Date.now(), mark: o.entry, unrealizedPnl: 0 };
+    const pos: Position = { id: id('pos'), ...o, tp: o.tp ?? null, openedAt: Date.now(), mark: o.entry, unrealizedPnl: 0, isHedge: !!o.isHedge };
     this.positions.push(pos);
     return pos;
   }

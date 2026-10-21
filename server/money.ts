@@ -2,7 +2,7 @@
 // Money Trade = total balance - safety net
 // Allocation per order = Money Trade / N   (N is 1, 2, 3 or 4)
 
-export interface SplitInput { balance: number; safetyNet: number; n: number }
+export interface SplitInput { balance: number; safetyNet?: number; n: number }
 export interface Split {
   balance: number;
   safetyNet: number;
@@ -11,6 +11,11 @@ export interface Split {
   perOrder: number;
   canOpen: boolean;
   note: string;
+  activeRatio?: number;
+  safetyRatio?: number;
+  activeCapital?: number;
+  triggerLoss?: number;
+  marginBuffer?: number;
 }
 
 export function assertN(n: number): asserts n is 1 | 2 | 3 | 4 {
@@ -19,12 +24,106 @@ export function assertN(n: number): asserts n is 1 | 2 | 3 | 4 {
 
 export function moneySplit({ balance, safetyNet, n }: SplitInput): Split {
   assertN(n);
-  const moneyTrade = Math.max(0, round2(balance - safetyNet));
+  const activeRatio = 0.60;
+  const safetyRatio = 0.40;
+  const effectiveSafetyNet = safetyNet != null && safetyNet >= 0 ? safetyNet : round2(balance * safetyRatio);
+  const activeCapital = round2(balance * activeRatio);
+  const moneyTrade = Math.max(0, round2(balance - effectiveSafetyNet));
   const perOrder = round2(moneyTrade / n);
-  const canOpen = balance > safetyNet && moneyTrade > 0;
+  const canOpen = balance > effectiveSafetyNet && moneyTrade > 0;
+  const triggerLoss = -round2(effectiveSafetyNet * 0.625);
+  const marginBuffer = round2(effectiveSafetyNet - Math.abs(triggerLoss));
   return {
-    balance: round2(balance), safetyNet: round2(safetyNet), n, moneyTrade, perOrder, canOpen,
+    balance: round2(balance),
+    safetyNet: round2(effectiveSafetyNet),
+    n,
+    moneyTrade,
+    perOrder,
+    canOpen,
+    activeRatio,
+    safetyRatio,
+    activeCapital,
+    triggerLoss,
+    marginBuffer,
     note: canOpen ? `Money Trade ${moneyTrade} / ${n} = ${perOrder} per order` : 'Balance is at or below the safety net. No new orders.'
+  };
+}
+
+export interface SafetyNetHedgeSpec {
+  balance: number;
+  activeRatio: number;
+  safetyRatio: number;
+  activeCapital: number;
+  safetyNet: number;
+  n: number;
+  perOrder: number;
+  triggerLoss: number;
+  triggerEquity: number;
+  marginBuffer: number;
+}
+
+export function calculateSafetyNetHedge(balance: number, n: number): SafetyNetHedgeSpec {
+  assertN(n);
+  const activeRatio = 0.60;
+  const safetyRatio = 0.40;
+  const activeCapital = round2(balance * activeRatio);
+  const safetyNet = round2(balance * safetyRatio);
+  const perOrder = round2(activeCapital / n);
+  const triggerLoss = -round2(safetyNet * 0.625);
+  const triggerEquity = round2(balance + triggerLoss);
+  const marginBuffer = round2(safetyNet - Math.abs(triggerLoss));
+  return {
+    balance: round2(balance),
+    activeRatio,
+    safetyRatio,
+    activeCapital,
+    safetyNet,
+    n,
+    perOrder,
+    triggerLoss,
+    triggerEquity,
+    marginBuffer
+  };
+}
+
+export interface AutoHedgeResult {
+  triggered: boolean;
+  triggerLoss: number;
+  marginBuffer: number;
+  unrealizedPnl: number;
+  buyVolume: number;
+  sellVolume: number;
+  vHedge: number;
+  direction: 'BUY' | 'SELL' | null;
+}
+
+export function evaluateAutoHedge(
+  balance: number,
+  safetyNet: number,
+  unrealizedPnl: number,
+  positions: { side: 'LONG' | 'SHORT'; qty: number }[]
+): AutoHedgeResult {
+  const mSafety = safetyNet > 0 ? safetyNet : round2(balance * 0.40);
+  const triggerLoss = -round2(mSafety * 0.625);
+  const marginBuffer = round2(mSafety - Math.abs(triggerLoss));
+  const buyVolume = round6(positions.filter((p) => p.side === 'LONG').reduce((sum, p) => sum + p.qty, 0));
+  const sellVolume = round6(positions.filter((p) => p.side === 'SHORT').reduce((sum, p) => sum + p.qty, 0));
+  const diff = round6(buyVolume - sellVolume);
+  const vHedge = Math.abs(diff);
+  const triggered = unrealizedPnl <= triggerLoss;
+  let direction: 'BUY' | 'SELL' | null = null;
+  if (triggered && vHedge > 1e-9) {
+    direction = diff > 0 ? 'SELL' : 'BUY';
+  }
+  return {
+    triggered,
+    triggerLoss,
+    marginBuffer,
+    unrealizedPnl: round2(unrealizedPnl),
+    buyVolume,
+    sellVolume,
+    vHedge: round6(vHedge),
+    direction
   };
 }
 
@@ -62,10 +161,11 @@ export interface PlanInput {
   /** @deprecated use rules.qtyStep */
   qtyStep?: number;
   takeProfitR?: number; // take profit at R times the stop distance, 0 = none
+  takeProfitPct?: number;
 }
 
 export type Plan =
-  | { ok: true; margin: number; notional: number; qty: number; stop: number; tp: number | null; leverage: number; lossAtStop: number; fees: number; stopPct: number; takerFee: number; rules: SizingRules; split: Split; notes: string[] }
+  | { ok: true; margin: number; notional: number; qty: number; stop: number; tp: number | null; leverage: number; lossAtStop: number; fees: number; stopPct: number; takerFee: number; rules: SizingRules; split: Split; notes: string[]; takeProfitPct?: number }
   | { ok: false; reason: string; split: Split; suggestion?: string };
 
 /**
@@ -134,11 +234,13 @@ export function planOrder(p: PlanInput): Plan {
   // Belt and braces: the floored plan must satisfy every cap.
   if (margin > Math.min(split.perOrder * factor, headroom) + 1e-9 || lossAtStop > maxLoss + 1e-9) return { ok: false, reason: 'Internal sizing check failed (margin or loss over the cap). Refusing.', split };
 
-  const r = p.takeProfitR ?? 2;
+  const r = p.takeProfitR != null && p.takeProfitR > 0
+    ? p.takeProfitR
+    : (p.takeProfitPct != null && stopPct > 0 ? p.takeProfitPct / stopPct : 2);
   const tp = r > 0 ? tickToward(p.side === 'LONG' ? p.price + dist * r : p.price - dist * r, rules.tickSize, p.side === 'LONG' ? 'SHORT' : 'LONG') : null;
   return {
     ok: true, margin: round2(margin), notional: round2(notional), qty, stop, tp: tp != null && rules.tickSize > 0 ? tp : tp != null ? roundPrice(tp) : null, leverage: p.leverage,
-    lossAtStop: round4(lossAtStop), fees: round4(fees), stopPct: round4(stopPct), takerFee: fee, rules: { ...rules, minQty, minNotional }, split, notes
+    lossAtStop: round4(lossAtStop), fees: round4(fees), stopPct: round4(stopPct), takerFee: fee, rules: { ...rules, minQty, minNotional }, split, notes, takeProfitPct: p.takeProfitPct ?? round2(stopPct * r)
   };
 }
 

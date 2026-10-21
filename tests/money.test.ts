@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { moneySplit, planOrder } from '../server/money.js';
+import { moneySplit, planOrder, calculateSafetyNetHedge, evaluateAutoHedge } from '../server/money.js';
 
 const base = { balance: 1000, safetyNet: 200, n: 4, openPositions: 0, usedMargin: 0, price: 100, side: 'LONG' as const, sizeFactor: 1, leverage: 2, stopPct: 1.5, minOrderUsdt: 5, maxLossPerTradePct: 1 };
 
@@ -70,5 +70,55 @@ describe('paper book exits', () => {
     expect(b.mark('X', 104.5)[0].reason).toMatch(/take profit/);
     expect(b.mark('Y', 102.5)[0].reason).toMatch(/stop/);
     expect(b.balance).toBe(1000 + 4 - 2);
+  });
+});
+
+describe('Safety Net and Auto-Hedge formula specification', () => {
+  it('calculates capital partitioning and margin allocation per N accurately for $20 balance', () => {
+    const spec1 = calculateSafetyNetHedge(20, 1);
+    expect(spec1.activeCapital).toBe(12.00);
+    expect(spec1.safetyNet).toBe(8.00);
+    expect(spec1.perOrder).toBe(12.00);
+    expect(spec1.triggerLoss).toBe(-5.00);
+    expect(spec1.triggerEquity).toBe(15.00);
+    expect(spec1.marginBuffer).toBe(3.00);
+
+    const spec2 = calculateSafetyNetHedge(20, 2);
+    expect(spec2.perOrder).toBe(6.00);
+
+    const spec3 = calculateSafetyNetHedge(20, 3);
+    expect(spec3.perOrder).toBe(4.00);
+
+    const spec4 = calculateSafetyNetHedge(20, 4);
+    expect(spec4.perOrder).toBe(3.00);
+  });
+
+  it('triggers auto-hedge only when loss reaches L_trigger and calculates hedge direction and volume', () => {
+    const positions = [
+      { side: 'LONG' as const, qty: 1.5 },
+      { side: 'SHORT' as const, qty: 0.5 }
+    ];
+
+    const safe = evaluateAutoHedge(20, 8, -4.50, positions);
+    expect(safe.triggered).toBe(false);
+    expect(safe.direction).toBeNull();
+
+    const hitLoss = evaluateAutoHedge(20, 8, -5.00, positions);
+    expect(hitLoss.triggered).toBe(true);
+    expect(hitLoss.triggerLoss).toBe(-5.00);
+    expect(hitLoss.marginBuffer).toBe(3.00);
+    expect(hitLoss.buyVolume).toBe(1.5);
+    expect(hitLoss.sellVolume).toBe(0.5);
+    expect(hitLoss.vHedge).toBe(1.0);
+    expect(hitLoss.direction).toBe('SELL');
+
+    const shortHeavy = [
+      { side: 'LONG' as const, qty: 0.2 },
+      { side: 'SHORT' as const, qty: 0.8 }
+    ];
+    const hitShort = evaluateAutoHedge(20, 8, -5.20, shortHeavy);
+    expect(hitShort.triggered).toBe(true);
+    expect(hitShort.vHedge).toBe(0.6);
+    expect(hitShort.direction).toBe('BUY');
   });
 });

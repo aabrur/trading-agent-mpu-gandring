@@ -36,6 +36,7 @@ export interface Position {
   ownership?: 'managed' | 'recovered' | 'external';
   protectionStatus?: 'confirmed' | 'missing' | 'unknown';
   entryStatus?: 'confirmed' | 'estimated';
+  isHedge?: boolean;
   id: string;
   symbol: string;
   side: 'LONG' | 'SHORT';
