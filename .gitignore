@@ -17,6 +17,7 @@ web/public/mpu-gandring-assets/
 data/learnings.json
 data/kill-switch.json
 *.xml
+*repomix*
 
 # Execution ownership and cumulative-fill checkpoints
 data/execution-*.json
