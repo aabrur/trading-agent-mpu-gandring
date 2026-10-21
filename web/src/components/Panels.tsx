@@ -74,6 +74,24 @@ export function TopBar({
   onOpenTrakteer?: () => void;
 }) {
   const { lang, toggleLang, t } = useI18n();
+  const [restarting, setRestarting] = useState(false);
+  const [restartReply, setRestartReply] = useState<string | null>(null);
+  useEffect(() => {
+    if (!restartReply) return;
+    const timer = window.setTimeout(() => setRestartReply(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [restartReply]);
+  const restart = async () => {
+    setRestarting(true);
+    setRestartReply(null);
+    try {
+      const response = await fetch('/api/setup/restart', { method: 'POST' });
+      const result = await response.json();
+      setRestartReply(response.ok && result.ok ? (result.detail || t('cbRestartSuccess')) : (result.detail || (lang === 'id' ? 'Restart gagal.' : 'Restart failed.')));
+    } catch {
+      setRestartReply(lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
+    } finally { setRestarting(false); }
+  };
   const ver = updateInfo?.currentVersion ?? '0.0.0.2.3';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
   void onOpenTrakteer;
@@ -220,21 +238,23 @@ export function TopBar({
         </a>
         {state && onVenueKeys && <WalletMenu state={state} open={walletOpen} onOpen={onVenueKeys} onClose={onCloseWallet ?? (() => {})} />}
         {(onSetup || onTour) && <details className="settings-menu">
-          <summary id="setup-trigger" className="badge setup-btn" aria-label={lang === 'id' ? 'Pengaturan dan tutorial' : 'Settings and tutorial'}>
+          <summary id="setup-trigger" className="badge setup-btn" aria-label={lang === 'id' ? 'Menu Setup' : 'Setup menu'}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 1 3h4l1-3 3-1 3-3-2-2 1-3-3-2-1-3Z"/><circle cx="11" cy="12" r="3"/></svg>
             {t('setup')}
           </summary>
           <div className="settings-popover">
             {onSetup && <button onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); onSetup(); }}>{t('setup')}</button>}
+            <button type="button" className="lang-toggle-btn" onClick={toggleLang} aria-label="switch language" title="Switch language">{lang === 'en' ? 'EN ▾ ID' : 'ID ▾ EN'}</button>
             {onTour && <button className="tour-trigger-btn" onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); onTour(); }}>{t('tutorial')}</button>}
           </div>
         </details>}
         {state?.bridgeEnabled && <span className="badge">Grok Bot bridge on</span>}
         {state?.paused && <span className="badge warn">{t('paused')}</span>}
         {!connected && <span className="badge warn" role="status">{t('reconnecting')}</span>}
-        <button className="badge setup-btn lang-toggle-btn" onClick={toggleLang} aria-label="switch language" title="Switch language">
-          {lang === 'en' ? 'EN ▾ ID' : 'ID ▾ EN'}
+        <button id="header-restart" type="button" className="badge setup-btn" onClick={() => void restart()} disabled={restarting} aria-busy={restarting} title={t('cbRestartTitle')}>
+          ↻ {restarting ? (lang === 'id' ? 'Memulai…' : 'Restarting…') : 'Restart'}
         </button>
+        {restartReply && <output className="topbar-restart-feedback" role="status">{restartReply}</output>}
         {onTheme && <button className="badge theme-toggle" onClick={onTheme} aria-label="toggle day or night">{theme === 'night' ? t('nightMode') : t('dayMode')}</button>}
       </div>
     </header>

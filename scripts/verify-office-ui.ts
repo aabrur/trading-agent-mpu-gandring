@@ -28,8 +28,10 @@ try {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   let socket: WebSocketRoute;
+  let restartFails = false;
   await page.route('**/api/**', (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/api/setup/restart' && restartFails) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, detail: 'Restart unavailable' }) });
     const data = url.pathname === '/api/wallet' ? { available: true, current: 'hyperliquid', venues: [{ venue: 'hyperliquid', label: 'Hyperliquid', kind: 'DEX', support: 'signature', steps: [], depositUrl: 'https://app.hyperliquid.xyz', revokeUrl: 'https://app.hyperliquid.xyz/API', docsUrl: 'https://hyperliquid.gitbook.io' }] }
       : url.pathname === '/api/wallet/balance' ? { ok: true, equityUsdt: null }
       : url.pathname === '/api/setup/trading' ? { ok: true, networks: { testnet: { profile: 'default' } } }
@@ -147,7 +149,23 @@ try {
   await page.getByRole('button', { name: 'Close tool panel' }).click();
   await page.locator('#setup-trigger').click();
   assert(await page.locator('.settings-popover .tour-trigger-btn').isVisible());
+  assert.equal(await page.locator('.settings-popover .lang-toggle-btn').count(), 1);
+  assert.equal(await page.locator('.badges > .lang-toggle-btn').count(), 0);
+  await page.locator('.settings-popover .lang-toggle-btn').click();
+  assert.equal(await page.evaluate(() => localStorage.getItem('mg-lang')), 'id');
+  await page.locator('.settings-popover .lang-toggle-btn').click();
+  assert.equal(await page.evaluate(() => localStorage.getItem('mg-lang')), 'en');
   await page.locator('#setup-trigger').click();
+  const restartRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/setup/restart' && request.method() === 'POST');
+  await page.locator('#header-restart').click();
+  await restartRequest;
+  await page.waitForFunction(() => document.querySelector('.topbar-restart-feedback')?.textContent?.includes('synchronized'));
+  await page.waitForSelector('.topbar-restart-feedback', { state: 'detached' });
+  restartFails = true;
+  await page.locator('#header-restart').click();
+  await page.waitForFunction(() => document.querySelector('.topbar-restart-feedback')?.textContent === 'Restart unavailable');
+  restartFails = false;
+  await page.waitForSelector('.topbar-restart-feedback', { state: 'detached' });
   await page.screenshot({ path: path.join(output, 'office-desktop.png'), fullPage: true });
   await page.locator('.office').screenshot({ path: path.join(output, 'office-room.png') });
   await page.getByRole('button', { name: 'Show older reports', exact: true }).click();

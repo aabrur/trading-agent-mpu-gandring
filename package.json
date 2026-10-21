@@ -1,10 +1,10 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.11",
-  "appVersion": "0.0.0.3.11",
+  "version": "0.3.12",
+  "appVersion": "0.0.0.3.12",
   "changelog": [
-    "Removed the office heading and compacted the header and map indicators to give the room more space.",
-    "Reduced scene characters and roster size while retaining the complete desktop office within one viewport."
+    "Moved the EN/ID language selector into the Setup menu.",
+    "Added a header Restart button in its former position with progress and result feedback."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",

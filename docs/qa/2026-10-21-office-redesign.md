@@ -66,3 +66,10 @@ The offline browser verifier passed for these desktop sizes and its existing mob
 Removed the office heading row. Reduced header padding, brand and balance sizing, ticker height and stage gaps. Narrowed the desktop map rail from 280px to 200px, compacted its controls, and reduced desktop scene characters to at most 40px and roster rows to 36px. The existing viewport fit remains in place, with more space allocated to the room.
 
 Verification: 14 focused scene/updater tests, typecheck, build and isolated browser checks passed. At 1920x936, 1366x768 and 1024x600 the checks confirm full workspace width, complete room and six roster buttons within the viewport, room height at least 60% of viewport height, indicator width at most 200px and scene character width at most 40px. Existing mobile, landscape, day/night and reduced-motion checks passed. Desktop screenshots were inspected and README screenshots refreshed. The full-suite result from v0.0.0.3.10 remains 369 passed and 15 failed; it was not rerun for this presentation-only change.
+
+
+## Setup menu and header restart: v0.0.0.3.12
+
+Moved the existing EN/ID language toggle into the Setup menu alongside Setup and Tutorial. Added a compact Restart button in the former top-bar language position. It uses the existing POST /api/setup/restart endpoint, disables while pending and displays the returned status or an error. Feedback clears after six seconds. Existing restart commands remain available.
+
+Verification: four updater/i18n tests, typecheck and production build passed. The isolated browser verifier passed its complete layout checks plus EN/ID switching and saved-language assertions inside the menu, header toggle removal, restart POST dispatch, successful restart feedback and failed-response feedback. All restart requests were mocked; no running trading process was restarted. README screenshots refreshed. The known full-suite result remains 369 passed / 15 failed and was not rerun for this UI change.

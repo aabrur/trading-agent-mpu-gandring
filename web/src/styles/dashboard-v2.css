@@ -11,7 +11,8 @@
 .dashboard .brand-meta { margin-top: 2px; gap: 4px; }
 .dashboard .brand-meta .badge { border-radius: 6px; padding: 2px 5px; font-size: 9px; letter-spacing: .035em; }
 .dashboard .topbar-balance-pill { border-color: var(--line); border-radius: 8px; padding: 6px 8px; box-shadow: none; }
-.dashboard .badges { gap: 7px; }
+.dashboard .badges { position: relative; gap: 7px; }
+.dashboard .topbar-restart-feedback { position: absolute; right: 0; top: calc(100% + 6px); z-index: 1600; max-width: min(320px, 90vw); padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); color: var(--text); font-size: 12px; }
 .dashboard .badges > button, .dashboard .wallet-menu > button { min-height: 30px; border-radius: 8px; box-shadow: none; }
 .dashboard .ticker { height: 24px; border-width: 1px; border-radius: 9px; box-shadow: none; background: color-mix(in srgb, var(--panel) 70%, transparent); }
 .dashboard .ticker-track { animation-duration: 75s; }
