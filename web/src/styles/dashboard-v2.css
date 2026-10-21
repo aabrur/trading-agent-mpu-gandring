@@ -1,29 +1,29 @@
 /* The office is the focal point; operational surfaces stay quiet and readable. */
 [data-theme='night'] .dashboard .safety-strip .mt,
 [data-theme='night'] .dashboard .safety-strip .sn { color: var(--bg); }
-.app.dashboard { max-width: 1720px; padding: 18px 32px 16px; }
-.dashboard .topbar { padding: 0 0 18px; gap: 20px; border-bottom: 1px solid var(--line); }
-.dashboard .brand-mark { width: 56px; height: 56px; border-width: 1px; border-radius: 16px; background: var(--panel); box-shadow: none; }
-.dashboard .brand { gap: 12px; }
-.dashboard .brand h1 { font-size: 19px; letter-spacing: -.025em; line-height: 1.2; }
+.app.dashboard { max-width: 1720px; padding: 10px 20px 16px; }
+.dashboard .topbar { padding: 0 0 8px; gap: 10px; border-bottom: 1px solid var(--line); }
+.dashboard .brand-mark { width: 36px; height: 36px; border-width: 1px; border-radius: 16px; background: var(--panel); box-shadow: none; }
+.dashboard .brand { gap: 8px; }
+.dashboard .brand h1 { font-size: 16px; letter-spacing: -.025em; line-height: 1.2; }
 .dashboard .brand h1 span { color: var(--wood-dark); }
-.dashboard .brand p { margin-top: 3px; font-size: 11px; line-height: 1.4; }
-.dashboard .brand-meta { margin-top: 6px; gap: 6px; }
-.dashboard .brand-meta .badge { border-radius: 6px; padding: 3px 7px; font-size: 10px; letter-spacing: .035em; }
-.dashboard .topbar-balance-pill { border-color: var(--line); border-radius: 12px; padding: 12px; box-shadow: none; }
+.dashboard .brand p { margin-top: 1px; font-size: 10px; line-height: 1.1; }
+.dashboard .brand-meta { margin-top: 2px; gap: 4px; }
+.dashboard .brand-meta .badge { border-radius: 6px; padding: 2px 5px; font-size: 9px; letter-spacing: .035em; }
+.dashboard .topbar-balance-pill { border-color: var(--line); border-radius: 8px; padding: 6px 8px; box-shadow: none; }
 .dashboard .badges { gap: 7px; }
-.dashboard .badges > button, .dashboard .wallet-menu > button { min-height: 36px; border-radius: 9px; box-shadow: none; }
-.dashboard .ticker { height: 32px; border-width: 1px; border-radius: 9px; box-shadow: none; background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.dashboard .badges > button, .dashboard .wallet-menu > button { min-height: 30px; border-radius: 8px; box-shadow: none; }
+.dashboard .ticker { height: 24px; border-width: 1px; border-radius: 9px; box-shadow: none; background: color-mix(in srgb, var(--panel) 70%, transparent); }
 .dashboard .ticker-track { animation-duration: 75s; }
-.dashboard .layout { grid-template-columns: minmax(0, 1fr) 62px; gap: 16px; margin-top: 0; scroll-margin-top: 20px; }
-.dashboard .stage { gap: 14px; }
+.dashboard .layout { grid-template-columns: minmax(0, 1fr) 48px; gap: 10px; margin-top: 0; scroll-margin-top: 20px; }
+.dashboard .stage { gap: 8px; }
 .dashboard .workspace-section-title { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 20px; padding: 0 2px; }
 .dashboard .workspace-section-title h2 { margin: 0; font-family: var(--font-head); font-size: 18px; font-weight: 600; letter-spacing: -.025em; }
 .dashboard .workspace-section-title > span { font-size: 12px; color: var(--text-dim); }
 .dashboard .side { top: 20px; }
 .dashboard .workspace-tools { position: sticky; top: 20px; right: auto; }
 .dashboard .tool-bubbles { gap: 10px; }
-.dashboard .tool-bubbles button { width: 62px; min-height: 62px; padding: 10px 4px; border-radius: 14px; box-shadow: none; transition: background var(--fast), border-color var(--fast), transform var(--fast); }
+.dashboard .tool-bubbles button { width: 48px; min-height: 48px; padding: 6px 3px; border-radius: 14px; box-shadow: none; transition: background var(--fast), border-color var(--fast), transform var(--fast); }
 .dashboard .tool-bubbles span { font-size: 10px; font-weight: 700; }
 .dashboard .tool-bubbles button:hover { transform: translateY(-2px); border-color: var(--sage-deep); background: var(--panel-2); }
 .dashboard .tool-bubbles button.is-active { background: var(--sage-deep); border-color: var(--sage-deep); color: var(--cream); }
@@ -56,8 +56,8 @@
 [data-theme='night'] .dashboard .badge.paper { background: var(--sage-deep); color: var(--bg); }
 
 @media (max-width: 1200px) {
-  .app.dashboard { padding: 16px 22px; }
-  .dashboard .topbar { gap: 12px; grid-template-columns: minmax(240px, 1fr) auto; }
+  .app.dashboard { padding: 10px 16px; }
+  .dashboard .topbar { gap: 6px; grid-template-columns: minmax(240px, 1fr) auto; }
   .dashboard .topbar-center { grid-column: 2; grid-row: 1; }
   .dashboard .topbar > .badges { grid-column: 1 / -1; justify-content: flex-start; }
 }
@@ -69,7 +69,7 @@
   .dashboard .topbar { grid-template-columns: minmax(0, 1fr); gap: 12px; padding-bottom: 14px; }
   .dashboard .topbar-center { grid-column: 1; grid-row: auto; }
   .dashboard .topbar-balance-pill { grid-template-columns: minmax(0, 1fr) auto; }
-  .dashboard .brand h1 { font-size: 19px; }
+  .dashboard .brand h1 { font-size: 16px; }
   .dashboard .badges { justify-content: flex-start; }
   .dashboard .badges > button, .dashboard .wallet-menu > button { min-height: 44px; }
   .dashboard .layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'stage' 'side'; gap: 0; }

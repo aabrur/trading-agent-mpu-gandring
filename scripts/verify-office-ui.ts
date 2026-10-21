@@ -65,6 +65,7 @@ try {
   assert.equal(await page.locator('.side .verdicts').count(), 0);
   assert.equal(await page.locator('.office-hud .verdicts').count(), 1);
   assert.equal(await page.locator('.workspace-heading, .desk-overview').count(), 0);
+  assert.equal(await page.getByRole('heading', { name: 'Around the office', exact: true }).count(), 0);
   assert.equal(await page.locator('.office-hud .office-orders .n-picker').count(), 1);
   assert.equal(await page.locator('.portfolio .n-picker').count(), 0);
   assert.equal(await page.locator('.studio-sign img[src="/mpu-gandring-logo.webp"]').count(), 1);
@@ -125,6 +126,9 @@ try {
     assert(Math.abs(geometry.office.width - geometry.stage.width) < 1, 'Office keeps the full stage width');
     assert(geometry.office.top >= 0 && geometry.roster.bottom <= viewport.height, 'Complete office and agent row fit the viewport');
     assert(await page.locator('.roster').evaluate((roster) => roster.scrollWidth <= roster.clientWidth), 'All six desktop agent buttons fit the row');
+    assert(geometry.office.height >= viewport.height * .6, 'Room must retain most of the viewport height');
+    assert(await page.locator('.office-hud').evaluate((hud) => hud.getBoundingClientRect().width <= 200), 'Map indicators remain compact');
+    assert(await page.locator('.office-world .agent .bot').evaluateAll((bots) => bots.every((bot) => bot.getBoundingClientRect().width <= 40)), 'Scene agents stay small');
     await page.screenshot({ path: path.join(output, `office-fit-${viewport.width}.png`) });
   }
   await page.setViewportSize({ width: 1440, height: 1100 });

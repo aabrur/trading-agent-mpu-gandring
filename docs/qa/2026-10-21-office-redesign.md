@@ -59,3 +59,10 @@ Verification: 14 focused scene/updater tests passed, typecheck passed, productio
 The full desktop room and all six roster buttons fit within one viewport at 1920x936, 1366x768 and 1024x600. The workspace retains its width; room height reserves the header, ticker, section title, agent row and spacing. The HUD scrolls inside the available office height, and character size follows room height. Mobile and very short landscape screens retain their existing flow.
 
 The offline browser verifier passed for these desktop sizes and its existing mobile, landscape, day/night and reduced-motion checks before release preparation. Typecheck and production build passed after the version update. Full suite rerun: 369 passed, 15 failed, 384 total in 44 files. The seven failing files are the same as documented above. The release also includes the previously committed saved-trading-settings and confirmed-exit-reversal changes in `6d7af4a`; this release preparation changes only version metadata, updater fixtures and documentation. No actual exchange trading was tested. CI is not claimed green.
+
+
+## Compact chrome and larger room: v0.0.0.3.11
+
+Removed the office heading row. Reduced header padding, brand and balance sizing, ticker height and stage gaps. Narrowed the desktop map rail from 280px to 200px, compacted its controls, and reduced desktop scene characters to at most 40px and roster rows to 36px. The existing viewport fit remains in place, with more space allocated to the room.
+
+Verification: 14 focused scene/updater tests, typecheck, build and isolated browser checks passed. At 1920x936, 1366x768 and 1024x600 the checks confirm full workspace width, complete room and six roster buttons within the viewport, room height at least 60% of viewport height, indicator width at most 200px and scene character width at most 40px. Existing mobile, landscape, day/night and reduced-motion checks passed. Desktop screenshots were inspected and README screenshots refreshed. The full-suite result from v0.0.0.3.10 remains 369 passed and 15 failed; it was not rerun for this presentation-only change.

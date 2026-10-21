@@ -1,6 +1,6 @@
 .office-v2.office .office-world { background: #cfb18a; aspect-ratio: 1000 / 640; max-height: none; min-height: 390px; }
-.office-v2.office { container-type: inline-size; grid-template-columns: minmax(0, 1fr) 280px; grid-template-rows: auto minmax(0, 1fr); }
-.office-v2 .office-hud { align-self: stretch; align-content: start; min-height: 0; max-height: calc(max(390px, (100cqw - 280px) * .64) - 90px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--sage-deep) var(--panel); }
+.office-v2.office { container-type: inline-size; grid-template-columns: minmax(0, 1fr) 200px; grid-template-rows: auto minmax(0, 1fr); }
+.office-v2 .office-hud { align-self: stretch; align-content: start; min-height: 0; max-height: calc(max(390px, (100cqw - 200px) * .64) - 90px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--sage-deep) var(--panel); }
 .office-v2 .office-orders { min-width: 0; padding: 9px; border-top: 1px solid var(--line); }
 .office-orders .n-picker { flex-wrap: wrap; margin: 0 0 8px; gap: 6px; }
 .office-orders .n-picker small { flex: 1 0 100%; color: var(--text); }
@@ -97,9 +97,19 @@
 
 /* Keep the complete room and agent row visible without narrowing the workspace. */
 @media (min-width: 769px) and (min-height: 600px) {
-  .office-v2.office { height: min(calc((100cqw - 280px) * .64 + 4px), var(--office-fit-height, calc(100dvh - 240px))); }
+  .office-v2.office { height: min(calc((100cqw - 200px) * .64 + 4px), var(--office-fit-height, calc(100dvh - 240px))); }
   .office-v2.office .office-world { height: 100%; min-height: 0; aspect-ratio: auto; container-type: size; }
   .office-v2 .office-hud { max-height: none; }
-  .office-v2 .agent .bot { width: clamp(32px, 10cqh, 62px); height: auto; }
-  .dashboard .desk-team .roster-item { flex: 1 1 0; }
+  .office-v2 .agent .bot { width: clamp(28px, 6cqh, 40px); height: auto; }
+  .office-v2 .agent .nametag strong { font-size: 9px; padding: 1px 4px; }
+  .office-v2 .agent .nametag .status { font-size: 8px; }
+  .office-v2 .office-pnl { margin: 6px; padding: 5px; }
+  .office-v2 .office-pnl strong { font-size: 16px; }
+  .office-v2 .office-hud { margin: 4px; }
+  .office-v2 .office-orders { padding: 6px; }
+  .office-v2 .office-orders .n-picker { gap: 4px; font-size: 10px; }
+  .office-v2 .office-orders .n-picker button { width: 28px; height: 28px; min-height: 28px; padding: 2px; font-size: 12px; }
+  .office-v2 .office-hud .verdicts-compact h2 { font-size: 13px; }
+  .dashboard .desk-team .roster-item { flex: 1 1 0; height: 36px; min-height: 36px; padding: 4px 6px; grid-template-columns: 20px minmax(0, 1fr) auto; font-size: 10px; }
+  .dashboard .desk-team .roster-item .bot { width: 20px; height: 24px; }
 }
