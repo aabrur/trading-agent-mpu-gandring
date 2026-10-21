@@ -113,6 +113,21 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('.office-world img')].every((img) => img.complete && img.naturalWidth > 0));
   await assertOfficeSpace();
+  for (const viewport of [{ width: 1920, height: 936 }, { width: 1366, height: 768 }, { width: 1024, height: 600 }]) {
+    await page.setViewportSize(viewport);
+    await page.waitForFunction(() => document.querySelector('.desk-team')!.getBoundingClientRect().bottom <= innerHeight);
+    await assertOfficeSpace();
+    const geometry = await page.evaluate(() => ({
+      office: document.querySelector('.office')!.getBoundingClientRect().toJSON(),
+      stage: document.querySelector('.stage')!.getBoundingClientRect().toJSON(),
+      roster: document.querySelector('.desk-team')!.getBoundingClientRect().toJSON()
+    }));
+    assert(Math.abs(geometry.office.width - geometry.stage.width) < 1, 'Office keeps the full stage width');
+    assert(geometry.office.top >= 0 && geometry.roster.bottom <= viewport.height, 'Complete office and agent row fit the viewport');
+    assert(await page.locator('.roster').evaluate((roster) => roster.scrollWidth <= roster.clientWidth), 'All six desktop agent buttons fit the row');
+    await page.screenshot({ path: path.join(output, `office-fit-${viewport.width}.png`) });
+  }
+  await page.setViewportSize({ width: 1440, height: 1100 });
   await page.locator('#tool-ops').click();
   await page.locator('.tool-flyout').hover();
   await page.waitForFunction(() => document.documentElement.style.overflow === 'hidden');

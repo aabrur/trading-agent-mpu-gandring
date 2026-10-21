@@ -94,3 +94,12 @@
 @media (prefers-reduced-motion: reduce) {
   .office-v2.is-brawling .studio-meeting > img { animation: none; }
 }
+
+/* Keep the complete room and agent row visible without narrowing the workspace. */
+@media (min-width: 769px) and (min-height: 600px) {
+  .office-v2.office { height: min(calc((100cqw - 280px) * .64 + 4px), var(--office-fit-height, calc(100dvh - 240px))); }
+  .office-v2.office .office-world { height: 100%; min-height: 0; aspect-ratio: auto; container-type: size; }
+  .office-v2 .office-hud { max-height: none; }
+  .office-v2 .agent .bot { width: clamp(32px, 10cqh, 62px); height: auto; }
+  .dashboard .desk-team .roster-item { flex: 1 1 0; }
+}

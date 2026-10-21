@@ -149,6 +149,27 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
 
 export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, children }: Props) {
   const { t } = useI18n();
+  const officeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const office = officeRef.current;
+    const stage = office?.parentElement;
+    const roster = stage?.querySelector<HTMLElement>('.desk-team');
+    if (!office || !stage || !roster) return;
+    const fit = () => {
+      const top = office.getBoundingClientRect().top + window.scrollY;
+      const gap = parseFloat(getComputedStyle(stage).rowGap) || 0;
+      const height = window.innerHeight - top - roster.offsetHeight - gap - 16;
+      office.style.setProperty('--office-fit-height', `${Math.max(180, height)}px`);
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(stage);
+    observer.observe(roster);
+    const header = document.querySelector('.topbar');
+    if (header) observer.observe(header);
+    window.addEventListener('resize', fit);
+    fit();
+    return () => { observer.disconnect(); window.removeEventListener('resize', fit); };
+  }, []);
   const activities = useSceneDirector(state, sceneEvents);
   const inDebate = !!state.debate;
   const heat = Math.min(1, disagreement);
@@ -175,7 +196,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   }, [state.agents, inDebate, activeFight, activities]);
 
   return (
-    <div className={`office office-v2 ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
+    <div ref={officeRef} className={`office office-v2 ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
       <output className="office-pnl" aria-label={`Open PnL, ${pnl.source}`} title="Unrealized PnL of open positions in USDT. Local estimates are not confirmed exchange results.">
         <span>Open PnL</span>
         <strong className={pnl.value == null ? '' : pnl.value >= 0 ? 'up' : 'down'}>{pnl.value == null ? 'Unavailable' : `${pnl.value >= 0 ? '+' : ''}${fmt(pnl.value)}`} <small>USDT</small></strong>
