@@ -35,7 +35,7 @@ export interface DeskState {
   signals: { source: string; symbol: string; action: string; price: number | null; note: string; at: number }[];
   agents: Record<AgentId, AgentView>; tickers: Record<string, Ticker>;
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] };
-  paper: { balance: number; safetyNet: number; n: number; moneyTrade: number; perOrder: number; canOpen: boolean; usedMargin: number; unrealized: number; equity: number; positions: Position[]; closed: ClosedTrade[]; minOrderUsdt: number; maxLeverage: number; defaultStopPct?: number; takeProfitR?: number };
+  paper: { balance: number; safetyNet: number; n: number; moneyTrade: number; perOrder: number; orderSizePct?: number; canOpen: boolean; usedMargin: number; unrealized: number; equity: number; positions: Position[]; closed: ClosedTrade[]; minOrderUsdt: number; maxLeverage: number; defaultStopPct?: number; takeProfitR?: number };
   equityHistory: { t: number; equity: number; balance: number }[];
   verdicts: Verdict[]; logs: LogLine[]; chats: Record<AgentId, ChatLine[]>; watchlist: string[];  fightThreshold: number;
   debateMode?: 'normal' | 'fast';

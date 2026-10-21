@@ -23,10 +23,8 @@ export function applyRiskGate(op: Out<'risk'>, limits: AppConfig['risk'], temper
   leverage = Math.max(1, Math.floor(leverage));
 
   // 2. Stop-loss breathing room: enforce minimum floor so wicks don't eat fees,
-  // and allow structural breathing room up to defaultStopPct (or +35% wider in aggressive temperament).
-  const effectiveMaxStop = temperament > 0
-    ? Math.round(limits.defaultStopPct * 1.35 * 100) / 100
-    : limits.defaultStopPct;
+  // The active owner's stop limit is also the execution planner's stop limit.
+  const effectiveMaxStop = limits.defaultStopPct;
 
   if (stopPct < limits.minStopPct) {
     notes.push(`Stop ${stopPct}% is tighter than the ${limits.minStopPct}% anti-whipsaw floor, widened to floor.`);

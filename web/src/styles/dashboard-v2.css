@@ -48,7 +48,7 @@
 .dashboard .panel h2 { font-size: 17px; letter-spacing: -.02em; }
 .dashboard .footer { padding-top: 24px; font-size: 11px; line-height: 1.7; color: var(--text-dim); }
 .dashboard :is(button, a, input, select, textarea):focus-visible { outline: 3px solid var(--sage-deep); outline-offset: 3px; }
-.dashboard button:active:not(:disabled) { transform: translateY(1px); }
+.dashboard button:active:not(:disabled):not(.agent) { transform: translateY(1px); }
 .dashboard .skip-office { position: fixed; left: 16px; top: -90px; z-index: 4000; background: var(--panel); border: 2px solid var(--sage-deep); border-radius: 8px; padding: 12px 18px; color: var(--text); }
 .dashboard .skip-office:focus { top: 16px; }
 .dashboard .layout:focus { outline: none; }

@@ -48,13 +48,14 @@ describe('safe command set', () => {
     expect(parseCommand('kill confirm')).toMatchObject({ ok: true, cmd: 'kill', confirm: true });
     expect(parseCommand('kill confirm:confirm')).toMatchObject({ ok: true, cmd: 'kill', confirm: true });
   });
-  it('refuses orders, mode changes, un-kill and key changes', () => {
+  it('accepts supported Owner orders while rejecting malformed orders, mode changes, un-kill and keys', () => {
     const refused = (t: string, re: RegExp) => { const p = parseCommand(t); expect(p.ok).toBe(false); if (!p.ok) expect(p.reply).toMatch(re); };
-    for (const t of ['open BTCUSDT long', '/buy ETH', 'short SOL 5x', 'close all', 'size BTC']) refused(t, /Orders cannot/);
+    for (const t of ['open BTCUSDT long', 'short SOL 5x', 'size BTC']) refused(t, /Usage/);
+    for (const t of ['/buy ETH', 'close all', 'set size 5%', 'set leverage 10']) expect(parseCommand(t)).toMatchObject({ ok: true, cmd: 'owner' });
     for (const t of ['live', '/mode LIVE', 'go-live', 'testnet']) refused(t, /mode cannot/);
     for (const t of ['unkill', 'un-kill --yes', 'resume']) refused(t, /desk computer/);
-    for (const t of ['key set BYBIT_API_KEY=x', 'set TRADING_MODE=LIVE', 'withdraw 100', 'env']) refused(t, /Keys and settings/);
-    refused('rm -rf /', /Unknown command/);
+    for (const t of ['key set BYBIT_API_KEY=x', 'set TRADING_MODE=LIVE', 'withdraw 100', 'env']) refused(t, /Keys and wallet/);
+    expect(parseCommand('rm -rf /')).toMatchObject({ ok: true, cmd: 'chat' });
   });
   it('accepts interactive commands: analyze, scan, ask, watchlist, scorecard, lessons, cautious', () => {
     expect(parseCommand('/analyze BTCUSDT')).toMatchObject({ ok: true, cmd: 'analyze', symbol: 'BTCUSDT' });
@@ -199,7 +200,7 @@ describe('Desk Lead and inbound routes', () => {
     expect((await slackReq(inBase, { user_id: 'U0ALLOWED1', text: 'status' }, '0'.repeat(32))).status).toBe(401);
     expect((await (await slackReq(inBase, { user_id: 'U0STRANGER', text: 'status' })).json()).text).toMatch(/not on this desk's allowlist/);
     expect((await (await slackReq(inBase, { user_id: 'U0ALLOWED1', text: 'status' })).json()).text).toMatch(/Desk Lead status: PAPER/);
-    expect((await (await slackReq(inBase, { user_id: 'U0ALLOWED1', text: 'open BTCUSDT long' })).json()).text).toMatch(/Refused/);
+    expect((await (await slackReq(inBase, { user_id: 'U0ALLOWED1', text: 'open BTCUSDT long' })).json()).text).toMatch(/Usage/);
     expect((await (await slackReq(inBase, { user_id: 'U0ALLOWED1', text: 'unkill' })).json()).text).toMatch(/Refused/);
   });
   it('Discord: PING, signature, allowlist, kill needs confirm and then trips the kill switch', async () => {
@@ -236,7 +237,7 @@ describe('Desk Lead and inbound routes', () => {
     const { lead, desk } = await boot();
     expect(await lead.handleTelegramUpdate({ update_id: 1, message: { chat: { id: 1111 }, from: { id: 9999 }, text: '/kill confirm' } })).toBeNull();
     expect(await lead.handleTelegramUpdate({ update_id: 2, message: { chat: { id: 5555 }, from: { id: 2222 }, text: '/status' } })).toBeNull();
-    expect(await lead.handleTelegramUpdate({ update_id: 3, message: { chat: { id: 1111 }, from: { id: 2222 }, text: '/open BTCUSDT' } })).toMatch(/Refused/);
+    expect(await lead.handleTelegramUpdate({ update_id: 3, message: { chat: { id: 1111 }, from: { id: 2222 }, text: '/open BTCUSDT' } })).toMatch(/Usage/);
     expect(await lead.handleTelegramUpdate({ update_id: 4, message: { chat: { id: 1111 }, from: { id: 2222 }, text: '/status' } })).toMatch(/Desk Lead status/);
     expect(desk.killed).toBe(false);
   });

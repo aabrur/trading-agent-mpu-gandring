@@ -2,13 +2,14 @@
 // Money Trade = total balance - safety net
 // Allocation per order = Money Trade / N   (N is 1, 2, 3 or 4)
 
-export interface SplitInput { balance: number; safetyNet?: number; n: number }
+export interface SplitInput { balance: number; safetyNet?: number; n: number; orderSizePct?: number }
 export interface Split {
   balance: number;
   safetyNet: number;
   n: number;
   moneyTrade: number;
   perOrder: number;
+  orderSizePct?: number;
   canOpen: boolean;
   note: string;
   activeRatio?: number;
@@ -22,14 +23,15 @@ export function assertN(n: number): asserts n is 1 | 2 | 3 | 4 {
   if (![1, 2, 3, 4].includes(n)) throw new Error('N (open orders) must be 1, 2, 3 or 4');
 }
 
-export function moneySplit({ balance, safetyNet, n }: SplitInput): Split {
+export function moneySplit({ balance, safetyNet, n, orderSizePct }: SplitInput): Split {
   assertN(n);
+  if (orderSizePct != null && (!Number.isFinite(orderSizePct) || orderSizePct < 1.5 || orderSizePct > 100)) throw new Error('Order size must be 1.5..100% of Money Trade');
   const activeRatio = 0.60;
   const safetyRatio = 0.40;
   const effectiveSafetyNet = safetyNet != null && safetyNet >= 0 ? safetyNet : round2(balance * safetyRatio);
   const activeCapital = round2(balance * activeRatio);
   const moneyTrade = Math.max(0, round2(balance - effectiveSafetyNet));
-  const perOrder = round2(moneyTrade / n);
+  const perOrder = round2(orderSizePct == null ? moneyTrade / n : moneyTrade * orderSizePct / 100);
   const canOpen = balance > effectiveSafetyNet && moneyTrade > 0;
   const triggerLoss = -round2(effectiveSafetyNet * 0.625);
   const marginBuffer = round2(effectiveSafetyNet - Math.abs(triggerLoss));
@@ -39,13 +41,14 @@ export function moneySplit({ balance, safetyNet, n }: SplitInput): Split {
     n,
     moneyTrade,
     perOrder,
+    ...(orderSizePct != null ? { orderSizePct } : {}),
     canOpen,
     activeRatio,
     safetyRatio,
     activeCapital,
     triggerLoss,
     marginBuffer,
-    note: canOpen ? `Money Trade ${moneyTrade} / ${n} = ${perOrder} per order` : 'Balance is at or below the safety net. No new orders.'
+    note: canOpen ? (orderSizePct == null ? `Money Trade ${moneyTrade} / ${n} = ${perOrder} per order` : `${orderSizePct}% of Money Trade ${moneyTrade} = ${perOrder} per order`) : 'Balance is at or below the safety net. No new orders.'
   };
 }
 
@@ -131,6 +134,10 @@ export function evaluateAutoHedge(
 export interface SizingRules { qtyStep: number; minQty: number; tickSize: number; minNotional?: number | null; maxQty?: number | null; takerFee?: number | null; source?: string }
 
 export interface PlanInput {
+  availableFunds?: number;
+  orderSizePct?: number;
+  /** LIVE/TESTNET can meet the exchange minimum within free capital and the loss cap. */
+  adjustToVenueMinimum?: boolean;
   balance: number;
   /** Account equity for the loss cap. Defaults to balance. */
   equity?: number;
@@ -174,14 +181,14 @@ export type Plan =
  *  2. stop = the given stop rounded to the tick TOWARD the entry (less risk), never moved otherwise
  *  3. qty = the smallest of: allocation * leverage / price, Money Trade headroom, and the loss cap
  *     (|entry - stop| * qty + round-trip taker fee <= MAX_LOSS_PER_TRADE_PCT of equity), floored to the lot step
- *  4. refuse if qty < minQty or qty * price < min notional. Never round up to a minimum.
+ *  4. optionally meet the venue minimum within free Money Trade and the active loss cap.
  */
 export function planOrder(p: PlanInput): Plan {
   const split = moneySplit(p);
   if (!split.canOpen) return { ok: false, reason: 'Balance is at or below the safety net. Not opening anything.', split };
   if (p.openPositions >= p.n) return { ok: false, reason: `Already ${p.openPositions} open position(s). The limit is N = ${p.n}.`, split };
-  if (!(p.price > 0)) return { ok: false, reason: 'No valid price.', split };
-  if (!(p.leverage >= 1)) return { ok: false, reason: 'No valid leverage.', split };
+  if (!(p.price > 0) || !Number.isFinite(p.price)) return { ok: false, reason: 'No valid price.', split };
+  if (!(p.leverage >= 1) || !Number.isFinite(p.leverage)) return { ok: false, reason: 'No valid leverage.', split };
 
   const notes: string[] = [];
   const rules: SizingRules = p.rules ?? { qtyStep: p.qtyStep ?? qtyStepFor(p.price), minQty: p.qtyStep ?? qtyStepFor(p.price), tickSize: 0, source: 'guessed from price (paper only)' };
@@ -190,6 +197,7 @@ export function planOrder(p: PlanInput): Plan {
   const minQty = Math.max(rules.minQty || 0, step);
   const minNotional = rules.minNotional != null && rules.minNotional > 0 ? rules.minNotional : p.minOrderUsdt;
   const fee = Math.max(p.takerFee ?? 0, rules.takerFee ?? 0);
+  if (![step, minQty, minNotional].every((v) => Number.isFinite(v) && v > 0) || !Number.isFinite(fee) || fee < 0) return { ok: false, reason: 'Invalid exchange quantity, minimum or fee rule.', split };
 
   // Stop: the given price, exactly. Only the internal debate (no stop price) derives one from stopPct.
   let rawStop: number;
@@ -209,10 +217,11 @@ export function planOrder(p: PlanInput): Plan {
   // Margin: allocation per order (Money Trade / N) times the risk factor, inside Money Trade headroom.
   const factor = Math.min(1, Math.max(0, p.sizeFactor));
   let margin = split.perOrder * factor;
-  const headroom = round2(split.moneyTrade - p.usedMargin);
+  const headroom = Math.min(round2(split.moneyTrade - p.usedMargin), p.availableFunds ?? Infinity);
   if (!(headroom > 0)) return { ok: false, reason: `Money Trade is already in use (${round2(p.usedMargin)} of ${split.moneyTrade} USDT). The safety net stays untouched.`, split };
   if (margin > headroom) { margin = headroom; notes.push('Trimmed to stay inside Money Trade so the safety net stays untouched.'); }
-  let qtyMax = (margin * p.leverage) / p.price;
+  const capitalPerUnit = p.price / p.leverage + fee * p.price;
+  let qtyMax = Math.min((margin * p.leverage) / p.price, headroom / capitalPerUnit);
 
   // Loss cap including the round-trip taker fee: qty * (dist + fee * (entry + stop)) <= maxLoss.
   // Loss cap base: the lower of balance and equity, so unrealized profit never raises the cap.
@@ -223,7 +232,16 @@ export function planOrder(p: PlanInput): Plan {
   if (qtyLoss < qtyMax) { qtyMax = qtyLoss; notes.push(`Size cut so a stop hit (with fees) loses at most ${p.maxLossPerTradePct}% of equity (${round2(maxLoss)} USDT).`); }
   if (rules.maxQty && qtyMax > rules.maxQty) { qtyMax = rules.maxQty; notes.push(`Capped at the venue max quantity ${rules.maxQty}.`); }
 
-  const qty = floorTo(qtyMax, step); // floor only, never round up
+  let qty = floorTo(qtyMax, step);
+  const venueMinimum = Math.ceil(Math.max(minQty, minNotional / p.price) / step - 1e-9) * step;
+  let adjusted = false;
+  if (p.adjustToVenueMinimum && factor > 0 && qty < venueMinimum - 1e-12) {
+    const requiredMargin = venueMinimum * p.price / p.leverage;
+    if (venueMinimum * capitalPerUnit <= headroom + 1e-9 && venueMinimum * lossPerUnit <= maxLoss + 1e-9 && (!rules.maxQty || venueMinimum <= rules.maxQty + 1e-12)) {
+      qty = venueMinimum; adjusted = true;
+      notes.push(`Raised to exchange minimum quantity ${qty}: margin ${round4(requiredMargin)} USDT (requested allocation ${split.perOrder}).`);
+    }
+  }
   const suggestion = p.n > 1 ? `Try a smaller N (for example ${p.n - 1}) so each order gets more money, or a closer stop.` : 'Add balance, lower the safety net, or use a closer stop.';
   if (qty < minQty - 1e-12 || qty <= 0) return { ok: false, reason: `Allowed size ${round6(qtyMax)} is below the minimum quantity ${minQty} (step ${step}) at ${p.price}. Not rounding up.`, split, suggestion };
   const notional = qty * p.price;
@@ -232,7 +250,7 @@ export function planOrder(p: PlanInput): Plan {
   const fees = fee * qty * (p.price + stop);
   const lossAtStop = dist * qty + fees;
   // Belt and braces: the floored plan must satisfy every cap.
-  if (margin > Math.min(split.perOrder * factor, headroom) + 1e-9 || lossAtStop > maxLoss + 1e-9) return { ok: false, reason: 'Internal sizing check failed (margin or loss over the cap). Refusing.', split };
+  if (margin > (adjusted ? headroom : Math.min(split.perOrder * factor, headroom)) + 1e-9 || qty * capitalPerUnit > headroom + 1e-9 || lossAtStop > maxLoss + 1e-9) return { ok: false, reason: 'Internal sizing check failed (margin or loss over the cap). Refusing.', split };
 
   const r = p.takeProfitR != null && p.takeProfitR > 0
     ? p.takeProfitR

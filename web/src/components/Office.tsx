@@ -223,12 +223,14 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         const busy = !atTable && a.status !== 'idle';
         const set = DESK_SETS[id];
         return (
-          <div key={`desk-${id}`} data-desk={id} className={`studio-desk ${desk.x > 50 ? 'desk-east' : 'desk-west'} ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, width: `${set.width ?? 17}%`, ['--agent' as string]: a.color }} aria-hidden="true">
+          <div key={`desk-${id}`} data-desk={id} className={`studio-desk ${desk.x > 50 ? 'desk-east' : 'desk-west'} ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, width: `${set.width ?? 17}%`, ['--desk-aspect' as string]: set.aspect, ['--agent' as string]: a.color }} aria-hidden="true">
             <div className="studio-chair" />
+            <div className="studio-desk-furniture">
             <img className="studio-desk-wood" src={asset(set.base)} alt="" />
             {set.monitor && <div className="studio-monitor" style={{ left: `${set.monitor.x}%`, top: `${set.monitor.y}%`, width: `${set.monitor.width}%` }}><img src={asset('mg_item_market_tablet')} alt="" />{spark.length > 1 && <div className="studio-screen"><Sparkline values={spark} up={up} /></div>}</div>}
             {set.props.map((prop) => <img key={prop.asset} className="studio-desk-prop" src={asset(prop.asset)} alt="" style={{ left: `${prop.x}%`, top: `${prop.y}%`, width: `${prop.width}%` }} />)}
             <span className="studio-desk-name">{DESK_LABEL[id]}</span>
+            </div>
           </div>
         );
       })}

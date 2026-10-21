@@ -5,12 +5,13 @@ export const TradingFields = z.object({
   maxLossPerTradePct: z.number().finite().positive().max(100),
   minEntryConfidencePct: z.number().finite().min(0).max(100),
   maxLeverage: z.number().int().min(1).max(100),
+  orderSizePct: z.number().finite().min(1.5).max(100).optional(),
   defaultStopPct: z.number().finite().positive().lt(100),
   minStopPct: z.number().finite().positive().lt(100),
   takeProfitPct: z.number().finite().positive().optional(),
   takeProfitR: z.number().finite().nonnegative(),
   minOrderUsdt: z.number().finite().positive(),
-  safetyNet: z.number().finite().positive(),
+  safetyNet: z.number().finite().nonnegative(),
   maxPositions: z.number().int().min(1).max(4)
 }).strict();
 
@@ -20,18 +21,18 @@ export const TradingSettingsSchema = TradingFields.refine(
 );
 
 export type TradingSettings = z.infer<typeof TradingFields>;
-export type TradingPresetId = 'default' | 'balance' | 'profit' | 'high_risk';
+export type TradingPresetId = 'default' | 'balance' | 'profit' | 'aggressive';
 export type TradingProfile = 'current' | TradingPresetId | 'manual';
 
-export const TRADING_PRESET_IDS: readonly TradingPresetId[] = ['default', 'balance', 'profit', 'high_risk'] as const;
-export const TRADING_PROFILES: readonly TradingProfile[] = ['current', 'default', 'balance', 'profit', 'high_risk', 'manual'] as const;
+export const TRADING_PRESET_IDS: readonly TradingPresetId[] = ['default', 'balance', 'profit', 'aggressive'] as const;
+export const TRADING_PROFILES: readonly TradingProfile[] = ['current', 'default', 'balance', 'profit', 'aggressive', 'manual'] as const;
 export type TradingNetwork = 'testnet' | 'mainnet';
 
 export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze({
   dailyLossLimitPct: 4,
-  maxLossPerTradePct: 1,
-  minEntryConfidencePct: 55,
-  maxLeverage: 3,
+  maxLossPerTradePct: 20,
+  minEntryConfidencePct: 50,
+  maxLeverage: 5,
   defaultStopPct: 20,
   minStopPct: 1.0,
   takeProfitPct: 60,
@@ -44,16 +45,16 @@ export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze
 export const TRADING_PRESETS: Record<TradingPresetId, {
   name: string;
   description: string;
-  values: Omit<TradingSettings, 'minOrderUsdt' | 'safetyNet'>;
+  values: Omit<TradingSettings, 'minOrderUsdt' | 'safetyNet' | 'orderSizePct'>;
 }> = {
   default: {
     name: 'Default',
     description: 'Baseline auto-trading mode with TP 60% and SL 20%.',
     values: {
       dailyLossLimitPct: 4,
-      maxLossPerTradePct: 1,
-      minEntryConfidencePct: 55,
-      maxLeverage: 3,
+      maxLossPerTradePct: 20,
+      minEntryConfidencePct: 50,
+      maxLeverage: 5,
       defaultStopPct: 20,
       minStopPct: 1.0,
       takeProfitPct: 60,
@@ -66,9 +67,9 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
     description: 'Balanced auto-trading mode with TP 60% and SL 30%.',
     values: {
       dailyLossLimitPct: 5,
-      maxLossPerTradePct: 1.5,
+      maxLossPerTradePct: 30,
       minEntryConfidencePct: 60,
-      maxLeverage: 5,
+      maxLeverage: 10,
       defaultStopPct: 30,
       minStopPct: 1.2,
       takeProfitPct: 60,
@@ -77,13 +78,13 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
     }
   },
   profit: {
-    name: 'Profile',
-    description: 'Profile momentum mode with TP 70% and SL 40%.',
+    name: 'Profit',
+    description: 'Profit momentum mode with TP 70% and SL 40%.',
     values: {
       dailyLossLimitPct: 8,
-      maxLossPerTradePct: 2.5,
-      minEntryConfidencePct: 65,
-      maxLeverage: 7,
+      maxLossPerTradePct: 40,
+      minEntryConfidencePct: 70,
+      maxLeverage: 15,
       defaultStopPct: 40,
       minStopPct: 1.5,
       takeProfitPct: 70,
@@ -91,14 +92,14 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
       maxPositions: 2
     }
   },
-  high_risk: {
-    name: 'High Risk High Reward',
+  aggressive: {
+    name: 'Aggressive',
     description: 'High risk high reward mode with TP 80% and SL 50%.',
     values: {
       dailyLossLimitPct: 12,
-      maxLossPerTradePct: 4.0,
-      minEntryConfidencePct: 70,
-      maxLeverage: 10,
+      maxLossPerTradePct: 50,
+      minEntryConfidencePct: 80,
+      maxLeverage: 20,
       defaultStopPct: 50,
       minStopPct: 1.8,
       takeProfitPct: 80,
@@ -113,12 +114,13 @@ export function resolveTradingPreset(preset: TradingPresetId, base: TradingSetti
   return TradingSettingsSchema.parse({
     ...values,
     minOrderUsdt: base.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
-    safetyNet: base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet
+    safetyNet: base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet,
+    ...(base.orderSizePct != null ? { orderSizePct: base.orderSizePct } : {})
   });
 }
 
 export function draftProfile(saved: TradingProfile): TradingPresetId | 'manual' {
-  if (saved === 'default' || saved === 'balance' || saved === 'profit' || saved === 'high_risk' || saved === 'manual') return saved;
+  if (saved === 'default' || saved === 'balance' || saved === 'profit' || saved === 'aggressive' || saved === 'manual') return saved;
   return 'manual';
 }
 
@@ -127,6 +129,7 @@ export const TRADING_ENV: Record<keyof TradingSettings, string> = {
   maxLossPerTradePct: 'MAX_LOSS_PER_TRADE_PCT',
   minEntryConfidencePct: 'MIN_ENTRY_CONFIDENCE_PCT',
   maxLeverage: 'MAX_LEVERAGE',
+  orderSizePct: 'ORDER_SIZE_PCT',
   defaultStopPct: 'DEFAULT_STOP_PCT',
   minStopPct: 'MIN_STOP_PCT',
   takeProfitPct: 'TAKE_PROFIT_PCT',
@@ -139,15 +142,17 @@ export const TRADING_ENV: Record<keyof TradingSettings, string> = {
 export const tradingPrefix = (network: TradingNetwork) => network.toUpperCase() + '_DESK_';
 
 export function selectedTradingProfile(env: Record<string, string | undefined>, network: TradingNetwork): TradingProfile {
-  const value = env[tradingPrefix(network) + 'PROFILE'] || 'current';
+  const saved = env[tradingPrefix(network) + 'PROFILE'] || 'current';
+  const value = saved === 'high_risk' ? 'aggressive' : saved;
   if (!TRADING_PROFILES.includes(value as TradingProfile)) throw new Error('Invalid ' + network + ' desk profile');
   return value as TradingProfile;
 }
 
 export function manualTradingOverrides(env: Record<string, string | undefined>, network: TradingNetwork): Partial<TradingSettings> {
-  const values: Record<string, number> = {};
+  const values: Record<string, number | undefined> = {};
   for (const [key, name] of Object.entries(TRADING_ENV)) {
     const raw = env[tradingPrefix(network) + name];
+    if (key === 'orderSizePct' && raw === '') values[key] = undefined;
     if (raw != null && raw !== '') values[key] = Number(raw);
   }
   return TradingFields.partial().parse(values);
@@ -164,13 +169,14 @@ export function resolveTradingSettings(env: Record<string, string | undefined>, 
   const networkBase: TradingSettings = {
     ...base,
     minOrderUsdt: overrides.minOrderUsdt ?? base.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
-    safetyNet: overrides.safetyNet ?? base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet
+    safetyNet: overrides.safetyNet ?? base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet,
+    orderSizePct: Object.hasOwn(overrides, 'orderSizePct') ? overrides.orderSizePct : base.orderSizePct
   };
   const values = profile === 'current'
     ? { ...base }
     : profile in TRADING_PRESETS
-      ? env[tradingPrefix(network) + 'SAVED_PROFILE'] === profile
-        ? TradingSettingsSchema.parse(Object.fromEntries(Object.entries(TRADING_ENV).map(([key, name]) => [key, Number(env[tradingPrefix(network) + 'SAVED_' + name])])))
+      ? (env[tradingPrefix(network) + 'SAVED_PROFILE'] === profile || profile === 'aggressive' && env[tradingPrefix(network) + 'SAVED_PROFILE'] === 'high_risk')
+        ? TradingSettingsSchema.parse(Object.fromEntries(Object.entries(TRADING_ENV).filter(([, name]) => env[tradingPrefix(network) + 'SAVED_' + name] != null && env[tradingPrefix(network) + 'SAVED_' + name] !== '').map(([key, name]) => [key, Number(env[tradingPrefix(network) + 'SAVED_' + name])])))
         : resolveTradingPreset(profile as TradingPresetId, networkBase)
       : TradingSettingsSchema.parse({ ...base, ...overrides });
   return { profile, values };

@@ -101,14 +101,14 @@ export class ExchangeError extends Error {
 
 export type FetchLike = typeof fetch;
 
-export async function httpJson(fetchImpl: FetchLike, url: string, init: RequestInit = {}, timeoutMs = 8000): Promise<any> {
+export async function httpJson(fetchImpl: FetchLike, url: string, init: RequestInit = {}, timeoutMs = 8000, parseBody: (text: string) => unknown = JSON.parse): Promise<any> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetchImpl(url, { ...init, signal: ctrl.signal });
     const text = await res.text();
     let body: any = null;
-    try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text.slice(0, 300) }; }
+    try { body = text ? parseBody(text) : null; } catch { body = { raw: text.slice(0, 300) }; }
     if (!res.ok) throw new ExchangeError(`HTTP ${res.status}: ${(body?.msg ?? body?.retMsg ?? body?.raw ?? '').toString().slice(0, 160)}`, res.status);
     return body;
   } catch (e) {

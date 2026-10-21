@@ -1,4 +1,4 @@
-.office-v2.office .office-world { background: #cfb18a; aspect-ratio: 1000 / 640; max-height: none; min-height: 390px; }
+.office-v2.office .office-world { background: #cfb18a; aspect-ratio: 1000 / 640; max-height: none; min-height: 390px; container-type: size; }
 .office-v2.office { container-type: inline-size; grid-template-columns: minmax(0, 1fr) 200px; grid-template-rows: auto minmax(0, 1fr); }
 .office-v2 .office-hud { align-self: stretch; align-content: start; min-height: 0; overflow: visible; }
 .office-v2 .office-orders { min-width: 0; padding: 9px; border-top: 1px solid var(--line); }
@@ -35,15 +35,15 @@
 .studio-sign img { width: 100%; height: 100%; object-fit: contain; }
 .studio-library { position: absolute; left: 3%; top: 3%; width: auto; height: 27%; aspect-ratio: 131 / 200; }
 .studio-shelf { width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(1px 5px 3px #63492d33); }
-.studio-coffee { position: absolute; right: 3%; top: 16%; width: 15%; height: 14%; }
-.studio-coffee > img:first-child { position: absolute; bottom: 0; width: 100%; height: auto; }
-.studio-coffee .coffee-cup { position: absolute; width: 17%; height: auto; right: 34%; bottom: 114%; }
-.studio-vine { position: absolute; top: -5%; height: 25%; object-fit: contain; }
+.studio-coffee { position: absolute; right: 3%; top: 3%; width: 15%; height: 27%; }
+.studio-coffee > img:first-child { position: absolute; bottom: 0; width: 100%; height: 100%; object-fit: contain; object-position: bottom; }
+.studio-coffee .coffee-cup { position: absolute; width: 12%; height: 12%; object-fit: contain; right: 25%; bottom: 45%; }
+.studio-vine { position: absolute; top: 1%; height: 21%; object-fit: contain; }
 .vine-west { left: 19%; }.vine-east { right: 17%; }
-.studio-pendant { position: absolute; left: 50%; top: -2%; width: 5%; height: 13%; object-fit: contain; transform: translateX(-50%); }
+.studio-pendant { position: absolute; left: 50%; top: 0; width: 5%; height: 10%; object-fit: contain; transform: translateX(-50%); }
 .studio-sunlight { position: absolute; left: 29%; top: 26%; height: 70%; width: 45%; background: linear-gradient(135deg, #fff7cd50, #fff7cd00 75%); clip-path: polygon(0 0, 75% 0, 100% 100%, 25% 100%); mix-blend-mode: soft-light; }
-.studio-rug { position: absolute; left: 50%; top: 65%; width: 43%; transform: translate(-50%, -50%); }
-.studio-rug img { width: 100%; height: auto; filter: drop-shadow(0 4px 2px #6d725529); }
+.studio-rug { position: absolute; left: 50%; top: 65%; width: 43%; height: 66%; transform: translate(-50%, -50%); }
+.studio-rug img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 4px 2px #6d725529); }
 .studio-lamp { position: absolute; width: 5%; height: 26%; object-fit: contain; filter: drop-shadow(0 1px 12px #fff0b64a); }
 .lamp-west { left: 3%; top: 31%; }.lamp-east { right: 3%; top: 31%; }
 .studio-plant { position: absolute; bottom: 1%; height: 25%; width: 11%; object-fit: contain; filter: drop-shadow(0 5px 3px #5d4d3330); }
@@ -54,7 +54,7 @@
 .studio-wall-board span { grid-column: 1 / -1; font-size: clamp(6px, .65vw, 10px); }
 .studio-wall-board .spark { grid-column: 1 / -1; min-height: 0; }
 .studio-wall-board i { height: 2px; background: #92aa87; width: 80%; }
-.studio-meeting { position: absolute; width: 29%; aspect-ratio: 168 / 117; transform: translate(-50%, -50%); z-index: 720; pointer-events: none; }
+.studio-meeting { position: absolute; width: 29%; aspect-ratio: 168 / 117; max-height: 50%; transform: translate(-50%, -50%); z-index: 720; pointer-events: none; }
 .studio-meeting > img:first-child { position: absolute; width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(0 9px 5px #69503138); }
 .studio-table-inlay { position: absolute; top: 5%; left: 44%; width: 11%; aspect-ratio: 1 / 2; transform: translateX(-50%); filter: drop-shadow(1px 2px 1px #69503138); }
 .studio-table-inlay img { display: block; width: 100%; height: auto; }
@@ -62,8 +62,9 @@
 .meeting-cup.cup-left { left: 19%; top: 33%; }.meeting-cup.cup-right { right: 18%; top: 43%; }
 .studio-meeting .meeting-book { position: absolute; left: 57%; top: 10%; width: 15%; height: auto; transform: rotate(0deg); }
 .studio-meeting .meeting-plant { position: absolute; left: 49%; top: 45%; width: 8%; height: auto; }
-.studio-desk { position: absolute; transform: translate(-50%, -50%); width: 17%; aspect-ratio: 1.78; pointer-events: none; }
-.studio-desk-wood { position: absolute; bottom: 0; left: 0; width: 100%; height: auto; filter: drop-shadow(0 6px 4px #67462c33); }
+.studio-desk { position: absolute; transform: translate(-50%, -50%); width: 17%; height: 19%; pointer-events: none; }
+.studio-desk-furniture { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: min(100%, calc(19cqh * var(--desk-aspect))); aspect-ratio: var(--desk-aspect); }
+.studio-desk-wood { position: absolute; bottom: 0; left: 0; width: 100%; height: 100%; object-fit: contain; object-position: bottom; filter: drop-shadow(0 6px 4px #67462c33); }
 .studio-chair { position: absolute; top: 10%; right: -14%; width: 26%; height: 70%; background: linear-gradient(90deg, #566d66, #8fa59a 65%, #668274); border: 2px solid #567064; border-radius: 42% 42% 25% 25%; box-shadow: 0 7px 0 -3px #6d513d; }
 .studio-desk.desk-east .studio-chair { right: auto; left: -14%; }
 .studio-monitor { position: absolute; aspect-ratio: 1.3; }

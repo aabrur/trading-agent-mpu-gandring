@@ -1,5 +1,5 @@
 import { privateKeyToAccount } from 'viem/accounts';
-import { historyRows, historyScope, historyWindow, asterIncome, asterFills } from './financial-history.js';
+import { historyRows, historyScope, historyWindow, asterIncome, asterFills, parseHistoryJson } from './financial-history.js';
 import type { FinancialQuery, FinancialPage } from './types.js';
 import type { Hex } from 'viem';
 import { ExchangeError, httpJson, floorStep, roundTick, pickProtection, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
@@ -67,7 +67,7 @@ export class AsterAdapter implements ExchangeAdapter {
   }
   private async req(method: 'GET' | 'POST' | 'DELETE', path: string, params: Record<string, string | number | boolean | undefined> = {}) {
     const { query } = await this.signedQuery(params);
-    const r = await httpJson(this.fetchImpl, `${this.base}${path}?${query}`, { method, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    const r = await httpJson(this.fetchImpl, `${this.base}${path}?${query}`, { method, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 8000, /\/(income|userTrades)$/.test(path) ? parseHistoryJson : JSON.parse);
     if (r && typeof r === 'object' && !Array.isArray(r) && typeof r.code === 'number' && r.code < 0) throw new ExchangeError(`aster ${path}: ${r.msg ?? 'error'} (${r.code})`, r.code);
     return r;
   }

@@ -28,7 +28,7 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
 
 export function makeCaller(cfg: AppConfig): ModelCaller {
   return async (req) => {
-    const { provider, model, system, user } = req;
+    const { provider, model, system, user, task } = req;
     switch (provider) {
       case 'mock':
         return mockReply(req);
@@ -49,7 +49,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
           'X-OpenRouter-Title': 'Trading Agent Mpu Gandring'
         } : {};
         // Reasoning models on OpenAI reject temperature and use the completion-token limit.
-        const maxTokens = provider === 'openai' ? 400 : 1500;
+        const maxTokens = task === 'chat' ? 4096 : 2048;
         const generation = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model) ? { max_completion_tokens: maxTokens, reasoning_effort: 'low' } : { temperature: 0.6, max_tokens: maxTokens };
         const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, {
           model, ...generation,

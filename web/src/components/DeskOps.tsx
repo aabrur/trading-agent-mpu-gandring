@@ -65,7 +65,7 @@ export function DeskOps({ state }: { state: DeskState }) {
       const targetPresetValues = TRADING_PRESETS[newPreset].values;
       const increasesLeverage = targetPresetValues.maxLeverage > runningLeverage;
       const increasesDailyLoss = targetPresetValues.dailyLossLimitPct > runningDailyLoss;
-      const isHighRisk = newPreset === 'high_risk';
+      const isHighRisk = newPreset === 'aggressive';
 
       if (isHighRisk || increasesLeverage || increasesDailyLoss) {
         const confirmed = window.confirm(
@@ -280,7 +280,7 @@ export function DeskOps({ state }: { state: DeskState }) {
               <option value="default">{t('opsPresetDefault')}</option>
               <option value="balance">{t('opsPresetBalance')}</option>
               <option value="profit">{t('opsPresetProfit')}</option>
-              <option value="high_risk">{t('opsPresetHighRisk')}</option>
+              <option value="aggressive">Aggressive</option>
             </select>
             <span className="auto-preset-chevron" aria-hidden="true">▾</span>
           </div>

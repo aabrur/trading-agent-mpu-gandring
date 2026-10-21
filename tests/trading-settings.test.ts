@@ -65,7 +65,7 @@ describe('network trading settings', () => {
     expect(resolveTradingSettings(env, base, 'mainnet').values).toEqual(DEFAULT_TRADING_SETTINGS);
   });
   it('rejects invalid percentages and inconsistent stop distances without zeroing guards', () => {
-    for (const patch of [{ dailyLossLimitPct: 0 }, { dailyLossLimitPct: 21 }, { maxLossPerTradePct: 0 }, { minEntryConfidencePct: 101 }, { minStopPct: 3, defaultStopPct: 1 }, { safetyNet: 0 }, { safetyNet: -1 }]) {
+    for (const patch of [{ dailyLossLimitPct: 0 }, { dailyLossLimitPct: 21 }, { maxLossPerTradePct: 0 }, { minEntryConfidencePct: 101 }, { minStopPct: 3, defaultStopPct: 1 }, { safetyNet: -1 }]) {
       expect(TradingSettingsSchema.safeParse({ ...DEFAULT_TRADING_SETTINGS, ...patch }).success).toBe(false);
     }
   });
@@ -118,7 +118,7 @@ describe('network trading settings', () => {
     const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null, executor: new LiveExecutor(adapter, 0) });
     const sync = d.syncLive(); await waiting;
     const change = d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, maxLeverage: 2 });
-    await Promise.resolve(); expect(cfg.risk.maxLeverage).toBe(3);
+    await Promise.resolve(); expect(cfg.risk.maxLeverage).toBe(DEFAULT_TRADING_SETTINGS.maxLeverage);
     release(); await sync; expect(await change).toBe(true); expect(cfg.risk.maxLeverage).toBe(2);
     expect(adapter.placed).toHaveLength(0);
   });
@@ -157,15 +157,15 @@ describe('network trading settings', () => {
     }
   });
   it('defines four recommended presets with exact values and schema validity', () => {
-    expect(TRADING_PRESET_IDS).toEqual(['default', 'balance', 'profit', 'high_risk']);
+    expect(TRADING_PRESET_IDS).toEqual(['default', 'balance', 'profit', 'aggressive']);
     const base = { ...DEFAULT_TRADING_SETTINGS, minOrderUsdt: 12, safetyNet: 350 };
 
     const def = resolveTradingPreset('default', base);
     expect(def).toMatchObject({
       dailyLossLimitPct: 4,
-      maxLossPerTradePct: 1,
-      minEntryConfidencePct: 55,
-      maxLeverage: 3,
+      maxLossPerTradePct: 20,
+      minEntryConfidencePct: 50,
+      maxLeverage: 5,
       defaultStopPct: 20,
       minStopPct: 1,
       takeProfitPct: 60,
@@ -178,14 +178,14 @@ describe('network trading settings', () => {
     expect(draftProfile('profit')).toBe('profit');
     expect(draftProfile('current')).toBe('manual');
     expect(draftProfile('manual')).toBe('manual');
-    expect(draftProfile('high_risk')).toBe('high_risk');
+    expect(draftProfile('aggressive')).toBe('aggressive');
 
     const bal = resolveTradingPreset('balance', base);
     expect(bal).toMatchObject({
       dailyLossLimitPct: 5,
-      maxLossPerTradePct: 1.5,
+      maxLossPerTradePct: 30,
       minEntryConfidencePct: 60,
-      maxLeverage: 5,
+      maxLeverage: 10,
       defaultStopPct: 30,
       minStopPct: 1.2,
       takeProfitPct: 60,
@@ -199,9 +199,9 @@ describe('network trading settings', () => {
     const prof = resolveTradingPreset('profit', base);
     expect(prof).toMatchObject({
       dailyLossLimitPct: 8,
-      maxLossPerTradePct: 2.5,
-      minEntryConfidencePct: 65,
-      maxLeverage: 7,
+      maxLossPerTradePct: 40,
+      minEntryConfidencePct: 70,
+      maxLeverage: 15,
       defaultStopPct: 40,
       minStopPct: 1.5,
       takeProfitPct: 70,
@@ -212,12 +212,12 @@ describe('network trading settings', () => {
     });
     expect(TradingSettingsSchema.safeParse(prof).success).toBe(true);
 
-    const hr = resolveTradingPreset('high_risk', base);
+    const hr = resolveTradingPreset('aggressive', base);
     expect(hr).toMatchObject({
       dailyLossLimitPct: 12,
-      maxLossPerTradePct: 4,
-      minEntryConfidencePct: 70,
-      maxLeverage: 10,
+      maxLossPerTradePct: 50,
+      minEntryConfidencePct: 80,
+      maxLeverage: 20,
       defaultStopPct: 50,
       minStopPct: 1.8,
       takeProfitPct: 80,
@@ -242,7 +242,7 @@ describe('network trading settings', () => {
 
       const savedTestnet = saveTradingProfile(file, { network: 'testnet', profile: 'balance' });
       expect(savedTestnet.profile).toBe('balance');
-      expect(savedTestnet.values.maxLeverage).toBe(5);
+      expect(savedTestnet.values.maxLeverage).toBe(10);
       expect(savedTestnet.values.safetyNet).toBe(80);
       expect(savedTestnet.values.minOrderUsdt).toBe(15);
       expect(savedTestnet.values.maxPositions).toBe(3);
@@ -252,15 +252,15 @@ describe('network trading settings', () => {
       expect(envAfterTestnet.TESTNET_DESK_MAX_LEVERAGE).toBe('7');
       expect(envAfterTestnet.MAINNET_DESK_PROFILE).toBeUndefined();
 
-      const savedMainnet = saveTradingProfile(file, { network: 'mainnet', profile: 'high_risk' });
-      expect(savedMainnet.profile).toBe('high_risk');
-      expect(savedMainnet.values.maxLeverage).toBe(10);
+      const savedMainnet = saveTradingProfile(file, { network: 'mainnet', profile: 'aggressive' });
+      expect(savedMainnet.profile).toBe('aggressive');
+      expect(savedMainnet.values.maxLeverage).toBe(20);
       expect(savedMainnet.values.safetyNet).toBe(250);
       expect(savedMainnet.values.minOrderUsdt).toBe(10);
       expect(savedMainnet.values.maxPositions).toBe(2);
 
       const envAfterMainnet = readEnv(file);
-      expect(envAfterMainnet.MAINNET_DESK_PROFILE).toBe('high_risk');
+      expect(envAfterMainnet.MAINNET_DESK_PROFILE).toBe('aggressive');
       expect(envAfterMainnet.TESTNET_DESK_PROFILE).toBe('balance');
       expect(envAfterMainnet.TRADING_MODE).toBe('PAPER');
 
@@ -278,7 +278,7 @@ describe('network trading settings', () => {
       const applied = await desk.applyTradingSettings('testnet', 'profit', savedMainnet.values);
       expect(applied).toBe(true);
       expect(cfg.tradingProfile).toBe('profit');
-      expect(cfg.risk.maxLeverage).toBe(10);
+      expect(cfg.risk.maxLeverage).toBe(20);
       expect(desk.book.n).toBe(2);
       expect(cfg.tradingMode).toBe('TESTNET');
       expect(desk.book.positions).toHaveLength(0);

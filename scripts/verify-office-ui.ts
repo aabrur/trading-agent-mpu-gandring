@@ -1,6 +1,9 @@
-// Offline browser checks. Every API and WebSocket response is simulated; no trading server is contacted.
+// Offline checks: fixture office feeds and a disposable PAPER Setup server with a temporary config.
+// No configured trading server or venue is contacted.
 import { chromium } from 'playwright-core';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { Desk } from '../server/desk.js';
@@ -8,6 +11,8 @@ import { loadConfig } from '../server/config.js';
 import { makeCaller } from '../server/providers/index.js';
 import { buildReport } from '../server/reports.js';
 import type { WebSocketRoute } from 'playwright-core';
+import { createApp } from '../server/app.js';
+import { readEnv } from '../cli/envfile.js';
 
 const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_PROVIDER: 'mock', AUTO_TRADING: 'off' });
 const desk = new Desk(cfg, makeCaller(cfg), { reportsDir: null, learningsPath: null });
@@ -60,6 +65,7 @@ try {
   });
   await page.goto(process.env.OFFICE_CHECK_URL ?? 'http://127.0.0.1:5178');
   await page.waitForSelector('.office');
+  if (!process.env.OFFICE_SETTINGS_ONLY) {
   await page.locator('.tour-skip-btn').click();
   await page.locator('.trakteer-close-x').click();
   await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connected'));
@@ -102,7 +108,7 @@ try {
         if (overlaps(decor[i].getBoundingClientRect(), decor[j].getBoundingClientRect())) errors.push('Table decorations overlap');
       }
       if (document.querySelectorAll('.studio-library img').length !== 1 || !document.querySelector('.studio-library img[src="/office-assets/mg_prop_bookshelf.webp"]')) errors.push('Bookshelf must use the complete stocked bundle');
-      for (const img of document.querySelectorAll('.studio-desk-wood, .studio-shelf, .studio-coffee > img:first-child, .studio-meeting > img:first-child')) {
+      for (const img of document.querySelectorAll('.studio-room img, .studio-desk img, .studio-meeting img, .studio-chair')) {
         const bounds = img.getBoundingClientRect();
         if (bounds.left < world.left - 1 || bounds.right > world.right + 1 || bounds.top < world.top - 1 || bounds.bottom > world.bottom + 1) errors.push('Furniture is clipped by the room');
       }
@@ -127,6 +133,23 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('.office-world img')].every((img) => img.complete && img.naturalWidth > 0));
   await assertOfficeSpace();
+  for (const id of ['lead', 'market', 'research', 'strategist', 'risk', 'execution']) {
+    const agent = page.locator(`[data-agent="${id}"] > button`);
+    const before = await agent.boundingBox();
+    assert(before);
+    await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+    await page.mouse.down();
+    const pressed = await agent.boundingBox();
+    assert(pressed && Math.abs(pressed.x - before.x) < 1 && Math.abs(pressed.y - before.y) < 1, `${id} stays in place while pressed`);
+    await page.mouse.up();
+    await page.waitForSelector('.agent-panel');
+    const input = page.locator('.ap-input textarea');
+    await input.fill('First paragraph');
+    await input.press('Shift+Enter');
+    await input.pressSequentially('Second paragraph');
+    assert.equal(await input.inputValue(), 'First paragraph\nSecond paragraph');
+    await page.locator('.agent-panel > .close').click();
+  }
   for (const viewport of [{ width: 1920, height: 936 }, { width: 1366, height: 768 }, { width: 1024, height: 600 }]) {
     await page.setViewportSize(viewport);
     await page.waitForFunction(() => document.querySelector('.desk-team')!.getBoundingClientRect().bottom <= innerHeight);
@@ -254,12 +277,50 @@ try {
   await page.setViewportSize({ width: 1440, height: 1100 });
   socket!.send(JSON.stringify({ type: 'state', payload: snapshot }));
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await page.waitForSelector('[data-activity="walk"]', { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelectorAll('[data-activity="sit"]').length === 6);
   await page.locator('.office').screenshot({ path: path.join(output, 'office-idle-activities.png') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'night'; });
   await page.screenshot({ path: path.join(output, 'office-night.png'), fullPage: true });
   await page.locator('.office').screenshot({ path: path.join(output, 'office-night-room.png') });
+  }
+  const settingsDir = mkdtempSync(path.join(tmpdir(), 'mpu-office-settings-'));
+  const settingsFile = path.join(settingsDir, 'fixture.env');
+  writeFileSync(settingsFile, 'TRADING_MODE=PAPER\nMARKET_SOURCE=sample\nDEFAULT_PROVIDER=mock\nAUTO_TRADING=off\nSAFETY_NET=200\nTESTNET_DESK_PROFILE=default\n');
+  const fixtureApp = createApp(cfg, { envFile: settingsFile, reportsDir: null, learningsPath: null });
+  await new Promise<void>((resolve) => fixtureApp.server.listen(0, '127.0.0.1', resolve));
+  const fixtureBase = `http://127.0.0.1:${(fixtureApp.server.address() as AddressInfo).port}`;
+  try {
+    await page.route((url) => url.pathname.startsWith('/api/setup'), async (route) => {
+      const request = route.request(), url = new URL(request.url());
+      const response = await fetch(fixtureBase + url.pathname + url.search, { method: request.method(), headers: { 'content-type': 'application/json' }, ...(request.method() !== 'GET' ? { body: request.postData() } : {}) });
+      await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
+    });
+    await page.evaluate(() => { window.location.hash = 'setup-trading-manual'; });
+    const settings = page.locator('.trading-setup');
+    await settings.getByLabel('Settings profile', { exact: true }).waitFor();
+    const cases = [['default', 50, 20, 5], ['balance', 60, 30, 10], ['profit', 70, 40, 15], ['aggressive', 80, 50, 20]] as const;
+    for (const [profile, confidence, loss, leverage] of cases) {
+      await settings.getByLabel('Settings profile', { exact: true }).selectOption(profile);
+      assert.equal(await settings.getByLabel('Minimum entry confidence (%)', { exact: true }).inputValue(), String(confidence));
+      assert.equal(await settings.getByLabel('Risk per trade (%)', { exact: true }).inputValue(), String(loss));
+      assert.equal(await settings.getByLabel('Maximum leverage (x)', { exact: true }).inputValue(), String(leverage));
+    }
+    const size = settings.getByLabel('Order size (% of Money Trade)', { exact: true });
+    await size.fill('5');
+    await settings.locator('button[type="submit"]').click();
+    await page.waitForFunction(() => [...document.querySelectorAll('.trading-setup [role="status"]')].some((node) => node.textContent?.toLowerCase().includes('saved')));
+    assert.equal(readEnv(settingsFile).TESTNET_DESK_SAVED_ORDER_SIZE_PCT, '5');
+    await size.fill('100');
+    await settings.getByRole('button', { name: 'Discard edits', exact: true }).click();
+    assert.equal(await size.inputValue(), '5', 'Discard restores the loaded percentage, including a saved preset');
+    await settings.screenshot({ path: path.join(output, 'trading-profiles.png') });
+    await page.getByRole('dialog', { name: 'Setup', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
+  } finally {
+    fixtureApp.desk.stop();
+    await new Promise<void>((resolve) => fixtureApp.server.close(() => resolve()));
+    rmSync(settingsDir, { recursive: true, force: true });
+  }
   assert.deepEqual(errors, []);
-  console.log(`Office layout and wallet session checks passed. Screenshots: ${output}`);
+  console.log(`Office, chat, profile and wallet session checks passed. Screenshots: ${output}`);
 } finally { await browser.close(); }

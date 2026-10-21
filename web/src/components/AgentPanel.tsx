@@ -61,7 +61,9 @@ export function AgentPanel({ state, id, onClose, command }: { state: DeskState; 
       </div>
       <div className="ap-quick">{quickList.map((q) => <button key={q} onClick={() => send(q)}>{q}</button>)}</div>
       <form className="ap-input" onSubmit={(e) => { e.preventDefault(); void send(text); }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={`${t('apMsgPlaceholder')} ${a.name}...`} maxLength={500} />
+        <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(text); }
+        }} aria-label={`Message ${a.name}`} placeholder={`${t('apMsgPlaceholder')} ${a.name}...`} maxLength={2500} />
         <button type="submit" disabled={busy}>{t('apSendBtn')}</button>
       </form>
     </aside>

@@ -60,7 +60,7 @@ export function AllocationBars({ state }: { state: DeskState }) {
   const [hi, setHi] = useState<number | null>(null);
   return (
     <figure className="mini-chart">
-      <figcaption><span>{t('allocationPerOrder')}</span><b>{fmt(p.moneyTrade)} / {p.n} = {fmt(p.perOrder)} USDT</b></figcaption>
+      <figcaption><span>{t('allocationPerOrder')}</span><b>{p.orderSizePct == null ? `${fmt(p.moneyTrade)} / ${p.n}` : `${p.orderSizePct}% × ${fmt(p.moneyTrade)}`} = {fmt(p.perOrder)} USDT</b></figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="allocation per order">
         {[0, 0.5, 1].map((f) => (
           <g key={f}>

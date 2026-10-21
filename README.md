@@ -8,13 +8,13 @@ Six AI trading agents share one office. They read the market, argue about it, th
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
 
-![Illustrated office with six workstations, shared discussion table and dashboard](docs/screenshot.png)
+![Illustrated office with six workstations, shared discussion table and dashboard](docs/qa/2026-10-22-office/screenshots/office-fit-1366.png)
 
-![The office and dashboard in night mode](docs/office-night.png)
+![The office in night mode](docs/qa/2026-10-22-office/screenshots/office-night-room.png)
 
 Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
 
-## Illustrated office (v0.0.0.3.14)
+## Illustrated office (v0.0.0.3.15)
 
 The office uses supplied wood furniture, a shared carved discussion table, a stocked library, sky windows, hanging plants, lamps and a coffee corner. Six animated characters retain their own workstation, role accessories, activity, debate and chat controls. Day and night themes extend across the room, map panels, agent roster, markets and reports.
 
@@ -22,11 +22,11 @@ The office opens directly below the ticker, without a workspace hero or account-
 
 On desktop viewports at least 600px tall, the complete office and all six agent buttons fit within the viewport while preserving workspace width. The indicator rail remains 200px wide without inner scrolling. Scene agents are now 48–60px wide with clearer name labels. The centered table has separate spaces for the complete keris-and-stand ornament, coffee, notebook and succulent. The bookshelf and coffee counter use complete assembled bundles. Each role has its matching desk; the execution terminal includes its own monitor, controls and tray.
 
-Analysis keeps agents at their workstations. Opposing debate brings them to the table and uses the supplied cartoon smoke during short fights. Between tasks, up to two agents visit the library, coffee corner, window, analysis board or lounge. New work, a pause or the kill switch interrupts breaks. Reduced motion disables roaming and fight effects. Setup, header controls, order calculations and exchange execution are preserved; the CI repair strengthens lesson rejection rather than loosening trading guards.
+Analysis keeps agents at their workstations. Opposing debate brings them to the table and uses the supplied cartoon smoke during short fights. When debate finishes, all six agents return to their own seats and remain there between tasks. Pressing an agent keeps its position stable and opens its chat. Furniture, chairs, accessories and wall decorations fit inside the existing frame; the frame has not been widened. Reduced motion disables movement and fight effects.
 
 Runtime artwork lives in `web/public/office-assets/`: 32 canonical WebP files, about 322 KiB total. The [asset index](docs/office-assets/mpu_gandring_assets_master.csv) records all 139 assets and six catalogs with actual extraction dimensions and reference crops. Supplied sheets are retained under [docs/office-assets](docs/office-assets/README.md). Three intact higher-resolution cutouts are used for the table, rug and floor lamp; runtime provenance is recorded in `manifest.json`. Production builds copy only runtime artwork and branding. The large local authoring library stays ignored and is not required to run a clone.
 
-Verification is recorded in [the office QA log](docs/qa/2026-10-21-office-redesign.md). Screenshots and browser checks use isolated PAPER/mock fixtures, including desktop, phone, landscape, night mode, complete furniture bounds, readable agents and a non-scrolling indicator rail. The former CI mismatches in debate consensus, freshness, saved presets and confidence fixtures are repaired without removing safety assertions.
+Verification is recorded in [the release QA log](docs/qa/2026-10-22-office/report.md): 427 tests across 46 files, typecheck and production build passed. Production frontend checks covered six viewports from 375px to 1920px wide, day/night, reduced motion, all six agent clicks, debate return-to-seat behavior and saved Setup values. Screenshots and browser checks use isolated PAPER/mock fixtures. Actual provider responses, live venue execution and Telegram connectivity still need runtime verification.
 
 > **Risk warning. Paper trading by default. Not financial advice. No profit promised.** This is an educational project about multi-agent decision making. If you choose TESTNET or LIVE in setup, the agents trade **on their own** in full auto with no approval step: they open, close, size and set stops without asking you. In LIVE that is real money and you can lose it, quickly. Automatic guards including the no-withdraw key check, stop on every order, daily loss stop, safety net, max N and kill switch limit damage; they do not prevent losses. Read [docs/live-trading.md](docs/live-trading.md) first.
 
@@ -53,7 +53,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 
 - **proaktif-agent, before every cycle.** A scan flags loss cap usage at 70 percent and up via `LOSS_WARN_PCT`, positions without a stop, API and exchange errors, stale or sample data, and a balance close to the safety net. Findings go to the office log, the Lessons panel and into the agents' next prompts.
 - **self-improving, after every cycle and every event.** After each cycle, closed losing trade, stop hit, error, or owner correction in the office chat, the desk writes a lesson with what happened, root cause, lesson and status to `data/learnings.json`. A lesson seen 3 times via `PROMOTE_AFTER` becomes a standing rule injected into that role's prompt.
-- **Lessons can never loosen a guard.** Any lesson that reads like more leverage, bigger size, a wider or missing stop, skipping risk or touching the safety net is refused before it is stored or promoted, and the code caps apply whatever a prompt says. Tests cover it.
+- **Lessons remain advice.** Owner corrections can be stored and promoted without a text-level guard-loosening refusal. Lesson text is fenced as untrusted context and cannot change settings or authorize an order. Explicit Owner commands change the active configuration.
 - **The Desk Lead supervises.** Every report has a per-role scorecard and "Lessons this period".
 - In Grok Bot mode the trading loop routine runs proaktif-agent first and self-improving last, through `npm run gb -- scan` and `npm run gb -- lessons add|list`.
 
@@ -64,13 +64,15 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
 - **Optional Jev decision sidecar.** TypeSafe Jev (`typesafe/jev-1.14`) over OpenRouter can classify market regime, news relevance, whale significance and debate conflicts. Off by default. Bring your own OpenRouter key. Shadow records only and does not block trading. Assist may enrich PAPER, TESTNET and LIVE analysis after an explicit Setup authorization. Jev never places, cancels or resizes orders. TypeSafe Direct is not included.
 - **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
-- **Risk can only tighten.** The Risk Manager can approve, reduce or reject. Hard caps in code clip leverage, stop distance and loss per trade, whatever any model says.
-- **Boss's money split.** You set a total balance, a safety net and N open orders from 1 to 4. Money Trade = balance minus safety net, and each order gets Money Trade / N. The safety net is never touched.
-- **Four recommended risk presets.** Select between `Default`, `Balance`, `Profit`, or `High Risk High Reward` directly from Setup or via the compact dropdown above `Cycle now` in Desk Ops Auto Trade. Your account safety net and minimum order size are always preserved across presets.
+- **Owner-selected risk limits.** The Risk Manager can approve, reduce or reject. Code applies the active profile's leverage, stop and loss limits; Owner commands can change the profile and leverage directly.
+- **Boss's money split.** Money Trade = balance minus safety net. An optional order percentage allocates 1.5–100% of Money Trade; leaving it blank uses Money Trade / N. N remains the maximum of 1–4 open positions, and available funds and stop-loss budgets still apply.
+- **Four risk presets.** Choose `Default`, `Balance`, `Profit` or `Aggressive` in Setup, Desk Ops or chat. Your account safety net, minimum order size and selected allocation percentage are preserved across presets. Exact values are listed below.
 - **Opportunity-seeking, evidence-driven trading culture.** The six agents evaluate genuine LONG and SHORT setups backed by verifiable market data and exchange-side stops instead of defaulting to unwarranted HOLDs.
 - **Authentic market and whale intelligence.** Multi-class news intelligence pipeline (macro, regulatory, token, hack) with deduplication and impact scoring, plus on-chain whale movement tracking with transparent attribution.
 - **Canonical ATR volatility and technical analysis.** Built-in Average True Range (ATR) equips Market Analyst and Strategist with volatility-calibrated stop and target projections.
-- **Natural language chat and agent delegation.** Click any agent or type in English or Indonesian (e.g. `Market, bagaimana tren BTC?` or `Research, berita apa 24 jam terakhir?`) with direct access to live tickers, positions, and recent verdicts.
+- **Chat and direct Owner commands for all six agents.** Ask questions, joke or discuss the market in English or Indonesian. Send up to 2500 characters with Enter; Shift+Enter starts a new paragraph. Direct commands open or close positions through the shared executor without a debate. Model-proposed commands must match an explicit instruction in the current Owner message.
+- **Modular personalities and response recovery.** Each agent loads `identity.md`, `soul.md`, `role.md` and `agent.md`. Chat accepts plain text and trims replies to 4000 characters before validation; missing confidence defaults to 0.65 for opinion, research, rebuttal and lead responses. Truncated JSON delimiter repair still requires valid trading fields.
+- **Financial history and channel recovery.** Aster history preserves large identifiers exactly and uses stable fallbacks for missing IDs. Telegram has one poller per token within the process, abortable requests, connection probes and bounded retry backoff.
 - **Every paper order has a stop loss and a take profit.** No stop, no order. The take profit sits `TAKE_PROFIT_R` times the stop distance away, 2R by default.
 - **Live public market data & multi-token picker.** Bybit, Binance, Hyperliquid, Aster, dYdX, Paradex and Orderly public endpoints, no key needed, with offline sample data as a fallback. Switch between your Watchlist, 20+ Popular Perps, or type any custom perp token symbol directly in the Price Chart, Command Bar, or Desk Ops.
 - **TradingView.** An optional free embedded TradingView chart widget (`TRADINGVIEW_WIDGET=on`), plus an alert webhook at `POST /api/tradingview` secured by a passphrase whose alerts are untrusted signals that start a debate. They never place an order by themselves.
@@ -82,14 +84,14 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **A cozy office with brutal cartoon smoke-cloud fights and spectator reactions.** Wood floors, a woven rug, sky windows, a coffee corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. When disagreement crosses the threshold, agents dive into a cartoon dust/smoke cloud with flying fists, spinning stars, lightning bolts and impact bursts (`GEBUK!`, `POW!`, `WHAM!`, `BONK!`), while bystander bots react with worried expressions and speech without blocking execution.
 - **Interactive pop-up tutorial on every start.** A 9-step guided onboarding tour launches automatically on startup (and via **Setup > Tutorial** in the top bar), highlighting each section of the desk with a spotlight and directional arrow.
 - **Dual language mode: EN and ID.** Defaults to English (`EN`) and switches instantly to Bahasa Indonesia (`ID`) from the top bar (`EN ▾ ID`), backed by a strictly synchronized 1:1 translation dictionary verified by automated tests.
-- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.14`).** The lit-up version notification badge (`v0.0.0.3.14 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
-- **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for Money Trade / N, and every desk monitor shows a sparkline.
+- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.15`).** The lit-up version notification badge (`v0.0.0.3.15 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
+- **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for the active percentage or Money Trade / N, and every desk monitor shows a sparkline.
 - **Day and night.** A toggle in the top bar. All colors and fonts live in `web/src/styles/tokens.css`.
 - **Live office feed.** Status, speech bubbles and fights stream over WebSocket, next to the fight meter, ticker strip, verdict cards and a desk log.
 - **Talk to the agents.** Click an agent to chat or give commands like `analyze ETHUSDT`, `be more cautious` or `close all`.
 - **Optional Grok Bot bridge.** Send verdicts and commands to a Grok Bot webhook routine from the server. Off by default.
 
-## Compact office controls (v0.0.0.3.14)
+## Compact office controls (v0.0.0.3.15)
 
 - Open **Ops**, **Portfolio**, **Lessons**, or **Log** from the bubble menu at the right. Panels stay closed until selected. Close with the same bubble, the close button, Escape, or a click outside. On phones the menu sits at the bottom-right.
 - **Reports** sits beside the price chart on desktop and below it on narrow screens. Open activity and evidence only when needed.
@@ -122,7 +124,7 @@ Save each setup section, then **Apply saved settings and restart**. **Connect Wa
 - **By hand, in a terminal:** `npm install`, then `npm run setup`. It asks the venue and mode, shows the direct links one step at a time for sign-up, test funds, key page and permissions, reads keys with hidden input into `.env` with chmod 600, offers Connect wallet for Hyperliquid and Aster, and runs the doctor check.
 - **By hand, in the office:** `npm run dev`, open http://localhost:5173 and click **Setup** at the top right. Same steps, same links, masked key inputs, doctor button, and mode switch where LIVE needs a typed confirmation.
 - **With your own AI agent** such as Grok Bot, Muse Code, Claude Code, Codex, Antigravity, Cursor or Copilot: Grok Bot follows [grokbot/INSTALL.md](grokbot/INSTALL.md) on Grok Bot's computer. Muse Code and other local CLIs follow [AGENTS.md](AGENTS.md) (Muse: [docs/muse-code.md](docs/muse-code.md)). Pointers live in `CLAUDE.md`, `MUSE.md`, `.cursor/rules/` and `.github/copilot-instructions.md`. They run the interview, give you one link per step and never ask for keys in chat.
-- **Chat channel:** the Desk Lead sends alerts and reports to Telegram, Discord, Slack or WhatsApp through official APIs only and accepts only `status`, `report`, `positions`, `kill` from allowlisted ids. Run `npm run channels -- setup telegram` or open Setup, section 7. Details: [docs/channels.md](docs/channels.md). MiChat has no official bot API, so it is not supported.
+- **Chat channel:** the Desk Lead sends alerts and reports to Telegram, Discord, Slack or WhatsApp through official APIs. With channel commands enabled, allowlisted Owner IDs can chat with any agent, change profile, size or leverage, and open or close positions. Run `npm run channels -- setup telegram` or open Setup, section 7. Details: [docs/channels.md](docs/channels.md), with the current Owner command syntax below. MiChat has no official bot API, so it is not supported.
 - **Per-venue guides** with testnet and mainnet sections: [docs/setup/](docs/setup/README.md) covering [Bybit](docs/setup/bybit.md), [Binance](docs/setup/binance.md), [OKX](docs/setup/okx.md), [Hyperliquid](docs/setup/hyperliquid.md), [Aster](docs/setup/aster.md), [dYdX](docs/setup/dydx.md), [Paradex](docs/setup/paradex.md) and [Orderly](docs/setup/orderly.md). Print one in the terminal: `npm run setup -- guide bybit`.
 
 Refused everywhere: main wallet private keys, seed phrases, keys that can withdraw. Every TESTNET/LIVE start checks the key again.
@@ -137,11 +139,11 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 | Enter keys into `.env` with chmod 600 | `npm run setup` hidden prompts | Setup > Exchange & Safety masked inputs |
 | Connect wallet for DEX venues + live DEX balance & deposit link | `npm run setup` offers it and opens the office | **Connect Wallet** green button in top bar, or `/#venue-keys` |
 | Live venue USDT balance + multi-country currency converter | `npm run gb -- account` | Top bar balance pill (`USDT`, `IDR`, `USD`, `EUR`, etc.), Portfolio panel (`Paper book`), & **Connect Wallet** modal |
-| Auto Trade ON/OFF + Token Picker + Presets (Default, Balance, Profit, High Risk) | `npm run trade` | **Desk Ops > Auto Trade** card (Presets dropdown, `Start Auto` / `Stop`, `Max Pos (N)`, token chips, `▶ Run now`) |
+| Auto Trade ON/OFF + Token Picker + Presets (Default, Balance, Profit, Aggressive) | `npm run trade` | **Desk Ops > Auto Trade** card (Presets dropdown, `Start Auto` / `Stop`, `Max Pos (N)`, token chips, `▶ Run now`) |
 | Interactive onboarding tour | N/A | Launches on every start, or open **Setup > Tutorial** in the top bar |
 | Optional Jev decision sidecar | Setup > Models, `JEV_ENABLED=true` | Shadow does not block. LIVE ASSIST needs Setup authorization. Never places orders |
 | Switch UI language (`EN` default / `ID`) | N/A | **EN ▾ ID** toggle in top bar |
-| Check version (`v0.0.0.3.14`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.14 · Update ↑** button in top bar |
+| Check version (`v0.0.0.3.15`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.15 · Update ↑** button in top bar |
 | Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup > Exchange & Safety **Run doctor** |
 | Switch mode to TESTNET or LIVE | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup > Exchange & Safety |
 | What is configured with secrets masked | `npm run setup -- status` | Setup header and status lines |
@@ -247,7 +249,8 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `DEFAULT_STOP_PCT` / `MIN_STOP_PCT` | `1.5` / `0.3` | Widest and tightest allowed stop distance, in percent |
 | `TAKE_PROFIT_R` | `2` | Take profit distance as a multiple of the stop distance. `0` turns take profit off. |
 | `MAX_LOSS_PER_TRADE_PCT` | `1` | A stop hit may lose at most this share of the balance |
-| `MIN_ORDER_USDT` | `5` | Below this the order is skipped. It is never rounded up. |
+| `MIN_ORDER_USDT` | `5` | Configured minimum order budget. Venue minimum adjustment in TESTNET/LIVE requires sufficient funds, fees and loss budget. |
+| `ORDER_SIZE_PCT` | unset | Optional allocation of 1.5–100% of Money Trade per order. Unset uses Money Trade / N. |
 | `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate, 1 to 4 |
 | `DEBATE_PACE_MS` | `700` | Speech pacing for the office. `0` is instant. |
 | `FIGHT_THRESHOLD` | `0.45` | Disagreement level where punches start |
@@ -257,7 +260,7 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `MAX_HOLD_HOURS` | `0` | Close positions older than this. `0` is off. |
 | `REPORT_INTERVAL_MIN` | `60` | Minutes between reports |
 | `TELEGRAM_*`, `DISCORD_*`, `SLACK_*`, `WHATSAPP_*` | empty | Chat channels for the Desk Lead's alerts and reports, see [docs/channels.md](docs/channels.md) |
-| `CHANNEL_COMMANDS` | `off` | `on` lets allowlisted chat ids send `status`, `report`, `positions`, `kill` |
+| `CHANNEL_COMMANDS` | `off` | `on` enables allowlisted Owner chat, settings and direct execution commands |
 | `LEARNING` / `PROACTIVE_SCAN` | `on` / `on` | self-improving lessons and the proaktif-agent scan |
 | `REFLECT_EVERY_CYCLES` | `1` | Reflection cadence in auto cycles |
 | `PROMOTE_AFTER` | `3` | Sightings before a lesson becomes a standing rule, 2 to 10 |
@@ -269,16 +272,17 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 
 ```
 Money Trade          = total balance - safety net
-Allocation per order = Money Trade / N        where N is 1, 2, 3 or 4
+Allocation per order = Money Trade * (orderSizePct / 100)   when set, 1.5–100%
+Allocation per order = Money Trade / N                     otherwise, N = 1..4
 ```
 
-Example: balance 100 USDT, safety net 20 USDT, N = 4 gives Money Trade 80 and 20 USDT per order.
+Example: balance 100 USDT and safety net 20 USDT gives Money Trade 80. N = 4 allocates 20 USDT per order by default; `set size 5%` instead allocates 4 USDT before execution checks.
 
 Rules the code enforces:
 
 - Never more than N open positions.
 - Margin in use never goes past Money Trade, so the safety net stays whole.
-- Lot step, minimum quantity, tick and minimum notional come from the exchange. If the allowed size is under the minimum quantity, or its notional is under the minimum notional, the order is skipped and the desk suggests a smaller N. Nothing is rounded up.
+- Lot step, minimum quantity, tick and minimum notional come from the exchange. In TESTNET/LIVE, a small order can adjust up to the venue minimum only when available funds, entry fees, the stop-loss budget and exchange maximums permit. PAPER does not round up automatically.
 - The loss at the stop includes the round-trip taker fee.
 - When the balance is at or below the safety net, no new orders.
 - The allocation is recalculated from the current balance before every order.
@@ -300,9 +304,9 @@ flowchart TD
     F --> D
     D --> L[Desk Lead<br/>OPEN_LONG / OPEN_SHORT / CLOSE / HOLD]
     L --> K[Risk Manager opinion]
-    K --> C[Code caps<br/>leverage, stop, loss per trade<br/>tighten only]
+    K --> C[Active Owner limits<br/>leverage, stop, loss per trade]
     C -->|REJECT| V[Verdict card]
-    C -->|APPROVE or REDUCE| P[Money split<br/>Money Trade / N, safety net, min order]
+    C -->|APPROVE or REDUCE| P[Money split<br/>percentage or Money Trade / N<br/>safety net, min order]
     P --> E[Execution Trader<br/>paper fill with stop loss]
     E --> V
     V --> J[Desk Lead journals closes]
@@ -327,13 +331,22 @@ flowchart LR
     UI --> API
 ```
 
-Each agent must answer with one JSON object that matches its schema in `server/schemas.ts`. A bad answer gets one retry. A second bad answer becomes the safe default: HOLD for the Desk Lead, REJECT for Risk, neutral for everyone else.
+Structured tasks validate against `server/schemas.ts` after delimiter repair. A bad answer gets one retry. A second bad answer uses a task fallback: HOLD for the Desk Lead, REJECT for Risk, neutral for other analysis tasks. If Risk formatting alone failed, the desk may continue only after a deterministic ticket preview passes; explicit Risk rejections remain effective. The executor checks the ticket again. Plain-text chat is wrapped as a reply, and oversized text is trimmed before validation.
 
 The Strategist's side comes from code, not from the model. If the model says something different, the rule wins.
 
 ## Talking to the agents
 
-Click an agent in the office or the roster under it. You get a chat panel. Plain questions go to that agent's model. These commands work anywhere:
+Click any agent in the office or the roster: `lead`, `market`, `research`, `strategist`, `risk` or `execution`. Plain questions go to that agent's model. Office commands require local Owner access; channel commands require enabled commands and an authenticated, allowlisted Owner ID. Direct open/close commands bypass debate and use the shared executor.
+
+| Profile | Confidence floor | Max loss per trade | Max leverage |
+| --- | --- | --- | --- |
+| `default` | 50% | 20% | 5x |
+| `balance` | 60% | 30% | 10x |
+| `profit` | 70% | 40% | 15x |
+| `aggressive` | 80% | 50% | 20x |
+
+Choosing a preset explicitly applies these values. Existing saved values remain intact across restarts, and the old `high_risk` profile name migrates to `aggressive`.
 
 | Command | Effect |
 | --- | --- |
@@ -342,9 +355,16 @@ Click an agent in the office or the roster under it. You get a chat panel. Plain
 | `set n 3` | Max open orders |
 | `set safety 150` | Safety net in USDT |
 | `set balance 1000` | Resets the paper balance when nothing is open |
-| `close all`, `close BTC` | Closes paper positions at the last price |
-| `be more cautious`, `be more aggressive`, `calm down` | Changes the mood of one agent in its panel or the whole desk in the command bar. Caps never loosen. |
+| `set profile default`, `set profile balance`, `set profile profit`, `set profile aggressive` | Applies the selected profile |
+| `set size 1.5%`, `set size 5%`, `set size 100%` | Persists allocation percentage of Money Trade, from 1.5 to 100 |
+| `set leverage 10` | Persists active leverage, from 1 to 20 |
+| `open long BTC 5% 10`, `buy BTC` | Opens LONG directly; optional percentage and leverage apply to this ticket |
+| `open short ETH 5% 10`, `sell ETH` | Opens SHORT directly through the same execution path |
+| `close all`, `close BTC` | Closes positions in the active mode; TESTNET/LIVE synchronizes the venue first |
+| `be more cautious`, `be more aggressive`, `calm down` | Changes the mood of one agent or the whole desk within the active settings |
 | `status`, `help` | Quick summary |
+
+Model replies may propose `commandToExecute`, but only a matching explicit command in the current Owner message executes. Questions, quotes, examples, negations, news and lesson text do not authorize orders. Direct execution retains available-funds, daily loss, kill-switch, position-count and exchange-stop checks. Switching trading mode, configuring keys and releasing a persisted kill switch keep their dedicated local flows.
 
 ## Venues
 
@@ -405,7 +425,8 @@ npm run setup -- paper         # back to PAPER
 ```
 bin/mpu.mjs        one-command launcher: mpu, mpu setup, mpu --no-open
 server/            Express + WebSocket backend
-  agents/          roles, prompts, JSON-validated agent runner
+  agents/          prompt loader and JSON-validated agent runner
+    personas/      six agent folders, each with identity.md, soul.md, role.md and agent.md
   providers/       mock, OpenAI-compatible, Anthropic, Gemini, and local CLI agent callers
   setup/           shared setup routes, venue guides, model catalog, local agent status, desk preferences
   market/          public market data, news & whale intelligence pipelines, offline sample data
@@ -417,10 +438,10 @@ server/            Express + WebSocket backend
   exchange/        adapter interface; Bybit implemented; Binance, OKX, Hyperliquid, Aster, dYdX, Paradex, Orderly experimental
   live/            automatic key guard, optional testnet round trip, live executor
   wallet.ts        Connect wallet: DEX agent key + one signed approval + live venue balance + official deposit links
-  updater.ts       in-app version check (v0.0.0.3.14) and one-click git fast-forward updater
+  updater.ts       in-app version check (v0.0.0.3.15) and one-click git fast-forward updater
   auto.ts          full auto scheduler
   reports.ts       periodic reports to files, UI, bridge and Telegram
-  learnings.ts     self-improving lessons store and the guard-loosening block
+  learnings.ts     self-improving lessons store; advice cannot authorize execution
   scan.ts          proaktif-agent scan
   scorecard.ts     Desk Lead per-role scorecard
 cli/debate.ts      headless debate
@@ -455,13 +476,13 @@ Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang
    mpu
    ```
 3. Ketik `mpu` kapan saja di terminal untuk langsung menjalankan desk dan membuka Web UI secara otomatis, atau `mpu setup` untuk langsung membuka menu pengaturan bernavigasi sidebar kiri. Di halaman Setup, Anda bisa mengatur saldo paper, safety net, memilih model untuk setiap agent dari 10 provider yang masing-masing menyediakan 20 model AI sehingga 1 API key bisa dipakai untuk banyak model, atau langsung menghubungkan agent CLI yang sudah terpasang di laptop Anda seperti Codex, Claude Code, Pi, Kimi Code, Kilo, Cline dan Grok Build maupun supervisor eksternal seperti Antigravity dan Grok Bot.
-4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia dropdown **Connect Wallet** khusus wallet EVM DEX, tombol **Setup**, menu **Setup > Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.3.14** untuk cek & klik update versi secara langsung, serta pilihan **EN ▾ ID** di dalam menu **Setup** untuk mengganti bahasa. Tombol **Restart** berada di navbar untuk memuat ulang konfigurasi kantor. Tersedia pula 4 preset risiko trading bawaan (Default, Balance, Profit, High Risk High Reward) yang dapat dipilih langsung dari Setup atau dropdown ringkas di atas tombol Cycle now pada Desk Ops Auto Trade.
-5. Aturan uang: Money Trade = total saldo dikurangi safety net, lalu dibagi N order dari 1 sampai 4. Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order. Safety net tidak pernah disentuh dan setiap order wajib pakai stop loss. Anda juga bisa memilih token perp apa saja lewat dropdown Watchlist, Popular Perps, atau `+ Custom token...` di Price Chart, Command Bar, dan Desk Ops.
+4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia dropdown **Connect Wallet** khusus wallet EVM DEX, tombol **Setup**, menu **Setup > Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.3.15** untuk cek & klik update versi secara langsung, serta pilihan **EN ▾ ID** di dalam menu **Setup** untuk mengganti bahasa. Tombol **Restart** berada di navbar untuk memuat ulang konfigurasi kantor. Empat preset risiko (Default, Balance, Profit, Aggressive) bisa dipilih lewat Setup, Desk Ops atau `set profile aggressive`. Tabel di atas mencantumkan batas masing-masing profil.
+5. Aturan uang: Money Trade = total saldo dikurangi safety net. Persentase per order dapat diatur dari 1,5 sampai 100% lewat Setup atau `set size 5%`. Jika kosong, alokasi memakai Money Trade / N, dengan N dari 1 sampai 4. Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order; ukuran 5% menjadi 4 USDT sebelum pemeriksaan eksekusi. Setiap order wajib pakai stop loss dan tetap mengikuti dana tersedia. Anda juga bisa memilih token perp apa saja lewat dropdown Watchlist, Popular Perps, atau `+ Custom token...` di Price Chart, Command Bar, dan Desk Ops.
 6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `mpu setup` atau `npm run setup` atau klik tombol **Setup** di kanan atas office: pilih venue dan mode, ikuti link langsung satu per satu untuk daftar, dana tes, halaman pembuatan key dan izin yang dicentang, lalu ketik key di input tersembunyi. Key masuk ke `.env` dengan chmod 600, tidak pernah ke chat. Izin: trade saja, withdraw dan transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Untuk DEX (`Hyperliquid`, `Aster`, `dYdX v4`, `Paradex`, `Orderly`) bisa melalui tombol **Connect Wallet** yang juga menampilkan saldo USDT secara live serta tombol **Halaman deposit resmi** untuk setiap DEX/CEX. Setelah itu jalankan `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
 7. Pakai agen AI sendiri? Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md), jalan di komputer Grok Bot, bukan laptop kamu. Muse Code: [docs/muse-code.md](docs/muse-code.md) dan [MUSE.md](MUSE.md). Claude Code, Codex, Antigravity, Cursor atau Copilot: [AGENTS.md](AGENTS.md) dan [docs/local-agents.md](docs/local-agents.md).
-8. Mau notifikasi di chat? Jalankan `npm run channels -- setup telegram` atau Discord, Slack dan WhatsApp Cloud API resmi, atau buka **Setup > Channels**. Desk Lead mengirim peringatan dan laporan. Dari chat hanya bisa `status`, `report`, `positions`, `kill`; buka order, pindah ke LIVE, un-kill dan ganti key tidak bisa dari chat. MiChat tidak punya API bot resmi, jadi tidak didukung. Panduan: [docs/channels.md](docs/channels.md).
+8. Mau notifikasi di chat? Jalankan `npm run channels -- setup telegram` atau Discord, Slack dan WhatsApp Cloud API resmi, atau buka **Setup > Channels**. Desk Lead mengirim peringatan dan laporan. Jika command diaktifkan, Owner dalam allowlist bisa ngobrol dengan keenam agen, mengubah profil, ukuran dan leverage, serta membuka atau menutup posisi langsung tanpa debat. Pindah mode, melepas kill switch tersimpan dan mengganti key tetap melalui alur lokal. MiChat tidak punya API bot resmi, jadi tidak didukung. Panduan: [docs/channels.md](docs/channels.md); sintaks terbaru ada pada tabel command di atas.
 
-Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `set n 3`, `set safety 150`, `close all`, `be more cautious`.
+Perintah yang bisa diketik: `analyze ETHUSDT`, `cek sol`, `tahan`, `lanjut`, `set n 3`, `set safety 150`, `set profile balance`, `set size 5%`, `set leverage 10`, `open long BTC 5% 10`, `sell ETH`, `close BTC`, `close all`. Klik agen mana pun untuk chat; Enter mengirim, Shift+Enter membuat paragraf baru. Setelah debat atau berantem kartun, agen kembali duduk di mejanya masing-masing.
 
 ## Contributing
 

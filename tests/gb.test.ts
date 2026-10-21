@@ -81,13 +81,13 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(r.ok).toBe(false);
     await expect(gb(['scan'], { env: { ...env, AGENT_EVENT_SECRET: '' }, baseUrl })).rejects.toThrow(/AGENT_EVENT_SECRET/);
   });
-  it('scan and lessons add|list (loosening lessons refused) with JSON-friendly output', async () => {
+  it('scan and lessons add|list (advice leaves active settings intact) with JSON-friendly output', async () => {
     const s = await run('scan');
     expect(s.ok).toBe(true);
     expect(Array.isArray(s.data)).toBe(true);
     const bad = await run('lessons', 'add', 'risk', 'use', '10x', 'leverage', 'on', 'strong', 'signals');
-    expect(bad.ok).toBe(false);
-    expect(bad.text).toMatch(/loosen a guard/);
+    expect(bad.ok).toBe(true);
+    expect(built.desk.cfg.risk.maxLeverage).toBe(3);
     for (let i = 0; i < 3; i++) await run('lessons', 'add', 'market', 'No stance on stale prices, say NEUTRAL', '--kind', 'scan', '--cause', 'feed lag');
     const list = await run('lessons', 'list');
     expect(list.text).toMatch(/RULE market: No stance on stale prices/);

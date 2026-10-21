@@ -34,7 +34,7 @@ export async function runAgent<K extends TaskKind>(
     const user = attempt === 1 ? baseUser : `${baseUser}\n\nYour previous reply was invalid (${lastErr}). Send only the JSON object.`;
     try {
       const raw = await call({ agent, task, provider, model, system, user, context: input.context, attempt });
-      const parsed = schema.safeParse(extractJson(raw));
+      const parsed = schema.safeParse(extractJson(raw, task));
       if (parsed.success) return { data: parsed.data as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: attempt };
       lastErr = parsed.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     } catch (e) {

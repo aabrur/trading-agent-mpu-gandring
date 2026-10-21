@@ -9,11 +9,20 @@ export function historyNumber(v: unknown) {
   if ((typeof v !== 'number' && typeof v !== 'string') || String(v).trim() === '' || !Number.isFinite(Number(v))) throw new ExchangeError('Missing financial history number');
   return Number(v);
 }
-export function historyText(v: unknown) {
-  if ((typeof v !== 'string' && typeof v !== 'number') || String(v).trim() === '' || typeof v === 'number' && !Number.isSafeInteger(v)) throw new ExchangeError('Missing or unsafe financial history identifier');
-  return String(v);
+export function historyText(v: unknown, fallback = 'unknown') {
+  return String(v ?? fallback).trim() || fallback;
 }
-export const historyScope = (venue: string, network: string, publicIdentity: unknown) => createHash('sha256').update(venue + ':' + network + ':' + historyText(publicIdentity).toLowerCase()).digest('hex');
+export const historyScope = (venue: string, network: string, publicIdentity: unknown) => {
+  if (!['string', 'number'].includes(typeof publicIdentity) || !String(publicIdentity).trim() || typeof publicIdentity === 'number' && !Number.isSafeInteger(publicIdentity)) throw new ExchangeError('Missing or unsafe financial account identifier');
+  return createHash('sha256').update(venue + ':' + network + ':' + historyText(publicIdentity).toLowerCase()).digest('hex');
+};
+const historyId = (kind: string, row: Record<string, unknown>) => kind + ':' + createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.entries(row).sort(([a], [b]) => a.localeCompare(b))))).digest('hex');
+
+/** Preserve large exchange IDs before JSON.parse can round them. Quoted text is left untouched. */
+export function parseHistoryJson(raw: string): unknown {
+  return JSON.parse(raw.replace(/"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (token) =>
+    /^-?\d+$/.test(token) && !Number.isSafeInteger(Number(token)) ? JSON.stringify(token) : token));
+}
 export function historyWindow(q: FinancialQuery) {
   if (!Number.isFinite(q.since) || !Number.isFinite(q.until) || q.since < 0 || q.until < q.since || q.until - q.since > 7 * 86400000) throw new ExchangeError('Financial history window must be within seven days');
 }
@@ -21,16 +30,16 @@ export function asterIncome(rows: Record<string, unknown>[]): FinancialRecord[] 
   return rows.flatMap((r): FinancialRecord[] => {
     if (!['FUNDING_FEE', 'COMMISSION', 'COMMISSION_REBATE'].includes(String(r.incomeType))) return [];
     const kind = r.incomeType === 'FUNDING_FEE' ? 'funding' : 'fee';
-    return [{ kind, id: historyText(r.incomeType) + ':' + historyText(r.tranId) + ':' + String(r.tradeId ?? ''), symbol: String(r.symbol ?? ''), currency: historyText(r.asset), amount: historyNumber(r.income) * (kind === 'fee' ? -1 : 1), at: historyNumber(r.time), ...(kind === 'fee' && r.tradeId ? { tradeId: String(r.tradeId) } : {}) }];
+    return [{ kind, id: historyText(r.incomeType) + ':' + historyText(r.tranId, historyId('income', r)) + ':' + String(r.tradeId ?? ''), symbol: String(r.symbol ?? ''), currency: historyText(r.asset), amount: historyNumber(r.income) * (kind === 'fee' ? -1 : 1), at: historyNumber(r.time), ...(kind === 'fee' && r.tradeId ? { tradeId: String(r.tradeId) } : {}) }];
   });
 }
 export function asterFills(rows: Record<string, unknown>[], income: FinancialRecord[]): FinancialFill[] {
   return rows.map((r) => {
     const qty = historyNumber(r.qty), price = historyNumber(r.price);
     if (!(qty > 0 && price > 0)) throw new ExchangeError('Invalid historical fill quantity or price');
-    const id = historyText(r.id), cost = income.find((i): i is FinancialCost => i.kind === 'fee' && i.tradeId === id && i.symbol === r.symbol);
+    const id = historyText(r.id, historyId('fill', r)), cost = income.find((i): i is FinancialCost => i.kind === 'fee' && i.tradeId === id && i.symbol === r.symbol);
     const currency = cost?.currency === 'USDT' && String(r.symbol).endsWith('USDT') ? 'USDT' : null;
-    return { kind: 'fill', id, orderId: historyText(r.orderId), symbol: historyText(r.symbol), side: r.positionSide === 'LONG' || r.positionSide === 'SHORT' ? r.positionSide : null, qty, price, fee: cost ? { amount: cost.amount, currency: cost.currency } : null, realizedPnl: r.realizedPnl != null && currency ? { amount: historyNumber(r.realizedPnl), currency } : null, at: historyNumber(r.time) };
+    return { kind: 'fill', id, orderId: historyText(r.orderId, historyId('order', r)), symbol: historyText(r.symbol), side: r.positionSide === 'LONG' || r.positionSide === 'SHORT' ? r.positionSide : null, qty, price, fee: cost ? { amount: cost.amount, currency: cost.currency } : null, realizedPnl: r.realizedPnl != null && currency ? { amount: historyNumber(r.realizedPnl), currency } : null, at: historyNumber(r.time) };
   });
 }
 export function bybitIncome(rows: Record<string, unknown>[]): FinancialRecord[] {

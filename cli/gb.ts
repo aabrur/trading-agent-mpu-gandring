@@ -97,7 +97,7 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     }
     case 'account': {
       const st = await state();
-      const d = { mode: st.mode, appMode: st.appMode, exchange: st.live?.exchange ?? null, balance: st.paper.balance, equity: st.paper.equity, safetyNet: st.paper.safetyNet, n: st.paper.n, moneyTrade: st.paper.moneyTrade, perOrder: st.paper.perOrder, open: st.paper.positions.length, dailyLoss: st.dailyLoss, killed: st.killed, paused: st.paused, auto: { on: st.auto?.on, intervalMin: st.auto?.intervalMin } };
+      const d = { mode: st.mode, appMode: st.appMode, exchange: st.live?.exchange ?? null, balance: st.paper.balance, equity: st.paper.equity, safetyNet: st.paper.safetyNet, n: st.paper.n, moneyTrade: st.paper.moneyTrade, perOrder: st.paper.perOrder, orderSizePct: st.paper.orderSizePct, open: st.paper.positions.length, dailyLoss: st.dailyLoss, killed: st.killed, paused: st.paused, auto: { on: st.auto?.on, intervalMin: st.auto?.intervalMin } };
       return ok(d, `${d.mode}${d.exchange ? ` on ${d.exchange}` : ''}: balance ${d.balance}, equity ${d.equity}, safety net ${d.safetyNet}, ${d.open}/${d.n} open, daily stop ${d.dailyLoss.limitPct}%${d.dailyLoss.hit ? ' HIT' : ''}${d.killed ? ', KILLED' : ''}`);
     }
     case 'positions': {
@@ -106,13 +106,13 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
       return ok(d, d.length ? d.map((p: any) => `${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} PnL ${p.pnl}`).join('\n') : 'no open positions');
     }
     case 'split': {
-      let balance = num(flags.balance), safetyNet = num(flags.safety), n = num(flags.n);
+      let balance = num(flags.balance), safetyNet = num(flags.safety), n = num(flags.n), orderSizePct = cfg.risk.orderSizePct;
       if (balance === undefined || safetyNet === undefined || n === undefined) {
-        try { const st = await state(); balance ??= st.paper.balance; safetyNet ??= st.paper.safetyNet; n ??= st.paper.n; }
+        try { const st = await state(); balance ??= st.paper.balance; safetyNet ??= st.paper.safetyNet; n ??= st.paper.n; orderSizePct = st.paper.orderSizePct; }
         catch { balance ??= cfg.paper.balance; safetyNet ??= cfg.paper.safetyNet; n ??= cfg.paper.n; }
       }
-      const sp = moneySplit({ balance: balance!, safetyNet: safetyNet!, n: n! });
-      return ok(sp, `Money Trade = ${sp.balance} - ${sp.safetyNet} = ${sp.moneyTrade}. Per order = ${sp.moneyTrade} / ${sp.n} = ${sp.perOrder}.`);
+      const sp = moneySplit({ balance: balance!, safetyNet: safetyNet!, n: n!, orderSizePct });
+      return ok(sp, `Money Trade = ${sp.balance} - ${sp.safetyNet} = ${sp.moneyTrade}. ${sp.note}.`);
     }
     case 'size': {
       let book: SizeBook = { balance: cfg.paper.balance, equity: cfg.paper.balance, safetyNet: cfg.paper.safetyNet, n: cfg.paper.n, open: 0, used: 0, mode: 'offline' };

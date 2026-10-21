@@ -10,11 +10,12 @@ export class PaperBook {
   closed: ClosedTrade[] = [];
   /** false in LIVE: the exchange holds the real stop and take profit. */
   autoExit = true;
+  orderSizePct?: number;
   constructor(public balance: number, public safetyNet: number, public n: number, public takerFee: number) {}
 
   get usedMargin() { return round2(this.positions.reduce((s, p) => s + p.margin, 0)); }
   get unrealized() { return round2(this.positions.reduce((s, p) => s + p.unrealizedPnl, 0)); }
-  split() { return moneySplit({ balance: this.balance, safetyNet: this.safetyNet, n: this.n }); }
+  split() { return moneySplit({ balance: this.balance, safetyNet: this.safetyNet, n: this.n, orderSizePct: this.orderSizePct }); }
 
   open(o: { symbol: string; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp?: number | null; margin: number; leverage: number; isHedge?: boolean }): Position {
     if (!(o.stop > 0)) throw new Error('refusing a paper order without a stop loss');

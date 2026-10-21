@@ -1,11 +1,11 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.14",
-  "appVersion": "0.0.0.3.14",
+  "version": "0.3.15",
+  "appVersion": "0.0.0.3.15",
   "changelog": [
-    "Rebuilt the office with correctly named complete furniture bundles from the supplied batch sheets, a stocked library, coffee counter and centered decorated discussion table.",
-    "Enlarged scene agents to 48-60px and synchronized workstation, break, debate and cartoon-fight activities with desk state.",
-    "Repaired stale CI fixtures and restored lesson checks against instructions that loosen risk guards."
+    "Repaired office agent clicks, seated idle behavior and furniture bounds inside the existing frame, with multiline chat for all six agents.",
+    "Added Owner profile, percentage sizing, leverage and direct open/close commands through the shared Office and channel execution path.",
+    "Added modular agent personas, response recovery, precise Aster history identifiers and singleton Telegram polling with bounded retries."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",

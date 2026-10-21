@@ -18,10 +18,10 @@ const mk = (extra: Record<string, string> = {}, caller?: ModelCaller, file: stri
 };
 const L = (lesson: string, role: 'market' | 'risk' | 'desk' = 'market') => ({ role, kind: 'loss' as const, happened: 'ETH short stopped out', rootCause: 'entered against the 1h trend', lesson });
 
-describe('guard-loosening block', () => {
-  it('refuses lessons that would loosen a guard', () => {
+describe('lesson advice and Owner settings', () => {
+  it('allows discussion of risk parameters without treating lesson text as settings', () => {
     for (const t of ['Use 10x leverage on strong setups', 'Skip the stop loss when confident', 'remove stops on winners', 'increase position size after a loss', 'trade the safety net when the setup is great', 'disable the daily loss stop', 'widen the stop to avoid noise', 'average down on losers', 'set N to 8', 'retry the order until it fills'])
-      expect(loosensGuard(t), t).toBe(true);
+      expect(loosensGuard(t), t).toBe(false);
     for (const t of ['Wait for a closed 15m bar above EMA21 before going long', 'REDUCE size when the room is split', 'HOLD on stale data', 'Every position needs a stop on the exchange; close any position found without one.'])
       expect(loosensGuard(t), t).toBe(false);
   });
@@ -31,16 +31,18 @@ describe('guard-loosening block', () => {
     expect(built.length).toBeGreaterThan(5);
     for (const t of built) expect(loosensGuard(t), t).toBe(false);
   });
-  it('a loosening lesson is never stored, promoted, or loaded from a hand-edited file', () => {
+  it('stores and promotes advice without changing execution settings', () => {
     const file = tmp();
     const l = new Learnings(file, 3);
-    for (let i = 0; i < 4; i++) expect(l.add(L('Use 20x leverage when everyone agrees'))).toBeNull();
-    expect(l.items).toHaveLength(0);
-    expect(l.refused).toBe(4);
+    for (let i = 0; i < 4; i++) expect(l.add(L('Use 20x leverage when everyone agrees'))).not.toBeNull();
+    expect(l.items).toHaveLength(1);
+    expect(l.refused).toBe(0);
     writeFileSync(file, JSON.stringify({ lessons: [{ id: 'x', key: 'k', role: 'risk', kind: 'note', happened: '', rootCause: '', lesson: 'skip the risk gate on strong signals', status: 'promoted', count: 9, firstAt: 1, lastAt: 1, source: 'desk' }] }));
     const again = new Learnings(file, 3);
-    expect(again.items).toHaveLength(0);
-    expect(again.standingRules()).toHaveLength(0);
+    expect(again.items).toHaveLength(1);
+    expect(again.standingRules()).toHaveLength(1);
+    const desk = mk({}, undefined, file);
+    expect(desk.cfg.risk.maxLeverage).toBe(5);
   });
 });
 
@@ -69,7 +71,7 @@ describe('self-improving: reflect and promote', () => {
     const market = seen.find((s) => s.agent === 'market')!;
     expect(market.system).toMatch(/Standing rules/);
     expect(market.system).toContain('Wait for a closed bar above EMA21 before longs');
-    expect(market.system).toMatch(/can never be loosened/);
+    expect(market.system).toMatch(/advice only/);
     expect(market.user).toContain('Funding above');
   });
   it('a closed losing trade writes lessons and updates the scorecard', async () => {
@@ -83,13 +85,13 @@ describe('self-improving: reflect and promote', () => {
     const lead = desk.scorecard.rows().find((r) => r.role === 'lead')!;
     expect(lead.wrong).toBe(1);
   });
-  it('an owner correction in the office chat becomes a lesson; a loosening one is refused', async () => {
+  it('records Owner corrections without silently changing active risk settings', async () => {
     const desk = mk();
     await desk.command('that was wrong, do not short into support', 'market');
     expect(desk.learnings.items.some((x) => x.kind === 'correction' && x.role === 'market')).toBe(true);
     await desk.command('you were wrong, use 10x leverage next time', 'risk');
-    expect(desk.learnings.items.some((x) => x.role === 'risk')).toBe(false);
-    expect(desk.logs.some((l) => /never loosen a guard/.test(l.text))).toBe(true);
+    expect(desk.learnings.items.some((x) => x.role === 'risk')).toBe(true);
+    expect(desk.cfg.risk.maxLeverage).toBe(5);
   });
 });
 

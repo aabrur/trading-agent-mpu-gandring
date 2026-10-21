@@ -5,7 +5,7 @@ import { loadJevSettings, type JevSettings } from './decision/jev.js';
 import { exchangeSettings, exchangeSecrets, ADAPTER_STATUS, type ExchangeName } from './exchange/index.js';
 import { channelConfig, CHANNEL_SECRET_ENV, type ChannelConfig } from './channels/config.js';
 import { checkTradingMode, type TradingMode } from './live/guard.js';
-import { DEFAULT_TRADING_SETTINGS, TRADING_ENV, resolveTradingSettings, type TradingProfile } from './trading-settings.js';
+import { DEFAULT_TRADING_SETTINGS, TRADING_ENV, TRADING_PROFILES, resolveTradingSettings, type TradingProfile } from './trading-settings.js';
 
 export type ApiProviderName = 'xai' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter' | 'groq' | 'mistral' | 'together' | 'fireworks';
 export type ProviderName = 'mock' | 'local' | ApiProviderName;
@@ -49,7 +49,7 @@ export interface AppConfig {
   watchlist: string[];
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
-  risk: { minEntryConfidencePct: number; maxLeverage: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitPct?: number; takeProfitR: number; dailyLossLimitPct: number };
+  risk: { minEntryConfidencePct: number; maxLeverage: number; orderSizePct?: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitPct?: number; takeProfitR: number; dailyLossLimitPct: number };
   debate: { rounds: number; paceMs: number; fightThreshold: number; mode: 'normal' | 'fast' };
   jev: JevSettings;
   bridge: { url: string; key: string; enabled: boolean };
@@ -61,6 +61,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ConfigError(`TRADING_MODE is "${mode}". Use PAPER (default), TESTNET or LIVE. Refusing to start.`, 2);
   }
   let tradingProfile: TradingProfile = 'current';
+  if (mode === 'PAPER' && env.PAPER_TRADING_PROFILE) {
+    if (!TRADING_PROFILES.includes(env.PAPER_TRADING_PROFILE as TradingProfile)) throw new ConfigError('Invalid PAPER trading profile');
+    tradingProfile = env.PAPER_TRADING_PROFILE as TradingProfile;
+  }
   if (mode !== 'PAPER') {
     const base = {
       ...DEFAULT_TRADING_SETTINGS,
@@ -69,7 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     try {
       const selected = resolveTradingSettings(env, base, mode === 'LIVE' ? 'mainnet' : 'testnet');
       tradingProfile = selected.profile;
-      if (tradingProfile !== 'current') env = { ...env, ...Object.fromEntries(Object.entries(selected.values).map(([key, value]) => [TRADING_ENV[key as keyof typeof TRADING_ENV], String(value)])) };
+      if (tradingProfile !== 'current') env = { ...env, ORDER_SIZE_PCT: '', ...Object.fromEntries(Object.entries(selected.values).filter(([, value]) => value != null).map(([key, value]) => [TRADING_ENV[key as keyof typeof TRADING_ENV], String(value)])) };
     } catch { throw new ConfigError('Invalid saved trading profile: check percentages, allocation and stop distances.'); }
   }
   let live: AppConfig['live'] = null;
@@ -130,6 +134,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (![1, 2, 3, 4].includes(n)) throw new ConfigError('OPEN_ORDERS_N must be 1, 2, 3 or 4');
   const balance = num(env, 'PAPER_BALANCE', 1000);
   const safetyNet = num(env, 'SAFETY_NET', 200);
+  if (env.ORDER_SIZE_PCT && (num(env, 'ORDER_SIZE_PCT', 0) < 1.5 || num(env, 'ORDER_SIZE_PCT', 0) > 100)) throw new ConfigError('ORDER_SIZE_PCT must be 1.5..100');
   if (balance < 0 || safetyNet < 0) throw new ConfigError('PAPER_BALANCE and SAFETY_NET must be zero or more');
   const src = (env.MARKET_SOURCE || 'bybit').toLowerCase();
   if (!['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly', 'sample'].includes(src)) throw new ConfigError('MARKET_SOURCE must be bybit, binance, hyperliquid, aster, dydx, paradex, orderly or sample');
@@ -167,10 +172,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     paper: { balance, safetyNet, n },
     risk: {
       minEntryConfidencePct: Math.min(100, Math.max(0, num(env, 'MIN_ENTRY_CONFIDENCE_PCT', DEFAULT_TRADING_SETTINGS.minEntryConfidencePct))),
-      maxLeverage: Math.max(1, num(env, 'MAX_LEVERAGE', 3)),
+      maxLeverage: Math.max(1, num(env, 'MAX_LEVERAGE', DEFAULT_TRADING_SETTINGS.maxLeverage)),
+      ...(env.ORDER_SIZE_PCT ? { orderSizePct: num(env, 'ORDER_SIZE_PCT', 100) } : {}),
       defaultStopPct: num(env, 'DEFAULT_STOP_PCT', 1.5),
       minStopPct: num(env, 'MIN_STOP_PCT', 0.3),
-      maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', 1),
+      maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', DEFAULT_TRADING_SETTINGS.maxLossPerTradePct),
       minOrderUsdt: num(env, 'MIN_ORDER_USDT', 5),
       takerFee: num(env, 'TAKER_FEE', 0.00055),
       takeProfitPct: num(env, 'TAKE_PROFIT_PCT', 60),

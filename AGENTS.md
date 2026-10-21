@@ -45,7 +45,7 @@ Everything can be done in the terminal or in the office, through the same code (
 
 ## Head supervisor: the Desk Lead, or your own AI agent
 
-The desk has one supervisor role, the **Desk Lead** (`server/channels/supervisor.ts`). It checks health, positions, stops, the daily loss cap, the safety net and errors every `SUPERVISOR_INTERVAL_MIN`, and sends alerts and scheduled reports to the chat channel the person chose ([docs/channels.md](docs/channels.md)). From chat, allowlisted ids can send only `status`, `report`, `positions`, `kill`.
+The desk has one supervisor role, the **Desk Lead** (`server/channels/supervisor.ts`). It checks health, positions, stops, the daily loss cap, the safety net and errors every `SUPERVISOR_INTERVAL_MIN`, and sends alerts and scheduled reports to the chat channel the person chose ([docs/channels.md](docs/channels.md)). With channel commands enabled, allowlisted Owner ids can chat with all six agents, choose a profile, set size and leverage, and open or close positions through the shared execution path. Supported commands are listed in `server/commands.ts` and channel help. Local Office commands require a loopback client and local origin.
 
 An external AI agent can play the same head-supervisor role from outside: Grok Bot, Muse Code, Claude Code, Codex, Cursor, Cline, Kilo Code, Google Antigravity, Hermes Agent (Nous Research), OpenClaw, or any agent that can run a terminal command or an HTTP GET on the desk's computer. This repo ships no plugin or MCP server for any of them and does not guess their config formats. Use what every one of them has: **a shell**. If your agent only speaks MCP, give it a shell or fetch MCP server from its own catalog and point it at the commands below.
 
@@ -78,7 +78,7 @@ Needs you: <decision the person must make, or "nothing">.
 
 **Escalate to the person at once when:** a position has no stop; the kill switch turned on; the daily loss stop hit or the cap is 90% used; balance is at the safety net; 3 or more API or exchange errors in one check; prices are stale or on sample data while TESTNET or LIVE; `/api/health` fails twice in a row; the mode or venue changed and the person did not say so.
 
-**Forbidden for an external supervisor, exactly as for chat:** opening, closing or resizing orders; switching PAPER, TESTNET or LIVE; releasing the kill switch; adding, changing or reading keys or `.env`; loosening any guard or lesson. The one action allowed without asking is the kill switch (`curl -X POST http://127.0.0.1:8787/api/kill`), and only if the person wrote down in advance which condition allows it. Otherwise describe the problem and ask. Never paste keys, addresses or `.env` lines into a report.
+**External supervision does not authorize trading:** an external supervisor must not open, close or resize orders without an explicit Owner instruction. Authenticated Owner chat commands may execute directly without a debate; model proposals must match the current Owner message. Switching PAPER, TESTNET or LIVE, releasing the kill switch, and configuring keys retain their dedicated local flows. The one supervision action allowed without asking is the kill switch (`curl -X POST http://127.0.0.1:8787/api/kill`), and only if the person wrote down in advance which condition allows it. Never paste keys, addresses or `.env` lines into a report.
 
 ## Ground rules
 
@@ -201,7 +201,7 @@ Only if the person asks. Follow [docs/grokbot-bridge.md](docs/grokbot-bridge.md)
 
 ## 7b. Learning, Grok Bot install, agent CLI
 
-- The proaktif-agent scan and self-improving reflection run on their own in the auto loop (`LEARNING=on`, `PROACTIVE_SCAN=on` by default). Do not turn them off unless the person asks. Lessons live in `data/learnings.json`; never edit them to loosen a guard (the app refuses such lessons and drops them on load).
+- The proaktif-agent scan and self-improving reflection run on their own in the auto loop (`LEARNING=on`, `PROACTIVE_SCAN=on` by default). Do not turn them off unless the person asks. Lessons live in `data/learnings.json` and are advice. Owner profile, size, leverage, N and safety-net commands change configuration explicitly; lesson text cannot authorize an order or change a setting.
 - Installing inside Grok Bot: follow [grokbot/BOOTSTRAP.md](grokbot/BOOTSTRAP.md) **on Grok Bot's computer**. No model keys are needed in that mode. Exchange keys only through the platform secret request card, never with `--keys-from-env` into `.env` there. Do not run that install on the owner's laptop.
 - Agents can trade and report through `npm run gb -- <cmd> --json` (see [docs/grokbot-mode.md](docs/grokbot-mode.md)). In the Grok Bot trading loop, run `gb scan` first and `gb lessons add` last, every cycle.
 

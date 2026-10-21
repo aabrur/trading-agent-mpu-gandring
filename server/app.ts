@@ -22,7 +22,7 @@ import { AutoTrader } from './auto.js';
 import { Reporter } from './reports.js';
 import { WalletConnector, walletAccess, walletInfo, findSecretLike } from './wallet.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName, type Network } from './exchange/index.js';
-import { mountSetupRoutes, mountOpsRoutes } from './setup/routes.js';
+import { mountSetupRoutes, mountOpsRoutes, localClient } from './setup/routes.js';
 import { DeskLead } from './channels/supervisor.js';
 import { createInboundApp, mountChannelSetupRoutes } from './channels/routes.js';
 import { APP_VERSION, checkUpdate, applyUpdate } from './updater.js';
@@ -76,7 +76,7 @@ const GbLessonSchema = z.object({
 
 export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null; setupFetch?: typeof fetch; channelFetch?: typeof fetch; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv } = {}) {
   const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
-  const desk = new Desk(cfg, caller, { opportunityReviewsPath: opts.reportsDir === null ? null : undefined, reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, killFile: opts.killFile ?? null, jevFetch: opts.jevFetch, jevEnv: opts.jevEnv });
+  const desk = new Desk(cfg, caller, { settingsFile: opts.envFile ?? (process.env.VITEST ? undefined : process.env.DOTENV_PATH ?? '.env'), opportunityReviewsPath: opts.reportsDir === null ? null : undefined, reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, killFile: opts.killFile ?? null, jevFetch: opts.jevFetch, jevEnv: opts.jevEnv });
   const auto = new AutoTrader(desk);
   const reporter = new Reporter(desk, opts.reportsDir === undefined ? 'reports' : opts.reportsDir, opts.outboxPath);
   const app = express();
@@ -162,7 +162,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   });
   app.get('/api/split', (req, res) => {
     try {
-      res.json(moneySplit({ balance: Number(req.query.balance ?? desk.book.balance), safetyNet: Number(req.query.safetyNet ?? desk.book.safetyNet), n: Number(req.query.n ?? desk.book.n) }));
+      res.json(moneySplit({ balance: Number(req.query.balance ?? desk.book.balance), safetyNet: Number(req.query.safetyNet ?? desk.book.safetyNet), n: Number(req.query.n ?? desk.book.n), orderSizePct: req.query.orderSizePct == null ? cfg.risk.orderSizePct : Number(req.query.orderSizePct) }));
     } catch (e) { res.status(400).json({ error: (e as Error).message }); }
   });
   // Starts a debate and waits for the verdict (used by the CLI, scripts and Grok Bot routines).
@@ -172,7 +172,10 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     catch (e) { res.status(409).json({ ok: false, error: safe((e as Error).message) }); }
   });
   app.post('/api/command', async (req, res) => {
-    const text = String(req.body?.text ?? '').slice(0, 500);
+    const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
+    if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });
+    const text = String(req.body?.text ?? '');
+    if (text.length > 2500) return res.status(400).json({ ok: false, error: 'Message exceeds 2500 characters' });
     const agent = req.body?.agent as AgentId | undefined;
     if (!text.trim()) return res.status(400).json({ ok: false, error: 'empty command' });
     if (agent && !AGENT_IDS.includes(agent)) return res.status(400).json({ ok: false, error: 'unknown agent' });
@@ -266,7 +269,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   }
 
   const server = createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 32 * 1024 });
   wss.on('error', () => { /* ignore */ });
   const send = (ws: WebSocket, type: string, payload: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload })); };
   const broadcast = (type: string) => (payload: unknown) => { const msg = JSON.stringify({ type, payload }); for (const c of wss.clients) if (c.readyState === WebSocket.OPEN) c.send(msg); };
@@ -289,13 +292,15 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     return origClose(cb);
   };
   server.on('close', cleanup);
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, request) => {
+    const owner = localClient({ remoteAddress: request.socket.remoteAddress, hostHeader: request.headers.host, origin: request.headers.origin });
     ws.on('error', () => { /* ignore */ });
     send(ws, 'state', desk.snapshot());
     ws.on('message', async (buf) => {
       try {
-        const msg = JSON.parse(String(buf).slice(0, 4000));
+        const msg = JSON.parse(String(buf));
         if (msg?.type === 'command' && typeof msg.text === 'string') {
+          if (!owner.ok) { send(ws, 'command_result', { ok: false, reply: owner.reason, command: 'invalid' }); return; }
           const agent = AGENT_IDS.includes(msg.agent) ? msg.agent : undefined;
           send(ws, 'command_result', await desk.command(msg.text, agent));
         }

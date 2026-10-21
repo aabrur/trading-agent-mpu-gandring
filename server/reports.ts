@@ -15,7 +15,7 @@ export interface Report {
   opportunityReviews?: { observed: number; pending: number; unavailable: number; items: import('./opportunity-review.js').OpportunityReview[] };
   id: string; at: number; since: number; mode: string; exchange: string | null;
   accounting?: { source: string; status: string; observedAt: number | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: number | null; funding: number | null; financialEvidence?: import('./live/financial-evidence.js').FinancialSummary };
-  balance: number; safetyNet: number; moneyTrade: number; n: number; perOrder: number; equity: number; unrealized: number; realized: number;
+  balance: number; safetyNet: number; moneyTrade: number; n: number; perOrder: number; orderSizePct?: number; equity: number; unrealized: number; realized: number;
   dailyLoss: { limitPct: number; hit: boolean }; auto: { on: boolean; cycles: number; intervalMin: number };
   positions: ReportPosition[]; opened: Activity[]; closed: Activity[]; skipped: Activity[];
   /** Desk Lead supervision */
@@ -43,7 +43,7 @@ export function buildReport(desk: Desk, since: number, at = Date.now()): Report 
     id: `rep-${at.toString(36)}`, at, since, mode: desk.cfg.tradingMode, exchange: desk.cfg.live?.exchange ?? null,
     accounting: { source: desk.venueAccount ? 'exchange' : 'local book', status: desk.venueAccount?.status ?? (desk.cfg.tradingMode === 'PAPER' ? 'paper' : 'unverified'), observedAt: desk.venueAccount?.at ?? null, confirmedRealized, estimatedRealized, unknownExits: exits.filter((t) => t.pnlStatus === 'unknown').length, actualFees: financial?.actualFees ?? null, funding: financial?.funding ?? null, financialEvidence: financial },
     opportunityReviews: { observed: reviews.filter((r) => r.status === 'observed').length, pending: reviews.filter((r) => r.status === 'pending').length, unavailable: reviews.filter((r) => r.status === 'unavailable').length, items: reviews.slice(-10) },
-    balance: desk.book.balance, safetyNet: desk.book.safetyNet, moneyTrade: s.moneyTrade, n: desk.book.n, perOrder: s.perOrder,
+    balance: desk.book.balance, safetyNet: desk.book.safetyNet, moneyTrade: s.moneyTrade, n: desk.book.n, perOrder: s.perOrder, orderSizePct: s.orderSizePct,
     equity: round2(desk.book.balance + desk.book.unrealized), unrealized: desk.book.unrealized, realized,
     dailyLoss: { limitPct: desk.cfg.risk.dailyLossLimitPct, hit: desk.day.lossHit },
     auto: { on: desk.autoState.on, cycles: desk.autoState.cycles, intervalMin: desk.cfg.auto.intervalMin },
@@ -79,7 +79,7 @@ export function renderText(r: Omit<Report, 'text'>) {
     'CAPITAL (USDT)',
     `Equity: ${r.equity} | Balance: ${r.balance}`,
     `Protected reserve: ${r.safetyNet} | Tradable: ${r.moneyTrade}`,
-    `Allocation: ${r.moneyTrade} / ${r.n} slots = ${r.perOrder} per order`,
+    `Allocation: ${r.orderSizePct == null ? `${r.moneyTrade} / ${r.n} slots` : `${r.orderSizePct}% of ${r.moneyTrade}`} = ${r.perOrder} per order`,
     `Realized this period: ${signed(r.realized)} | Unrealized: ${signed(r.unrealized)}`,
     '',
     `POSITIONS (${r.positions.length})`,

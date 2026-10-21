@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-const conf = z.number().min(0).max(1);
-const text = z.string().min(1).max(700);
+const conf = z.number().min(0).max(1).default(0.65);
+const boundedText = (limit: number) => z.string().transform((s) => s.slice(0, limit)).pipe(z.string().min(1).max(limit));
+const text = boundedText(1500);
 
 export const OpinionSchema = z.object({
   stance: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
@@ -53,7 +54,7 @@ export const ReviewSchema = z.object({
   grade: z.enum(['A', 'B', 'C', 'D', 'F'])
 });
 
-export const ChatSchema = z.object({ reply: text });
+export const ChatSchema = z.object({ reply: boundedText(4000), commandToExecute: z.string().min(1).max(200).optional() });
 
 export type Schemas = {
   opinion: typeof OpinionSchema;
@@ -72,24 +73,46 @@ export const SCHEMA_HINTS: Record<TaskKind, string> = {
   research: '{"vote":"LONG|SHORT|ABSTAIN|VETO","confidence":0..1,"argument":"max 2 sentences","sources":["id or source name"]}',
   rebuttal: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"target":"agent id you answer or none","rebuttal":"max 2 sentences, direct and in character"}',
   lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences"}',
-  risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":1..125,"stopPct":positive percentage points up to 50 (2 means 2%),"reason":"1..700 characters"}. APPROVE/REDUCE require all numeric fields as JSON numbers. REJECT may omit sizing. Never substitute null or strings for numbers.',
+  risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":1..125,"stopPct":positive percentage points up to 50 (2 means 2%),"reason":"1..1500 characters"}. APPROVE/REDUCE require all numeric fields as JSON numbers. REJECT may omit sizing. Never substitute null or strings for numbers.',
   review: '{"lesson":"one sentence","grade":"A|B|C|D|F"}',
-  chat: '{"reply":"short answer in character"}'
+  chat: '{"reply":"answer in character, up to 4000 characters","commandToExecute":"optional exact supported command explicitly requested by Boss"}'
 };
 
 // Pull the first JSON object out of a model reply (handles ```json fences and chatter).
-export function extractJson(raw: string): unknown {
+export function extractJson(raw: string, task?: TaskKind): unknown {
   const s = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  try { return JSON.parse(s); } catch { /* fall through */ }
+  try {
+    const parsed: unknown = JSON.parse(s);
+    return task === 'chat' && typeof parsed === 'string' ? { reply: parsed } : parsed;
+  } catch { /* fall through */ }
   const start = s.indexOf('{');
-  if (start < 0) throw new Error('no JSON object in reply');
-  let depth = 0, inStr = false, esc = false;
+  if (start < 0) {
+    if (task === 'chat') return { reply: raw };
+    throw new Error('no JSON object in reply');
+  }
+  const closing: string[] = [];
+  let inStr = false, esc = false;
   for (let i = start; i < s.length; i++) {
     const ch = s[i];
     if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
     if (ch === '"') inStr = true;
-    else if (ch === '{') depth++;
-    else if (ch === '}') { depth--; if (depth === 0) return JSON.parse(s.slice(start, i + 1)); }
+    else if (ch === '{' || ch === '[') closing.push(ch === '{' ? '}' : ']');
+    else if (ch === '}' || ch === ']') {
+      if (closing.pop() !== ch) {
+        if (task === 'chat') return { reply: raw };
+        throw new Error('mismatched JSON delimiter');
+      }
+      if (!closing.length) {
+        try { return JSON.parse(s.slice(start, i + 1)); }
+        catch (e) { if (task === 'chat') return { reply: raw }; throw e; }
+      }
+    }
   }
-  throw new Error('unterminated JSON object');
+  // Repair missing delimiters only. Required decisions and numeric fields still pass their schemas.
+  let candidate = s.slice(start);
+  if (esc) candidate = candidate.slice(0, -1);
+  candidate += inStr ? '"' : '';
+  if (!inStr) candidate = candidate.replace(/,\s*$/, '');
+  try { return JSON.parse(candidate + closing.reverse().join('')); }
+  catch { if (task === 'chat') return { reply: raw }; throw new Error('unterminated JSON object'); }
 }

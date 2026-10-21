@@ -7,7 +7,7 @@ import { planOrder, round2 } from './money.js';
 import { normSymbol } from './commands.js';
 import { safe } from './redact.js';
 
-export interface SizeBook { balance: number; equity: number; safetyNet: number; n: number; open: number; used: number; mode: string }
+export interface SizeBook { balance: number; equity: number; safetyNet: number; n: number; open: number; used: number; mode: string; availableFunds?: number }
 export interface SizeInput { symbol: string; side: string; entry: number; stop: number; leverage?: number }
 export interface SizeResult { ok: boolean; text: string; data: Record<string, unknown> | null }
 
@@ -34,7 +34,7 @@ export function previewTicket(cfg: AppConfig, book: SizeBook, i: { symbol: strin
   const stop = i.stop ?? (side === 'LONG' ? entry * (1 - cfg.risk.defaultStopPct / 100) : entry * (1 + cfg.risk.defaultStopPct / 100));
   const leverage = Math.max(1, Math.min(cfg.risk.maxLeverage, Math.floor(i.leverage ?? cfg.risk.maxLeverage)));
   const fail = (text: string, data: Record<string, unknown> | null = null): SizeResult => ({ ok: false, text, data });
-  const plan = planOrder({ balance: book.balance, equity: book.equity, safetyNet: book.safetyNet, n: book.n, openPositions: book.open, usedMargin: book.used, price: entry, side: side as 'LONG', sizeFactor: 1, leverage, stop, minStopPct: cfg.risk.minStopPct, maxStopPct: cfg.risk.defaultStopPct, minOrderUsdt: cfg.risk.minOrderUsdt, maxLossPerTradePct: cfg.risk.maxLossPerTradePct, takerFee: cfg.risk.takerFee, rules, takeProfitR: cfg.risk.takeProfitR, takeProfitPct: cfg.risk.takeProfitPct });
+  const plan = planOrder({ availableFunds: book.availableFunds, balance: book.balance, equity: book.equity, safetyNet: book.safetyNet, n: book.n, orderSizePct: cfg.risk.orderSizePct, adjustToVenueMinimum: book.mode === 'LIVE' || book.mode === 'TESTNET', openPositions: book.open, usedMargin: book.used, price: entry, side, sizeFactor: 1, leverage, stop, minStopPct: cfg.risk.minStopPct, maxStopPct: cfg.risk.defaultStopPct, minOrderUsdt: cfg.risk.minOrderUsdt, maxLossPerTradePct: cfg.risk.maxLossPerTradePct, takerFee: cfg.risk.takerFee, rules, takeProfitR: cfg.risk.takeProfitR, takeProfitPct: cfg.risk.takeProfitPct });
   if (!plan.ok) return fail(`no ticket: ${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`, { ok: false, reason: plan.reason, suggestion: plan.suggestion, split: plan.split, rules, notes });
   const maxLoss = round2((Math.min(book.balance, book.equity) * cfg.risk.maxLossPerTradePct) / 100);
   const d = { symbol: s, side, entry, qty: plan.qty, margin: plan.margin, notional: plan.notional, leverage: plan.leverage, stop: plan.stop, stopGiven: stop, stopPct: plan.stopPct, tp: plan.tp, riskAtStop: plan.lossAtStop, fees: plan.fees, takerFee: plan.takerFee, maxLoss, equity: book.equity, book: book.mode, rules: plan.rules, split: plan.split, notes: [...notes, ...plan.notes] };

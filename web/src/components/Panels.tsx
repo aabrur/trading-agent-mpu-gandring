@@ -570,7 +570,7 @@ function OrderDetails({ state, command }: { state: DeskState; command: (text: st
   const p = state.paper;
   return <div className="order-details">
       <div className="mini-charts"><AllocationBars state={state} /><EquityChart state={state} /></div>
-      <p className="formula">{t('moneyTrade')} = {fmt(p.balance)} - {fmt(p.safetyNet)} = <b>{fmt(p.moneyTrade)}</b> · / {p.n} = <b>{fmt(p.perOrder)}</b> {t('perOrder').toLowerCase()}{!p.canOpen && <em> · {t('atSafetyNet')}</em>}</p>
+      <p className="formula">{t('moneyTrade')} = {fmt(p.balance)} - {fmt(p.safetyNet)} = <b>{fmt(p.moneyTrade)}</b> · {p.orderSizePct == null ? `/ ${p.n}` : `× ${p.orderSizePct}%`} = <b>{fmt(p.perOrder)}</b> {t('perOrder').toLowerCase()}{!p.canOpen && <em> · {t('atSafetyNet')}</em>}</p>
       <div className="positions">
         {p.positions.length === 0 && <p className="muted">{t('noOpenPositions')}</p>}
         {p.positions.map((x) => (

@@ -11,6 +11,7 @@ import type { Report } from '../reports.js';
 import { ChannelHub } from './adapters.js';
 import { allowed, parseCommand, runCommand } from './commands.js';
 import type { ChannelConfig } from './config.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const RANK: Record<Finding['level'], number> = { ok: 0, info: 1, warn: 2, alert: 3 };
 const keyOf = (f: Finding) => (['no_stop', 'stale_feed', 'sample_fallback'].includes(f.code) ? `${f.code}:${f.text.split(' ')[0]}` : f.code);
@@ -20,7 +21,8 @@ export class DeskLead {
   private timer: NodeJS.Timeout | null = null;
   private sent = new Map<string, { at: number; rank: number }>();
   private wasKilled: boolean;
-  private polling = false;
+  private static telegramPollers = new Map<string, DeskLead>();
+  private pollAbort: AbortController | null = null;
   private offset = 0;
   private onReport = (r: Report) => { void this.hub.broadcast(r.text, { except: ['telegram'] }); };
 
@@ -37,7 +39,12 @@ export class DeskLead {
     log(`[desk lead] watching the desk every ${this.cfg.supervisor.intervalMin} min; channels: ${this.hub.enabled().join(', ') || 'none'}; chat commands ${this.cfg.commands ? 'on (allowlisted only)' : 'off'}`);
     if (this.cfg.commands && this.cfg.telegram.enabled && this.cfg.telegram.allowed.length) void this.pollTelegram();
   }
-  stop() { if (this.timer) clearInterval(this.timer); this.timer = null; this.polling = false; this.desk.off('report', this.onReport); }
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null; this.pollAbort?.abort(); this.pollAbort = null;
+    if (DeskLead.telegramPollers.get(this.cfg.telegram.token) === this) DeskLead.telegramPollers.delete(this.cfg.telegram.token);
+    this.desk.off('report', this.onReport);
+  }
 
   /** One supervision pass. Returns the alert texts it sent (for tests and the office). */
   async tick(now = Date.now()): Promise<string[]> {
@@ -58,6 +65,7 @@ export class DeskLead {
 
   /** Telegram long polling (getUpdates). Only messages from TELEGRAM_CHAT_ID sent by a user in TELEGRAM_ALLOWED_USER_IDS are obeyed. */
   async handleTelegramUpdate(u: { update_id?: number; message?: { chat?: { id?: number | string }; from?: { id?: number | string }; text?: string } }): Promise<string | null> {
+    if (typeof u.update_id === 'number' && u.update_id < this.offset) return null;
     if (typeof u.update_id === 'number') this.offset = Math.max(this.offset, u.update_id + 1);
     const m = u.message; if (!m || typeof m.text !== 'string') return null;
     const tg = this.cfg.telegram;
@@ -68,17 +76,44 @@ export class DeskLead {
   }
 
   private async pollTelegram() {
-    this.polling = true;
     const tg = this.cfg.telegram;
-    while (this.polling) {
+    if (this.pollAbort || DeskLead.telegramPollers.has(tg.token)) return;
+    const control = new AbortController();
+    this.pollAbort = control;
+    DeskLead.telegramPollers.set(tg.token, this);
+    let failures = 0;
+    let warned = false;
+    try { while (!control.signal.aborted) {
       try {
-        const r = await this.fetchImpl(`https://api.telegram.org/bot${tg.token}/getUpdates?timeout=25&offset=${this.offset}&allowed_updates=${encodeURIComponent('["message"]')}`, { signal: AbortSignal.timeout(35_000) });
+        if (failures) {
+          const probe = await this.fetchImpl(`https://api.telegram.org/bot${tg.token}/getMe`, { signal: AbortSignal.any([control.signal, AbortSignal.timeout(8000)]) });
+          if (!probe.ok) throw new Error(`Connection check HTTP ${probe.status}`);
+        }
+        const r = await this.fetchImpl(`https://api.telegram.org/bot${tg.token}/getUpdates?timeout=25&offset=${this.offset}&allowed_updates=${encodeURIComponent('["message"]')}`, { signal: AbortSignal.any([control.signal, AbortSignal.timeout(35_000)]) });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const j = (await r.json()) as { result?: unknown[] };
-        for (const u of j.result ?? []) await this.handleTelegramUpdate(u as never);
+        const j = (await r.json()) as { ok?: boolean; result?: unknown[] };
+        if (j.ok === false || !Array.isArray(j.result)) throw new Error('Invalid getUpdates response');
+        if (control.signal.aborted) break;
+        if (warned) log('[desk lead] Telegram connection restored');
+        warned = false;
+        failures = 0;
+        for (const u of j.result) { if (control.signal.aborted) break; await this.handleTelegramUpdate(u as never); }
+        if (!j.result.length) await delay(1000, undefined, { signal: control.signal });
       } catch (e) {
-        log(`[desk lead] Telegram polling: ${safe((e as Error).message).slice(0, 120)}`);
-        await new Promise((res) => setTimeout(res, 15_000));
+        if (control.signal.aborted) break;
+        failures++;
+        const name = (e as Error).name;
+        if (!warned && name !== 'AbortError' && name !== 'TimeoutError') {
+          log(`[desk lead] Telegram unavailable: ${safe((e as Error).message).slice(0, 120)}. Retrying with backoff.`);
+          warned = true;
+        }
+        try { await delay(Math.min(120_000, 15_000 * 2 ** Math.min(failures - 1, 3)), undefined, { signal: control.signal }); }
+        catch { break; }
+      }
+    } } finally {
+      if (this.pollAbort === control) {
+        this.pollAbort = null;
+        if (DeskLead.telegramPollers.get(tg.token) === this) DeskLead.telegramPollers.delete(tg.token);
       }
     }
   }

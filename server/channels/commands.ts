@@ -1,7 +1,7 @@
 import type { Desk } from '../desk.js';
 import { buildReport } from '../reports.js';
 import { safe } from '../redact.js';
-import { normSymbol } from '../commands.js';
+import { normSymbol, parseCommand as parseOwnerCommand } from '../commands.js';
 import { proactiveScan } from '../scan.js';
 import type { AgentId } from '../types.js';
 
@@ -15,13 +15,13 @@ export type Parsed =
   | { ok: true; cmd: 'scan' | 'watchlist' | 'scorecard' | 'lessons' | 'cautious' | 'aggressive' | 'calm' }
   | { ok: true; cmd: 'analyze' | 'debate'; symbol: string }
   | { ok: true; cmd: 'ask' | 'chat'; agent: AgentId; text: string }
+  | { ok: true; cmd: 'owner'; text: string }
   | { ok: false; reply: string };
 
 const FORBIDDEN: Array<[RegExp, string]> = [
-  [/^(open|buy|sell|long|short|order|trade|enter|close|flatten|exit|tp|sl|stop|size|leverage)\b/, 'Orders cannot be opened, closed or changed from chat. Use the office or npm run gb on the desk computer.'],
   [/^(live|testnet|paper|mode|go-?live|switch)\b/, 'The trading mode cannot be changed from chat. Use npm run setup on the desk computer.'],
   [/^(unkill|un-kill|resume|unpause|start|release|restart)\b/, 'The kill switch can only be released on the desk computer: npm run unkill -- --yes, then restart.'],
-  [/^(key|keys|secret|api|token|env|set|config|wallet|withdraw|transfer)\b/, 'Keys and settings cannot be changed from chat. They live in the local .env only.']
+  [/^(key|keys|secret|api|token|env|set|config|wallet|withdraw|transfer)\b/, 'Keys and wallet permissions are configured locally.']
 ];
 
 export const HELP_TEXT = [
@@ -32,6 +32,9 @@ export const HELP_TEXT = [
   '• /scan: Instant proactive scan for desk alerts',
   '• /analyze <symbol>: Direct agents to debate & auto-trade (e.g. /analyze BTCUSDT)',
   '• /ask <question>: Chat with Desk Lead (or /ask <agent> <question>)',
+  '• /set profile <default|balance|profit|aggressive>, /set size <1.5..100>%, /set leverage <1..20>',
+  '• /open long|short <symbol> [size%] [leverage], /buy <symbol>, /sell <symbol>',
+  '• /close <symbol> or /close all: Execute directly using the active settings',
   '• /watchlist: Active auto-trading symbols',
   '• /scorecard: Agent performance & win rate',
   '• /lessons: Recent self-improving lessons',
@@ -43,8 +46,14 @@ const AGENTS: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', '
 
 /** Parse one chat message. Accepts "/status", "status", "/status@MyBot", "desk status", "/analyze BTC", "/ask ...". */
 export function parseCommand(text: string): Parsed {
-  const t = String(text ?? '').trim().toLowerCase().replace(/^\/?desk\s+/, '').replace(/^\//, '').replace(/^([a-z-]+)@\S+/, '$1').slice(0, 200);
-  const [word = '', ...rest] = t.split(/\s+/);
+  if (text.length > 2500) return { ok: false, reply: 'Message exceeds 2500 characters.' };
+  const t = String(text ?? '').trim().replace(/^\/?desk\s+/i, '').replace(/^\//, '').replace(/^([a-z-]+)@\S+/i, '$1');
+  const owner = parseOwnerCommand(t);
+  if (owner.type === 'invalid') return { ok: false, reply: owner.reason };
+  if (['set_profile', 'set_size', 'set_leverage', 'set_n', 'set_safety', 'open', 'close', 'close_all'].includes(owner.type)) return { ok: true, cmd: 'owner', text: t };
+  if (/^(long|short|size|leverage)\b/i.test(t)) return { ok: false, reply: 'Usage: open long|short <symbol> [size%] [leverage], set size <percent>%, or set leverage <value>.' };
+  const [rawWord = '', ...rest] = t.split(/\s+/);
+  const word = rawWord.toLowerCase();
   if (!word) return { ok: false, reply: HELP_TEXT };
   if ((SAFE_COMMANDS as readonly string[]).includes(word)) {
     return { ok: true, cmd: word as SafeCommand, confirm: word === 'kill' && /^(confirm|yes)$/.test(rest.join(' ').replace(/^confirm:\s*/, '')) };
@@ -67,8 +76,8 @@ export function parseCommand(text: string): Parsed {
     if ((AGENTS as string[]).includes(word)) {
       agent = word as AgentId;
       textContent = rest.join(' ').trim();
-    } else if (rest[0] && (AGENTS as string[]).includes(rest[0])) {
-      agent = rest[0] as AgentId;
+    } else if (rest[0] && (AGENTS as string[]).includes(rest[0].toLowerCase())) {
+      agent = rest[0].toLowerCase() as AgentId;
       textContent = rest.slice(1).join(' ').trim();
     } else {
       textContent = rest.join(' ').trim();
@@ -77,7 +86,7 @@ export function parseCommand(text: string): Parsed {
     return { ok: true, cmd: 'ask', agent, text: textContent };
   }
   for (const [re, reply] of FORBIDDEN) if (re.test(word)) return { ok: false, reply: `Refused. ${reply}` };
-  return { ok: false, reply: `Unknown command. ${HELP_TEXT}` };
+  return { ok: true, cmd: 'chat', agent: 'lead', text: t };
 }
 
 /** Is this sender allowed to command? Empty allowlist means nobody. */
@@ -114,6 +123,7 @@ export function reportText(desk: Desk): string {
 export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void): Promise<string> {
   if (!p.ok) return p.reply;
   switch (p.cmd) {
+    case 'owner': return safe((await desk.command(p.text)).reply);
     case 'help': return HELP_TEXT;
     case 'status': return statusText(desk);
     case 'positions': return positionsText(desk);

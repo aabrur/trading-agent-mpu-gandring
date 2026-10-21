@@ -66,7 +66,6 @@ export function officePositions(state: DeskState, activities: Record<AgentId, Ac
   const atTable = state.debate && !['opening', 'reading', 'done'].includes(state.debate.phase);
   return Object.fromEntries(AGENT_ORDER.map((id) => {
     if (fight) return [id, fight.from === id ? FIGHT_STAGE.from : fight.to === id ? FIGHT_STAGE.to : SPECTATORS[id]];
-    if (!state.debate && activities[id].destination) return [id, activities[id].destination!];
     return [id, atTable ? SEATS[id] : workstationPoint(id)];
   })) as Record<AgentId, Point>;
 }
@@ -76,16 +75,14 @@ export function directScene(input: { state: DeskState; events: SceneEvent[]; tic
   const slot = Math.floor(tick / 18);
   const recent = events.filter((e) => e.at <= now && now - e.at < 7000).sort((a, b) => b.at - a.at);
   const important = recent.find((e) => e.kind === 'execution') ?? recent.find((e) => e.kind !== 'speech');
-  const resting = !hidden && !reducedMotion && !state.debate && !state.killed && !state.paused && !recent.length;
-  const visitors = new Set(resting ? [tick % 18 < 13 ? AGENT_ORDER[slot % AGENT_ORDER.length] : null, tick % 18 >= 4 ? AGENT_ORDER[(slot + 3) % AGENT_ORDER.length] : null] : []);
-  const frame = Object.fromEntries(AGENT_ORDER.map((id) => [id, activityFor(state, id, slot, visitors.has(id) ? id : null, important)])) as Record<AgentId, Activity>;
+  const frame = Object.fromEntries(AGENT_ORDER.map((id) => [id, activityFor(state, id, slot, null, important)])) as Record<AgentId, Activity>;
   const speech = recent.find((e) => e.kind === 'speech' && (e.agent === 'research' || e.agent === 'risk'));
   if (!hidden && !reducedMotion && !state.killed && !state.paused && !state.debate && !important && speech?.agent) {
     const from = speech.agent, to = from === 'risk' ? 'execution' : 'lead';
     const available = [from, to].every((id) => !['executing', 'fighting'].includes(state.agents[id as AgentId].status));
     if (available) {
-      frame[from] = { pose: 'pass', face: 'normal', label: 'sharing a report', destination: { x: 43, y: 43 }, facing: 'right', partner: to };
-      frame[to] = { pose: 'read', face: 'normal', label: 'reviewing a report', destination: { x: 57, y: 43 }, facing: 'left', partner: from };
+      frame[from] = { pose: 'pass', face: 'normal', label: 'sharing a report', facing: 'right', partner: to };
+      frame[to] = { pose: 'read', face: 'normal', label: 'reviewing a report', facing: 'left', partner: from };
     }
   }
   if (hidden || reducedMotion) for (const a of Object.values(frame)) { delete a.destination; delete a.partner; }
@@ -111,7 +108,7 @@ export function activityFor(state: DeskState, id: AgentId, slot: number, visitor
   if (busy[status]) return busy[status]!;
   if (state.debate) return { pose: 'sit', face: 'normal', label: 'listening' };
   if (id === visitor) return ambientActivity(id, slot);
-  return { pose: id === 'market' || id === 'execution' ? 'sit' : 'idle', face: 'normal', label: 'at workstation' };
+  return { pose: 'sit', face: 'normal', label: 'at workstation' };
 }
 
 export function blocked(p: Point, desks: Point[]) {
