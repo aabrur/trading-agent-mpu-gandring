@@ -45,6 +45,15 @@
     "bytes": 2114
   },
   {
+    "file": "012_coffee-cup_potted-plant.webp",
+    "source": "012_coffee-cup_potted-plant.png",
+    "sourceArchive": "segments (12).zip",
+    "sourcePath": "potted-plant.png",
+    "sourceWidth": 125,
+    "sourceHeight": 170,
+    "bytes": 3726
+  },
+  {
     "file": "019_soil_potted-plant.webp",
     "source": "019_soil_potted-plant.png",
     "sourceArchive": "segments (19).zip",
@@ -133,6 +142,15 @@
     "sourceWidth": 776,
     "sourceHeight": 900,
     "bytes": 63682
+  },
+  {
+    "file": "051_red-mug_espresso-machine.webp",
+    "source": "051_red-mug_espresso-machine.png",
+    "sourceArchive": "segments (51).zip",
+    "sourcePath": "espresso-machine.png",
+    "sourceWidth": 104,
+    "sourceHeight": 134,
+    "bytes": 3558
   },
   {
     "file": "147_sky.webp",

@@ -27,3 +27,13 @@ The full-suite failure means this release cannot claim a green CI or validated t
 ## Work log
 
 Approved visual redesign completed through separate office, dashboard, character and review passes, integrated on main. Verification used isolated fixtures. Release notes disclose the existing test failures.
+
+## Screenshot-directed follow-up: v0.0.0.3.6
+
+Implemented the eight requested corrections: removed the workspace headline/navigation and account summary; made the roster one equal-height compact row; added the supplied espresso machine; replaced wall text with the existing project logo; removed the discussion-table label and added coffee, a book and a plant; contained background scrolling while a tool panel is hovered; moved open-order controls, allocation, equity history and positions into the map rail; removed mode/source text from visible map PnL. Existing mode indication remains in the top bar and PnL provenance remains available to assistive technology.
+
+Open-order content was moved into a shared component without changing its N-setting endpoint, position-close commands, calculations or server-side guards. The map rail scrolls within the room height on desktop and flows below the room on mobile. The roster keeps a single row with its own horizontal scrolling on narrow screens.
+
+Verification: typecheck and production build passed. The offline browser verifier passed at 1440px desktop, 375px phone and 812px landscape, day/night themes and reduced motion. Added checks cover section removal, asset loading and logo/decor placement, single-row 44px roster items, tool-panel pointer enter/exit scroll locking, order controls in the map rail, and mode/source labels omitted from map PnL with a simulated LIVE snapshot. No real trading server was contacted. Full test suite remains 358 passed / 15 failed in the same seven baseline files.
+
+Runtime artwork now has 18 WebP images, 285,218 bytes total. README screenshots were refreshed from isolated PAPER fixtures.

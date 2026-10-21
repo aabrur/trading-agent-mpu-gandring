@@ -1,4 +1,19 @@
 .office-v2.office .office-world { background: #cfb18a; aspect-ratio: 1000 / 640; max-height: none; min-height: 390px; }
+.office-v2.office { container-type: inline-size; grid-template-columns: minmax(0, 1fr) 280px; grid-template-rows: auto minmax(0, 1fr); }
+.office-v2 .office-hud { align-self: stretch; align-content: start; min-height: 0; max-height: calc(max(390px, (100cqw - 280px) * .64) - 90px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--sage-deep) var(--panel); }
+.office-v2 .office-orders { min-width: 0; padding: 9px; border-top: 1px solid var(--line); }
+.office-orders .n-picker { flex-wrap: wrap; margin: 0 0 8px; gap: 6px; }
+.office-orders .n-picker small { flex: 1 0 100%; color: var(--text); }
+.office-orders .n-picker button { width: 38px; height: 36px; }
+.office-orders .mini-chart { border-radius: 8px; padding: 8px; }
+.office-orders .mini-chart figcaption { flex-wrap: wrap; font-size: 11px; gap: 3px; }
+.office-orders .mini-chart figcaption b { font-size: 10px; }
+.office-orders .formula { font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.office-orders .safety-strip { font-size: 9px; }
+.office-orders .safety-strip span { min-width: 0; padding-inline: 5px; }
+.office-orders .positions .pos { grid-template-columns: 1fr; gap: 4px; font-size: 11px; }
+.office-orders .foot { flex-wrap: wrap; gap: 5px 10px; font-size: 10px; }
+.dashboard .tool-flyout { overscroll-behavior: contain; }
 .studio-room { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .studio-wall { position: absolute; inset: 0 0 70%; background: repeating-linear-gradient(90deg, transparent 0 27px, #b7946c12 27px 28px), linear-gradient(#f3e8d2, #e4d2b4); border-bottom: 8px solid #9c704b; box-shadow: inset 0 -6px #c3986b; }
 .studio-wall::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 18%; border-top: 2px solid #b68c60; background: repeating-linear-gradient(90deg, #c9b08a 0 62px, #ac875e 63px 65px); }
@@ -9,10 +24,8 @@
 .studio-window span::before, .studio-window span::after { content: ''; position: absolute; top: 0; bottom: 0; width: 43%; background: #c2d9d9 url('/office-assets/147_sky.webp') center / cover; }
 .studio-window span::before { left: 0; }.studio-window span::after { right: 0; background-position: right; }
 .window-west { left: 29%; }.window-east { right: 27%; }
-.studio-sign { position: absolute; left: 43%; top: 7%; width: 16%; color: #68513b; text-align: center; display: grid; gap: 4px; }
-.studio-sign > span { font-size: clamp(7px, .8vw, 10px); letter-spacing: .12em; text-transform: uppercase; }
-.studio-sign strong { font-family: var(--font-head); font-size: clamp(13px, 1.8vw, 23px); line-height: 1.05; }
-.studio-sign i { font-size: clamp(5px, .55vw, 8px); font-style: normal; white-space: nowrap; }
+.studio-sign { position: absolute; left: 43%; top: 5%; width: 16%; height: 22%; }
+.studio-sign img { width: 100%; height: 100%; object-fit: contain; }
 .studio-library { position: absolute; left: 4%; top: 3%; height: 29%; width: 14%; }
 .studio-shelf { width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(1px 5px 3px #63492d33); }
 .studio-books { position: absolute; left: 12%; right: 11%; height: 19%; display: flex; align-items: end; justify-content: center; gap: 2%; }
@@ -20,7 +33,8 @@
 .books-0 { top: 10%; }.books-1 { top: 36%; }.books-2 { top: 63%; }
 .studio-coffee { position: absolute; right: 3%; top: 19%; width: 17%; height: 15%; }
 .studio-coffee > img:first-child { width: 100%; height: 100%; object-fit: fill; }
-.studio-coffee .coffee-cup { position: absolute; width: 17%; height: auto; right: 29%; top: -20%; }
+.studio-coffee .coffee-machine { position: absolute; width: 42%; height: auto; left: 14%; bottom: 82%; }
+.studio-coffee .coffee-cup { position: absolute; width: 17%; height: auto; right: 7%; top: -20%; }
 .studio-coffee > span { position: absolute; top: -46%; width: 100%; text-align: center; font-size: clamp(7px, .8vw, 11px); font-family: var(--font-head); color: #735738; }
 .studio-vine { position: absolute; top: -5%; height: 25%; object-fit: contain; }
 .vine-west { left: 19%; }.vine-east { right: 17%; }
@@ -38,9 +52,12 @@
 .studio-wall-board > span { font-size: clamp(6px, .7vw, 10px); max-width: 55%; line-height: 1.25; }
 .studio-wall-board svg { width: 45%; height: 100%; }
 .studio-meeting { position: absolute; width: 31%; aspect-ratio: 1.8; transform: translate(-50%, -50%); z-index: 720; pointer-events: none; }
-.studio-meeting > img { position: absolute; width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(0 9px 5px #69503138); }
+.studio-meeting > img:first-child { position: absolute; width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(0 9px 5px #69503138); }
 .studio-table-inlay { position: absolute; top: 17%; left: 50%; transform: translateX(-50%) rotate(90deg); opacity: .42; }
-.studio-meeting-label { position: absolute; top: 15%; left: 50%; transform: translateX(-50%); white-space: nowrap; max-width: 95%; overflow: hidden; text-overflow: ellipsis; color: #59422e; background: #f7e5bfeb; font-size: clamp(7px, .8vw, 11px); font-weight: 700; padding: 3px 9px; border-radius: 4px; box-shadow: 0 1px 2px #68402133; }
+.studio-meeting .meeting-cup { position: absolute; width: 10%; height: auto; filter: drop-shadow(0 2px 1px #69503138); }
+.meeting-cup.cup-left { left: 22%; top: 23%; }.meeting-cup.cup-right { right: 24%; top: 40%; }
+.studio-meeting .meeting-book { position: absolute; left: 61%; top: 12%; width: 17%; height: auto; transform: rotate(16deg); }
+.studio-meeting .meeting-plant { position: absolute; left: 43%; top: -3%; width: 9%; height: auto; }
 .studio-desk { position: absolute; transform: translate(-50%, -50%); width: 15%; aspect-ratio: 1.8; pointer-events: none; }
 .studio-desk-wood { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 6px 4px #67462c33); }
 .studio-chair { position: absolute; top: 10%; right: -14%; width: 26%; height: 70%; background: linear-gradient(90deg, #566d66, #8fa59a 65%, #668274); border: 2px solid #567064; border-radius: 42% 42% 25% 25%; box-shadow: 0 7px 0 -3px #6d513d; }
@@ -57,17 +74,17 @@
 .office-v2 .agent .nametag strong { border-radius: 5px; padding: 2px 7px; background: #fbf2dd; border-color: #9d815d; box-shadow: 0 2px 2px #76533222; }
 .office-v2 .agent .nametag .status { border-radius: 4px; background: #fbf2dde8; color: #5b4b39; }
 .office-v2 .agent.is-selected .nametag strong { outline: 2px solid var(--teal); outline-offset: 2px; }
-.office-v2.is-brawling .studio-meeting > img { animation: table-shake .16s ease-in-out infinite alternate; }
+.office-v2.is-brawling .studio-meeting > img:first-child { animation: table-shake .16s ease-in-out infinite alternate; }
 [data-theme='night'] .office-v2 .studio-room { filter: brightness(.72) saturate(.8); }
 [data-theme='night'] .office-v2 .studio-window span { filter: brightness(.6) saturate(.65); }
 @media (max-width: 768px) {
+  .office-v2.office { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; }
   .office-v2.office .office-world { aspect-ratio: 1.24; min-height: 350px; }
-  .studio-sign strong { font-size: 13px; }
-  .studio-sign i { display: none; }
-  .studio-sign { top: 10%; }
+  .office-v2 .office-hud { grid-template-columns: minmax(0, 1fr); max-height: none; overflow: visible; }
+  .office-v2 .office-hud .verdicts-compact { border-left: 0; border-top: 1px solid var(--line); }
+  .office-orders .n-picker button { width: 44px; height: 44px; }
   .studio-desk-name { display: none; }
   .studio-wall-board > span { font-size: 6px; }
-  .studio-meeting-label { font-size: 7px; padding: 2px 5px; }
   .office-v2 .agent .bot { width: 48px; height: auto; }
   .office-v2 .agent .nametag strong { font-size: 8px; padding: 1px 4px; }
   .office-v2 .agent .nametag .status { display: none; }

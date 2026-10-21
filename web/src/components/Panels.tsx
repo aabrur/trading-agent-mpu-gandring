@@ -376,12 +376,10 @@ const ALL_VENUES: { venue: string; label: string; depositUrl: string }[] = [
 ];
 
 export function Portfolio({ state, command }: { state: DeskState; command: (t: string) => void }) {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const p = state.paper;
   const [safety, setSafety] = useState(String(p.safetyNet));
   const [balance, setBalance] = useState(String(p.balance));
-  const [nBusy, setNBusy] = useState(false);
-  const [nError, setNError] = useState<string | null>(null);
   const [selectedVenue, setSelectedVenue] = useState<string>(() => {
     try {
       return localStorage.getItem('mg-wallet-venue') || state.venue?.name || state.live?.exchange || 'bybit';
@@ -515,7 +513,16 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
           )}
         </div>
       </div>
+    </section>
+  );
+}
 
+export function OpenOrders({ state, command }: { state: DeskState; command: (text: string) => void }) {
+  const { t, lang } = useI18n();
+  const p = state.paper;
+  const [nBusy, setNBusy] = useState(false);
+  const [nError, setNError] = useState<string | null>(null);
+  return <section className="office-orders" aria-label={t('openOrdersN')}>
       <div className="n-picker">
         <small>{t('openOrdersN')}</small>
         {[1, 2, 3, 4].map((n) => <button key={n} type="button" className={p.n === n ? 'on' : ''} disabled={nBusy} aria-pressed={p.n === n} onClick={() => void (async () => {
@@ -545,8 +552,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
         ))}
       </div>
       <div className="foot"><span>{t('equityLabel')} {fmt(p.equity)}</span><span>{t('usedMarginLabel')} {fmt(p.usedMargin)}</span><span>{t('closedLabel')} {p.closed.length}</span></div>
-    </section>
-  );
+  </section>;
 }
 
 const ACTION_LABEL: Record<Verdict['action'], string> = { OPEN_LONG: 'OPEN LONG', OPEN_SHORT: 'OPEN SHORT', CLOSE: 'CLOSE', HOLD: 'HOLD' };
@@ -605,20 +611,18 @@ export function TradeLog({ state }: { state: DeskState }) {
 }
 
 export function Roster({ state, onSelect }: { state: DeskState; onSelect: (id: AgentId) => void }) {
-  const { t } = useI18n();
   return (
     <div className="roster">
       {AGENT_ORDER.map((id) => {
         const a = state.agents[id];
         return (
-          <button key={id} className={`roster-item status-${a.status}`} style={{ ['--agent' as string]: a.color }} onClick={() => onSelect(id)}>
+          <button key={id} className={`roster-item status-${a.status}`} title={`${a.name} · ${a.provider}`} style={{ ['--agent' as string]: a.color }} onClick={() => onSelect(id)}>
             <Bot id={id} size={20} pose="idle" />
             <span>{a.name}</span>
             <small>{a.provider === 'mock' ? 'mock' : a.provider}</small>
           </button>
         );
       })}
-      <span className="roster-hint">{t('rosterHint')}</span>
     </div>
   );
 }

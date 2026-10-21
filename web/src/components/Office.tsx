@@ -178,9 +178,9 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   return (
     <div className={`office office-v2 ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
       <output className="office-pnl" aria-label={`Open PnL, ${pnl.source}`} title="Unrealized PnL of open positions in USDT. Local estimates are not confirmed exchange results.">
-        <span>Open PnL · {state.mode}</span>
+        <span>Open PnL</span>
         <strong className={pnl.value == null ? '' : pnl.value >= 0 ? 'up' : 'down'}>{pnl.value == null ? 'Unavailable' : `${pnl.value >= 0 ? '+' : ''}${fmt(pnl.value)}`} <small>USDT</small></strong>
-        <small>{pnl.source}</small>
+        {pnl.source.includes('stale') && <small>Stale data</small>}
       </output>
       <div className="office-hud">{children}</div>
       <div className="office-world">
@@ -189,12 +189,12 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         <div className="studio-floor" />
         <div className="studio-window window-west"><img src={asset('023_keyboard_window-1')} alt="" /><span /></div>
         <div className="studio-window window-east"><img src={asset('023_keyboard_window-1')} alt="" /><span /></div>
-        <div className="studio-sign"><span>Trading Agent</span><strong>Mpu Gandring</strong><i>research · debate · discipline</i></div>
+        <div className="studio-sign"><img src="/mpu-gandring-logo.webp" alt="" /></div>
         <div className="studio-library">
           <img className="studio-shelf" src={asset('011_red-books_wooden-bookshelf-1')} alt="" />
           {[0, 1, 2].map((row) => <div className={`studio-books books-${row}`} key={row}>{Array.from({ length: 7 }, (_, i) => <img key={i} src={asset('011_red-books_1')} alt="" style={{ filter: `hue-rotate(${(i * 43 + row * 17) % 180}deg)`, height: `${74 + (i * 7 % 25)}%` }} />)}</div>)}
         </div>
-        <div className="studio-coffee"><img src={asset('023_keyboard_office-desk-7')} alt="" /><img className="coffee-cup" src={asset('012_coffee-cup')} alt="" /><span>the coffee corner</span></div>
+        <div className="studio-coffee"><img src={asset('023_keyboard_office-desk-7')} alt="" /><img className="coffee-machine" src={asset('051_red-mug_espresso-machine')} alt="" /><img className="coffee-cup" src={asset('012_coffee-cup')} alt="" /><span>the coffee corner</span></div>
         <img className="studio-vine vine-west" src={asset('023_keyboard_hanging-plant')} alt="" />
         <img className="studio-vine vine-east" src={asset('023_keyboard_hanging-plant')} alt="" />
         <div className="studio-pendant"><i /><span /></div>
@@ -209,7 +209,10 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       <div className="studio-meeting" style={{ left: '50%', top: '72%' }} aria-label="Agent discussion table">
         <img src={asset('023_keyboard_round-coffee-table')} alt="" />
         <div className="studio-table-inlay"><KerisBlade size={60} /></div>
-        <div className="studio-meeting-label">{state.debate ? `${state.debate.symbol} · ${state.debate.phase}` : t('arenaDebateTable')}</div>
+        <img className="meeting-cup cup-left" src={asset('012_coffee-cup')} alt="" />
+        <img className="meeting-cup cup-right" src={asset('001_ceramic-mug')} alt="" />
+        <img className="meeting-book" src={asset('030_closed-book')} alt="" />
+        <img className="meeting-plant" src={asset('012_coffee-cup_potted-plant')} alt="" />
       </div>
 
       {AGENT_ORDER.map((id) => {

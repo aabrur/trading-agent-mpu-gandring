@@ -64,6 +64,13 @@ try {
   assert.equal(await page.locator('.desk-ops .ops-setup-link').count(), 0);
   assert.equal(await page.locator('.side .verdicts').count(), 0);
   assert.equal(await page.locator('.office-hud .verdicts').count(), 1);
+  assert.equal(await page.locator('.workspace-heading, .desk-overview').count(), 0);
+  assert.equal(await page.locator('.office-hud .office-orders .n-picker').count(), 1);
+  assert.equal(await page.locator('.portfolio .n-picker').count(), 0);
+  assert.equal(await page.locator('.studio-sign img[src="/mpu-gandring-logo.webp"]').count(), 1);
+  assert.equal(await page.locator('.studio-meeting-label').count(), 0);
+  assert.equal(await page.locator('.coffee-machine, .meeting-book, .meeting-plant').count(), 3);
+  assert.equal((await page.locator('.office-pnl').innerText()).includes('PAPER'), false);
   assert.equal(await page.locator('.report').count(), 5);
   assert.equal(await page.locator('.report-evidence[open]').count(), 0);
   async function assertOfficeSpace() {
@@ -95,6 +102,13 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('.office-world img')].every((img) => img.complete && img.naturalWidth > 0));
   await assertOfficeSpace();
   await page.locator('#tool-ops').click();
+  await page.locator('.tool-flyout').hover();
+  await page.waitForFunction(() => document.documentElement.style.overflow === 'hidden');
+  const backgroundScroll = await page.evaluate(() => window.scrollY);
+  await page.mouse.wheel(0, 800);
+  assert.equal(await page.evaluate(() => window.scrollY), backgroundScroll, 'Page must not scroll while inside an open tool.');
+  await page.mouse.move(1, 1);
+  await page.waitForFunction(() => document.documentElement.style.overflow !== 'hidden');
   const preset = await page.locator('.auto-preset-select').boundingBox();
   const cycle = await page.locator('.auto-run-btn').boundingBox();
   assert(preset && cycle && preset.y + preset.height <= cycle.y, 'Preset must sit above Cycle now.');
@@ -117,10 +131,11 @@ try {
   await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connect Wallet'));
   await page.getByRole('button', { name: 'Close wallet', exact: true }).click();
   await page.waitForSelector('.wallet-dropdown', { state: 'detached' });
-  const stopped = structuredClone(snapshot);
-  stopped.dailyLoss.hit = true;
-  socket!.send(JSON.stringify({ type: 'state', payload: stopped }));
-  await page.waitForFunction(() => document.querySelector('.overview-status.needs-attention')?.textContent?.includes('Daily loss stop hit'));
+  const live = structuredClone(snapshot);
+  live.mode = 'LIVE';
+  socket!.send(JSON.stringify({ type: 'state', payload: live }));
+  await page.waitForFunction(() => document.querySelector('.live-badge') != null);
+  assert(!/LIVE|Exchange/.test(await page.locator('.office-pnl').innerText()), 'Map PnL omits mode and exchange source labels.');
   const hot = structuredClone(snapshot);
   hot.paper.unrealized = -7.5;
   hot.debate = { id: 'test-hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.9, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
@@ -146,6 +161,8 @@ try {
     await page.screenshot({ path: path.join(output, `office-${viewport.width}.png`), fullPage: true });
     if (viewport.width === 375) await page.screenshot({ path: path.join(output, 'office-mobile-top.png') });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Overflow at ${viewport.width}px`);
+    const roster = await page.locator('.roster-item').evaluateAll((items) => items.map((item) => ({ y: item.getBoundingClientRect().y, h: item.getBoundingClientRect().height })));
+    assert(roster.every((item) => Math.abs(item.y - roster[0].y) < 1 && item.h === 44), 'Roster stays equal height in a single row.');
     await assertOfficeSpace();
     if (viewport.width === 375) await page.locator('.office-pnl').screenshot({ path: path.join(output, 'office-pnl-mobile.png') });
     await page.locator('.office').screenshot({ path: path.join(output, `office-room-${viewport.width}.png`) });
