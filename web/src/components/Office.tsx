@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import type { AgentId, AgentView, DeskState, Fight, Reaction, Speech } from '../types';
 import { AGENT_ORDER } from '../types';
 import { Bot, type Face, type Pose } from './Bot';
-import { KerisBlade } from './Keris';
 import { Sparkline } from './MiniCharts';
 import { SEATS, WORKSTATIONS, FIGHT_STAGE, SPECTATORS, heatedDebateFight, officePnl, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
 import { useSceneDirector } from '../useSceneDirector';
@@ -208,7 +207,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       </div>
       <div className="studio-meeting" style={{ left: '50%', top: '72%' }} aria-label="Agent discussion table">
         <img src={asset('023_keyboard_round-coffee-table')} alt="" />
-        <div className="studio-table-inlay"><KerisBlade size={60} /></div>
+        <div className="studio-table-inlay"><img src={asset('026_curved-blade_ornate-dagger')} alt="" width={337} height={940} /></div>
         <img className="meeting-cup cup-left" src={asset('012_coffee-cup')} alt="" />
         <img className="meeting-cup cup-right" src={asset('001_ceramic-mug')} alt="" />
         <img className="meeting-book" src={asset('030_closed-book')} alt="" />

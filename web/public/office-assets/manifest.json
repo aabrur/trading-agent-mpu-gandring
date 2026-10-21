@@ -135,6 +135,15 @@
     "bytes": 2040
   },
   {
+    "file": "026_curved-blade_ornate-dagger.webp",
+    "source": "026_curved-blade_ornate-dagger.png",
+    "sourceArchive": "segments (26).zip",
+    "sourcePath": "ornate-dagger.png",
+    "sourceWidth": 337,
+    "sourceHeight": 940,
+    "bytes": 10624
+  },
+  {
     "file": "030_closed-book.webp",
     "source": "030_closed-book.png",
     "sourceArchive": "segments (30).zip",

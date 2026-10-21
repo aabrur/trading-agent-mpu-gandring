@@ -37,3 +37,7 @@ Open-order content was moved into a shared component without changing its N-sett
 Verification: typecheck and production build passed. The offline browser verifier passed at 1440px desktop, 375px phone and 812px landscape, day/night themes and reduced motion. Added checks cover section removal, asset loading and logo/decor placement, single-row 44px roster items, tool-panel pointer enter/exit scroll locking, order controls in the map rail, and mode/source labels omitted from map PnL with a simulated LIVE snapshot. No real trading server was contacted. Full test suite remains 358 passed / 15 failed in the same seven baseline files.
 
 Runtime artwork now has 18 WebP images, 285,218 bytes total. README screenshots were refreshed from isolated PAPER fixtures.
+
+## Table keris replacement: v0.0.0.3.7
+
+Replaced only the discussion-table KerisBlade drawing with an optimized WebP of the supplied `026_curved-blade_ornate-dagger.png`. Adjusted its size and position to fit among the existing decorations. Typecheck, production build and the offline office UI verifier passed; the resulting browser screenshot was inspected. Full-suite failures were not repaired or revalidated for this asset-only change. The existing baseline remains documented above.

@@ -1,13 +1,10 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.6",
-  "appVersion": "0.0.0.3.6",
+  "version": "0.3.7",
+  "appVersion": "0.0.0.3.7",
   "changelog": [
-    "Removed the workspace headline/navigation and account summary sections.",
-    "Agent roster uses one compact row with equal shapes, aligned text and consistent sizes.",
-    "Office wall uses the project logo; the coffee corner has an espresso machine and the discussion table has coffee, a book and a plant.",
-    "Open-order controls, allocation, equity and positions now share the map rail with PnL, fight meter and verdicts.",
-    "Tool panels contain background scrolling while the pointer is inside; map PnL omits mode and source labels. Trading behavior is unchanged."
+    "Replaced the discussion-table keris drawing with the supplied ornate-dagger artwork, optimized as WebP.",
+    "Preserved table decorations, office layout and trading behavior."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",
