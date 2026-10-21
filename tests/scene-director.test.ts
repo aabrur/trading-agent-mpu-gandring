@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ambientActivity, eventActivity, route, blocked, directScene, verdictReactions, heatedDebateFight, officePnl } from '../web/src/sceneDirector';
+import { WORKSTATIONS, ambientActivity, eventActivity, route, blocked, directScene, verdictReactions, heatedDebateFight, officePnl } from '../web/src/sceneDirector';
 import { AGENT_ORDER } from '../web/src/types';
 import type { DeskState, Verdict } from '../web/src/types';
 import { Desk } from '../server/desk';
@@ -59,10 +59,10 @@ describe('office director', () => {
     const input = sceneFixture(), frame = directScene(input);
     expect(frame.research.partner).toBe('lead');
     expect(frame.research.destination).not.toEqual(frame.lead.destination);
-    const desks = AGENT_ORDER.map((id) => input.state.agents[id].desk);
+    const desks = AGENT_ORDER.map((id) => WORKSTATIONS[id]);
     for (const id of ['research', 'lead'] as const) {
       const destination = frame[id].destination!;
-      const desk = input.state.agents[id].desk;
+      const desk = WORKSTATIONS[id];
       const from = { x: desk.x + (desk.x <= 50 ? 7.8 : -7.8), y: desk.y + 5.5 };
       expect(route(from, destination, desks).at(-1)).toEqual(destination);
     }

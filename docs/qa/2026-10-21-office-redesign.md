@@ -45,3 +45,10 @@ Replaced only the discussion-table KerisBlade drawing with an optimized WebP of 
 ## Matching keris stand: v0.0.0.3.8
 
 Corrected the previous table placement: the ornate keris is now mounted upright in the supplied `026_curved-blade_wooden-display-stand.png`, with its base resting on the tabletop. Preserved surrounding decorations. Typecheck, production build and offline office UI checks passed; the resulting screenshot was visually inspected. Full-suite baseline failures remain unresolved and were not rerun for this artwork correction.
+
+
+## Office arrangement: v0.0.0.3.9
+
+Centered the discussion table at the center of the usable floor (x=50%, y=65% with the floor starting at y=30%). Aligned the six workstations in two balanced columns and updated agent seats, spectator positions, report-sharing destinations and table collision bounds to match. Separated the keris stand, cups, book and plant. Replaced repeated hue-shifted individual books with nine supplied assembled book groups across all four shelf levels. Removed the clipped coffee-corner caption and unused single-book runtime image.
+
+Verification: 14 focused scene/updater tests passed, typecheck passed, production build passed, and offline browser checks passed at desktop, 375px phone and 812px landscape, with day/night and reduced-motion coverage. Browser assertions now verify table centering, separate tabletop decoration bounds and non-overlapping bookshelf groups on four levels. Desktop and mobile screenshots were inspected. Runtime assets total 363,320 bytes across 28 WebP files; the authoring library remains excluded from the production output. README screenshots were refreshed from simulated PAPER fixtures. The previously documented 15 full-suite failures were not rerun or repaired for this layout patch.

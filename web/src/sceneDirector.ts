@@ -6,13 +6,13 @@ export interface SceneEvent { id: string; kind: 'execution' | 'report' | 'verdic
 export interface Activity { pose: Pose; face: Face; label: string; destination?: Point; facing?: 'left' | 'right'; partner?: AgentId }
 // Presentation geometry stays separate from venue configuration and trading decisions.
 export const WORKSTATIONS: Record<AgentId, Point> = {
-  lead: { x: 50, y: 39 }, market: { x: 15, y: 48 }, research: { x: 84, y: 43 },
-  strategist: { x: 17, y: 78 }, risk: { x: 83, y: 68 }, execution: { x: 45, y: 91 }
+  lead: { x: 18, y: 43 }, market: { x: 82, y: 43 }, research: { x: 18, y: 66 },
+  strategist: { x: 82, y: 66 }, risk: { x: 18, y: 89 }, execution: { x: 82, y: 89 }
 };
-export const FIGHT_STAGE = { from: { x: 43, y: 70 }, to: { x: 57, y: 70 } };
+export const FIGHT_STAGE = { from: { x: 43, y: 65 }, to: { x: 57, y: 65 } };
 export const SPECTATORS: Record<AgentId, Point> = {
-  lead: { x: 50, y: 40 }, market: { x: 23, y: 60 }, research: { x: 78, y: 51 },
-  strategist: { x: 26, y: 86 }, risk: { x: 78, y: 80 }, execution: { x: 50, y: 96 }
+  lead: { x: 50, y: 41 }, market: { x: 27, y: 57 }, research: { x: 73, y: 57 },
+  strategist: { x: 27, y: 80 }, risk: { x: 73, y: 80 }, execution: { x: 50, y: 92 }
 };
 
 /** Repeat cartoon sparring only while an actual opposing debate meets the configured heat threshold. */
@@ -45,10 +45,10 @@ export function verdictReactions(v: Verdict): Partial<Record<AgentId, Reaction>>
   return reactions;
 }
 export const SEATS: Record<AgentId, Point> = {
-  lead: { x: 50, y: 48 }, market: { x: 24, y: 63 }, research: { x: 76, y: 61 },
-  strategist: { x: 25, y: 85 }, risk: { x: 76, y: 83 }, execution: { x: 50, y: 95 }
+  lead: { x: 50, y: 41 }, market: { x: 27, y: 57 }, research: { x: 73, y: 57 },
+  strategist: { x: 27, y: 80 }, risk: { x: 73, y: 80 }, execution: { x: 50, y: 92 }
 };
-const destinations = { coffee: { x: 88, y: 37 }, bookshelf: { x: 12, y: 37 }, analysis: { x: 59, y: 52 }, window: { x: 36, y: 37 } };
+const destinations = { coffee: { x: 88, y: 37 }, bookshelf: { x: 12, y: 37 }, analysis: { x: 66, y: 43 }, window: { x: 36, y: 37 } };
 const routines: Record<AgentId, Activity[]> = {
   lead: [{ pose: 'read', face: 'normal', label: 'checking the journal' }, { pose: 'observe', face: 'normal', label: 'visiting analysis', destination: destinations.analysis }, { pose: 'drink', face: 'happy', label: 'coffee break', destination: destinations.coffee }],
   market: [{ pose: 'point', face: 'normal', label: 'checking the chart' }, { pose: 'observe', face: 'normal', label: 'looking out the window', destination: destinations.window }, { pose: 'stretch', face: 'normal', label: 'stretching' }],
@@ -73,8 +73,8 @@ export function directScene(input: { state: DeskState; events: SceneEvent[]; tic
     const from = speech.agent, to = from === 'risk' ? 'execution' : 'lead';
     const available = [from, to].every((id) => !['executing', 'fighting'].includes(state.agents[id as AgentId].status));
     if (available) {
-      frame[from] = { pose: 'pass', face: 'normal', label: 'sharing a report', destination: { x: 46, y: 52 }, facing: 'right', partner: to };
-      frame[to] = { pose: 'read', face: 'normal', label: 'reviewing a report', destination: { x: 59, y: 52 }, facing: 'left', partner: from };
+      frame[from] = { pose: 'pass', face: 'normal', label: 'sharing a report', destination: { x: 43, y: 43 }, facing: 'right', partner: to };
+      frame[to] = { pose: 'read', face: 'normal', label: 'reviewing a report', destination: { x: 57, y: 43 }, facing: 'left', partner: from };
     }
   }
   if (hidden || reducedMotion) for (const a of Object.values(frame)) { delete a.destination; delete a.partner; }
@@ -104,7 +104,7 @@ export function activityFor(state: DeskState, id: AgentId, slot: number, visitor
 
 export function blocked(p: Point, desks: Point[]) {
   if (p.x < 8 || p.x > 92 || p.y < 34 || p.y > 97) return true;
-  if (p.x > 36 && p.x < 64 && p.y > 61 && p.y < 81) return true;
+  if (p.x > 36 && p.x < 64 && p.y > 53 && p.y < 76) return true;
   return desks.some((d) => Math.abs(p.x - d.x) < 6.5 && p.y > d.y - 5 && p.y < d.y + 2);
 }
 const clear = (a: Point, b: Point, desks: Point[]) => {

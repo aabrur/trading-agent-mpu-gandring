@@ -1,10 +1,10 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.8",
-  "appVersion": "0.0.0.3.8",
+  "version": "0.3.9",
+  "appVersion": "0.0.0.3.9",
   "changelog": [
-    "Mounted the supplied ornate keris upright in its matching wooden display stand on the discussion table.",
-    "Preserved the surrounding table decorations and trading behavior."
+    "Centered the discussion table on the floor and aligned six workstations in balanced columns.",
+    "Stocked all four bookshelf levels with supplied assembled book sets and separated tabletop decorations."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
   "license": "MIT",

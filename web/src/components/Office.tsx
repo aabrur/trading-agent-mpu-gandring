@@ -191,9 +191,9 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         <div className="studio-sign"><img src="/mpu-gandring-logo.webp" alt="" /></div>
         <div className="studio-library">
           <img className="studio-shelf" src={asset('011_red-books_wooden-bookshelf-1')} alt="" />
-          {[0, 1, 2].map((row) => <div className={`studio-books books-${row}`} key={row}>{Array.from({ length: 7 }, (_, i) => <img key={i} src={asset('011_red-books_1')} alt="" style={{ filter: `hue-rotate(${(i * 43 + row * 17) % 180}deg)`, height: `${74 + (i * 7 % 25)}%` }} />)}</div>)}
+          {[[11, 8], [3, 1, 5], [2, 4, 9], [12]].map((books, row) => <div className={`studio-books books-${row}`} key={row}>{books.map((book) => <img key={book} src={asset(`011_red-books_stacked-books-${book}`)} alt="" />)}</div>)}
         </div>
-        <div className="studio-coffee"><img src={asset('023_keyboard_office-desk-7')} alt="" /><img className="coffee-machine" src={asset('051_red-mug_espresso-machine')} alt="" /><img className="coffee-cup" src={asset('012_coffee-cup')} alt="" /><span>the coffee corner</span></div>
+        <div className="studio-coffee"><img src={asset('023_keyboard_office-desk-7')} alt="" /><img className="coffee-machine" src={asset('051_red-mug_espresso-machine')} alt="" /><img className="coffee-cup" src={asset('012_coffee-cup')} alt="" /></div>
         <img className="studio-vine vine-west" src={asset('023_keyboard_hanging-plant')} alt="" />
         <img className="studio-vine vine-east" src={asset('023_keyboard_hanging-plant')} alt="" />
         <div className="studio-pendant"><i /><span /></div>
@@ -205,7 +205,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         <img className="studio-plant plant-east" src={asset('022_soil_potted-plant')} alt="" />
         <div className="studio-wall-board"><span>{t('analysisBoardText')}</span><svg viewBox="0 0 90 30"><path d="M4 23 L18 16 L31 20 L44 8 L57 13 L70 6 L85 9" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div>
       </div>
-      <div className="studio-meeting" style={{ left: '50%', top: '72%' }} aria-label="Agent discussion table">
+      <div className="studio-meeting" style={{ left: '50%', top: '65%' }} aria-label="Agent discussion table">
         <img src={asset('023_keyboard_round-coffee-table')} alt="" />
         <div className="studio-table-inlay">
           <img className="keris-blade" src={asset('026_curved-blade_ornate-dagger')} alt="" width={337} height={940} />
@@ -222,7 +222,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         const desk = WORKSTATIONS[id];
         const busy = !inDebate && a.status !== 'idle';
         return (
-          <div key={`desk-${id}`} data-desk={id} className={`studio-desk ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, ['--agent' as string]: a.color }} aria-hidden="true">
+          <div key={`desk-${id}`} data-desk={id} className={`studio-desk ${desk.x > 50 ? 'desk-east' : 'desk-west'} ${busy ? 'is-busy' : ''}`} style={{ left: `${desk.x}%`, top: `${desk.y}%`, zIndex: Math.round(desk.y * 10) + 5, ['--agent' as string]: a.color }} aria-hidden="true">
             <div className="studio-chair" />
             <img className="studio-desk-wood" src={asset('023_keyboard_computer-desk-5')} alt="" />
             <div className="studio-monitor"><img src={asset('023_keyboard_computer-monitor-1')} alt="" /><div className="studio-screen"><Sparkline values={spark} up={up} /></div></div>

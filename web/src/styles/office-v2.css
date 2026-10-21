@@ -26,23 +26,22 @@
 .window-west { left: 29%; }.window-east { right: 27%; }
 .studio-sign { position: absolute; left: 43%; top: 5%; width: 16%; height: 22%; }
 .studio-sign img { width: 100%; height: 100%; object-fit: contain; }
-.studio-library { position: absolute; left: 4%; top: 3%; height: 29%; width: 14%; }
+.studio-library { position: absolute; left: 4%; top: 3%; width: 14%; aspect-ratio: 771 / 1172; background: #795438; border-radius: 5%; }
 .studio-shelf { width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(1px 5px 3px #63492d33); }
-.studio-books { position: absolute; left: 12%; right: 11%; height: 19%; display: flex; align-items: end; justify-content: center; gap: 2%; }
-.studio-books img { width: 11%; object-fit: fill; }
-.books-0 { top: 10%; }.books-1 { top: 36%; }.books-2 { top: 63%; }
+.studio-books { position: absolute; left: 7%; right: 8%; height: 18%; display: flex; align-items: end; justify-content: space-between; gap: 3%; }
+.studio-books img { min-width: 0; max-width: 100%; height: 100%; object-fit: contain; object-position: center bottom; flex: 1 1 0; }
+.books-0 { top: 9%; }.books-1 { top: 30%; }.books-2 { top: 51%; }.books-3 { top: 72%; }
 .studio-coffee { position: absolute; right: 3%; top: 19%; width: 17%; height: 15%; }
 .studio-coffee > img:first-child { width: 100%; height: 100%; object-fit: fill; }
 .studio-coffee .coffee-machine { position: absolute; width: 42%; height: auto; left: 14%; bottom: 82%; }
 .studio-coffee .coffee-cup { position: absolute; width: 17%; height: auto; right: 7%; top: -20%; }
-.studio-coffee > span { position: absolute; top: -46%; width: 100%; text-align: center; font-size: clamp(7px, .8vw, 11px); font-family: var(--font-head); color: #735738; }
 .studio-vine { position: absolute; top: -5%; height: 25%; object-fit: contain; }
 .vine-west { left: 19%; }.vine-east { right: 17%; }
 .studio-pendant { position: absolute; left: 50%; top: 0; width: 5%; height: 10%; transform: translateX(-50%); opacity: .9; }
 .studio-pendant i { display: block; height: 40%; width: 1px; background: #9d7e58; margin: 0 auto; }
 .studio-pendant span { display: block; height: 40%; border-radius: 50% 50% 15% 15%; background: linear-gradient(#cfb285, #f9eac5); box-shadow: 0 14px 28px #fff0ba; }
 .studio-sunlight { position: absolute; left: 29%; top: 26%; height: 70%; width: 45%; background: linear-gradient(135deg, #fff7cd50, #fff7cd00 75%); clip-path: polygon(0 0, 75% 0, 100% 100%, 25% 100%); mix-blend-mode: soft-light; }
-.studio-rug { position: absolute; left: 23%; top: 49%; width: 54%; height: 43%; border-radius: 50%; background: repeating-radial-gradient(ellipse at center, #91a69b 0 5px, #90a196 6px 7px); border: 5px solid #798b7a; box-shadow: 0 4px 0 #6d725529, inset 0 0 0 5px #c6c7ab; transform: rotate(-2deg); }
+.studio-rug { position: absolute; left: 28%; top: 47%; width: 44%; height: 36%; border-radius: 50%; background: repeating-radial-gradient(ellipse at center, #91a69b 0 5px, #90a196 6px 7px); border: 5px solid #798b7a; box-shadow: 0 4px 0 #6d725529, inset 0 0 0 5px #c6c7ab; transform: none; }
 .studio-rug span { position: absolute; inset: 12%; border: 2px dashed #d8d5b6; border-radius: 50%; opacity: .65; }
 .studio-lamp { position: absolute; width: 5%; height: 26%; object-fit: contain; filter: drop-shadow(0 1px 12px #fff0b64a); }
 .lamp-west { left: 3%; top: 31%; }.lamp-east { right: 3%; top: 31%; }
@@ -53,18 +52,18 @@
 .studio-wall-board svg { width: 45%; height: 100%; }
 .studio-meeting { position: absolute; width: 31%; aspect-ratio: 1.8; transform: translate(-50%, -50%); z-index: 720; pointer-events: none; }
 .studio-meeting > img:first-child { position: absolute; width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(0 9px 5px #69503138); }
-.studio-table-inlay { position: absolute; top: 10%; left: 38%; width: 13%; aspect-ratio: 579 / 1159; transform: translateX(-50%); filter: drop-shadow(1px 2px 1px #69503138); }
+.studio-table-inlay { position: absolute; top: 5%; left: 44%; width: 11%; aspect-ratio: 579 / 1159; transform: translateX(-50%); filter: drop-shadow(1px 2px 1px #69503138); }
 .studio-table-inlay img { position: absolute; display: block; height: auto; }
 .studio-table-inlay .keris-blade { top: 0; left: 31.4%; width: 58.2%; }
 .studio-table-inlay .keris-stand { bottom: 0; left: 0; width: 100%; }
 .studio-meeting .meeting-cup { position: absolute; width: 10%; height: auto; filter: drop-shadow(0 2px 1px #69503138); }
-.meeting-cup.cup-left { left: 22%; top: 23%; }.meeting-cup.cup-right { right: 24%; top: 40%; }
-.studio-meeting .meeting-book { position: absolute; left: 61%; top: 12%; width: 17%; height: auto; transform: rotate(16deg); }
-.studio-meeting .meeting-plant { position: absolute; left: 43%; top: -3%; width: 9%; height: auto; }
+.meeting-cup.cup-left { left: 19%; top: 33%; }.meeting-cup.cup-right { right: 18%; top: 43%; }
+.studio-meeting .meeting-book { position: absolute; left: 57%; top: 10%; width: 15%; height: auto; transform: rotate(0deg); }
+.studio-meeting .meeting-plant { position: absolute; left: 49%; top: 45%; width: 8%; height: auto; }
 .studio-desk { position: absolute; transform: translate(-50%, -50%); width: 15%; aspect-ratio: 1.8; pointer-events: none; }
 .studio-desk-wood { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 6px 4px #67462c33); }
 .studio-chair { position: absolute; top: 10%; right: -14%; width: 26%; height: 70%; background: linear-gradient(90deg, #566d66, #8fa59a 65%, #668274); border: 2px solid #567064; border-radius: 42% 42% 25% 25%; box-shadow: 0 7px 0 -3px #6d513d; }
-.studio-desk:nth-of-type(even) .studio-chair { right: auto; left: -14%; }
+.studio-desk.desk-east .studio-chair { right: auto; left: -14%; }
 .studio-monitor { position: absolute; left: 24%; top: -48%; width: 51%; height: 75%; }
 .studio-monitor > img { height: 100%; width: 100%; object-fit: fill; }
 .studio-screen { position: absolute; inset: 12% 13% 28%; overflow: hidden; background: #eff0d2; transform: rotate(-1deg); }

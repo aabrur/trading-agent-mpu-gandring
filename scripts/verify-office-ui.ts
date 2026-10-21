@@ -80,6 +80,18 @@ try {
       const pnl = document.querySelector('.office-pnl')!.getBoundingClientRect();
       const overlaps = (a: DOMRect, b: DOMRect) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
       const errors: string[] = [];
+      const table = document.querySelector('.studio-meeting')!.getBoundingClientRect();
+      if (Math.abs(table.x + table.width / 2 - (world.x + world.width / 2)) > 1 || Math.abs(table.y + table.height / 2 - (world.y + world.height * .65)) > 1) errors.push('Table is not centered on the floor');
+      const decor = [...document.querySelectorAll('.studio-table-inlay, .meeting-cup, .meeting-book, .meeting-plant')];
+      for (let i = 0; i < decor.length; i++) for (let j = i + 1; j < decor.length; j++) {
+        if (overlaps(decor[i].getBoundingClientRect(), decor[j].getBoundingClientRect())) errors.push('Table decorations overlap');
+      }
+      const shelves = [...document.querySelectorAll('.studio-books')];
+      if (shelves.length !== 4) errors.push('Bookshelf must have four stocked levels');
+      for (const shelf of shelves) {
+        const books = [...shelf.children];
+        for (let i = 1; i < books.length; i++) if (overlaps(books[i - 1].getBoundingClientRect(), books[i].getBoundingClientRect())) errors.push('Bookshelf groups overlap');
+      }
       if (overlaps(world, hud)) errors.push('HUD covers the room');
       if (overlaps(world, pnl)) errors.push('PnL covers the room');
       for (const element of document.querySelectorAll('.office-world .agent .bot')) {

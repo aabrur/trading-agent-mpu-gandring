@@ -18,13 +18,85 @@
     "bytes": 8188
   },
   {
-    "file": "011_red-books_1.webp",
-    "source": "011_red-books_1.png",
+    "file": "011_red-books_stacked-books-1.webp",
+    "source": "011_red-books_stacked-books-1.png",
     "sourceArchive": "segments (11).zip",
-    "sourcePath": "red-books/red-books-1.png",
-    "sourceWidth": 61,
-    "sourceHeight": 181,
-    "bytes": 1286
+    "sourcePath": "stacked-books/stacked-books-1.png",
+    "sourceWidth": 219,
+    "sourceHeight": 147,
+    "bytes": 4298
+  },
+  {
+    "file": "011_red-books_stacked-books-11.webp",
+    "source": "011_red-books_stacked-books-11.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-11.png",
+    "sourceWidth": 278,
+    "sourceHeight": 201,
+    "bytes": 6614
+  },
+  {
+    "file": "011_red-books_stacked-books-12.webp",
+    "source": "011_red-books_stacked-books-12.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-12.png",
+    "sourceWidth": 655,
+    "sourceHeight": 200,
+    "bytes": 7972
+  },
+  {
+    "file": "011_red-books_stacked-books-2.webp",
+    "source": "011_red-books_stacked-books-2.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-2.png",
+    "sourceWidth": 164,
+    "sourceHeight": 124,
+    "bytes": 2886
+  },
+  {
+    "file": "011_red-books_stacked-books-3.webp",
+    "source": "011_red-books_stacked-books-3.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-3.png",
+    "sourceWidth": 209,
+    "sourceHeight": 191,
+    "bytes": 4544
+  },
+  {
+    "file": "011_red-books_stacked-books-4.webp",
+    "source": "011_red-books_stacked-books-4.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-4.png",
+    "sourceWidth": 191,
+    "sourceHeight": 151,
+    "bytes": 4346
+  },
+  {
+    "file": "011_red-books_stacked-books-5.webp",
+    "source": "011_red-books_stacked-books-5.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-5.png",
+    "sourceWidth": 260,
+    "sourceHeight": 212,
+    "bytes": 6246
+  },
+  {
+    "file": "011_red-books_stacked-books-8.webp",
+    "source": "011_red-books_stacked-books-8.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-8.png",
+    "sourceWidth": 205,
+    "sourceHeight": 199,
+    "bytes": 4978
+  },
+  {
+    "file": "011_red-books_stacked-books-9.webp",
+    "source": "011_red-books_stacked-books-9.png",
+    "sourceArchive": "segments (11).zip",
+    "sourcePath": "stacked-books/stacked-books-9.png",
+    "sourceWidth": 297,
+    "sourceHeight": 203,
+    "bytes": 8354
   },
   {
     "file": "011_red-books_wooden-bookshelf-1.webp",
