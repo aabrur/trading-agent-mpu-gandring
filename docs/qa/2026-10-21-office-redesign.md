@@ -41,3 +41,7 @@ Runtime artwork now has 18 WebP images, 285,218 bytes total. README screenshots 
 ## Table keris replacement: v0.0.0.3.7
 
 Replaced only the discussion-table KerisBlade drawing with an optimized WebP of the supplied `026_curved-blade_ornate-dagger.png`. Adjusted its size and position to fit among the existing decorations. Typecheck, production build and the offline office UI verifier passed; the resulting browser screenshot was inspected. Full-suite failures were not repaired or revalidated for this asset-only change. The existing baseline remains documented above.
+
+## Matching keris stand: v0.0.0.3.8
+
+Corrected the previous table placement: the ornate keris is now mounted upright in the supplied `026_curved-blade_wooden-display-stand.png`, with its base resting on the tabletop. Preserved surrounding decorations. Typecheck, production build and offline office UI checks passed; the resulting screenshot was visually inspected. Full-suite baseline failures remain unresolved and were not rerun for this artwork correction.

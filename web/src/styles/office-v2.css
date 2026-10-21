@@ -53,8 +53,10 @@
 .studio-wall-board svg { width: 45%; height: 100%; }
 .studio-meeting { position: absolute; width: 31%; aspect-ratio: 1.8; transform: translate(-50%, -50%); z-index: 720; pointer-events: none; }
 .studio-meeting > img:first-child { position: absolute; width: 100%; height: 100%; object-fit: fill; filter: drop-shadow(0 9px 5px #69503138); }
-.studio-table-inlay { position: absolute; top: 18%; left: 45%; width: 8%; transform: translateX(-50%) rotate(90deg); }
-.studio-table-inlay img { display: block; width: 100%; height: auto; filter: drop-shadow(1px 2px 1px #69503138); }
+.studio-table-inlay { position: absolute; top: 10%; left: 38%; width: 13%; aspect-ratio: 579 / 1159; transform: translateX(-50%); filter: drop-shadow(1px 2px 1px #69503138); }
+.studio-table-inlay img { position: absolute; display: block; height: auto; }
+.studio-table-inlay .keris-blade { top: 0; left: 31.4%; width: 58.2%; }
+.studio-table-inlay .keris-stand { bottom: 0; left: 0; width: 100%; }
 .studio-meeting .meeting-cup { position: absolute; width: 10%; height: auto; filter: drop-shadow(0 2px 1px #69503138); }
 .meeting-cup.cup-left { left: 22%; top: 23%; }.meeting-cup.cup-right { right: 24%; top: 40%; }
 .studio-meeting .meeting-book { position: absolute; left: 61%; top: 12%; width: 17%; height: auto; transform: rotate(16deg); }

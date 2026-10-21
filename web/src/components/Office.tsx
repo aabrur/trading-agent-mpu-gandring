@@ -207,7 +207,10 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       </div>
       <div className="studio-meeting" style={{ left: '50%', top: '72%' }} aria-label="Agent discussion table">
         <img src={asset('023_keyboard_round-coffee-table')} alt="" />
-        <div className="studio-table-inlay"><img src={asset('026_curved-blade_ornate-dagger')} alt="" width={337} height={940} /></div>
+        <div className="studio-table-inlay">
+          <img className="keris-blade" src={asset('026_curved-blade_ornate-dagger')} alt="" width={337} height={940} />
+          <img className="keris-stand" src={asset('026_curved-blade_wooden-display-stand')} alt="" width={579} height={459} />
+        </div>
         <img className="meeting-cup cup-left" src={asset('012_coffee-cup')} alt="" />
         <img className="meeting-cup cup-right" src={asset('001_ceramic-mug')} alt="" />
         <img className="meeting-book" src={asset('030_closed-book')} alt="" />
