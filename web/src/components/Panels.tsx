@@ -263,48 +263,41 @@ export function TopBar({
 
 export function TrakteerPopup({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  const embedUrl = `https://trakteer.id/v1/aabrur/tip/embed/modal?embedId=0&ref=${encodeURIComponent(window.location.href)}`;
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
-    const onMsg = (ev: MessageEvent) => {
-      if (ev.data && typeof ev.data === 'object' && ev.data.type === 'embed.modalClosed') {
-        onClose();
-      }
-    };
-    window.addEventListener('message', onMsg);
-    return () => window.removeEventListener('message', onMsg);
-  }, [onClose]);
+    const popup = dialog.current;
+    if (!popup) return;
+    const previous = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement : document.querySelector<HTMLElement>('.trakteer-btn');
+    popup.showModal();
+    return () => { popup.close(); previous?.focus(); };
+  }, []);
 
   return (
-    <div
-      className="setup-overlay trakteer-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('trakteerTitle')}
+    <dialog
+      ref={dialog}
+      className="trakteer-dialog"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      onCancel={(e) => { e.preventDefault(); onClose(); }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="panel trakteer-popup-card">
         <div className="panel-head trakteer-head">
-          <h2>{t('trakteerTitle')}</h2>
-          <button className="trakteer-close-x" onClick={onClose} aria-label={t('closeModal')} title={t('closeModal')}>✕</button>
+          <h2 id={titleId}>{t('trakteerTitle')}</h2>
+          <button type="button" className="trakteer-close-x" onClick={onClose} aria-label={t('closeModal')} title={t('closeModal')}>✕</button>
         </div>
-        <div className="trakteer-iframe-wrap">
-          <iframe
-            src={embedUrl}
-            title="Dukung Saya di Trakteer"
-            className="trakteer-iframe"
-            onLoad={(e) => {
-              try {
-                e.currentTarget.contentWindow?.postMessage({ type: 'embed.openModal' }, '*');
-              } catch { /* ignore */ }
-            }}
-          />
-        </div>
+        <p id={descriptionId} className="trakteer-popup-body">{t('trakteerBody')}</p>
+        <p className="trakteer-popup-note">{t('trakteerBrowserNote')}</p>
         <div className="trakteer-popup-actions">
-          <button className="badge setup-btn trakteer-later-btn" onClick={onClose}>{t('trakteerDismiss')}</button>
+          <a className="trakteer-btn" href="https://trakteer.id/aabrur/tip" target="_blank" rel="noopener noreferrer">{t('trakteerBtn')}</a>
+          <button type="button" className="badge setup-btn trakteer-later-btn" onClick={onClose}>{t('trakteerDismiss')}</button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }
 

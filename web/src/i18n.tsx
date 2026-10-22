@@ -190,6 +190,7 @@ export const en = {
   trakteerBtn: 'Support on Trakteer',
   trakteerTitle: 'Support Mpu Gandring with Cendol!',
   trakteerBody: 'Enjoying the 6-agent trading desk? Treat the creator to a glass of Cendol on Trakteer to keep updates and new adapters coming.',
+  trakteerBrowserNote: 'Opens the Trakteer support page in a new tab.',
   trakteerDismiss: 'Maybe later',
 
   // Auto Trade & TopBar Balance
@@ -694,6 +695,7 @@ export const id: Record<TranslationKey, string> = {
   trakteerBtn: 'Dukung Saya di Trakteer',
   trakteerTitle: 'Trakteer Cendol untuk Mpu Gandring!',
   trakteerBody: 'Suka dengan meja trading 6 agen ini? Trakteer pembuatnya segelas Cendol supaya update fitur dan adapter baru terus jalan.',
+  trakteerBrowserNote: 'Halaman dukungan Trakteer dibuka di tab baru.',
   trakteerDismiss: 'Nanti dulu',
 
   // Auto Trade & TopBar Balance
