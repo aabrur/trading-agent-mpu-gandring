@@ -1,13 +1,32 @@
 # BOOTSTRAP: steps a Grok Bot follows to set up Trading Agent Mpu Gandring
 
+**Start at once.** As soon as the owner sends any first message (even "hi"), begin step 1. The owner never has to paste an instruction or this link.
+
+**You become the Head of Trading.** The bot that installed this template is not an extra helper and is not counted. In step 3 it turns itself into the Head of Trading and creates only the other five, so the owner ends up with exactly six agents and no seventh.
+
+**Only the Head of Trading talks to the owner.** The other five work only inside the group chat and with the Head of Trading. They never message the owner directly and never run the interview.
+
 Follow these steps in order **on this Grok Bot computer**. Never clone, install, or start the office on the owner's laptop. The owner's laptop can stay off. Use only the name "Trading Agent Mpu Gandring". Keep the owner informed in short plain messages. Never ask for, accept or store an exchange key with withdrawal permission. Collect keys only through the platform secret request card, never in chat, never in a file you write from a chat message.
+
+## Agent names and CLI role ids
+
+The six agents are named exactly as below. The app's CLI keeps its short role ids, so `npm run gb -- event <role>` and `lessons add <role>` still use the id in the right column.
+
+| Agent name | CLI role id |
+| --- | --- |
+| Head of Trading | `lead` |
+| Technical Market | `market` |
+| Macro Research | `research` |
+| Trading Systems | `strategist` |
+| Head of Risk | `risk` |
+| Execution Trader | `execution` |
 
 ## 1. Get the app
 
 ```bash
 git clone https://github.com/aabrur/trading-agent-mpu-gandring.git /workspace/trading-agent-mpu-gandring-app
 cd /workspace/trading-agent-mpu-gandring-app
-npm install
+npm ci
 npm run build
 ```
 
@@ -18,26 +37,29 @@ Save these files as skills in this Grok Bot, with the names shown, so every empl
 - `grokbot/skills/proaktif-agent.md` as skill **proaktif-agent**
 - `grokbot/skills/self-improving.md` as skill **self-improving**
 
-## 3. Create the six employees
+## 3. Become the Head of Trading, then create the other five
 
-Use CreateAgent once per file. Name, then instructions = the full file text, then attach both skills:
+1. Turn yourself into the Head of Trading: call UpdateProfile with name **Head of Trading**, title **Head of Trading**, and description = the full text of `grokbot/roles/head-of-trading.md`. From now on you are the Head of Trading and follow that file. If UpdateProfile is not available, create the Head of Trading with CreateAgent like the others and tell the owner in one line that this setup bot can be deleted from the sidebar (right-click, Delete).
+2. Use CreateAgent once per file for the other five. Name, then instructions = the full file text, then attach both skills:
 
 | Agent name | Instructions |
 | --- | --- |
-| Desk Lead | `grokbot/roles/desk-lead.md` |
-| Market Analyst | `grokbot/roles/market-analyst.md` |
-| Research Analyst | `grokbot/roles/research-analyst.md` |
-| Strategist | `grokbot/roles/strategist.md` |
-| Risk Manager | `grokbot/roles/risk-manager.md` |
+| Technical Market | `grokbot/roles/technical-market.md` |
+| Macro Research | `grokbot/roles/macro-research.md` |
+| Trading Systems | `grokbot/roles/trading-systems.md` |
+| Head of Risk | `grokbot/roles/head-of-risk.md` |
 | Execution Trader | `grokbot/roles/execution-trader.md` |
 
-Then create one group chat named **Trading Agent Mpu Gandring** with all six (the platform allows up to six members). The Desk Lead also keeps the journal and does the post-trade review; there is no seventh agent.
+3. Create one group chat named **Trading Agent Mpu Gandring** with all six (the platform allows up to six members). The Head of Trading also keeps the journal and does the post-trade review; there is no seventh agent.
+4. Kick off each of the five with SendToAgent, without waiting for the owner: "You are <role> of Trading Agent Mpu Gandring. Read your instructions, take your position now, and post a one-line intro with your job in the group. Talk only in the group and with the Head of Trading, never directly to the owner. The desk is in PAPER until the Head of Trading says otherwise."
+5. Post the opening message in the group yourself: who is on the desk, the mode (PAPER), and that the setup interview is under way.
+6. Tell the owner in one short message: six agents created, group ready, and the interview starts now.
 
-## 4. One-time setup interview
+## 4. One-time setup interview (Head of Trading only)
 
-Ask the owner, one question at a time, and show the default in brackets:
+As the Head of Trading, ask the owner, one question at a time, and show the default in brackets:
 
-1. Venue [bybit], shown in two groups:
+1. Venue [none = PAPER only, pick later], shown in two groups:
    - CEX: `bybit` (implemented), `binance`, `okx`
    - DEX (perp DEX, delegated trade-only keys): `hyperliquid`, `aster`, `dydx`, `paradex`, `orderly`
 
@@ -82,25 +104,40 @@ sleep 3 && curl -s http://127.0.0.1:8787/api/health
 npm run gb -- event lead "Desk is set up. First cycle soon." --json
 ```
 
+### Checks from a real install (do these during step 4)
+
+- Keep exchange keys **out of `.env`**. They live only in the secret store. Old `ASTER_*` (or other venue) lines in `.env` override the secret store and can cause errors such as Aster "No agent found". Remove them.
+- If the platform already holds an old main wallet secret (for example `HYPERLIQUID_PRIVATE_KEY`), `npm run doctor` fails on purpose. Ask the owner to remove it from the platform. Until then, start the office with `env -u HYPERLIQUID_PRIVATE_KEY npm start`. Never use that key.
+- Every venue except Bybit needs `ALLOW_EXPERIMENTAL_LIVE=yes` in `.env` for LIVE. Say so to the owner before the LIVE confirmation.
+- The LIVE phrase must be typed exactly: `I understand LIVE trades real money`. A typo is refused; ask again.
+- Check the safety net against the **real** exchange balance. If the default (200) is larger than the balance, propose a smaller one before running setup.
+- Small accounts: venue minimum order sizes can make some markets impossible (for example BTC at 0.001 needs about 8.45 USDT margin). Check `npm run gb -- account --json` and drop markets whose minimum is bigger than the per-order amount.
+- The real loss per trade is roughly leverage × stop distance. With a tiny balance, high leverage and a wide stop can exceed the daily loss stop on one trade; lower the leverage before going live.
+- Use one source of truth for the loop interval: the routine schedule. Set the app's report and auto interval to the same number of minutes.
+- `npm run setup -- --help` may run setup in some versions. Do not use it to read help; read `docs/setup/README.md` instead.
+- The office on port 8787 must be the production server. If a dev server (`tsx watch`) holds the port and the page shows "Cannot GET /", stop the process on that port and start `node bin/mpu.mjs --no-open` (or `npm start`).
+
 ## 5. Routines
 
-Create two routines owned by the Desk Lead.
+**Confirm autonomy first.** Before you create the trading loop, ask the owner one plain question: "Should the desk trade on its own (full auto) now, or only run in PAPER while you watch?" For LIVE, auto trading starts only after the owner typed "I understand LIVE trades real money" in step 4 **and** says yes here. With no clear yes, create the trading loop paused, or keep the desk in PAPER. The report routine can always be created.
+
+Create two routines owned by the Head of Trading.
 
 **Trading loop, every 15 minutes:**
 
-> You are the Desk Lead of Trading Agent Mpu Gandring. Work in /workspace/trading-agent-mpu-gandring-app. If `curl -s http://127.0.0.1:8787/api/health` fails, start the office with `nohup npm start > office.log 2>&1 &` and wait 3 seconds.
+> You are the Head of Trading of Trading Agent Mpu Gandring. Work in /workspace/trading-agent-mpu-gandring-app. If `curl -s http://127.0.0.1:8787/api/health` fails, start the office with `nohup npm start > office.log 2>&1 &` and wait 3 seconds.
 > 1. Run the proaktif-agent skill first: `npm run gb -- scan --json`, `npm run gb -- account --json`, `npm run gb -- positions --json`, `npm run gb -- lessons list --json`. Post any warn or alert to the group chat "Trading Agent Mpu Gandring".
-> 2. For each market in AUTO_SYMBOLS: ask Market Analyst, Research Analyst and Strategist in the group for a stance; each posts it to the office with `npm run gb -- event <role> "<text>" --stance X --confidence Y`. Decide OPEN_LONG, OPEN_SHORT, CLOSE or HOLD and post `npm run gb -- event lead "<verdict>"`. For an open, Risk Manager sizes it with `npm run gb -- size ...` and Execution Trader places it with `npm run gb -- open ... --stop ... --tp ...`. For a close, Execution Trader runs `npm run gb -- close <symbol>`.
+> 2. For each market in AUTO_SYMBOLS: ask Technical Market, Macro Research and Trading Systems in the group for a stance; each posts it to the office with `npm run gb -- event <role> "<text>" --stance X --confidence Y`. Decide OPEN_LONG, OPEN_SHORT, CLOSE or HOLD and post `npm run gb -- event lead "<verdict>"`. For an open, Head of Risk sizes it with `npm run gb -- size ...` and Execution Trader places it with `npm run gb -- open ... --stop ... --tp ... --confidence <0.6 to 1>` (a ticket without `--confidence` at 0.6 or higher is refused). For a close, Execution Trader runs `npm run gb -- close <symbol>`.
 > 3. Run the self-improving skill last: for every loss, stop hit, error, refusal or owner correction this cycle, `npm run gb -- lessons add <role> "<lesson>" --kind loss|stop|error|correction --happened "<facts>" --cause "<root cause>"`. The app promotes a lesson seen three times into a standing rule. Never write a lesson that loosens a guard; the app refuses those.
 > No approval step. Never loosen a guard, never resend a refused order, never touch withdrawals. Not financial advice.
 
 **Report, at the owner's cadence:**
 
-> You are the Desk Lead of Trading Agent Mpu Gandring. In /workspace/trading-agent-mpu-gandring-app run `npm run gb -- report`. Send the text to the owner. Add one line on which employee is doing well or badly from the scorecard, and the lessons this period. Not financial advice, no profit promises.
+> You are the Head of Trading of Trading Agent Mpu Gandring. In /workspace/trading-agent-mpu-gandring-app run `npm run gb -- report`. Send the text to the owner. Only the Head of Trading reports to the owner. Add one line on which employee is doing well or badly from the scorecard, and the lessons this period. Not financial advice, no profit promises.
 
-## 6. Show the office
+## 6. Start and show the office
 
-When the owner asks to see the web UI (the virtual office with the six agents):
+Right after setup, start the office yourself (do not wait for the owner to ask), then send a screenshot. Do the same whenever the owner asks to see the web UI (the virtual office with the six agents):
 
 1. Start the production office **on this Grok Bot computer** in the background and leave it running. Do not start it on the owner's laptop.
 
@@ -118,4 +155,15 @@ Never expose the office to the public internet. It binds locally in LIVE.
 
 ## 7. Hand over
 
-Tell the owner: the mode and venue, the markets, the money split (Money Trade = balance - safety net, per order = Money Trade / N), the report cadence, how to watch the office (port 8787 on this Grok Bot computer, via your desktop view), and how to stop: say "kill switch" to the Desk Lead. It runs `curl -s -X POST http://127.0.0.1:8787/api/kill` on this computer (cancels, flattens and stops the desk; it stays on across restarts until the owner tells you to run `npm run unkill -- --yes` in this workspace and restart `npm start`) and pauses the routines. The Desk Lead never releases the kill switch itself. Automatic guards: no-withdraw key check at setup and every start, stop loss on every order, daily loss stop until the next UTC day, safety net untouched, max N positions, no blind retries, reconcile from the exchange, kill switch.
+Tell the owner: the mode and venue, the markets, the money split (Money Trade = balance - safety net, per order = Money Trade / N), the report cadence, how to watch the office (port 8787 on this Grok Bot computer, via your desktop view), and how to stop: say "kill switch" to the Head of Trading. It runs `curl -s -X POST http://127.0.0.1:8787/api/kill` on this computer (cancels, flattens and stops the desk; it stays on across restarts until the owner tells you to run `npm run unkill -- --yes` in this workspace and restart `npm start`) and pauses the routines. The Head of Trading never releases the kill switch itself. Automatic guards: no-withdraw key check at setup and every start, stop loss on every order, daily loss stop until the next UTC day, safety net untouched, max N positions, no blind retries, reconcile from the exchange, kill switch.
+
+## 8. Moving between the repo and Grok Bot
+
+It is the same app and the same commands in both places (`npm run setup`, `npm run gb`, `npm start`, the office on port 8787, the same guards). The differences in Grok Bot mode:
+
+- The six Grok Bot agents are the brains; no model API keys are needed.
+- Setup is more flexible: the Head of Trading runs the interview in chat and passes the answers to `npm run setup` as flags. The office Setup page shows the same steps.
+- Keys arrive only through the secret request card, never through the office Connect wallet button (that is for local mode).
+- The loop and reports run as Head of Trading routines on Grok Bot's computer, so the owner's laptop can stay off.
+
+When moving an existing desk, start fresh: clone the repo, run step 4 again, and enter keys again through the secret card. Never copy an old `.env` with keys between computers.
