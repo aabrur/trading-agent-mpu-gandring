@@ -11,33 +11,57 @@ export const LOCAL_AGENTS = [
   { id: 'kimi', label: 'Kimi Code', login: ['login'], docs: 'https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html', models: ['default'] },
   { id: 'kilo', label: 'Kilo', login: ['auth', 'login'], docs: 'https://kilo.ai/docs/code-with-ai/platforms/cli', models: ['default'] },
   { id: 'cline', label: 'Cline', login: ['auth'], docs: 'https://docs.cline.bot/cline-cli/overview', models: ['default'] },
-  { id: 'grok', label: 'Grok Build', login: ['login'], docs: 'https://docs.x.ai/build/cli/headless-scripting', models: ['default'] }
+  { id: 'grok', label: 'Grok Build', login: ['login'], docs: 'https://docs.x.ai/build/cli/headless-scripting', models: ['default'] },
+  {
+    id: 'antigravity',
+    label: 'Antigravity',
+    login: [],
+    docs: 'https://antigravity.google',
+    models: [
+      'default',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'gemini-4-argon-high',
+      'gemini-4-argon-medium',
+      'gemini-4-argon-low',
+      'claude-opus-5-5-high',
+      'claude-sonnet-5-5-high',
+      'claude-opus-5-5-medium',
+      'claude-sonnet-5-5-medium',
+      'gpt-oss-120b-medium'
+    ]
+  }
 ] as const;
 export type LocalAgentId = (typeof LOCAL_AGENTS)[number]['id'];
-const allowedEnv = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|LANG|LC_ALL|TERM|CODEX_HOME|CLAUDE_CONFIG_DIR|PI_CODING_AGENT_DIR|KIMI_CODE_HOME)$/i;
+const allowedEnv = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|LANG|LC_ALL|TERM|CODEX_HOME|CLAUDE_CONFIG_DIR|PI_CODING_AGENT_DIR|KIMI_CODE_HOME|ANTIGRAVITY_HOME|GEMINI_HOME|GEMINI_API_KEY)$/i;
 export const localEnvironment = (env: NodeJS.ProcessEnv) => Object.fromEntries(Object.entries(env).filter(([k]) => allowedEnv.test(k)));
 
 /** Resolve native binaries or the JS entry in an npm shim. Never pass prompts through a shell. */
 export function localExecutable(id: string, env: NodeJS.ProcessEnv = process.env): { file: string; prefix: string[] } | null {
-  if (!LOCAL_AGENTS.some((a) => a.id === id)) return null;
+  const normId = id === 'agy' ? 'antigravity' : id;
+  if (!LOCAL_AGENTS.some((a) => a.id === normId)) return null;
   const dirs = (env.PATH || env.Path || '').split(path.delimiter).filter(Boolean);
-  for (const dir of dirs) for (const ext of process.platform === 'win32' ? ['.exe', '.cmd'] : ['']) {
-    const file = path.join(dir.replace(/^"|"$/g, ''), id + ext);
-    if (!existsSync(file)) continue;
-    if (ext !== '.cmd') return { file, prefix: [] };
-    const match = readFileSync(file, 'utf8').match(/"%dp0%[\\/]([^"\r\n]+\.(?:c?js|mjs))"/i);
-    if (match) { const entry = path.resolve(dir, match[1]); if (existsSync(entry)) return { file: process.execPath, prefix: [entry] }; }
+  const candidates = normId === 'antigravity' ? ['agy', 'antigravity'] : [normId];
+  for (const name of candidates) {
+    for (const dir of dirs) for (const ext of process.platform === 'win32' ? ['.exe', '.cmd'] : ['']) {
+      const file = path.join(dir.replace(/^"|"$/g, ''), name + ext);
+      if (!existsSync(file)) continue;
+      if (ext !== '.cmd') return { file, prefix: [] };
+      const match = readFileSync(file, 'utf8').match(/"%dp0%[\\/]([^"\r\n]+\.(?:c?js|mjs))"/i);
+      if (match) { const entry = path.resolve(dir, match[1]); if (existsSync(entry)) return { file: process.execPath, prefix: [entry] }; }
+    }
   }
   return null;
 }
-export function localAgentStatus() { return LOCAL_AGENTS.map((a) => ({ ...a, installed: !!localExecutable(a.id), loginCommand: [a.id, ...a.login].join(' '), hint: a.id === 'pi' ? 'Open Pi and use /login. Its configured provider and model are reused.' : 'Sign in with the agent’s own account. Then test the connection.' })); }
+export function localAgentStatus() { return LOCAL_AGENTS.map((a) => ({ ...a, installed: !!localExecutable(a.id), loginCommand: [a.id === 'antigravity' ? 'agy' : a.id, ...a.login].join(' '), hint: a.id === 'pi' ? 'Open Pi and use /login. Its configured provider and model are reused.' : a.id === 'antigravity' ? 'Run agy to connect your account. Its active models are reused.' : 'Sign in with the agent’s own account. Then test the connection.' })); }
 export function localSelection(value: string) {
-  const [id, ...parts] = value.split(':'); const model = parts.join(':') || 'default';
+  const [rawId, ...parts] = value.split(':'); const id = rawId === 'agy' ? 'antigravity' : rawId; const model = parts.join(':') || 'default';
   const agent = LOCAL_AGENTS.find((a) => a.id === id);
   if (!agent || !(agent.models as readonly string[]).includes(model)) throw new Error('Choose an available local agent and model.');
   return { id: agent.id, model };
 }
-export function localArgs(id: LocalAgentId, model: string, folder: string): { args: string[]; env: Record<string, string> } {
+export function localArgs(id: LocalAgentId, model: string, folder: string, prompt = ''): { args: string[]; env: Record<string, string> } {
   let args: string[] = [], env: Record<string, string> = {};
   switch (id) {
     case 'codex': args = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--json', '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'plugins', '-c', 'mcp_servers={}', '-']; break;
@@ -47,6 +71,11 @@ export function localArgs(id: LocalAgentId, model: string, folder: string): { ar
     case 'kilo': args = ['--pure', 'run', '--format', 'json']; env = { KILO_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'deny' }, plugin: [] }) }; break;
     case 'cline': args = ['--json', '--plan', '--auto-approve', 'false', '--timeout', '110']; break;
     case 'grok': args = ['--prompt-file', path.join(folder, 'prompt.txt'), '--tools', '', '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'text']; break;
+    case 'antigravity':
+      args = ['--dangerously-skip-permissions', '--disable-slash-commands', '--output-format', 'json'];
+      if (model !== 'default') args.push('--model', model);
+      args.push('--print', prompt);
+      return { args, env };
   }
   if (model !== 'default') args.push('--model', model);
   return { args, env };
@@ -77,7 +106,7 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
   try {
     writeFileSync(path.join(folder, 'prompt.txt'), prompt, { mode: 0o600 });
     writeFileSync(path.join(folder, 'reasoner.md'), '---\nname: desk-reasoner\ndescription: Return a structured trading desk opinion\ntools: []\nsubagents: []\n---\nUse only the supplied facts. Return JSON only.\n', { mode: 0o600 });
-    const plan = localArgs(id, model, folder);
+    const plan = localArgs(id, model, folder, prompt);
     return await new Promise<string>((resolve, reject) => {
       const child = spawn(executable.file, [...executable.prefix, ...plan.args], { cwd: folder, env: { ...localEnvironment(process.env), ...plan.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
       let output = '', size = 0, stopped = false, failure = '';
@@ -98,7 +127,8 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
 
 /** Only a fixed, locally discovered login command can open an interactive terminal. No tokens are read or returned. */
 export async function openAgentLogin(id: string) {
-  const agent = LOCAL_AGENTS.find((a) => a.id === id); const executable = localExecutable(id);
+  const normId = id === 'agy' ? 'antigravity' : id;
+  const agent = LOCAL_AGENTS.find((a) => a.id === normId); const executable = localExecutable(normId);
   if (!agent || !executable) throw new Error('Install the agent on PATH first.');
   let child;
   if (process.platform === 'win32') {
@@ -111,5 +141,5 @@ export async function openAgentLogin(id: string) {
     child = spawn('open', ['-a', 'Terminal', file], { detached: true, stdio: 'ignore' });
   } else child = spawn('x-terminal-emulator', ['-e', executable.file, ...executable.prefix, ...agent.login], { cwd: tmpdir(), detached: true, stdio: 'ignore' });
   await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); child.unref();
-  return `Sign-in terminal opened. ${agent.id === 'pi' ? 'Type /login in Pi.' : 'Finish the agent’s own sign-in flow.'} Then test the connection.`;
+  return `Sign-in terminal opened. ${agent.id === 'pi' ? 'Type /login in Pi.' : agent.id === 'antigravity' ? 'Run agy in the terminal.' : 'Finish the agent’s own sign-in flow.'} Then test the connection.`;
 }

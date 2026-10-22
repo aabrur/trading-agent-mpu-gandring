@@ -14,8 +14,12 @@ describe('existing agent integration', () => {
     expect(localExecutable('cmd.exe')).toBeNull();
     expect(() => localSelection('codex:--dangerously-bypass-approvals-and-sandbox')).toThrow();
     expect(() => localSelection('unknown:default')).toThrow();
+    expect(localSelection('antigravity:gemini-3.8-flash-high')).toEqual({ id: 'antigravity', model: 'gemini-3.8-flash-high' });
+    expect(localSelection('agy:gemini-3.8-flash-high')).toEqual({ id: 'antigravity', model: 'gemini-3.8-flash-high' });
     const cfg = loadConfig({ DEFAULT_PROVIDER: 'local', LOCAL_MODEL: 'claude:sonnet' });
     expect(cfg.agents.risk).toEqual({ provider: 'local', model: 'claude:sonnet', fellBackToMock: false });
+    const cfgAgy = loadConfig({ DEFAULT_PROVIDER: 'local', LOCAL_MODEL: 'antigravity:gemini-3.8-flash-high' });
+    expect(cfgAgy.agents.risk).toEqual({ provider: 'local', model: 'antigravity:gemini-3.8-flash-high', fellBackToMock: false });
   });
   it('uses constrained native modes instead of bypassing agent permissions', () => {
     expect(localArgs('codex', 'default', 'folder').args).toEqual(expect.arrayContaining(['--sandbox', 'read-only', '--disable', 'shell_tool']));
@@ -25,13 +29,16 @@ describe('existing agent integration', () => {
     expect(JSON.parse(localArgs('kilo', 'default', 'folder').env.KILO_CONFIG_CONTENT).permission['*']).toBe('deny');
     expect(localArgs('cline', 'default', 'folder').args).toEqual(expect.arrayContaining(['--auto-approve', 'false']));
     expect(localArgs('grok', 'default', 'folder').args).toEqual(expect.arrayContaining(['--tools', '', '--deny', '*']));
+    expect(localArgs('antigravity', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--dangerously-skip-permissions', '--disable-slash-commands', '--output-format', 'json', '--print', 'hello']));
+    expect(localArgs('antigravity', 'gemini-3.8-flash-high', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--model', 'gemini-3.8-flash-high', '--print', 'hello']));
   });
-  it('extracts model text from Codex, Claude, Kilo and Cline event envelopes', () => {
+  it('extracts model text from Codex, Claude, Kilo, Cline, and Antigravity envelopes', () => {
     const reply = '{"reply":"connected"}';
     expect(localReply(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: reply } }))).toBe(reply);
     expect(localReply(JSON.stringify({ type: 'result', result: reply }))).toBe(reply);
     expect(localReply(JSON.stringify({ type: 'text', part: { text: reply } }))).toBe(reply);
     expect(localReply(JSON.stringify({ type: 'say', say: 'text', text: reply }))).toBe(reply);
+    expect(localReply(JSON.stringify({ response: reply }))).toBe(reply);
     expect(localReply(reply)).toBe(reply);
   });
   it('runs a discovered CLI with stdin, isolated working directory, and no exported desk secrets', async () => {

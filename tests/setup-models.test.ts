@@ -15,7 +15,7 @@ describe('curated provider and model setup', () => {
     expect(entries.length).toBe(12);
     for (const [p, models] of entries) {
       if (p === 'mock') expect(models.length).toBe(1);
-      else if (p === 'local') expect(models.length).toBe(11);
+      else if (p === 'local') expect(models.length).toBe(23);
       else expect(models.length).toBe(20);
       expect(new Set(models.map((m) => m.id)).size).toBe(models.length);
       expect(models.filter((m) => m.tags.some((t) => t.startsWith('Free'))).length).toBeLessThanOrEqual(6);
