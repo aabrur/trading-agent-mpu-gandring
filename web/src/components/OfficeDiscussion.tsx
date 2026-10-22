@@ -6,8 +6,9 @@ export function OfficeDiscussion({ state, latest, onSelect }: { state: DeskState
   const { lang } = useI18n();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const roomMessages = (state.roomHistory && state.roomHistory.length > 0) ? state.roomHistory.slice(-30) : null;
   const history = state.logs.filter((line) => line.kind === 'speech' && line.agent).slice(-20);
-  const showLatest = latest && history.at(-1)?.text !== latest.text;
+  const showLatest = latest && !roomMessages && history.at(-1)?.text !== latest.text;
   return <div className="office-discussion" onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); } }}>
     <button ref={trigger} className="discussion-bubble" aria-expanded={open} aria-controls="office-transcript" onClick={() => setOpen(!open)}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M4 4h16v12H9l-5 4zM8 8h8m-8 4h5" /></svg>
@@ -17,8 +18,23 @@ export function OfficeDiscussion({ state, latest, onSelect }: { state: DeskState
     {open && <section id="office-transcript" className="discussion-popover" aria-label={lang === 'id' ? 'Diskusi kantor' : 'Office discussion'}>
       <div className="discussion-head"><b>{lang === 'id' ? 'Diskusi kantor' : 'Office discussion'}</b><button onClick={() => { setOpen(false); trigger.current?.focus(); }} aria-label="Close discussion">×</button></div>
       <div className="discussion-lines" role="log">
-        {!history.length && !latest && <p className="muted">{lang === 'id' ? 'Percakapan muncul saat agen berdiskusi.' : 'Agent conversations appear here during a debate.'}</p>}
-        {history.map((line, i) => <button key={`${line.at}-${i}`} onClick={() => line.agent && onSelect(line.agent)}><b>{line.agent ? state.agents[line.agent].name : ''}</b><span>{line.text}</span>{line.example && <small>EXAMPLE</small>}</button>)}
+        {!roomMessages && !history.length && !latest && <p className="muted">{lang === 'id' ? 'Percakapan muncul saat agen berdiskusi.' : 'Agent conversations appear here during a debate.'}</p>}
+        {roomMessages ? (
+          roomMessages.map((msg, i) => {
+            const fromName = msg.from === 'owner' ? 'Boss' : (state.agents[msg.from]?.name ?? msg.from);
+            const toName = msg.to ? (msg.to === 'owner' ? 'Boss' : msg.to === 'all' ? '@all' : (state.agents[msg.to]?.name ?? msg.to)) : '';
+            const targetAgent = msg.from !== 'owner' ? msg.from : (msg.to && msg.to !== 'all' && msg.to !== 'owner' ? msg.to : undefined);
+            return (
+              <button key={`${msg.id || msg.at}-${i}`} onClick={() => targetAgent && onSelect(targetAgent)}>
+                <b>{fromName}{toName ? ` -> ${toName}` : ''}</b>
+                <span>{msg.text}</span>
+                {msg.example && <small>EXAMPLE</small>}
+              </button>
+            );
+          })
+        ) : (
+          history.map((line, i) => <button key={`${line.at}-${i}`} onClick={() => line.agent && onSelect(line.agent)}><b>{line.agent ? state.agents[line.agent].name : ''}</b><span>{line.text}</span>{line.example && <small>EXAMPLE</small>}</button>)
+        )}
         {showLatest && <button onClick={() => onSelect(latest.agent)}><b>{state.agents[latest.agent].name}</b><span>{latest.text}</span>{latest.example && <small>EXAMPLE</small>}</button>}
       </div>
     </section>}

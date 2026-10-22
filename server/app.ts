@@ -269,11 +269,11 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   }
 
   const server = createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 32 * 1024 });
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 128 * 1024 });
   wss.on('error', () => { /* ignore */ });
   const send = (ws: WebSocket, type: string, payload: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload })); };
   const broadcast = (type: string) => (payload: unknown) => { const msg = JSON.stringify({ type, payload }); for (const c of wss.clients) if (c.readyState === WebSocket.OPEN) c.send(msg); };
-  const eventTypes = ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report', 'execution'] as const;
+  const eventTypes = ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report', 'execution', 'room'] as const;
   const listeners = eventTypes.map((ev) => {
     const fn = broadcast(ev);
     desk.on(ev, fn);

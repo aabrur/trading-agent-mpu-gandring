@@ -18,9 +18,9 @@ const input = { instruction: 'Reply.', data: {}, context: {} };
 
 describe('model response recovery', () => {
   it('accepts plain chat and clips text before validation without inventing actions', async () => {
-    const result = await runAgent(cfg(), async () => 'x'.repeat(5000), 'lead', 'chat', input);
+    const result = await runAgent(cfg(), async () => 'x'.repeat(70000), 'lead', 'chat', input);
     expect(result.fallback).toBe(false);
-    expect(result.data.reply).toHaveLength(4000);
+    expect(result.data.reply).toHaveLength(64000);
     expect(result.data.commandToExecute).toBeUndefined();
     expect(OpinionSchema.parse({ stance: 'LONG', argument: 'x'.repeat(3000) }).argument).toHaveLength(1500);
     expect(ChatSchema.parse({ reply: 'Paragraph one.\n\nParagraph two.' }).reply).toContain('\n\n');

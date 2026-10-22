@@ -99,7 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gemini: env.GEMINI_API_KEY ?? '', deepseek: env.DEEPSEEK_API_KEY ?? '', openrouter: env.OPENROUTER_API_KEY ?? '',
     groq: env.GROQ_API_KEY ?? '', mistral: env.MISTRAL_API_KEY ?? '', together: env.TOGETHER_API_KEY ?? '', fireworks: env.FIREWORKS_API_KEY ?? ''
   };
-  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, env.JEV_OPENROUTER_API_KEY, ...CHANNEL_SECRET_ENV.map((k) => env[k]), ...exchangeSecrets(env)]);
+  registerSecrets([...Object.values(keys), env.GROKBOT_WEBHOOK_KEY, env.AGENT_EVENT_SECRET, env.TRADINGVIEW_PASSPHRASE, env.CRYPTOPANIC_API_KEY, env.COINGLASS_API_KEY, env.TREE_OF_ALPHA_API_KEY, env.ARKHAM_API_KEY, env.FRED_API_KEY, env.JEV_OPENROUTER_API_KEY, ...CHANNEL_SECRET_ENV.map((k) => env[k]), ...exchangeSecrets(env)]);
   const defaultModels: Record<ProviderName, string> = {
     mock: 'mock-desk-v1',
     local: env.LOCAL_MODEL || 'codex:default',

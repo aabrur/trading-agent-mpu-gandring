@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AppConfig } from './config.js';
 import { AGENT_IDS } from './config.js';
-import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, Action } from './types.js';
+import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, Action, RoomMessage } from './types.js';
 import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
 import type { ModelCaller } from './providers/index.js';
@@ -63,6 +63,7 @@ export class Desk extends EventEmitter {
   verdicts: Verdict[] = [];
   logs: LogLine[] = [];
   chats: Record<AgentId, ChatLine[]>;
+  roomHistory: RoomMessage[] = [];
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
   paused = false;
   killed = false;
@@ -222,7 +223,7 @@ export class Desk extends EventEmitter {
         equity: round2(this.book.balance + this.book.unrealized), positions: this.book.positions, closed: this.book.closed.slice(0, 20),
         minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, takeProfitR: this.cfg.risk.takeProfitR
       },
-      equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-120), chats: this.chats,
+      equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-120), chats: this.chats, roomHistory: this.roomHistory.slice(-100),
       watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold,
       jev: { ...this.jev.status(), lastDecision: this.jevLast ?? this.jev.lastRecord },
       debateMode: this.cfg.debate.mode,
@@ -255,6 +256,21 @@ export class Desk extends EventEmitter {
     const line = { ...l, text: safe(l.text), at: Date.now() };
     this.logs.push(line); if (this.logs.length > 400) this.logs.splice(0, this.logs.length - 400);
     this.emit('log', line);
+  }
+  addRoomMessage(msg: Omit<RoomMessage, 'id' | 'at'> & { id?: string; at?: number }): RoomMessage {
+    const roomMsg: RoomMessage = {
+      id: msg.id ?? `room-${Date.now()}-${++this.speechSeq}`,
+      at: msg.at ?? Date.now(),
+      from: msg.from,
+      to: msg.to ?? 'all',
+      text: safe(msg.text),
+      symbol: msg.symbol,
+      example: msg.example
+    };
+    this.roomHistory.push(roomMsg);
+    if (this.roomHistory.length > 100) this.roomHistory.splice(0, this.roomHistory.length - 100);
+    this.emit('room', roomMsg);
+    return roomMsg;
   }
   private setStatus(id: AgentId, status: AgentStatus) { this.agents[id].status = status; this.emit('status', { agent: id, status }); }
   private setAll(status: AgentStatus) { for (const id of AGENT_IDS) this.agents[id].status = status; this.changed(); }
@@ -492,6 +508,7 @@ export class Desk extends EventEmitter {
           broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt },
           symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h,
           fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol,
+          orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain,
           recentClosedCandles: lastCandles, source: snap.source,
           externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined
         },
@@ -541,6 +558,7 @@ export class Desk extends EventEmitter {
         data: {
           symbol,
           tradeFlowProxy,
+          whaleOnChain: snap.whaleOnChain,
           newsBriefing: { providerStatus: newsBriefing.providerStatus, summary: newsBriefing.summary, events: newsBriefing.events.slice(0, 6) },
           whaleBriefing: { providerStatus: whaleBriefing.providerStatus, summary: whaleBriefing.summary, events: whaleBriefing.events.slice(0, 4) },
           jevSidecar,
@@ -558,7 +576,7 @@ export class Desk extends EventEmitter {
       const rule = strategyVote(snap.candles);
       const st = await timer.measure('strategist', () => this.run('strategist', 'opinion', {
         instruction: `The EMA rule on closed 15m bars produced the result below for ${symbol}. Your stance must match the rule side (ABSTAIN means NEUTRAL). Explain it in your voice.`,
-        data: { symbol, rule, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'strategist') : undefined },
+        data: { symbol, rule, technicalSummary: snap.technicalSummary, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'strategist') : undefined },
         context: { symbol, rule }
       }));
       const ruleStance: Stance = rule.side === 'ABSTAIN' ? 'NEUTRAL' : rule.side;
@@ -617,7 +635,7 @@ export class Desk extends EventEmitter {
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
         instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, CLOSE requires strategyInvalidated=true (opposite closed-bar direction beyond EMA21 with opposing five-bar momentum), or a verified critical event. A minor EMA9 crossing, unrealized loss, or changed agent vote alone is insufficient. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
-        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
+        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       }));
       let action: Action = ld.data.action;
@@ -727,6 +745,103 @@ export class Desk extends EventEmitter {
       this.debate = null;
       this.setAll('idle');
       this.emit('debate', { id, symbol, phase: 'done' });
+    }
+  }
+
+  async runHuddle(message: string, targetAgents?: (AgentId | 'all')[], symbol?: string): Promise<{ ok: boolean; replies: Array<{ agent: AgentId; reply: string }> }> {
+    const sym = symbol ? normSymbol(symbol) : (this.verdicts[0]?.symbol ?? this.cfg.watchlist[0] ?? 'BTCUSDT');
+    const snap = await getSnapshot(sym, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample').catch(() => null);
+    if (snap) this.updateTicker(snap);
+
+    const hasAll = !targetAgents || targetAgents.length === 0 || targetAgents.includes('all');
+    const agentsToCall: AgentId[] = hasAll
+      ? ['market', 'research', 'strategist', 'risk', 'execution', 'lead']
+      : (targetAgents.filter((a): a is AgentId => a !== 'all') as AgentId[]);
+
+    const replies: Array<{ agent: AgentId; reply: string }> = [];
+
+    for (const agent of agentsToCall) {
+      if (this.stopFlag || this.killed) break;
+      this.setStatus(agent, 'thinking');
+      this.changed();
+
+      const recentRoom = this.roomHistory.slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
+      const openPositions = this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty, unrealizedPnl: p.unrealizedPnl }));
+
+      const res = await this.run(agent, 'chat', {
+        instruction: `Huddle discussion with Boss and teammates on ${sym}. Provide your direct domain perspective. You can build upon or challenge previous agent comments in the room discussion. Do NOT trigger voting or debates, and do NOT execute orders unless explicitly instructed.`,
+        data: {
+          ownerMessage: message,
+          detectedSymbol: sym,
+          roomDiscussion: recentRoom,
+          openPositions,
+          marketSnapshot: snap ? {
+            last: snap.last,
+            change24hPct: snap.change24hPct,
+            orderbook: snap.orderbook,
+            orderflow: snap.orderflow,
+            derivatives: snap.derivatives,
+            technicalSummary: snap.technicalSummary,
+            whaleOnChain: snap.whaleOnChain
+          } : null,
+          paper: this.book.split()
+        },
+        context: {
+          message,
+          roomDiscussion: recentRoom,
+          openPositions,
+          detectedSymbol: sym
+        }
+      });
+
+      this.setStatus(agent, 'idle');
+      const agentReply = res.data.reply;
+      replies.push({ agent, reply: agentReply });
+      this.addRoomMessage({ from: agent, to: 'all', text: agentReply, symbol: sym, example: res.example });
+      await this.say(agent, agentReply, res.example, 'idle');
+
+      if (res.data.askTeammate && res.data.askTeammate.to && res.data.askTeammate.question) {
+        await this.handleTeammateHandoff(agent, res.data.askTeammate.to, res.data.askTeammate.question, sym, 1, 3);
+      }
+    }
+
+    return { ok: true, replies };
+  }
+
+  private async handleTeammateHandoff(fromAgent: AgentId, toAgent: AgentId, question: string, symbol: string, hop = 1, maxHops = 3): Promise<void> {
+    if (hop > maxHops || this.stopFlag || this.killed) return;
+    if (!AGENT_IDS.includes(toAgent) || toAgent === fromAgent) return;
+    this.setStatus(toAgent, 'thinking');
+    this.changed();
+
+    const recentRoom = this.roomHistory.slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
+    const openPositions = this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty, unrealizedPnl: p.unrealizedPnl }));
+
+    const res = await this.run(toAgent, 'chat', {
+      instruction: `${ROLES[fromAgent].name} asked you directly: "${question}". Answer clearly and concisely using your domain knowledge and current room context. If needed, you may ask another teammate via askTeammate.`,
+      data: {
+        colleagueQuestion: question,
+        fromAgent,
+        detectedSymbol: symbol,
+        roomDiscussion: recentRoom,
+        openPositions,
+        paper: this.book.split()
+      },
+      context: {
+        question,
+        fromAgent,
+        roomDiscussion: recentRoom,
+        detectedSymbol: symbol
+      }
+    });
+
+    this.setStatus(toAgent, 'idle');
+    const answer = res.data.reply;
+    this.addRoomMessage({ from: toAgent, to: fromAgent, text: answer, symbol, example: res.example });
+    await this.say(toAgent, answer, res.example, 'idle');
+
+    if (res.data.askTeammate && res.data.askTeammate.to && res.data.askTeammate.question && res.data.askTeammate.to !== toAgent) {
+      await this.handleTeammateHandoff(toAgent, res.data.askTeammate.to, res.data.askTeammate.question, symbol, hop + 1, maxHops);
     }
   }
 
@@ -1131,7 +1246,7 @@ export class Desk extends EventEmitter {
   }
 
   async command(text: string, agent?: AgentId): Promise<{ ok: boolean; reply: string; command: Command['type'] }> {
-    if (text.length > 2500) return { ok: false, reply: 'Message exceeds 2500 characters.', command: 'invalid' };
+    if (text.length > 32000) return { ok: false, reply: 'Message exceeds 32000 characters.', command: 'invalid' };
     const addressed = text.match(/^(lead|market|research|strategist|risk|execution)[\s,:]+(.+)$/is);
     if (addressed) { agent = addressed[1].toLowerCase() as AgentId; text = addressed[2]; }
     const cmd = parseCommand(text);
@@ -1218,9 +1333,26 @@ export class Desk extends EventEmitter {
             target = matchTarget[1].toLowerCase() as AgentId;
             userQuery = matchTarget[2] || userQuery;
           }
+
+          const symMatch = userQuery.match(/\b(BTC|ETH|SOL|BNB|XRP|DOGE|AVAX|LINK|SUI|ADA|NEAR|APT)(?:USDT)?\b/i);
+          const detectedSymbol = symMatch ? normSymbol(symMatch[0]) : (this.verdicts[0]?.symbol ?? this.cfg.watchlist[0] ?? 'BTCUSDT');
+
+          // Multi-agent mention fan-out or @all huddle
+          const isMultiAgent = cmd.mentions && (cmd.mentions.includes('all') || cmd.mentions.length > 1);
+          if (isMultiAgent) {
+            who = 'lead';
+            this.addRoomMessage({ from: 'owner', to: 'all', text: userQuery, symbol: detectedSymbol });
+            const huddleRes = await this.runHuddle(userQuery, cmd.mentions, detectedSymbol);
+            reply = huddleRes.replies.map((r) => `**${ROLES[r.agent].name}**: ${r.reply}`).join('\n\n');
+            break;
+          }
+
+          if (cmd.mentions && cmd.mentions.length === 1 && cmd.mentions[0] !== 'all') {
+            target = cmd.mentions[0];
+          }
           who = target;
           if (!agent) this.chats[target].push(userLine);
-          // Owner feedback is stored as advice; settings are changed by the command handler.
+          this.addRoomMessage({ from: 'owner', to: target, text: userQuery, symbol: detectedSymbol });
 
           if (/\b(wrong|salah|don'?t|do not|jangan|stop doing|bad call|mistake|keliru|should have|harusnya|never again)\b/i.test(userQuery)) {
             const l = this.learn({ role: target, kind: 'correction', happened: `Owner corrected ${ROLES[target].name}: "${userQuery.slice(0, 160)}"`, rootCause: 'owner feedback from the office chat', lesson: userQuery.slice(0, 200), source: 'owner' });
@@ -1229,8 +1361,8 @@ export class Desk extends EventEmitter {
           if (this.grokbot) { reply = `I am played by your Grok Bot agent in the "Trading Agent Mpu Gandring" group chat. Talk to me there. This office only shows what we post.`; break; }
           this.setStatus(target, 'typing'); this.changed();
 
-          const symMatch = userQuery.match(/\b(BTC|ETH|SOL|BNB|XRP|DOGE|AVAX|LINK|SUI|ADA|NEAR|APT)(?:USDT)?\b/i);
-          const detectedSymbol = symMatch ? normSymbol(symMatch[0]) : (this.verdicts[0]?.symbol ?? this.cfg.watchlist[0] ?? 'BTCUSDT');
+          const snap = await getSnapshot(detectedSymbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample').catch(() => null);
+          if (snap) this.updateTicker(snap);
 
           let newsBriefingData: unknown = null;
           let whaleBriefingData: unknown = null;
@@ -1245,6 +1377,7 @@ export class Desk extends EventEmitter {
           const recentVerdicts = this.verdicts.slice(0, 4).map((v) => ({ symbol: v.symbol, action: v.action, riskDecision: v.riskDecision, executed: v.executed, reason: v.reason }));
           const openPositions = this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty, unrealizedPnl: p.unrealizedPnl }));
           const recentClosed = this.book.closed.slice(0, 3).map((c) => ({ symbol: c.symbol, side: c.side, realizedPnl: c.realizedPnl, reason: c.reason }));
+          const recentRoom = this.roomHistory.slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
           const ticker = this.tickers[detectedSymbol];
 
           const res = await this.run(target, 'chat', {
@@ -1257,6 +1390,16 @@ export class Desk extends EventEmitter {
               recentVerdicts,
               openPositions,
               recentClosed,
+              roomDiscussion: recentRoom,
+              marketSnapshot: snap ? {
+                last: snap.last,
+                change24hPct: snap.change24hPct,
+                orderbook: snap.orderbook,
+                orderflow: snap.orderflow,
+                derivatives: snap.derivatives,
+                technicalSummary: snap.technicalSummary,
+                whaleOnChain: snap.whaleOnChain
+              } : null,
               newsBriefing: newsBriefingData,
               whaleBriefing: whaleBriefingData,
               paper: this.book.split(),
@@ -1265,6 +1408,7 @@ export class Desk extends EventEmitter {
             context: {
               message: userQuery,
               chatHistory: history,
+              roomDiscussion: recentRoom,
               paper: this.book.split(),
               stopMarginPct: this.cfg.risk.defaultStopPct,
               takeProfitMarginPct: this.cfg.risk.takeProfitPct,
@@ -1276,6 +1420,13 @@ export class Desk extends EventEmitter {
           });
           this.setStatus(target, 'idle');
           reply = res.data.reply;
+          this.addRoomMessage({ from: target, to: 'owner', text: reply, symbol: detectedSymbol, example: res.example });
+          await this.say(target, reply, res.example, 'idle');
+
+          if (res.data.askTeammate && res.data.askTeammate.to && res.data.askTeammate.question) {
+            await this.handleTeammateHandoff(target, res.data.askTeammate.to, res.data.askTeammate.question, detectedSymbol, 1, 3);
+          }
+
           if (res.data.commandToExecute) {
             if (authorizedChatCommand(userQuery, res.data.commandToExecute)) {
               const result = await this.command(res.data.commandToExecute, target);

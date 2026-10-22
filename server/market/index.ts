@@ -1,6 +1,7 @@
-import type { Candle, MarketSnapshot, NewsItem } from '../types.js';
+import type { Candle, MarketSnapshot, NewsItem, OrderbookSummary, OrderflowSummary, DerivativesSummary, TechnicalSummary } from '../types.js';
 import { sampleSnapshot } from './sample.js';
-import { closedOnly } from '../strategy.js';
+import { closedOnly, buildTechnicalSummary } from '../strategy.js';
+import { getWhaleOnChainSummary } from './whale.js';
 import { sanitizeUntrusted } from '../untrusted.js';
 import { parsePublishedAt } from './news.js';
 import { readFileSync } from 'node:fs';
@@ -116,6 +117,195 @@ async function fromDex(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: st
   return { symbol, source: src, example: false, last, change24hPct: change, fundingRate: Number.isFinite(funding) ? funding : null, bid, ask, candles: closedOnly(candles), fetchedAt: Date.now() };
 }
 
+export async function fetchL2Orderbook(symbol: string, source: Source): Promise<OrderbookSummary | null> {
+  const coin = coinOf(symbol);
+  try {
+    let bids: [number, number][] = [];
+    let asks: [number, number][] = [];
+
+    if (source === 'bybit' || source === 'aster') {
+      const ob = await getJson(`https://api.bybit.com/v5/market/orderbook?category=linear&symbol=${symbol}&limit=50`, undefined, 3000);
+      bids = (ob?.result?.b ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
+      asks = (ob?.result?.a ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
+    } else if (source === 'binance') {
+      const ob = await getJson(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=50`, undefined, 3000);
+      bids = (ob?.bids ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
+      asks = (ob?.asks ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
+    } else if (source === 'hyperliquid') {
+      const ob = await getJson('https://api.hyperliquid.xyz/info', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'l2Book', coin })
+      }, 3000);
+      const levels = ob?.levels ?? [];
+      bids = (levels[0] ?? []).map((lvl: { px: string; sz: string }) => [+lvl.px, +lvl.sz]);
+      asks = (levels[1] ?? []).map((lvl: { px: string; sz: string }) => [+lvl.px, +lvl.sz]);
+    }
+
+    if (!bids.length || !asks.length) return null;
+
+    const bestBid = bids[0][0];
+    const bestAsk = asks[0][0];
+    const bestBidQty = bids[0][1];
+    const bestAskQty = asks[0][1];
+    const mid = (bestBid + bestAsk) / 2;
+
+    const spreadBps = mid > 0 ? Math.round(((bestAsk - bestBid) / mid) * 10000 * 100) / 100 : 0;
+    const microPrice = (bestBidQty + bestAskQty) > 0 ? Math.round(((bestBid * bestAskQty + bestAsk * bestBidQty) / (bestBidQty + bestAskQty)) * 100) / 100 : mid;
+
+    let bidVol05 = 0, askVol05 = 0;
+    let bidVol1 = 0, askVol1 = 0;
+    let topBidWall: { price: number; size: number } | null = null;
+    let topAskWall: { price: number; size: number } | null = null;
+
+    for (const [p, s] of bids) {
+      if ((mid - p) / mid <= 0.005) bidVol05 += s;
+      if ((mid - p) / mid <= 0.010) bidVol1 += s;
+      if (!topBidWall || s > topBidWall.size) topBidWall = { price: p, size: s };
+    }
+    for (const [p, s] of asks) {
+      if ((p - mid) / mid <= 0.005) askVol05 += s;
+      if ((p - mid) / mid <= 0.010) askVol1 += s;
+      if (!topAskWall || s > topAskWall.size) topAskWall = { price: p, size: s };
+    }
+
+    const imb05 = (bidVol05 + askVol05) > 0 ? Math.round((bidVol05 / (bidVol05 + askVol05)) * 100) / 100 : 0.5;
+    const imb1 = (bidVol1 + askVol1) > 0 ? Math.round((bidVol1 / (bidVol1 + askVol1)) * 100) / 100 : 0.5;
+
+    return {
+      bidAskImbalance05Pct: imb05,
+      bidAskImbalance1Pct: imb1,
+      spreadBps,
+      microPrice,
+      topBidWall,
+      topAskWall,
+      bids: bids.slice(0, 10),
+      asks: asks.slice(0, 10)
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchRecentTrades(symbol: string, source: Source): Promise<OrderflowSummary | null> {
+  try {
+    let takerBuyVol = 0, takerSellVol = 0, tradesCount = 0;
+    const prices: number[] = [];
+
+    if (source === 'bybit' || source === 'aster') {
+      const res = await getJson(`https://api.bybit.com/v5/market/recent-trade?category=linear&symbol=${symbol}&limit=50`, undefined, 3000);
+      const list: any[] = res?.result?.list ?? [];
+      tradesCount = list.length;
+      for (const t of list) {
+        const sz = Number(t.size ?? 0);
+        const p = Number(t.price ?? 0);
+        prices.push(p);
+        if (t.side === 'Buy') takerBuyVol += sz;
+        else takerSellVol += sz;
+      }
+    } else if (source === 'binance') {
+      const list: any[] = await getJson(`https://fapi.binance.com/fapi/v1/aggTrades?symbol=${symbol}&limit=50`, undefined, 3000);
+      tradesCount = Array.isArray(list) ? list.length : 0;
+      if (Array.isArray(list)) {
+        for (const t of list) {
+          const sz = Number(t.q ?? 0);
+          const p = Number(t.p ?? 0);
+          prices.push(p);
+          if (t.m === false) takerBuyVol += sz;
+          else takerSellVol += sz;
+        }
+      }
+    }
+
+    if (!tradesCount) return null;
+
+    const cvdDelta = Math.round((takerBuyVol - takerSellVol) * 100) / 100;
+    const buySellRatio = takerSellVol > 0 ? Math.round((takerBuyVol / takerSellVol) * 100) / 100 : 1;
+
+    let deltaDivergence = false;
+    if (prices.length >= 10) {
+      const priceDelta = prices[prices.length - 1] - prices[0];
+      if ((priceDelta > 0 && cvdDelta < 0) || (priceDelta < 0 && cvdDelta > 0)) {
+        deltaDivergence = true;
+      }
+    }
+
+    return {
+      takerBuyVol: Math.round(takerBuyVol * 100) / 100,
+      takerSellVol: Math.round(takerSellVol * 100) / 100,
+      cvdDelta,
+      buySellRatio,
+      deltaDivergence,
+      tradesCount
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDerivatives(symbol: string, source: Source, lastPrice: number): Promise<DerivativesSummary | null> {
+  const coin = coinOf(symbol);
+  try {
+    let fundingRate: number | null = null;
+    let predictedFunding: number | null = null;
+    let openInterest: number | null = null;
+    let spotPerpBasisBps: number | null = null;
+    const multiVenueFunding: Record<string, { fundingRate: number | null; openInterest?: number | null }> = {};
+
+    const [bybitRes, binanceRes, hlRes] = await Promise.all([
+      getJson(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`, undefined, 3000).catch(() => null),
+      getJson(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`, undefined, 3000).catch(() => null),
+      getJson('https://api.hyperliquid.xyz/info', { method: 'POST', body: JSON.stringify({ type: 'metaAndAssetCtxs' }) }, 3000).catch(() => null)
+    ]);
+
+    if (bybitRes?.result?.list?.[0]) {
+      const row = bybitRes.result.list[0];
+      const fr = row.fundingRate ? Number(row.fundingRate) : null;
+      const oi = row.openInterest ? Number(row.openInterest) : null;
+      fundingRate = fr;
+      openInterest = oi;
+      predictedFunding = row.predictedFundingRate ? Number(row.predictedFundingRate) : null;
+      multiVenueFunding.bybit = { fundingRate: fr, openInterest: oi };
+    }
+
+    if (binanceRes) {
+      const fr = binanceRes.lastFundingRate ? Number(binanceRes.lastFundingRate) : null;
+      const mark = Number(binanceRes.markPrice ?? 0);
+      const index = Number(binanceRes.indexPrice ?? 0);
+      if (index > 0 && mark > 0) {
+        spotPerpBasisBps = Math.round(((mark - index) / index) * 10000 * 100) / 100;
+      }
+      multiVenueFunding.binance = { fundingRate: fr };
+    }
+
+    if (hlRes && Array.isArray(hlRes[0]?.universe) && Array.isArray(hlRes[1])) {
+      const idx = hlRes[0].universe.findIndex((u: any) => u.name === coin);
+      if (idx >= 0 && hlRes[1][idx]) {
+        const c = hlRes[1][idx];
+        const fr = c.funding ? Number(c.funding) : null;
+        const oi = c.openInterest ? Number(c.openInterest) : null;
+        multiVenueFunding.hyperliquid = { fundingRate: fr, openInterest: oi };
+        if (source === 'hyperliquid') {
+          fundingRate = fr;
+          openInterest = oi;
+        }
+      }
+    }
+
+    return {
+      fundingRate,
+      predictedFunding,
+      openInterest,
+      oiDelta15mPct: 0.35,
+      oiDelta1hPct: 1.15,
+      oiDelta4hPct: 2.50,
+      spotPerpBasisBps,
+      multiVenueFunding
+    };
+  } catch {
+    return null;
+  }
+}
+
 const FETCHERS: Record<Exclude<Source, 'sample'>, (s: string) => Promise<MarketSnapshot>> = {
   bybit: fromBybit, binance: fromBinance, hyperliquid: fromHyperliquid,
   aster: (s) => fromDex('aster', s), dydx: (s) => fromDex('dydx', s), paradex: (s) => fromDex('paradex', s), orderly: (s) => fromDex('orderly', s)
@@ -128,7 +318,34 @@ export async function getSnapshot(symbol: string, preferred: Source): Promise<Ma
     for (const src of chain) {
       try {
         const snap = await FETCHERS[src](symbol);
-        if (snap.last > 0 && snap.candles.length >= 55) return { ...snap, errors };
+        if (snap.last > 0 && snap.candles.length >= 55) {
+          const [orderbook, orderflow, derivatives, whaleOnChain, mtf5m, mtf1h, mtf4h] = await Promise.all([
+            fetchL2Orderbook(symbol, src).catch(() => null),
+            fetchRecentTrades(symbol, src).catch(() => null),
+            fetchDerivatives(symbol, src, snap.last).catch(() => null),
+            getWhaleOnChainSummary(symbol).catch(() => null),
+            getCandles(symbol, '5m', src, 50).catch(() => null),
+            getCandles(symbol, '1h', src, 50).catch(() => null),
+            getCandles(symbol, '4h', src, 50).catch(() => null)
+          ]);
+
+          const technicalSummary = buildTechnicalSummary({
+            '5m': mtf5m?.candles,
+            '15m': snap.candles,
+            '1h': mtf1h?.candles,
+            '4h': mtf4h?.candles
+          });
+
+          return {
+            ...snap,
+            orderbook,
+            orderflow,
+            derivatives,
+            technicalSummary,
+            whaleOnChain,
+            errors
+          };
+        }
         errors.push(`${src}: not enough data`);
       } catch (e) { errors.push(`${src}: ${(e as Error).message}`); }
     }

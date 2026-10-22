@@ -5,6 +5,99 @@ export type AgentStatus = 'idle' | 'reading' | 'thinking' | 'typing' | 'arguing'
 
 export interface Candle { t: number; o: number; h: number; l: number; c: number; v: number }
 
+export interface RoomMessage {
+  id: string;
+  at: number;
+  from: AgentId | 'owner';
+  to?: AgentId | 'all' | 'owner';
+  text: string;
+  symbol?: string;
+  example?: boolean;
+}
+
+export interface OrderbookSummary {
+  bidAskImbalance05Pct: number;
+  bidAskImbalance1Pct: number;
+  spreadBps: number;
+  microPrice: number;
+  topBidWall: { price: number; size: number } | null;
+  topAskWall: { price: number; size: number } | null;
+  bids?: [number, number][];
+  asks?: [number, number][];
+}
+
+export interface OrderflowSummary {
+  takerBuyVol: number;
+  takerSellVol: number;
+  cvdDelta: number;
+  buySellRatio: number;
+  deltaDivergence: boolean;
+  tradesCount?: number;
+}
+
+export interface DerivativesSummary {
+  fundingRate: number | null;
+  predictedFunding: number | null;
+  openInterest: number | null;
+  oiDelta15mPct: number | null;
+  oiDelta1hPct: number | null;
+  oiDelta4hPct: number | null;
+  spotPerpBasisBps: number | null;
+  multiVenueFunding?: Record<string, { fundingRate: number | null; openInterest?: number | null }>;
+  liquidations24hUsd?: number | null;
+  liquidationClusters?: Array<{ price: number; estimatedVolUsd: number; side: 'LONG' | 'SHORT' }>;
+}
+
+export interface TechnicalSummary {
+  mtfTrend: Record<'5m' | '15m' | '1h' | '4h', {
+    ema9: number;
+    ema21: number;
+    ema50: number;
+    ema200: number;
+    regime: 'STRONG_UPTREND' | 'STRONG_DOWNTREND' | 'RANGING_CHOP' | 'SQUEEZE_BREAKOUT';
+  }>;
+  volatility: {
+    atr14: number;
+    atrPct: number;
+    realizedVol24h: number;
+    bollingerBandWidthPct: number;
+  };
+  momentum: {
+    rsi14_15m: number;
+    rsi14_1h: number;
+    rsi14_4h: number;
+  };
+  volumeProfile: {
+    sessionVwap: number;
+    poc: number;
+    vah: number;
+    val: number;
+  };
+  swingLevels: {
+    recentSwingHigh: number;
+    recentSwingLow: number;
+    distToLiquiditySweepPct: number;
+  };
+}
+
+export interface WhaleOnChainSummary {
+  hyperliquidWhales?: {
+    longCount: number;
+    shortCount: number;
+    avgLongNotional: number;
+    avgShortNotional: number;
+    totalUnrealizedPnl: number;
+    topPositions?: Array<{ address: string; side: 'LONG' | 'SHORT'; notional: number; pnl: number }>;
+  };
+  deribitMacro?: {
+    dvol: number | null;
+    putCallRatio: number | null;
+    indexPrice: number | null;
+  };
+  newsWire?: NewsItem[];
+  arkhamAlerts?: Array<{ id: string; summary: string; timestamp: number }>;
+}
+
 export interface MarketSnapshot {
   symbol: string;
   source: 'bybit' | 'binance' | 'hyperliquid' | 'aster' | 'dydx' | 'paradex' | 'orderly' | 'sample';
@@ -16,6 +109,11 @@ export interface MarketSnapshot {
   ask: number | null;
   candles: Candle[]; // closed 15m bars, oldest first
   fetchedAt: number;
+  orderbook?: OrderbookSummary | null;
+  orderflow?: OrderflowSummary | null;
+  derivatives?: DerivativesSummary | null;
+  technicalSummary?: TechnicalSummary | null;
+  whaleOnChain?: WhaleOnChainSummary | null;
 }
 
 export interface NewsItem {

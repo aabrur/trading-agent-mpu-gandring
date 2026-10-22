@@ -19,6 +19,7 @@ export interface Verdict {
 }
 export interface LogLine { at: number; kind: string; agent?: AgentId; text: string; example?: boolean }
 export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at: number }
+export interface RoomMessage { id: string; at: number; from: AgentId | 'owner'; to?: AgentId | 'all' | 'owner'; text: string; symbol?: string; example?: boolean }
 export interface DeskState {
   trading?: { network: 'testnet' | 'mainnet' | null; profile: import('../../server/trading-settings').TradingProfile; values: import('../../server/trading-settings').TradingSettings };
   app: string; mode: 'PAPER' | 'TESTNET' | 'LIVE'; appMode: 'local' | 'grokbot'; marketSource: string; bridgeEnabled: boolean; paused: boolean;
@@ -37,7 +38,7 @@ export interface DeskState {
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] };
   paper: { balance: number; safetyNet: number; n: number; moneyTrade: number; perOrder: number; orderSizePct?: number; canOpen: boolean; usedMargin: number; unrealized: number; equity: number; positions: Position[]; closed: ClosedTrade[]; minOrderUsdt: number; maxLeverage: number; defaultStopPct?: number; takeProfitR?: number };
   equityHistory: { t: number; equity: number; balance: number }[];
-  verdicts: Verdict[]; logs: LogLine[]; chats: Record<AgentId, ChatLine[]>; watchlist: string[];  fightThreshold: number;
+  verdicts: Verdict[]; logs: LogLine[]; chats: Record<AgentId, ChatLine[]>; roomHistory?: RoomMessage[]; watchlist: string[];  fightThreshold: number;
   debateMode?: 'normal' | 'fast';
   lastCycle?: { symbol: string; durationMs: number; stage: string; verdict: string | null; noTradeReason: string | null; executionStatus: string | null; reasonCode: string | null; outcome: string | null } | null;
   jev?: {

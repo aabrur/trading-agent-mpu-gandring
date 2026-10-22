@@ -16,7 +16,7 @@ export function looksLikeInjection(text: string): boolean {
   return INJECTION.some((re) => re.test(text));
 }
 
-export function sanitizeUntrusted(text: string, maxLen = 600): { text: string; flagged: boolean } {
+export function sanitizeUntrusted(text: string, maxLen = 16000): { text: string; flagged: boolean } {
   let flagged = false;
   const kept = String(text)
     .replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ')

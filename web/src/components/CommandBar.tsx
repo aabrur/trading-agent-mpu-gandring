@@ -69,7 +69,7 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
         </div>
         <form className="cb-input" onSubmit={(e) => { e.preventDefault(); void run(text); setText(''); }}>
           <span className="prompt">&gt;</span>
-          <input value={text} onChange={(e) => setText(e.target.value)} placeholder={t('commandPlaceholder')} maxLength={500} aria-label="command" />
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder={t('commandPlaceholder')} maxLength={32000} aria-label="command" />
           <button type="submit">{t('runBtn')}</button>
         </form>
       </div>

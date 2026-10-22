@@ -54,7 +54,14 @@ export const ReviewSchema = z.object({
   grade: z.enum(['A', 'B', 'C', 'D', 'F'])
 });
 
-export const ChatSchema = z.object({ reply: boundedText(4000), commandToExecute: z.string().min(1).max(200).optional() });
+export const ChatSchema = z.object({
+  reply: boundedText(64000),
+  commandToExecute: z.string().min(1).max(200).optional(),
+  askTeammate: z.object({
+    to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),
+    question: z.string().min(1).max(2000)
+  }).nullable().optional()
+});
 
 export type Schemas = {
   opinion: typeof OpinionSchema;
@@ -75,19 +82,19 @@ export const SCHEMA_HINTS: Record<TaskKind, string> = {
   lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences"}',
   risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":1..125,"stopPct":positive percentage points up to 50 (2 means 2%),"reason":"1..1500 characters"}. APPROVE/REDUCE require all numeric fields as JSON numbers. REJECT may omit sizing. Never substitute null or strings for numbers.',
   review: '{"lesson":"one sentence","grade":"A|B|C|D|F"}',
-  chat: '{"reply":"answer in character, up to 4000 characters","commandToExecute":"optional exact supported command explicitly requested by Boss"}'
+  chat: '{"reply":"answer in character, up to 64000 characters","commandToExecute":"optional exact supported command explicitly requested by Boss","askTeammate":{"to":"lead|market|research|strategist|risk|execution","question":"question"} or null}'
 };
 
 // Pull the first JSON object out of a model reply (handles ```json fences and chatter).
 export function extractJson(raw: string, task?: TaskKind): unknown {
-  const s = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const s = raw.trim().replace(/^```(?:json|markdown)?/i, '').replace(/```$/, '').trim();
   try {
     const parsed: unknown = JSON.parse(s);
     return task === 'chat' && typeof parsed === 'string' ? { reply: parsed } : parsed;
   } catch { /* fall through */ }
   const start = s.indexOf('{');
   if (start < 0) {
-    if (task === 'chat') return { reply: raw };
+    if (task === 'chat') return { reply: s };
     throw new Error('no JSON object in reply');
   }
   const closing: string[] = [];
@@ -99,12 +106,12 @@ export function extractJson(raw: string, task?: TaskKind): unknown {
     else if (ch === '{' || ch === '[') closing.push(ch === '{' ? '}' : ']');
     else if (ch === '}' || ch === ']') {
       if (closing.pop() !== ch) {
-        if (task === 'chat') return { reply: raw };
+        if (task === 'chat') return { reply: s };
         throw new Error('mismatched JSON delimiter');
       }
       if (!closing.length) {
         try { return JSON.parse(s.slice(start, i + 1)); }
-        catch (e) { if (task === 'chat') return { reply: raw }; throw e; }
+        catch (e) { if (task === 'chat') return { reply: s }; throw e; }
       }
     }
   }
@@ -114,5 +121,5 @@ export function extractJson(raw: string, task?: TaskKind): unknown {
   candidate += inStr ? '"' : '';
   if (!inStr) candidate = candidate.replace(/,\s*$/, '');
   try { return JSON.parse(candidate + closing.reverse().join('')); }
-  catch { if (task === 'chat') return { reply: raw }; throw new Error('unterminated JSON object'); }
+  catch { if (task === 'chat') return { reply: s }; throw new Error('unterminated JSON object'); }
 }

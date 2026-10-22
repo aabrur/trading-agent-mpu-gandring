@@ -1,20 +1,32 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.15",
-  "appVersion": "0.0.0.3.15",
+  "version": "0.3.16",
+  "appVersion": "0.0.0.3.16",
   "changelog": [
-    "Orders now use Owner profile SL/TP percentages of committed margin, with 60% entry confidence and daily loss limits of 10%, 15%, 20% and 25%.",
-    "Removed minimum stop distance, separate account-equity trade risk sizing, model and mood size adjustments, and automatic hedge orders.",
-    "Repaired office agent clicks, seated idle behavior and furniture bounds inside the existing frame, with multiline chat for all six agents.",
-    "Added Owner profile, percentage sizing, leverage and direct open/close commands through the shared Office and channel execution path.",
-    "Added modular agent personas, response recovery, precise Aster history identifiers and singleton Telegram polling with bounded retries."
+    "Expanded chat context to 64,000 characters and input to 32,000 characters with graceful markdown recovery.",
+    "Added direct inter-agent communication, @mention and @all huddles, and autonomous askTeammate handoffs.",
+    "Integrated high-alpha market engine: L2 orderbook imbalance, CVD delta, MTF structure, Volume Profile POC/VAH/VAL, and Hyperliquid whale tracking.",
+    "Clarified architecture documentation: exactly 6 AI trading agents plus an optional Jev decision sidecar."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",
   "author": "Abrur Alaina",
   "type": "module",
-  "bin": { "mpu": "bin/mpu.mjs" },
-  "files": ["bin", "dist", "cli", "server", "web", "docs", ".env.example", "tsconfig.server.json", "tsconfig.web.json", "vite.config.ts"],
+  "bin": {
+    "mpu": "bin/mpu.mjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "cli",
+    "server",
+    "web",
+    "docs",
+    ".env.example",
+    "tsconfig.server.json",
+    "tsconfig.web.json",
+    "vite.config.ts"
+  ],
   "private": false,
   "engines": {
     "node": ">=20"

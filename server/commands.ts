@@ -15,7 +15,7 @@ export type Command =
   | { type: 'close'; symbol: string }
   | { type: 'mood'; delta: number | 'reset' }
   | { type: 'status' } | { type: 'help' }
-  | { type: 'chat'; text: string };
+  | { type: 'chat'; text: string; mentions?: (import('./types.js').AgentId | 'all')[] };
 
 export function normSymbol(s: string): string {
   const up = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -24,6 +24,18 @@ export function normSymbol(s: string): string {
 }
 
 // Plain language command parser. English plus a few Bahasa Indonesia words.
+export function extractMentions(input: string): { mentions: (import('./types.js').AgentId | 'all')[]; cleanText: string } {
+  const agentRegex = /@(all|desk|lead|market|research|strategist|risk|execution)\b/gi;
+  const found: (import('./types.js').AgentId | 'all')[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = agentRegex.exec(input)) !== null) {
+    const raw = m[1].toLowerCase();
+    const target = (raw === 'all' || raw === 'desk') ? 'all' : (raw as import('./types.js').AgentId);
+    if (!found.includes(target)) found.push(target);
+  }
+  return { mentions: found, cleanText: input };
+}
+
 export function parseCommand(input: string): Command {
   const t = input.trim().replace(/^\//, '');
   let m: RegExpMatchArray | null;
@@ -56,7 +68,8 @@ export function parseCommand(input: string): Command {
   if (/^(calm down|reset mood|normal again|biasa saja|tenang dulu)[.!]?$/i.test(t)) return { type: 'mood', delta: 'reset' };
   if (/^(status|portfolio)\b/i.test(t)) return { type: 'status' };
   if (/^(help|\?)$/i.test(t)) return { type: 'help' };
-  return { type: 'chat', text: t };
+  const { mentions } = extractMentions(t);
+  return { type: 'chat', text: t, ...(mentions.length ? { mentions } : {}) };
 }
 
 export const HELP = 'Commands: analyze ETHUSDT, set profile default|balance|profit|aggressive, set size 5%, set leverage 10, open long BTC [size%] [leverage], open short BTC [size%] [leverage], buy BTC, sell BTC, close BTC, close all, pause, resume, set n 3, set safety 20, set balance 100, be more cautious, be more aggressive, calm down, status.';

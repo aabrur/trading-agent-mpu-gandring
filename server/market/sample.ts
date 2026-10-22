@@ -1,4 +1,5 @@
 import type { Candle, MarketSnapshot } from '../types.js';
+import { buildTechnicalSummary } from '../strategy.js';
 
 // Offline sample market. Deterministic, labeled EXAMPLE. Used when public APIs
 // are unreachable or MARKET_SOURCE=sample.
@@ -46,6 +47,51 @@ export function sampleSnapshot(symbol: string, now = Date.now()): MarketSnapshot
     symbol, source: 'sample', example: true, last: px,
     change24hPct: ((px - dayAgo) / dayAgo) * 100,
     fundingRate: ((hashStr(symbol) % 21) - 10) / 100000,
-    bid: px * 0.9999, ask: px * 1.0001, candles, fetchedAt: now
+    bid: px * 0.9999, ask: px * 1.0001, candles, fetchedAt: now,
+    orderbook: {
+      bidAskImbalance05Pct: 0.52,
+      bidAskImbalance1Pct: 0.51,
+      spreadBps: 2,
+      microPrice: Math.round(px * 1.00002 * 100) / 100,
+      topBidWall: { price: Math.round(px * 0.995 * 100) / 100, size: 45.2 },
+      topAskWall: { price: Math.round(px * 1.005 * 100) / 100, size: 52.8 }
+    },
+    orderflow: {
+      takerBuyVol: 1250,
+      takerSellVol: 1180,
+      cvdDelta: 70,
+      buySellRatio: 1.06,
+      deltaDivergence: false,
+      tradesCount: 48
+    },
+    derivatives: {
+      fundingRate: ((hashStr(symbol) % 21) - 10) / 100000,
+      predictedFunding: 0.0001,
+      openInterest: 15200,
+      oiDelta15mPct: 0.45,
+      oiDelta1hPct: 1.2,
+      oiDelta4hPct: 2.8,
+      spotPerpBasisBps: 3.5,
+      multiVenueFunding: {
+        bybit: { fundingRate: 0.0001, openInterest: 8500 },
+        binance: { fundingRate: 0.00009, openInterest: 12400 },
+        hyperliquid: { fundingRate: 0.00012, openInterest: 3200 }
+      }
+    },
+    technicalSummary: buildTechnicalSummary({ '15m': candles }),
+    whaleOnChain: {
+      hyperliquidWhales: {
+        longCount: 14,
+        shortCount: 8,
+        avgLongNotional: 850000,
+        avgShortNotional: 620000,
+        totalUnrealizedPnl: 420000
+      },
+      deribitMacro: {
+        dvol: 52.4,
+        putCallRatio: 0.68,
+        indexPrice: px
+      }
+    }
   };
 }

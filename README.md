@@ -4,7 +4,7 @@
   <img src="web/public/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring" width="280" />
 </p>
 
-Six AI trading agents share one office. They read the market, argue about it, throw cartoon punches when they really disagree, and execute the Desk Lead's decision using the Owner's profile and allocation.
+Six AI trading agents share one office, backed by an optional Jev decision-intelligence sidecar (total architecture: 6 AI agents + Jev; Jev is a sidecar, not a seventh trading agent). They read the market, argue about it, throw cartoon punches when they really disagree, and execute the Desk Lead's decision using the Owner's profile and allocation.
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
 
@@ -14,7 +14,7 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
 
-## Illustrated office (v0.0.0.3.15)
+## Illustrated office (v0.0.0.3.16)
 
 The office uses supplied wood furniture, a shared carved discussion table, a stocked library, sky windows, hanging plants, lamps and a coffee corner. Six animated characters retain their own workstation, role accessories, activity, debate and chat controls. Day and night themes extend across the room, map panels, agent roster, markets and reports.
 
@@ -59,7 +59,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 
 ## What it does
 
-- **A real desk, not one bot.** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager and Execution Trader each have a job, a personality and their own model. The Desk Lead also keeps the trade journal: it grades every closed trade, writes one lesson and owns the periodic report.
+- **A real desk, not one bot (6 AI agents + Jev).** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager and Execution Trader each have a job, a personality and their own model. The total setup is exactly 6 AI trading agents plus an optional Jev decision sidecar. The Desk Lead also keeps the trade journal: it grades every closed trade, writes one lesson and owns the periodic report.
 - **Bring your own brains.** Every agent can run on a different provider across 10 API providers with 20 AI models each: xAI, OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Groq, Mistral, Together and Fireworks, or a signed-in local agent CLI on your computer: Codex, Claude Code, Muse Code, Pi, Kimi Code, Kilo, Cline and Grok Build. Mix them so the arguments get interesting, or use a single provider API key across all six agents with different models.
 - **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
 - **Optional Jev decision sidecar.** TypeSafe Jev (`typesafe/jev-1.14`) over OpenRouter can classify market regime, news relevance, whale significance and debate conflicts. Off by default. Bring your own OpenRouter key. Shadow records only and does not block trading. Assist may enrich PAPER, TESTNET and LIVE analysis after an explicit Setup authorization. Jev never places, cancels or resizes orders. TypeSafe Direct is not included.
@@ -70,8 +70,8 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Opportunity-seeking, evidence-driven trading culture.** The six agents evaluate genuine LONG and SHORT setups backed by verifiable market data and exchange-side stops instead of defaulting to unwarranted HOLDs.
 - **Authentic market and whale intelligence.** Multi-class news intelligence pipeline (macro, regulatory, token, hack) with deduplication and impact scoring, plus on-chain whale movement tracking with transparent attribution.
 - **Canonical ATR volatility and technical analysis.** Built-in Average True Range (ATR) equips Market Analyst and Strategist with volatility-calibrated stop and target projections.
-- **Chat and direct Owner commands for all six agents.** Ask questions, joke or discuss the market in English or Indonesian. Send up to 2500 characters with Enter; Shift+Enter starts a new paragraph. Direct commands open or close positions through the shared executor without a debate. Model-proposed commands must match an explicit instruction in the current Owner message.
-- **Modular personalities and response recovery.** Each agent loads `identity.md`, `soul.md`, `role.md` and `agent.md`. Chat accepts plain text and trims replies to 4000 characters before validation; missing confidence defaults to 0.65 for opinion, research, rebuttal and lead responses. Truncated JSON delimiter repair still requires valid trading fields.
+- **Chat, direct Owner commands, @all huddles, and inter-agent handoff.** Ask questions, joke, discuss market setups, or call tactical huddles across agents using @all or @<agent> in English or Indonesian. Send up to 32,000 characters with Enter; Shift+Enter starts a new paragraph. Direct commands open or close positions through the shared executor without a debate. Agents can consult each other autonomously via askTeammate without formal debate barriers.
+- **Modular personalities and 64k character response recovery.** Each agent loads `identity.md`, `soul.md`, `role.md` and `agent.md`. Chat accepts extensive text and detailed markdown analysis up to 64,000 characters without truncation errors; missing confidence defaults to 0.65 for opinion, research, rebuttal and lead responses. Truncated JSON delimiter repair still requires valid trading fields.
 - **Financial history and channel recovery.** Aster history preserves large identifiers exactly and uses stable fallbacks for missing IDs. Telegram has one poller per token within the process, abortable requests, connection probes and bounded retry backoff.
 - **Profile protection on every order.** The active profile supplies stop loss and take profit for Office tickets, CLI/API tickets, Owner commands and internal debates. Price distance equals the configured margin percentage divided by leverage, before fees and venue rounding.
 - **Live public market data & multi-token picker.** Bybit, Binance, Hyperliquid, Aster, dYdX, Paradex and Orderly public endpoints, no key needed, with offline sample data as a fallback. Switch between your Watchlist, 20+ Popular Perps, or type any custom perp token symbol directly in the Price Chart, Command Bar, or Desk Ops.
@@ -84,7 +84,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **A cozy office with brutal cartoon smoke-cloud fights and spectator reactions.** Wood floors, a woven rug, sky windows, a coffee corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. When disagreement crosses the threshold, agents dive into a cartoon dust/smoke cloud with flying fists, spinning stars, lightning bolts and impact bursts (`GEBUK!`, `POW!`, `WHAM!`, `BONK!`), while bystander bots react with worried expressions and speech without blocking execution.
 - **Interactive pop-up tutorial on every start.** A 9-step guided onboarding tour launches automatically on startup (and via **Setup > Tutorial** in the top bar), highlighting each section of the desk with a spotlight and directional arrow.
 - **Dual language mode: EN and ID.** Defaults to English (`EN`) and switches instantly to Bahasa Indonesia (`ID`) from the top bar (`EN ▾ ID`), backed by a strictly synchronized 1:1 translation dictionary verified by automated tests.
-- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.15`).** The lit-up version notification badge (`v0.0.0.3.15 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
+- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.16`).** The lit-up version notification badge (`v0.0.0.3.16 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
 - **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for the active percentage or Money Trade / N, and every desk monitor shows a sparkline.
 - **Day and night.** A toggle in the top bar. All colors and fonts live in `web/src/styles/tokens.css`.
 - **Live office feed.** Status, speech bubbles and fights stream over WebSocket, next to the fight meter, ticker strip, verdict cards and a desk log.
@@ -102,7 +102,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 
 SL/TP percentages use committed order margin. For example, Default at 5x uses a 4% stop distance and a 12% target distance from the entry quote. Fees, fill slippage and exchange tick rounding affect realized results. Minimum stop distance, account-equity loss sizing per trade, model/mood size changes and automatic hedge orders are removed. Existing capital/N settings, strategy validation, venue checks, exchange-side protection and kill/pause controls remain. Saved preset snapshots retain their reviewed values until saved again. See [trading profiles](docs/setup/trading-profiles.md).
 
-## Compact office controls (v0.0.0.3.15)
+## Compact office controls (v0.0.0.3.16)
 
 - Open **Ops**, **Portfolio**, **Lessons**, or **Log** from the bubble menu at the right. Panels stay closed until selected. Close with the same bubble, the close button, Escape, or a click outside. On phones the menu sits at the bottom-right.
 - **Reports** sits beside the price chart on desktop and below it on narrow screens. Open activity and evidence only when needed.
@@ -154,7 +154,7 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 | Interactive onboarding tour | N/A | Launches on every start, or open **Setup > Tutorial** in the top bar |
 | Optional Jev decision sidecar | Setup > Models, `JEV_ENABLED=true` | Shadow does not block. LIVE ASSIST needs Setup authorization. Never places orders |
 | Switch UI language (`EN` default / `ID`) | N/A | **EN ▾ ID** toggle in top bar |
-| Check version (`v0.0.0.3.15`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.15 · Update ↑** button in top bar |
+| Check version (`v0.0.0.3.16`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.16 · Update ↑** button in top bar |
 | Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup > Exchange & Safety **Run doctor** |
 | Switch mode to TESTNET or LIVE | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup > Exchange & Safety |
 | What is configured with secrets masked | `npm run setup -- status` | Setup header and status lines |
@@ -450,7 +450,7 @@ server/            Express + WebSocket backend
   exchange/        adapter interface; Bybit implemented; Binance, OKX, Hyperliquid, Aster, dYdX, Paradex, Orderly experimental
   live/            automatic key guard, optional testnet round trip, live executor
   wallet.ts        Connect wallet: DEX agent key + one signed approval + live venue balance + official deposit links
-  updater.ts       in-app version check (v0.0.0.3.15) and one-click git fast-forward updater
+  updater.ts       in-app version check (v0.0.0.3.16) and one-click git fast-forward updater
   auto.ts          full auto scheduler
   reports.ts       periodic reports to files, UI, bridge and Telegram
   learnings.ts     self-improving lessons store; advice cannot authorize execution
@@ -488,7 +488,7 @@ Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang
    mpu
    ```
 3. Ketik `mpu` kapan saja di terminal untuk langsung menjalankan desk dan membuka Web UI secara otomatis, atau `mpu setup` untuk langsung membuka menu pengaturan bernavigasi sidebar kiri. Di halaman Setup, Anda bisa mengatur saldo paper, safety net, memilih model untuk setiap agent dari 10 provider yang masing-masing menyediakan 20 model AI sehingga 1 API key bisa dipakai untuk banyak model, atau langsung menghubungkan agent CLI yang sudah terpasang di laptop Anda seperti Codex, Claude Code, Pi, Kimi Code, Kilo, Cline dan Grok Build maupun supervisor eksternal seperti Antigravity dan Grok Bot.
-4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia dropdown **Connect Wallet** khusus wallet EVM DEX, tombol **Setup**, menu **Setup > Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.3.15** untuk cek & klik update versi secara langsung, serta pilihan **EN ▾ ID** di dalam menu **Setup** untuk mengganti bahasa. Tombol **Restart** berada di navbar untuk memuat ulang konfigurasi kantor. Empat preset risiko (Default, Balance, Profit, Aggressive) bisa dipilih lewat Setup, Desk Ops atau `set profile aggressive`. Tabel di atas mencantumkan batas masing-masing profil.
+4. Tanpa API key pun jalan, karena ada provider `mock`. Di navbar bagian atas tersedia dropdown **Connect Wallet** khusus wallet EVM DEX, tombol **Setup**, menu **Setup > Tutorial** untuk panduan pop-up interaktif 9 langkah, tombol **v0.0.0.3.16** untuk cek & klik update versi secara langsung, serta pilihan **EN ▾ ID** di dalam menu **Setup** untuk mengganti bahasa. Tombol **Restart** berada di navbar untuk memuat ulang konfigurasi kantor. Empat preset risiko (Default, Balance, Profit, Aggressive) bisa dipilih lewat Setup, Desk Ops atau `set profile aggressive`. Tabel di atas mencantumkan batas masing-masing profil.
 5. Aturan uang: Money Trade = total saldo dikurangi safety net. Persentase per order dapat diatur dari 1,5 sampai 100% lewat Setup atau `set size 5%`. Jika kosong, alokasi memakai Money Trade / N, dengan N dari 1 sampai 4. Contoh saldo 100, safety net 20, N = 4, berarti 20 USDT per order; ukuran 5% menjadi 4 USDT sebelum pemeriksaan eksekusi. Setiap order wajib pakai stop loss dan tetap mengikuti dana tersedia. Anda juga bisa memilih token perp apa saja lewat dropdown Watchlist, Popular Perps, atau `+ Custom token...` di Price Chart, Command Bar, dan Desk Ops.
 6. Mau trading di exchange? Pakai akun dan key **milik Anda sendiri**. Urutannya PAPER, lalu TESTNET, LIVE paling akhir. Jalankan `mpu setup` atau `npm run setup` atau klik tombol **Setup** di kanan atas office: pilih venue dan mode, ikuti link langsung satu per satu untuk daftar, dana tes, halaman pembuatan key dan izin yang dicentang, lalu ketik key di input tersembunyi. Key masuk ke `.env` dengan chmod 600, tidak pernah ke chat. Izin: trade saja, withdraw dan transfer MATI. Private key dompet utama dan seed phrase selalu ditolak. Untuk DEX (`Hyperliquid`, `Aster`, `dYdX v4`, `Paradex`, `Orderly`) bisa melalui tombol **Connect Wallet** yang juga menampilkan saldo USDT secara live serta tombol **Halaman deposit resmi** untuk setiap DEX/CEX. Setelah itu jalankan `npm run doctor`. Panduan per venue: [docs/setup/](docs/setup/README.md). Untuk LIVE harus mengetik kalimat konfirmasi.
 7. Pakai agen AI sendiri? Grok Bot: [grokbot/INSTALL.md](grokbot/INSTALL.md), jalan di komputer Grok Bot, bukan laptop kamu. Muse Code: [docs/muse-code.md](docs/muse-code.md) dan [MUSE.md](MUSE.md). Claude Code, Codex, Antigravity, Cursor atau Copilot: [AGENTS.md](AGENTS.md) dan [docs/local-agents.md](docs/local-agents.md).

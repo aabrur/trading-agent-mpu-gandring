@@ -30,10 +30,12 @@ export async function runAgent<K extends TaskKind>(
   const baseUser = [input.instruction, fenceData('desk', input.data), `Respond with JSON only: ${SCHEMA_HINTS[task]}`].join('\n\n');
   const schema = SCHEMAS[task] as Schemas[K];
   let lastErr = '';
+  let lastRaw = '';
   for (let attempt = 1; attempt <= 2; attempt++) {
     const user = attempt === 1 ? baseUser : `${baseUser}\n\nYour previous reply was invalid (${lastErr}). Send only the JSON object.`;
     try {
       const raw = await call({ agent, task, provider, model, system, user, context: input.context, attempt });
+      lastRaw = raw;
       const parsed = schema.safeParse(extractJson(raw, task));
       if (parsed.success) return { data: parsed.data as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: attempt };
       lastErr = parsed.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
@@ -41,6 +43,10 @@ export async function runAgent<K extends TaskKind>(
       lastErr = safe((e as Error).message).slice(0, 120);
     }
     log(`[agent:${agent}] ${task} attempt ${attempt} invalid: ${lastErr}`);
+  }
+  if (task === 'chat' && lastRaw.trim()) {
+    const clean = lastRaw.trim().replace(/^```(?:json|markdown)?/i, '').replace(/```$/, '').trim();
+    return { data: { reply: clean, askTeammate: null } as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: 2 };
   }
   const fallback = task === 'risk'
     ? { ...FALLBACK.risk, reason: `${FALLBACK.risk.reason} Validation: ${safe(lastErr).slice(0, 240)}` }
