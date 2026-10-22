@@ -25,19 +25,20 @@ async function boot(env: Record<string, string> = {}) {
 }
 
 describe('CLI parity in local mode (no AGENT_EVENT_SECRET)', () => {
-  it('gb open/positions/close/scan/lessons work through the localhost office routes, stop still required', async () => {
+  it('gb commands work through localhost with the confidence floor and profile-derived protection', async () => {
     const { base, desk } = await boot();
     await desk.refreshTickers();
     const env = { PORT: '1' } as NodeJS.ProcessEnv; // no secret
     const price = desk.tickers.BTCUSDT.last;
-    expect((await gb(['open', 'BTCUSDT', 'LONG'], { env, baseUrl: base })).text).toMatch(/no stop/);
+    expect((await gb(['open', 'BTCUSDT', 'LONG'], { env, baseUrl: base })).text).toMatch(/confidence is unavailable/);
     const o = await gb(['open', 'BTCUSDT', 'LONG', '--confidence', '0.8', '--stop', String(Math.round(price * 0.99))], { env, baseUrl: base });
     expect(o.text).not.toMatch(/AGENT_EVENT_SECRET/);
     expect(o.ok).toBe(true);
     expect((await gb(['positions'], { env, baseUrl: base })).text).toMatch(/BTCUSDT/);
     const wide = await gb(['open', 'ETHUSDT', 'LONG', '--confidence', '0.8', '--stop', String(desk.tickers.ETHUSDT.last * 0.9)], { env, baseUrl: base });
-    expect(wide.ok).toBe(false); // the same planner refuses a stop wider than DEFAULT_STOP_PCT
+    expect(wide.ok).toBe(true); // The profile supplies protection rather than the legacy stop price.
     expect((await gb(['close', 'BTCUSDT'], { env, baseUrl: base })).ok).toBe(true);
+    expect((await gb(['close', 'ETHUSDT'], { env, baseUrl: base })).ok).toBe(true);
     expect((await gb(['scan'], { env, baseUrl: base })).ok).toBe(true);
     expect((await gb(['lessons', 'add', 'desk', 'Wait for a clean retest before entering'], { env, baseUrl: base })).ok).toBe(true);
     expect((await gb(['lessons', 'list'], { env, baseUrl: base })).text).toMatch(/clean retest/);

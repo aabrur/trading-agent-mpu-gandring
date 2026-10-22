@@ -13,7 +13,7 @@ import type { ModelCaller } from './providers/index.js';
 import { getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem } from './market/index.js';
 import { strategyVote, rsi, volumeDelta, atr } from './strategy.js';
 import { applyRiskGate } from './risk.js';
-import { planOrder, round2, roundPrice, evaluateAutoHedge, type AutoHedgeResult } from './money.js';
+import { planOrder, round2, roundPrice } from './money.js';
 import { previewTicket } from './sizing.js';
 import { PaperBook } from './paper.js';
 import { parseCommand, authorizedChatCommand, HELP, normSymbol, type Command } from './commands.js';
@@ -313,7 +313,6 @@ export class Desk extends EventEmitter {
       this.note('closed', t.symbol, `${t.side} at ${t.exit}, PnL ${t.realizedPnl} USDT (${t.reason})`);
       void this.review(t);
     }
-    void this.checkAutoHedge();
   }
 
   /** LIVE: pull balance and positions from the exchange. Positions gone on the venue were closed there (stop, take profit or by hand). */
@@ -613,12 +612,13 @@ export class Desk extends EventEmitter {
       if (this.opts.executor) await this.syncLive();
       const { weighted, disagreement, camps } = this.score();
       const pos = this.book.positions.find((p) => p.symbol === symbol);
-      const cautious = this.agents.lead.mood < 0;
+      const { maxLossPerTradePct: _legacyLoss, minStopPct: _legacyMinStop, takeProfitR: _legacyR, ...entrySettings } = tradingSettingsFromConfig(this.cfg);
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
+        extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
         instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, CLOSE requires strategyInvalidated=true (opposite closed-bar direction beyond EMA21 with opposing five-bar momentum), or a verified critical event. A minor EMA9 crossing, unrealized loss, or changed agent vote alone is insufficient. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
-        data: { symbol, tradingSettings: tradingSettingsFromConfig(this.cfg), strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
-        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, cautious, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
+        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
+        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       }));
       let action: Action = ld.data.action;
       let flipNote = '';
@@ -652,57 +652,39 @@ export class Desk extends EventEmitter {
       const decisionReason = exitBlock ?? confidenceBlock ?? ld.data.reason;
       await this.say('lead', `${action.replace('_', ' ')}. ${decisionReason}${flipNote}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
 
-      // 6. Risk gate
+      // 6. Apply the Owner's profile without a second model sizing decision.
       const opening = action === 'OPEN_LONG' || action === 'OPEN_SHORT';
       if (opening) { this.setPhase('risk gate'); this.setStatus('risk', 'thinking'); this.changed(); }
-      const finalResearchVote = researchVote === 'VETO' ? 'VETO' : (this.agents.research.stance ?? researchVote);
-      const estPrice = roundPrice(action === 'OPEN_LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last));
-      const stopDistancePct = rule.invalidation && estPrice > 0 ? round2(Math.abs((estPrice - rule.invalidation) / estPrice) * 100) : this.cfg.risk.defaultStopPct;
-      const rk = opening ? await timer.measure('riskManager', () => this.run('risk', 'risk', {
-        instruction: `Gate this proposal from the Desk Lead: ${action} ${symbol} at current price ~${estPrice}. EMA9 signal reference is ${rule.invalidation} (~${stopDistancePct}% away), not a mandatory execution stop. Research debate stance is ${finalResearchVote}. Use candle structure and ATR to select a viable stop within the owner's ${this.cfg.risk.minStopPct}%..${this.cfg.risk.defaultStopPct}% range; do not reject solely because EMA9 is closer than that floor. If no structural stop fits the range, REJECT with the concrete reason. Calculate available allocation, reserved capital, stop distance, fee estimate, and daily loss budget. If within owner caps and stop is valid, APPROVE or REDUCE promptly so the trade can execute. REJECT only when a concrete limit is violated. Caps: max leverage ${this.cfg.risk.maxLeverage}x, max loss per trade ${this.cfg.risk.maxLossPerTradePct}% of balance. Send decision, sizeFactor (0.1..1), leverage, stopPct in percentage points (2 means 2%), reason.`,
-        data: { caps: this.cfg.risk, account: this.venueAccount ?? { source: 'paper book' }, executionVenue: this.cfg.exchange.name, analyticalPriceSource: snap.source, symbol, action, entryPrice: estPrice, stopDistancePct, atr: atrVal, recentClosedCandles: lastCandles, disagreement, researchVote: finalResearchVote, strategy: { side: rule.side, invalidation: rule.invalidation }, paper: this.book.split(), openPositions: this.book.positions.length, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'risk') : undefined },
-        context: { action, entryPrice: estPrice, stopDistancePct, disagreement, researchVote: finalResearchVote, strategySide: rule.side, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, temperament: this.agents.risk.mood }
-      })) : { data: { decision: 'APPROVE' as const, sizeFactor: 1, leverage: 1, stopPct: this.cfg.risk.defaultStopPct, reason: 'Not applicable to HOLD/CLOSE' }, example: false };
-      if (opening && 'fallback' in rk && rk.fallback && finalResearchVote !== 'VETO') {
-        const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
-        const checked = await this.previewTicket({ symbol, side, entry: this.opts.executor ? undefined : estPrice, leverage: this.cfg.risk.maxLeverage });
-        if (checked.ok && !this.killed && !this.paused && !this.checkDay()) {
-          rk.data = { decision: 'APPROVE', sizeFactor: 1, leverage: this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct, reason: `Model format unavailable; deterministic ticket check passed. ${checked.text}` };
-        } else rk.data.reason += ` Code check: ${checked.text}`;
-      }
-      const gate = applyRiskGate(rk.data, this.cfg.risk, this.agents.risk.mood);
-
+      const profileReason = `Owner profile: SL ${this.cfg.risk.defaultStopPct}% and TP ${this.cfg.risk.takeProfitPct}% of margin; no additional model risk sizing.`;
+      const gate = applyRiskGate({ leverage: this.cfg.risk.maxLeverage }, this.cfg.risk);
       this.scorecard.verdict();
       if (opening) this.scorecard.riskDecision(gate.decision);
-      const riskLine = `${gate.decision}. ${rk.data.reason}${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`;
-      if (opening) { await this.say('risk', riskLine, rk.example, 'idle'); note('Risk Manager', riskLine); }
+      const riskLine = `${gate.decision}. ${profileReason}${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`;
+      if (opening) { await this.say('risk', riskLine, false, 'idle'); note('Risk Manager', riskLine); }
 
       // 7. Verdict and paper execution
-      const verdict: Verdict = { id, symbol, action, riskDecision: opening ? gate.decision : 'N/A', executed: false, reason: decisionReason, disagreement, camps, example: mk.example || ld.example || rk.example || snap.example, at: Date.now() };
+      const verdict: Verdict = { id, symbol, action, riskDecision: opening ? gate.decision : 'N/A', executed: false, reason: decisionReason, disagreement, camps, example: mk.example || ld.example || snap.example, at: Date.now() };
       if (action === 'OPEN_LONG' || action === 'OPEN_SHORT') {
-        if (gate.decision === 'REJECT') { verdict.reason = `Risk rejected: ${rk.data.reason}`; this.note('skipped', symbol, verdict.reason); }
-        else {
-          const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
-          let execSnap = snap;
-          if (!snapshotIsFresh(snap)) {
-            execSnap = await getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample');
-            this.updateTicker(execSnap);
-          }
-          const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap });
-          if (!reval.ok) {
-            action = 'HOLD';
-            verdict.action = 'HOLD';
-            verdict.reason = reval.reason ?? 'Stale signal.';
-            this.note('skipped', symbol, `HOLD: ${verdict.reason}`);
-          } else {
-            const price = roundPrice(reval.quote);
-            const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, evidence: { action, confidence: ld.data.confidence, reason: ld.data.reason, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
-            if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
-            verdict.executed = res.ok;
-            if (res.order) { verdict.order = res.order; verdict.executionStatus = res.order.status; }
-            if (!res.ok) verdict.reason = res.reason;
-            note('Execution Trader', res.line);
-          }
+        const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
+        let execSnap = snap;
+        if (!snapshotIsFresh(snap)) {
+          execSnap = await getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample');
+          this.updateTicker(execSnap);
+        }
+        const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap });
+        if (!reval.ok) {
+          action = 'HOLD';
+          verdict.action = 'HOLD';
+          verdict.reason = reval.reason ?? 'Stale signal.';
+          this.note('skipped', symbol, `HOLD: ${verdict.reason}`);
+        } else {
+          const price = roundPrice(reval.quote);
+          const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, evidence: { action, confidence: ld.data.confidence, reason: ld.data.reason, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
+          if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
+          verdict.executed = res.ok;
+          if (res.order) { verdict.order = res.order; verdict.executionStatus = res.order.status; }
+          if (!res.ok) verdict.reason = res.reason;
+          note('Execution Trader', res.line);
         }
       } else if (action === 'CLOSE' && pos) {
         const t = await this.executeClose(symbol, snap.last, flipNote ? 'opposite signal' : 'desk verdict CLOSE', true);
@@ -729,7 +711,7 @@ export class Desk extends EventEmitter {
       };
       if (!verdict.executed && action !== 'CLOSE') this.opportunityReviews.record({
         id: verdict.id, symbol, side: rule.side === 'LONG' || rule.side === 'SHORT' ? rule.side : null,
-        reasonKind: researchVote === 'VETO' ? 'veto' : opening && gate.decision === 'REJECT' ? 'risk-reject' : verdict.action === 'HOLD' ? 'hold' : opening ? 'execution-failed' : 'hold',
+        reasonKind: researchVote === 'VETO' ? 'veto' : verdict.action === 'HOLD' ? 'hold' : opening ? 'execution-failed' : 'hold',
         reason: researchVote === 'VETO' ? 'Research VETO: ' + rs.data.argument : verdict.reason, at: verdict.at, horizonMs: this.cfg.auto.intervalMin * 60000,
         reference: { price: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example },
         evidence: { strategy: rule, votes: DEBATERS.map((agent) => ({ agent, stance: this.agents[agent].stance })), action }
@@ -805,14 +787,11 @@ export class Desk extends EventEmitter {
     if (live && rules?.status && rules.status !== 'TRADING') return no(`${symbol} is ${rules.status} on the exchange, not TRADING.`);
     const plan = planOrder({
       balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
-      price, side, availableFunds: live ? this.venueAccount?.available : undefined, orderSizePct: gate.orderSizePct ?? this.cfg.risk.orderSizePct, adjustToVenueMinimum: Boolean(live), sizeFactor: gate.sizeFactor, leverage: Math.max(1, Math.floor(Math.min(gate.leverage, this.cfg.risk.maxLeverage))),
-      // A given stop (Strategist / Grok Bot ticket) is used exactly. Only the internal debate falls back to stopPct.
-      stop: gate.stop ?? null, stopPct: gate.stopPct, minStopPct: this.cfg.risk.minStopPct, maxStopPct: this.cfg.risk.defaultStopPct,
-      minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLossPerTradePct: this.cfg.risk.maxLossPerTradePct, takerFee: this.cfg.risk.takerFee, rules, takeProfitR: this.cfg.risk.takeProfitR, takeProfitPct: this.cfg.risk.takeProfitPct
+      price, side, availableFunds: live ? this.venueAccount?.available : undefined, orderSizePct: gate.orderSizePct ?? this.cfg.risk.orderSizePct, adjustToVenueMinimum: Boolean(live), sizeFactor: 1, leverage: Math.max(1, Math.floor(Math.min(gate.leverage, this.cfg.risk.maxLeverage))),
+      stopPct: this.cfg.risk.defaultStopPct,
+      minOrderUsdt: this.cfg.risk.minOrderUsdt, takerFee: this.cfg.risk.takerFee, rules, takeProfitPct: this.cfg.risk.takeProfitPct
     });
     if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
-    // A take profit from a Grok Bot agent is accepted only on the right side of the entry (the adapter rounds it to the tick). The stop is never theirs to widen.
-    if (gate.tp && Number.isFinite(gate.tp) && (side === 'LONG' ? gate.tp > price : gate.tp < price)) plan.tp = rules?.tickSize ? gate.tp : roundPrice(gate.tp);
     this.setStatus('execution', 'executing'); this.changed();
     let entry = price, qty = plan.qty, tag = 'Paper fill', clientId: string | undefined, confirmedPrice = true;
     if (live && !live.adapter.exchangeStops) return no('The execution venue cannot hold a stop loss.');
@@ -841,73 +820,6 @@ export class Desk extends EventEmitter {
     return { ok: true, line, reason: '', order: { positionId: p.id, status: qty < plan.qty ? 'partial' : 'filled', side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, margin: p.margin, leverage: p.leverage } };
   }
 
-  /** Auto-hedge: locks loss when unrealized loss reaches L_trigger. */
-  async checkAutoHedge(): Promise<AutoHedgeResult | null> {
-    if (this.killed || this.paused) return null;
-    if (this.book.positions.length === 0) return null;
-
-    const currentUnrealized = this.venueAccount?.status === 'confirmed'
-      ? this.venueAccount.unrealized
-      : this.book.unrealized;
-    const balance = this.book.balance;
-    const safetyNet = this.book.safetyNet || round2(balance * 0.40);
-
-    const hedge = evaluateAutoHedge(balance, safetyNet, currentUnrealized, this.book.positions);
-    if (!hedge.triggered || !hedge.direction || hedge.vHedge <= 1e-9) return hedge;
-
-    const symbols = [...new Set(this.book.positions.map((p) => p.symbol))];
-    let targetSymbol = symbols[0];
-    for (const s of symbols) {
-      const symPositions = this.book.positions.filter((p) => p.symbol === s);
-      const buyVol = symPositions.filter((p) => p.side === 'LONG').reduce((sum, p) => sum + p.qty, 0);
-      const sellVol = symPositions.filter((p) => p.side === 'SHORT').reduce((sum, p) => sum + p.qty, 0);
-      if (hedge.direction === 'SELL' && buyVol > sellVol) { targetSymbol = s; break; }
-      if (hedge.direction === 'BUY' && sellVol > buyVol) { targetSymbol = s; break; }
-    }
-
-    const price = this.tickers[targetSymbol]?.last ?? this.book.positions.find((p) => p.symbol === targetSymbol)?.entry ?? 0;
-    if (!(price > 0)) return hedge;
-
-    const hedgeSide: 'LONG' | 'SHORT' = hedge.direction === 'BUY' ? 'LONG' : 'SHORT';
-    const stopDistance = price * (this.cfg.risk.defaultStopPct / 100);
-    const stop = roundPrice(hedgeSide === 'LONG' ? price - stopDistance : price + stopDistance);
-    const margin = round2((hedge.vHedge * price) / Math.max(1, this.cfg.risk.maxLeverage));
-
-    const live = this.opts.executor;
-    if (live && live.adapter.exchangeStops) {
-      try {
-        const fill = await live.open({ symbol: targetSymbol, side: hedgeSide, qty: hedge.vHedge, stop, tp: null, leverage: this.cfg.risk.maxLeverage });
-        if (!fill.ok) {
-          this.recordError('exchange', `Auto-hedge ${targetSymbol} ${hedgeSide} not filled: ${fill.note}`);
-          return hedge;
-        }
-      } catch (err) {
-        this.recordError('exchange', `Auto-hedge error: ${safe((err as Error).message)}`);
-        return hedge;
-      }
-    }
-
-    const p = this.book.open({
-      symbol: targetSymbol,
-      side: hedgeSide,
-      qty: hedge.vHedge,
-      entry: price,
-      stop,
-      margin,
-      leverage: this.cfg.risk.maxLeverage,
-      isHedge: true
-    });
-    p.ownership = 'managed';
-
-    const line = `Auto-hedge triggered: loss ${currentUnrealized} USDT reached L_trigger ${hedge.triggerLoss} USDT. Executed ${hedgeSide} ${hedge.vHedge} ${targetSymbol} to lock losses. Buffer remaining: ${hedge.marginBuffer} USDT.`;
-    this.addLog({ kind: 'trade', agent: 'risk', text: line });
-    this.note('opened', targetSymbol, `Auto-hedge ${hedgeSide} ${hedge.vHedge} at ${price} (loss locked)`);
-    await this.say('risk', line, false, 'idle', false);
-    this.recordEquity();
-    this.changed();
-
-    return hedge;
-  }
 
   /** Closes every position on a symbol. LIVE: one reduce-only send each, reconciled from the exchange record. */
   async executeClose(symbol: string, price: number, reason: string, ownedOnly = false): Promise<ClosedTrade[]> {
@@ -1090,13 +1002,7 @@ export class Desk extends EventEmitter {
     return { ok: false, reply: 'unknown event' };
   }
 
-  /**
-   * Keyless agent path (npm run gb -- open, Grok Bot Desk Lead). Same single execution path as the
-   * internal debate: risk gate code caps, money split, stop loss, daily loss stop, kill switch.
-   * A given stop is used exactly (tick-rounded toward the entry) and never moved. A stop wider than DEFAULT_STOP_PCT
-   * or closer than MIN_STOP_PCT is refused; otherwise qty shrinks to fit the loss cap including round-trip fees, or the ticket is refused.
-   * A ticket without a stop price is refused (the Strategist's stop is required); leverage is capped.
-   */
+  /** Agent and manual tickets use the same profile SL/TP and allocation as internal debates. */
   async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId; confidence?: number }, autonomous = true): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
     const symbol = normSymbol(o.symbol);
     const agentEntry = autonomous || o.confidence != null;
@@ -1105,20 +1011,15 @@ export class Desk extends EventEmitter {
     if (!symbol) return { ok: false, reply: 'unknown symbol', notes: [] };
     if (this.killed) return { ok: false, reply: 'kill switch is on', notes: [] };
     if (this.paused) return { ok: false, reply: 'desk is paused', notes: [] };
-    if (o.stop == null || !Number.isFinite(o.stop) || !(o.stop > 0)) return { ok: false, reply: 'no stop: every ticket needs the Strategist stop price (--stop P). Not opening without one.', notes: [] };
     if (this.book.positions.some((p) => p.symbol === symbol)) return { ok: false, reply: `already have a ${symbol} position`, notes: [] };
     const snap = await getSnapshot(symbol, this.cfg.marketSource);
     this.updateTicker(snap);
     // Entry is the live ask (LONG) or bid (SHORT), not rounded: the stop distance and size are measured from it.
     const price = o.side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last);
-    if (!this.opts.executor && o.stop != null && (!(o.stop > 0) || (o.side === 'LONG' ? o.stop >= price : o.stop <= price))) return { ok: false, reply: `stop ${o.stop} is on the wrong side of the entry ${price}`, notes: [] };
-    // The gate caps leverage and size factor. The given stop is NOT moved: it goes to the planner exactly,
-    // which refuses it if it is wider than DEFAULT_STOP_PCT or closer than MIN_STOP_PCT, and otherwise shrinks
-    // qty to fit the loss cap (fees included) or refuses. A missing stop was refused above.
-    const gate = applyRiskGate({ decision: 'APPROVE', reason: 'Grok Bot ticket, code caps only', sizeFactor: 1, leverage: o.leverage ?? this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct } as never, this.cfg.risk, this.agents.risk.mood);
+    // Legacy ticket stop/TP fields are accepted for compatibility; the active profile supplies protection.
+    const gate = applyRiskGate({ leverage: o.leverage ?? this.cfg.risk.maxLeverage }, this.cfg.risk);
     this.scorecard.verdict(); this.scorecard.riskDecision(gate.decision);
     await this.say('risk', `${gate.decision}. Ticket ${o.side} ${symbol} checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
-    if (gate.decision === 'REJECT') { this.note('skipped', symbol, 'Risk rejected the ticket'); return { ok: false, reply: 'risk rejected', notes: gate.notes }; }
     const res = await this.executeOpen(symbol, o.side, price, { ...gate, autonomous: agentEntry, confidence: o.confidence, tp: o.tp ?? null, stop: o.stop ?? null, evidence: { action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', reason: 'Direct ticket', stop: o.stop, tp: o.tp, source: snap.source } }, snap.example);
     if (res.ok) this.scorecard.opened(symbol, { side: o.side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
     this.verdicts.unshift({ id: `gb-${Date.now().toString(36)}`, symbol, action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', riskDecision: gate.decision, executed: res.ok, reason: res.ok ? 'Grok Bot ticket' : res.reason, disagreement: this.score().disagreement, camps: this.score().camps, example: snap.example, at: Date.now(), ...(res.order ? { order: res.order } : {}) });
@@ -1247,7 +1148,7 @@ export class Desk extends EventEmitter {
         case 'invalid': ok = false; reply = cmd.reason; break;
         case 'set_profile': {
           const values = await this.applyOwnerSettings((base) => resolveTradingPreset(cmd.profile, base), cmd.profile);
-          reply = `Profile ${cmd.profile} active: confidence ${values.minEntryConfidencePct}%, max loss per trade ${values.maxLossPerTradePct}%, leverage ${values.maxLeverage}x.`;
+          reply = `Profile ${cmd.profile} active: SL ${values.defaultStopPct}% / TP ${values.takeProfitPct}% of margin, confidence ${values.minEntryConfidencePct}%, daily loss ${values.dailyLossLimitPct}%, leverage ${values.maxLeverage}x.`;
           break;
         }
         case 'set_size':
@@ -1365,7 +1266,8 @@ export class Desk extends EventEmitter {
               message: userQuery,
               chatHistory: history,
               paper: this.book.split(),
-              maxLossPct: this.cfg.risk.maxLossPerTradePct,
+              stopMarginPct: this.cfg.risk.defaultStopPct,
+              takeProfitMarginPct: this.cfg.risk.takeProfitPct,
               maxLeverage: this.cfg.risk.maxLeverage,
               openPositions,
               stance: this.agents[target].stance,

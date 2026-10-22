@@ -66,7 +66,7 @@ export const noModelCaller: ModelCaller = async () => { throw new Error('no mode
 
 const GbOpenSchema = z.object({
   symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']),
-  stop: z.number().positive(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(),
+  stop: z.number().positive().optional(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(),
   agent: z.enum(AGENTS).optional(), confidence: z.number().min(0).max(1).optional(), reason: z.string().max(300).optional()
 }).strict();
 const GbLessonSchema = z.object({

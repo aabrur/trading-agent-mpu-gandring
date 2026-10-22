@@ -43,12 +43,13 @@ describe('order planning', () => {
     expect(p.ok).toBe(false);
     if (!p.ok) expect(p.suggestion).toMatch(/smaller N/);
   });
-  it('caps size so a stop hit loses at most the per trade limit', () => {
+  it('uses the allocation without a separate account-equity loss cap', () => {
     const p = planOrder({ ...base, n: 1, leverage: 3, stopPct: 1.5 });
     expect(p.ok).toBe(true);
     if (p.ok) {
-      expect(p.notional * 0.015).toBeLessThanOrEqual(10 + 1e-6);
-      expect(p.margin).toBeLessThanOrEqual(800);
+      expect(p.margin).toBe(800);
+      expect(p.stop).toBe(99.5); // 1.5% of margin at 3x = 0.5% of price.
+      expect(p.lossAtStop).toBeGreaterThan(10);
     }
   });
   it('puts the stop on the right side', () => {

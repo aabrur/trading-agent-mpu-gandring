@@ -4,22 +4,21 @@ import { loadConfig } from '../server/config.js';
 
 const limits = loadConfig({ TRADING_MODE: 'PAPER' }).risk;
 
-describe('risk gate can tighten, never loosen', () => {
-  it('caps leverage and widened stops', () => {
-    const g = applyRiskGate({ decision: 'APPROVE', sizeFactor: 1, leverage: 100, stopPct: 20, reason: 'yolo' }, limits);
+describe('Owner profile order parameters', () => {
+  it('caps leverage at the selected profile and uses its margin stop', () => {
+    const g = applyRiskGate({ leverage: 100 }, limits);
     expect(g.leverage).toBe(limits.maxLeverage);
     expect(g.stopPct).toBe(limits.defaultStopPct);
   });
-  it('keeps a tighter choice from the agent', () => {
-    const g = applyRiskGate({ decision: 'REDUCE', sizeFactor: 0.3, leverage: 1, stopPct: 0.8, reason: 'careful' }, limits);
-    expect(g).toMatchObject({ decision: 'REDUCE', sizeFactor: 0.3, leverage: 1, stopPct: 0.8 });
+  it('keeps requested leverage below the cap without reducing allocation', () => {
+    const g = applyRiskGate({ leverage: 1 }, limits);
+    expect(g).toMatchObject({ decision: 'APPROVE', sizeFactor: 1, leverage: 1, stopPct: limits.defaultStopPct });
   });
-  it('REJECT means zero size', () => {
-    expect(applyRiskGate({ decision: 'REJECT', sizeFactor: 1, leverage: 3, stopPct: 1, reason: 'no' }, limits).sizeFactor).toBe(0);
+  it('does not use legacy model rejection, size factor or stop choices', () => {
+    const proposal = { decision: 'REJECT', sizeFactor: 0, leverage: 3, stopPct: 0.1 };
+    expect(applyRiskGate(proposal, limits)).toMatchObject({ decision: 'APPROVE', sizeFactor: 1, stopPct: limits.defaultStopPct });
   });
-  it('a cautious owner mood trims size further', () => {
-    const g = applyRiskGate({ decision: 'APPROVE', sizeFactor: 1, leverage: 3, stopPct: 1, reason: 'ok' }, limits, -2);
-    expect(g.sizeFactor).toBeLessThan(1);
-    expect(g.decision).toBe('REDUCE');
+  it('has no independent minimum stop floor', () => {
+    expect(applyRiskGate({ leverage: 3 }, { ...limits, minStopPct: 1.2, defaultStopPct: 0.1 }).stopPct).toBe(0.1);
   });
 });

@@ -64,10 +64,12 @@ describe('network trading settings', () => {
     expect(resolveTradingSettings(env, base, 'testnet').values.maxLeverage).toBe(2);
     expect(resolveTradingSettings(env, base, 'mainnet').values).toEqual(DEFAULT_TRADING_SETTINGS);
   });
-  it('rejects invalid percentages and inconsistent stop distances without zeroing guards', () => {
-    for (const patch of [{ dailyLossLimitPct: 0 }, { dailyLossLimitPct: 21 }, { maxLossPerTradePct: 0 }, { minEntryConfidencePct: 101 }, { minStopPct: 3, defaultStopPct: 1 }, { safetyNet: -1 }]) {
+  it('validates profile values and allows the 25% daily cap without a minimum stop constraint', () => {
+    for (const patch of [{ dailyLossLimitPct: 0 }, { dailyLossLimitPct: 26 }, { maxLossPerTradePct: 0 }, { minEntryConfidencePct: 101 }, { safetyNet: -1 }]) {
       expect(TradingSettingsSchema.safeParse({ ...DEFAULT_TRADING_SETTINGS, ...patch }).success).toBe(false);
     }
+    expect(TradingSettingsSchema.safeParse({ ...DEFAULT_TRADING_SETTINGS, dailyLossLimitPct: 25, minStopPct: 0 }).success).toBe(true);
+    expect(TradingSettingsSchema.safeParse({ ...DEFAULT_TRADING_SETTINGS, minStopPct: 3, defaultStopPct: 1 }).success).toBe(true);
   });
   it('loads the selected network into the same risk and allocation configuration used by execution', () => {
     const env = { TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', TESTNET_DESK_PROFILE: 'manual', TESTNET_DESK_DAILY_LOSS_LIMIT_PCT: '2', TESTNET_DESK_MAX_LOSS_PER_TRADE_PCT: '0.6', TESTNET_DESK_MIN_ENTRY_CONFIDENCE_PCT: '75', TESTNET_DESK_SAFETY_NET: '25', TESTNET_DESK_OPEN_ORDERS_N: '2' };
@@ -86,17 +88,19 @@ describe('network trading settings', () => {
       expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG', stop: 3000, confidence }, true)).ok).toBe(false);
     }
     expect(d.book.positions).toHaveLength(0);
-    // At the boundary the confidence gate passes; the existing mandatory stop guard still runs.
-    expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'SHORT', confidence: 0.75 }, true)).reply).toContain('no stop');
-    expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG', confidence: 0.95 }, true)).reply).toContain('no stop');
+    // At the boundary, the profile supplies the mandatory stop without an agent stop price.
+    const opened = await d.gbOpen({ symbol: 'ETHUSDT', side: 'SHORT', confidence: 0.75 }, true);
+    expect(opened.ok).toBe(true);
+    expect(opened.order?.stop).toBeGreaterThan(opened.order?.entry ?? Infinity);
   });
-  it('uses the applied risk cap, reserve, position count, leverage and TP in shared sizing', async () => {
+  it('uses profile margin SL/TP and allocation, ignoring the legacy equity loss cap and ticket stop', async () => {
     const cfg = loadConfig({ TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', MARKET_SOURCE: 'sample' });
     const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null });
     await d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, maxLossPerTradePct: 0.2, maxLeverage: 2, safetyNet: 100, maxPositions: 2, takeProfitR: 3 });
     const result = previewTicket(cfg, { balance: d.book.balance, equity: d.book.balance + d.book.unrealized, safetyNet: d.book.safetyNet, n: d.book.n, open: 0, used: 0, mode: 'TESTNET' }, { symbol: 'ETHUSDT', side: 'LONG', entry: 3000, stop: 2970, leverage: 8 }, { qtyStep: 0.001, minQty: 0.001, tickSize: 0.01, minNotional: 5 });
-    expect(result.ok).toBe(true); expect(result.data).toMatchObject({ leverage: 2, maxLoss: 2, tp: 3090, split: { moneyTrade: 900, perOrder: 450 } });
-    expect(Number(result.data?.riskAtStop)).toBeLessThanOrEqual(2);
+    expect(result.ok).toBe(true); expect(result.data).toMatchObject({ leverage: 2, stop: 2700, tp: 3900, stopMarginPct: 20, takeProfitMarginPct: 60, split: { moneyTrade: 900, perOrder: 450 } });
+    expect(Number(result.data?.riskAtStop)).toBeGreaterThan(89);
+    expect(result.data).not.toHaveProperty('maxLoss');
   });
   it('does not replace an active profile allocation with legacy values during a settings reload', async () => {
     const cfg = loadConfig({ TRADING_MODE: 'TESTNET', EXCHANGE: 'bybit', BYBIT_TESTNET_API_KEY: 'test-key', BYBIT_TESTNET_API_SECRET: 'test-secret', MARKET_SOURCE: 'sample' });
@@ -156,18 +160,18 @@ describe('network trading settings', () => {
       Object.assign(process.env, oldEnv); rmSync(dir, { recursive: true, force: true });
     }
   });
-  it('defines four recommended presets with exact values and schema validity', () => {
+  it('defines four Owner presets with exact values and schema validity', () => {
     expect(TRADING_PRESET_IDS).toEqual(['default', 'balance', 'profit', 'aggressive']);
     const base = { ...DEFAULT_TRADING_SETTINGS, minOrderUsdt: 12, safetyNet: 350 };
 
     const def = resolveTradingPreset('default', base);
     expect(def).toMatchObject({
-      dailyLossLimitPct: 4,
+      dailyLossLimitPct: 10,
       maxLossPerTradePct: 20,
-      minEntryConfidencePct: 50,
+      minEntryConfidencePct: 60,
       maxLeverage: 5,
       defaultStopPct: 20,
-      minStopPct: 1,
+      minStopPct: 0,
       takeProfitPct: 60,
       takeProfitR: 3.0,
       maxPositions: 3,
@@ -182,12 +186,12 @@ describe('network trading settings', () => {
 
     const bal = resolveTradingPreset('balance', base);
     expect(bal).toMatchObject({
-      dailyLossLimitPct: 5,
+      dailyLossLimitPct: 15,
       maxLossPerTradePct: 30,
       minEntryConfidencePct: 60,
       maxLeverage: 10,
       defaultStopPct: 30,
-      minStopPct: 1.2,
+      minStopPct: 0,
       takeProfitPct: 60,
       takeProfitR: 2.0,
       maxPositions: 3,
@@ -198,12 +202,12 @@ describe('network trading settings', () => {
 
     const prof = resolveTradingPreset('profit', base);
     expect(prof).toMatchObject({
-      dailyLossLimitPct: 8,
+      dailyLossLimitPct: 20,
       maxLossPerTradePct: 40,
-      minEntryConfidencePct: 70,
+      minEntryConfidencePct: 60,
       maxLeverage: 15,
       defaultStopPct: 40,
-      minStopPct: 1.5,
+      minStopPct: 0,
       takeProfitPct: 70,
       takeProfitR: 1.75,
       maxPositions: 2,
@@ -214,12 +218,12 @@ describe('network trading settings', () => {
 
     const hr = resolveTradingPreset('aggressive', base);
     expect(hr).toMatchObject({
-      dailyLossLimitPct: 12,
+      dailyLossLimitPct: 25,
       maxLossPerTradePct: 50,
-      minEntryConfidencePct: 80,
+      minEntryConfidencePct: 60,
       maxLeverage: 20,
       defaultStopPct: 50,
-      minStopPct: 1.8,
+      minStopPct: 0,
       takeProfitPct: 80,
       takeProfitR: 1.6,
       maxPositions: 2,

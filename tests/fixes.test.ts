@@ -122,26 +122,27 @@ describe('bug 6: kill switch survives a restart until the owner releases it', ()
   });
 });
 
-describe('bug 7: every ticket needs a stop; one log line per fill', () => {
-  it('gb open without --stop is refused before anything is sent', async () => {
+describe('profile protection on every ticket; one log line per fill', () => {
+  it('gb open lets the desk derive protection from the active profile', async () => {
     let sent = 0;
     const f = (async () => { sent++; return json({ ok: true }); }) as unknown as typeof fetch;
     const r = await gb(['open', 'ETHUSDT', 'LONG'], { env: { TRADING_MODE: 'PAPER', AGENT_EVENT_SECRET: 'x'.repeat(32) }, fetchImpl: f, baseUrl: 'http://127.0.0.1:1' });
-    expect(r.ok).toBe(false);
-    expect(r.text).toMatch(/no stop/);
-    expect(sent).toBe(0);
+    expect(r.ok).toBe(true);
+    expect(sent).toBe(1);
   });
-  it('desk.gbOpen and a Desk Lead proposal without a stop are refused; with a stop it opens once and logs the fill once', async () => {
+  it('direct tickets and Lead proposals receive profile stops and log each fill once', async () => {
     const c = loadConfig({ TRADING_MODE: 'PAPER', APP_MODE: 'grokbot', AGENT_EVENT_SECRET: 'y'.repeat(32), MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0' });
     const d = new Desk(c, makeCaller(c), { reportsDir: null });
-    expect((await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG', confidence: 0.8 })).reply).toMatch(/no stop/);
-    expect((await d.onAgentEvent({ agent: 'lead', kind: 'proposal', symbol: 'ETHUSDT', action: 'OPEN_LONG', confidence: 0.8 })).reply).toMatch(/no stop/);
-    expect(d.book.positions).toHaveLength(0);
-    const last = (await getSnapshot('ETHUSDT', 'sample')).last;
-    const r = await d.onAgentEvent({ agent: 'lead', kind: 'proposal', symbol: 'ETHUSDT', action: 'OPEN_LONG', confidence: 0.8, stop: Math.round(last * 0.99) });
+    const direct = await d.gbOpen({ symbol: 'ETHUSDT', side: 'LONG', confidence: 0.8 });
+    expect(direct.ok).toBe(true);
+    expect(direct.order?.stop).toBeGreaterThan(0);
+    expect(direct.order?.stop).toBeLessThan(direct.order?.entry ?? 0);
+    await d.gbClose('all');
+    const r = await d.onAgentEvent({ agent: 'lead', kind: 'proposal', symbol: 'ETHUSDT', action: 'OPEN_LONG', confidence: 0.8 });
     expect(r.ok).toBe(true);
     expect(d.book.positions).toHaveLength(1);
-    expect(d.logs.filter((l) => /Paper fill/.test(l.text))).toHaveLength(1);
+    expect(d.book.positions[0].stop).toBeGreaterThan(0);
+    expect(d.logs.filter((l) => /Paper fill/.test(l.text))).toHaveLength(2);
     d.stop();
   });
 });

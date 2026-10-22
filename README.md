@@ -4,7 +4,7 @@
   <img src="web/public/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring" width="280" />
 </p>
 
-Six AI trading agents share one office. They read the market, argue about it, throw cartoon punches when they really disagree, and then a Risk Manager decides whether the Desk Lead's call is allowed to touch the paper book.
+Six AI trading agents share one office. They read the market, argue about it, throw cartoon punches when they really disagree, and execute the Desk Lead's decision using the Owner's profile and allocation.
 
 You watch all of it live in a little virtual office in your browser, and you can walk up to any agent and talk to them or give orders.
 
@@ -64,8 +64,8 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
 - **Optional Jev decision sidecar.** TypeSafe Jev (`typesafe/jev-1.14`) over OpenRouter can classify market regime, news relevance, whale significance and debate conflicts. Off by default. Bring your own OpenRouter key. Shadow records only and does not block trading. Assist may enrich PAPER, TESTNET and LIVE analysis after an explicit Setup authorization. Jev never places, cancels or resizes orders. TypeSafe Direct is not included.
 - **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
-- **Owner-selected risk limits.** The Risk Manager can approve, reduce or reject. Code applies the active profile's leverage, stop and loss limits; Owner commands can change the profile and leverage directly.
-- **Boss's money split.** Money Trade = balance minus safety net. An optional order percentage allocates 1.5–100% of Money Trade; leaving it blank uses Money Trade / N. N remains the maximum of 1–4 open positions, and available funds and stop-loss budgets still apply.
+- **Owner-selected profiles.** Code uses the active profile's SL/TP percentages of order margin, leverage cap, entry confidence and daily loss limit. No second Risk model changes the order size or protection. Owner commands can change the profile and leverage directly.
+- **Boss's money split.** Money Trade = balance minus safety net. An optional order percentage allocates 1.5–100% of Money Trade; leaving it blank uses Money Trade / N. N remains the maximum of 1–4 open positions, subject to available funds and exchange instrument rules.
 - **Four risk presets.** Choose `Default`, `Balance`, `Profit` or `Aggressive` in Setup, Desk Ops or chat. Your account safety net, minimum order size and selected allocation percentage are preserved across presets. Exact values are listed below.
 - **Opportunity-seeking, evidence-driven trading culture.** The six agents evaluate genuine LONG and SHORT setups backed by verifiable market data and exchange-side stops instead of defaulting to unwarranted HOLDs.
 - **Authentic market and whale intelligence.** Multi-class news intelligence pipeline (macro, regulatory, token, hack) with deduplication and impact scoring, plus on-chain whale movement tracking with transparent attribution.
@@ -73,7 +73,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Chat and direct Owner commands for all six agents.** Ask questions, joke or discuss the market in English or Indonesian. Send up to 2500 characters with Enter; Shift+Enter starts a new paragraph. Direct commands open or close positions through the shared executor without a debate. Model-proposed commands must match an explicit instruction in the current Owner message.
 - **Modular personalities and response recovery.** Each agent loads `identity.md`, `soul.md`, `role.md` and `agent.md`. Chat accepts plain text and trims replies to 4000 characters before validation; missing confidence defaults to 0.65 for opinion, research, rebuttal and lead responses. Truncated JSON delimiter repair still requires valid trading fields.
 - **Financial history and channel recovery.** Aster history preserves large identifiers exactly and uses stable fallbacks for missing IDs. Telegram has one poller per token within the process, abortable requests, connection probes and bounded retry backoff.
-- **Every paper order has a stop loss and a take profit.** No stop, no order. The take profit sits `TAKE_PROFIT_R` times the stop distance away, 2R by default.
+- **Profile protection on every order.** The active profile supplies stop loss and take profit for Office tickets, CLI/API tickets, Owner commands and internal debates. Price distance equals the configured margin percentage divided by leverage, before fees and venue rounding.
 - **Live public market data & multi-token picker.** Bybit, Binance, Hyperliquid, Aster, dYdX, Paradex and Orderly public endpoints, no key needed, with offline sample data as a fallback. Switch between your Watchlist, 20+ Popular Perps, or type any custom perp token symbol directly in the Price Chart, Command Bar, or Desk Ops.
 - **TradingView.** An optional free embedded TradingView chart widget (`TRADINGVIEW_WIDGET=on`), plus an alert webhook at `POST /api/tradingview` secured by a passphrase whose alerts are untrusted signals that start a debate. They never place an order by themselves.
 - **CEX and perp DEX venues behind one adapter, with live balance, multi-country currency converter & official deposit links.** Bybit is fully implemented. Binance, OKX, Hyperliquid, Aster, dYdX v4, Paradex and Orderly are experimental. DEX venues use delegated trade-only keys such as an agent wallet, API trading key or subkey, never the main wallet key. As soon as you connect a wallet or configure an API key, both the Top Bar and the Portfolio panel (`Paper book` / `Live book`) immediately display your live venue balance (`Equity` and `Available` USDT), converted into your selected country currency (`USDT`, `IDR`, `USD`, `EUR`, `GBP`, `SGD`, `MYR`, `JPY`, `KRW`, `CNY`, `INR`, `AUD`), along with direct links to each venue's official deposit page. Stops always rest on the exchange. See the venue table below and [docs/venues.md](docs/venues.md).
@@ -91,6 +91,17 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Talk to the agents.** Click an agent to chat or give commands like `analyze ETHUSDT`, `be more cautious` or `close all`.
 - **Optional Grok Bot bridge.** Send verdicts and commands to a Grok Bot webhook routine from the server. Off by default.
 
+## Owner trading profiles
+
+| Profile | Stop loss | Take profit | Maximum leverage | Entry confidence | Daily loss limit |
+| --- | --- | --- | --- | --- | --- |
+| Default | 20% | 60% | 5x | 60% | 10% |
+| Balance | 30% | 60% | 10x | 60% | 15% |
+| Profit | 40% | 70% | 15x | 60% | 20% |
+| Aggressive | 50% | 80% | 20x | 60% | 25% |
+
+SL/TP percentages use committed order margin. For example, Default at 5x uses a 4% stop distance and a 12% target distance from the entry quote. Fees, fill slippage and exchange tick rounding affect realized results. Minimum stop distance, account-equity loss sizing per trade, model/mood size changes and automatic hedge orders are removed. Existing capital/N settings, strategy validation, venue checks, exchange-side protection and kill/pause controls remain. Saved preset snapshots retain their reviewed values until saved again. See [trading profiles](docs/setup/trading-profiles.md).
+
 ## Compact office controls (v0.0.0.3.15)
 
 - Open **Ops**, **Portfolio**, **Lessons**, or **Log** from the bubble menu at the right. Panels stay closed until selected. Close with the same bubble, the close button, Escape, or a click outside. On phones the menu sits at the bottom-right.
@@ -101,7 +112,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **Disconnect** removes the local session and requests browser permission revocation where supported. It does not stop trading or revoke a venue agent. Revoke that agent on the venue's official API-wallet page.
 - If a request is pending, open the selected wallet extension and finish or reject it before retrying. If no EVM provider is detected, use the external browser where the extension is enabled and refresh. Keys and seed phrases never belong in chat.
 
-The optional Solidity registry remains undeployed and is not a venue authorization gate. This release does not deploy it, change trading mode, enable Auto Trade, or change risk limits.
+The optional Solidity registry remains undeployed and is not a venue authorization gate. This release does not deploy it, change trading mode or enable Auto Trade. Profile values and protection calculations are updated as listed above.
 
 ## Quick setup
 
@@ -232,7 +243,7 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `TRADINGVIEW_PASSPHRASE` | empty | Turns on `POST /api/tradingview`, 12+ chars |
 | `NEWS_PROVIDER` / `CRYPTOPANIC_API_KEY` | `sample` | Optional experimental news plugin |
 | `EXCHANGE` | `none` | CEX: `bybit`, `binance`, `okx`. DEX: `hyperliquid`, `aster`, `dydx`, `paradex`, `orderly`. Env names per venue in the [venue table](#venues) and [docs/venues.md](docs/venues.md) |
-| `DAILY_LOSS_LIMIT_PCT` | `3` | Daily loss stop, percent of the day's starting equity, clamped to 0.5..20 |
+| `DAILY_LOSS_LIMIT_PCT` | `10` | Daily loss stop, percent of the day's starting equity, clamped to 0.5..25 |
 | `ALLOW_EXPERIMENTAL_LIVE` | `no` | Needed for LIVE on any unverified venue except Bybit |
 | `PROTECT_STOP_PCT` | `3` | Startup reconcile: stop distance for a venue position found without an exchange-side stop |
 | `PORT` / `WEB_PORT` | `8787` / `5173` | Backend and frontend ports |
@@ -245,11 +256,12 @@ Everything lives in `.env`. Copy `.env.example` and edit. Keys are read on the s
 | `PAPER_BALANCE` | `1000` | Starting paper balance in USDT |
 | `SAFETY_NET` | `200` | Part of the balance that is never used. Must be above 0 in TESTNET and LIVE. |
 | `OPEN_ORDERS_N` | `4` | Max open orders, 1 to 4 |
-| `MAX_LEVERAGE` | `3` | Hard cap |
-| `DEFAULT_STOP_PCT` / `MIN_STOP_PCT` | `1.5` / `0.3` | Widest and tightest allowed stop distance, in percent |
-| `TAKE_PROFIT_R` | `2` | Take profit distance as a multiple of the stop distance. `0` turns take profit off. |
-| `MAX_LOSS_PER_TRADE_PCT` | `1` | A stop hit may lose at most this share of the balance |
-| `MIN_ORDER_USDT` | `5` | Configured minimum order budget. Venue minimum adjustment in TESTNET/LIVE requires sufficient funds, fees and loss budget. |
+| `MAX_LEVERAGE` | `5` | Maximum leverage for the active Owner profile |
+| `DEFAULT_STOP_PCT` | `20` | Stop loss as a percentage of committed order margin, before fees |
+| `TAKE_PROFIT_PCT` | `60` | Take profit as a percentage of committed order margin, before fees |
+| `MIN_ENTRY_CONFIDENCE_PCT` | `60` | Minimum reported confidence for autonomous entries |
+| `MIN_STOP_PCT`, `MAX_LOSS_PER_TRADE_PCT`, `TAKE_PROFIT_R` | legacy | Read compatibility only; these fields do not override profile execution |
+| `MIN_ORDER_USDT` | `5` | Configured minimum order notional. Venue minimum adjustment in TESTNET/LIVE requires sufficient available funds, entry fees and venue capacity. |
 | `ORDER_SIZE_PCT` | unset | Optional allocation of 1.5–100% of Money Trade per order. Unset uses Money Trade / N. |
 | `DEBATE_ROUNDS` | `2` | Rebuttal rounds per debate, 1 to 4 |
 | `DEBATE_PACE_MS` | `700` | Speech pacing for the office. `0` is instant. |
@@ -282,12 +294,12 @@ Rules the code enforces:
 
 - Never more than N open positions.
 - Margin in use never goes past Money Trade, so the safety net stays whole.
-- Lot step, minimum quantity, tick and minimum notional come from the exchange. In TESTNET/LIVE, a small order can adjust up to the venue minimum only when available funds, entry fees, the stop-loss budget and exchange maximums permit. PAPER does not round up automatically.
+- Lot step, minimum quantity, tick and minimum notional come from the exchange. In TESTNET/LIVE, a small order can adjust up to the venue minimum only when available funds, entry fees and exchange maximums permit. PAPER does not round up automatically.
 - The loss at the stop includes the round-trip taker fee.
 - When the balance is at or below the safety net, no new orders.
 - The allocation is recalculated from the current balance before every order.
-- Every order carries a stop loss, and a take profit unless `TAKE_PROFIT_R=0`. The paper book checks the stop first, then the take profit.
-- A stop hit may lose at most `MAX_LOSS_PER_TRADE_PCT` of the balance, so size can come out smaller than the allocation.
+- Every order derives stop loss and take profit from the active profile's margin percentages. The paper book checks the stop first, then the take profit.
+- There is no separate account-equity loss cap per trade or minimum stop distance. Order quantity follows the Owner's allocation within available capital and venue rules.
 
 Full note: [docs/money-split.md](docs/money-split.md).
 
@@ -464,7 +476,7 @@ If you use a coding agent or a Grok Bot, point it at [AGENTS.md](AGENTS.md). It 
 
 ## Bahasa Indonesia: mulai cepat
 
-Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang adu jotos versi kartun, lalu Risk Manager memutuskan boleh atau tidak. Bukan saran keuangan dan tidak ada janji untung. Mode LIVE terkunci: harus lulus uji testnet, API key tanpa izin withdraw yang dicek ke exchange, dan mengetik kalimat konfirmasi di CLI. Kalau dibuka, uang sungguhan bisa hilang.
+Proyek ini simulasi trading kertas secara default. Enam agen AI berdebat, kadang adu jotos versi kartun, lalu order memakai profil dan alokasi Owner. SL/TP dihitung dari margin order; tabel profil di atas memuat nilainya. Bukan saran keuangan dan tidak ada janji untung. Mode LIVE memakai API key tanpa izin withdraw yang dicek ke exchange serta konfirmasi lokal. Kalau diaktifkan, uang sungguhan bisa hilang.
 
 1. Pasang Node.js 20 atau lebih baru.
 2. Jalankan sekali untuk memasang dan mendaftarkan perintah `mpu`:

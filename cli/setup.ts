@@ -74,7 +74,7 @@ function status() {
   if (ex !== 'none') for (const net of ['testnet', 'mainnet'] as const) { const n = envNames(ex, net); console.log(`    ${net.padEnd(8)} ${n.key} ${PUBLIC_KEY_FIELD.has(ex) ? env[n.key] || '(empty)' : mask(env[n.key])}, ${n.secret} ${mask(env[n.secret])}${n.passphrase ? `, ${n.passphrase} ${PUBLIC_THIRD_FIELD.has(ex) ? env[n.passphrase] || '(empty)' : mask(env[n.passphrase])}` : ''}`); }
   console.log(`  auto trading      ${env.AUTO_TRADING || 'off'}, debate every ${env.DEBATE_INTERVAL_MIN || 15} min, max hold ${env.MAX_HOLD_HOURS || 0}h (0 = off)`);
   console.log(`  reports           every ${env.REPORT_INTERVAL_MIN || 60} min${env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID ? ', Telegram on' : ''}${env.GROKBOT_WEBHOOK_URL ? ', Grok Bot bridge on' : ''}`);
-  console.log(`  safety net        ${env.SAFETY_NET || 200} USDT, N ${env.OPEN_ORDERS_N || 4}, daily loss stop ${env.DAILY_LOSS_LIMIT_PCT || 3}%`);
+  console.log(`  safety net        ${env.SAFETY_NET || 200} USDT, N ${env.OPEN_ORDERS_N || 4}, daily loss stop ${env.DAILY_LOSS_LIMIT_PCT || 10}%`);
   console.log('');
 }
 
@@ -190,7 +190,7 @@ async function wizard() {
   await num('SAFETY_NET', 'safety-net', 'Safety net, never traded (USDT)', '200');
   await num('OPEN_ORDERS_N', 'n', 'Max open orders N (1 to 4)', '4');
   if (![1, 2, 3, 4].includes(Number(up.OPEN_ORDERS_N))) throw new Error('N must be 1, 2, 3 or 4');
-  await num('DAILY_LOSS_LIMIT_PCT', 'daily-loss', 'Daily loss stop, percent of equity', '3');
+  await num('DAILY_LOSS_LIMIT_PCT', 'daily-loss', 'Daily loss stop, percent of equity', '10');
   if (opt('market-source')) up.MARKET_SOURCE = opt('market-source')!;
 
   // 7. full auto and reports

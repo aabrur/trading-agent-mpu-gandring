@@ -3,11 +3,13 @@
   "version": "0.3.15",
   "appVersion": "0.0.0.3.15",
   "changelog": [
+    "Orders now use Owner profile SL/TP percentages of committed margin, with 60% entry confidence and daily loss limits of 10%, 15%, 20% and 25%.",
+    "Removed minimum stop distance, separate account-equity trade risk sizing, model and mood size adjustments, and automatic hedge orders.",
     "Repaired office agent clicks, seated idle behavior and furniture bounds inside the existing frame, with multiline chat for all six agents.",
     "Added Owner profile, percentage sizing, leverage and direct open/close commands through the shared Office and channel execution path.",
     "Added modular agent personas, response recovery, precise Aster history identifiers and singleton Telegram polling with bounded retries."
   ],
-  "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then pass a risk gate. Paper by default; full auto on testnet or live after a one-time setup, behind automatic guards. Comes with a cozy virtual office UI.",
+  "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",
   "author": "Abrur Alaina",
   "type": "module",

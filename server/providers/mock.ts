@@ -107,8 +107,7 @@ function lead(c: Ctx) {
     return { action: 'HOLD', confidence: 0.6, reason: `Our ${c.positionSide} still has support. Hold and let the stop do its job.` };
   }
   if (!c.slotsFree) return { action: 'HOLD', confidence: 0.8, reason: 'All N order slots are taken. Nothing new today.' };
-  const baseBar = c.liveFeed ? 0.05 : 0.15;
-  const bar = baseBar + (c.cautious ? 0.12 : 0);
+  const bar = c.liveFeed ? 0.05 : 0.15;
   if (dis > 0.75) return { action: 'HOLD', confidence: 0.55, reason: 'This room is split down the middle. A split desk does not get my money.' };
   if (w > bar) return { action: 'OPEN_LONG', confidence: r2(clamp(0.5 + w / 2)), reason: `Bulls carried it with a weighted score of ${w.toFixed(2)}. Long, with a stop.` };
   if (w < -bar) return { action: 'OPEN_SHORT', confidence: r2(clamp(0.5 + Math.abs(w) / 2)), reason: `Bears carried it with a weighted score of ${w.toFixed(2)}. Short, with a stop.` };
@@ -116,18 +115,7 @@ function lead(c: Ctx) {
 }
 
 function risk(c: Ctx) {
-  const dis = Number(c.disagreement ?? 0);
-  const temper = Number(c.temperament ?? 0);
-  const lev = Number(c.maxLeverage ?? 3);
-  const stop = Number(c.defaultStopPct ?? 1.5);
-  if (c.action === 'HOLD' || c.action === 'CLOSE') return { decision: 'APPROVE', sizeFactor: 1, leverage: 1, stopPct: stop, reason: c.action === 'CLOSE' ? 'Closing reduces risk. Approved.' : 'Nothing to size. Fine by me.' };
-  if (c.researchVote === 'VETO') return { decision: 'REJECT', sizeFactor: 0, leverage: 1, stopPct: stop, reason: 'Research vetoed. Rejected.' };
-  const strategyAgrees = (c.action === 'OPEN_LONG' && c.strategySide === 'LONG') || (c.action === 'OPEN_SHORT' && c.strategySide === 'SHORT');
-  if (!strategyAgrees && dis > 0.5) return { decision: 'REJECT', sizeFactor: 0, leverage: 1, stopPct: stop, reason: 'The rule does not back this and the room is split. Rejected.' };
-  if (dis > 0.35 || !strategyAgrees || temper < 0) {
-    return { decision: 'REDUCE', sizeFactor: r2(clamp(0.5 + temper * 0.1, 0.2, 0.6)), leverage: Math.max(1, lev - 1), stopPct: r2(stop * 0.8), reason: `Disagreement ${dis.toFixed(2)}. Half size, lower leverage, tighter stop.` };
-  }
-  return { decision: 'APPROVE', sizeFactor: 1, leverage: lev, stopPct: stop, reason: 'Rule, tape and lead line up. Approved at standard size.' };
+  return { decision: 'APPROVE', sizeFactor: 1, leverage: Number(c.maxLeverage ?? 5), stopPct: Number(c.defaultStopPct ?? 20), reason: 'Owner profile SL/TP and allocation apply directly.' };
 }
 
 /** Deterministic post-trade review. Also used by the Desk Lead journal in Grok Bot mode (no model calls). */
@@ -149,8 +137,8 @@ function chat(c: Ctx) {
   const riskAtStop = pos.reduce((s, p) => s + Math.abs(p.entry - p.stop) * p.qty, 0);
   const asks = (...w: string[]) => w.some((x) => msg.includes(x));
   if (agent === 'risk') {
-    if (asks('stop', 'lose', 'loss', 'rugi')) return { reply: pos.length ? `If every stop hits, we give back about ${r2(riskAtStop)} USDT plus fees. Each trade is capped at ${c.maxLossPct}% of the balance, so the worst single hit is ${r2((paper.balance ?? 0) * (c.maxLossPct ?? 1) / 100)} USDT.` : `Nothing open, so nothing to lose right now. When we do trade, a stop hit costs at most ${c.maxLossPct}% of the balance. That cap is in code.` };
-    return { reply: `My job is saying no politely. Leverage tops out at ${c.maxLeverage}x and the safety net of ${paper.safetyNet} USDT never moves. I can shrink a trade or kill it, never grow it.` };
+    if (asks('stop', 'lose', 'loss', 'rugi')) return { reply: pos.length ? `At the current stop prices, the estimated loss is ${r2(riskAtStop)} USDT plus fees. New orders use SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% of committed margin, before fees and venue rounding.` : `No open positions. New orders use the Owner profile: SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% of committed margin before fees and venue rounding.` };
+    return { reply: `The Owner profile sets SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% of order margin and leverage up to ${c.maxLeverage}x. I report those settings without adding size reductions or stop-distance rules.` };
   }
   if (agent === 'lead') return { reply: asks('learn', 'journal', 'report', 'pelajaran') ? `I keep the journal too. Every closed trade gets a grade and one lesson, and the periodic report is mine. Positions: ${posTxt}.` : asks('why', 'kenapa') ? `I only sign what survives the argument and the risk gate. HOLD is a perfectly good answer.` : `Give me a symbol and I will call the table. Positions: ${posTxt}.` };
   if (agent === 'market') return { reply: `I read public prices and closed candles, nothing else. Ask me after a debate and I will tell you what the tape said.` };

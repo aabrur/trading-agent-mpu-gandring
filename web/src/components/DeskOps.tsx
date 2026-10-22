@@ -332,8 +332,8 @@ export function DeskOps({ state }: { state: DeskState }) {
         <p className="ops-help">{t('opsExecutionPrefix')} {state.venue?.label ?? state.mode} · {t('opsAnalysisPrefix')} {state.marketSource}. {t('opsPricesMayDiffer')}</p>
         <div className="ticket-inputs">
           <label>{t('opsEntryLabel')}<input aria-label="entry" placeholder={t('opsLiveQuotePlaceholder')} value={entry} onChange={(e) => setEntry(e.target.value)} /></label>
-          <label>{t('opsStopLossLabel')}<input aria-label="stop" placeholder={t('opsStopPricePlaceholder')} value={stop} onChange={(e) => setStop(e.target.value)} /></label>
-          <label>{t('opsTakeProfitLabel')}<input aria-label="take profit" placeholder={t('opsTpPricePlaceholder')} value={tp} onChange={(e) => setTp(e.target.value)} /></label>
+          <label>{t('opsStopLossLabel')}<input aria-label="stop" placeholder={t('opsStopPricePlaceholder')} value={stop} readOnly /></label>
+          <label>{t('opsTakeProfitLabel')}<input aria-label="take profit" placeholder={t('opsTpPricePlaceholder')} value={tp} readOnly /></label>
           <label>{t('opsLeverageLabel')}<input aria-label="leverage" placeholder={`≤ ${state.paper.maxLeverage}x`} value={lev} onChange={(e) => setLev(e.target.value)} /></label>
         </div>
         <p className="ops-help">{t('opsAutoStopHelpText')}</p>

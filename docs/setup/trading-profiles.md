@@ -4,20 +4,20 @@ Open **Desk ops → Live trading setup → Default** or **Manual setup**. Both o
 
 Manual setup loads the values previously entered for that network. Switching sections keeps the draft. **Discard edits** restores saved values; closing Setup discards unsaved edits. Saving Default keeps the saved manual values available for later editing.
 
-| Setting | App preset | Meaning |
-| --- | --- | --- |
-| Daily loss cap | 3% | UTC-day equity loss limit; an existing daily stop remains latched until the next UTC day |
-| Risk per trade | 1% | Maximum loss at stop including estimated round-trip fees, relative to the lower of balance and equity |
-| Minimum entry confidence | 0% | No additional confidence floor; manual profiles can require a higher reported signal confidence |
-| Maximum leverage | 3x | Existing code caps and instrument limits still apply |
-| Maximum / fallback stop | 1.5% | Maximum allowed distance and fallback when deriving a stop |
-| Minimum stop distance | 0.3% | Minimum allowed stop distance |
-| Take profit | 2R | Derived target distance; 0 disables the derived target |
-| Minimum order notional | 5 USDT | Exchange minimums also apply; quantity is never rounded up to force an entry |
-| Reserved capital | 200 USDT | Excluded from Money Trade; must remain above zero outside PAPER |
-| Maximum open positions | 4 | Allocation slots; existing positions are not resized or closed by a profile change |
+| Profile | Stop loss | Take profit | Maximum leverage | Minimum entry confidence | Daily loss limit |
+| --- | --- | --- | --- | --- | --- |
+| Default | 20% | 60% | 5x | 60% | 10% |
+| Balance | 30% | 60% | 10x | 60% | 15% |
+| Profit | 40% | 70% | 15x | 60% | 20% |
+| Aggressive | 50% | 80% | 20x | 60% | 25% |
 
-The preset is the app baseline, not a recommendation tailored to an account. In particular, a reserve above available equity leaves no allocation for new entries. Confidence is an agent's reported assessment, not a verified probability of profit. No daily profit target or daily order quota is added.
+SL and TP are percentages of the margin committed to an order, before fees and venue rounding. Price distance equals margin percentage divided by leverage. For example, Default at 5x places SL 4% and TP 12% from entry. LONG subtracts the SL distance and adds the TP distance; SHORT does the reverse.
+
+Every entry path uses these profile percentages, including Office tickets, Owner commands, internal debates and agent API/CLI tickets. Legacy stop/TP prices supplied by agent tickets do not override the active profile. There is no minimum stop distance, separate account-equity loss cap per trade, model size reduction, mood multiplier or automatic hedge order.
+
+Allocation still comes from the Owner's Money Trade and N/order-size setting. Available funds, exchange quantity/tick rules, the profile leverage cap, exchange-side protection, daily loss limit, and kill/pause controls still apply. Estimated fees are shown separately and do not impose a second per-trade loss cap. The daily limit uses UTC-day start equity and remains latched until the next UTC day once reached.
+
+These values are Owner settings. Confidence is an agent's reported assessment, not a verified probability of profit. No daily profit target or daily order quota is added.
 
 ## What saving does
 
@@ -26,12 +26,12 @@ The preset is the app baseline, not a recommendation tailored to an account. In 
 - Saving does not switch mode, enable Auto Trade, connect an exchange, restart the desk or place an order. **Exchange & Safety** retains the existing credential checks and typed LIVE confirmation. LIVE trades real money autonomously and can lose it.
 - Existing installations keep their current configuration until a profile is explicitly saved. Provider/model selection, permitted symbols, debate settings, holding period, reporting, notifications, fees and kill-switch behavior are not changed by a profile.
 
-The entry confidence floor applies to internal Lead decisions, signed agent proposals and agent open tickets, for both LONG and SHORT. CLOSE and HOLD remain available. A missing confidence blocks an agent entry only when the configured floor is above zero. Human manual tickets retain their existing sizing, risk and protection checks.
+The entry confidence floor applies to internal Lead decisions, signed agent proposals and agent open tickets, for both LONG and SHORT. CLOSE and HOLD remain available. A missing confidence blocks an agent entry only when the configured floor is above zero. Human manual tickets use the profile SL/TP without an agent confidence requirement.
 
-Agent tickets can provide `confidence` on the existing API, or `npm run gb -- open ETHUSDT LONG --stop <price> --confidence 0.75`. Use the same 0..1 scale as agent replies. The agent CLI, signed agent routes and proposals identify the ticket as an agent entry automatically, including when the CLI uses the local ops route. Do not omit confidence to bypass an owner-configured floor.
+Agent tickets can provide `confidence` on the existing API, or `npm run gb -- open ETHUSDT LONG --confidence 0.60`. The profile supplies SL/TP. Use the same 0..1 confidence scale as agent replies. The agent CLI, signed agent routes and proposals identify the ticket as an agent entry automatically, including when the CLI uses the local ops route.
 
 ## Persistence
 
-The existing local setup store holds `TESTNET_DESK_PROFILE` and `MAINNET_DESK_PROFILE`, with values `default` or `manual`. Missing selection means legacy/current configuration. Manual values use the same existing setting names, prefixed with `TESTNET_DESK_` or `MAINNET_DESK_`, for example `MAINNET_DESK_MIN_ENTRY_CONFIDENCE_PCT=75`. Default selection does not erase these manual values. Legacy settings and credentials are retained.
+The existing local setup store holds `TESTNET_DESK_PROFILE` and `MAINNET_DESK_PROFILE`, with values `default`, `balance`, `profit`, `aggressive` or `manual`. Missing selection means legacy/current configuration. Saved preset values are frozen until the Owner saves a profile again. Manual values use the existing setting names prefixed with `TESTNET_DESK_` or `MAINNET_DESK_`. Preset selection does not erase manual drafts. Legacy minimum-stop and account-equity risk fields remain readable for compatibility but do not affect execution.
 
 Profile reads and writes use the existing localhost and same-origin setup route gate. No exchange history reads or model calls are needed to edit a profile.

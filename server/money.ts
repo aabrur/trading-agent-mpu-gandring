@@ -136,10 +136,10 @@ export interface SizingRules { qtyStep: number; minQty: number; tickSize: number
 export interface PlanInput {
   availableFunds?: number;
   orderSizePct?: number;
-  /** LIVE/TESTNET can meet the exchange minimum within free capital and the loss cap. */
+  /** LIVE/TESTNET can meet the exchange minimum within available capital. */
   adjustToVenueMinimum?: boolean;
   balance: number;
-  /** Account equity for the loss cap. Defaults to balance. */
+  /** Account equity, retained for callers displaying account observations. */
   equity?: number;
   safetyNet: number;
   n: number;
@@ -152,15 +152,16 @@ export interface PlanInput {
   leverage: number;
   /** The stop price given by the Strategist. Used exactly (only rounded to the tick toward the entry). Never moved. */
   stop?: number | null;
-  /** Used only when no stop price is given (internal debate): the stop is placed this far from the entry. */
+  /** Stop loss as a percentage of committed margin, converted to price distance using leverage. */
   stopPct?: number;
-  /** Stops closer than this (in % of entry) are refused. */
+  /** @deprecated Read compatibility only. There is no minimum stop distance. */
   minStopPct?: number;
-  /** A given stop wider than this (in % of entry, DEFAULT_STOP_PCT) is refused, never tightened or moved. */
+  /** @deprecated Read compatibility only. The profile supplies the stop. */
   maxStopPct?: number;
   /** Fallback minimum order value (qty * price) when the venue publishes none. */
   minOrderUsdt: number;
-  maxLossPerTradePct: number;
+  /** @deprecated Read compatibility only. No account-equity loss cap changes order size. */
+  maxLossPerTradePct?: number;
   /** Taker fee fraction (0.00055 = 0.055%). The larger of this and the venue fee is charged on entry and exit. */
   takerFee?: number;
   /** Exchange rules. Without them the lot step is a paper-only guess and the plan says so. */
@@ -168,6 +169,7 @@ export interface PlanInput {
   /** @deprecated use rules.qtyStep */
   qtyStep?: number;
   takeProfitR?: number; // take profit at R times the stop distance, 0 = none
+  /** Take profit as a percentage of committed margin. Takes precedence over legacy R. */
   takeProfitPct?: number;
 }
 
@@ -177,11 +179,10 @@ export type Plan =
 
 /**
  * Sizes one order. Order of work:
- *  1. guards: safety net, N, valid price, a stop on the right side, not closer than MIN_STOP_PCT and not wider than DEFAULT_STOP_PCT
+ *  1. check available allocation, N, valid price and a stop on the right side
  *  2. stop = the given stop rounded to the tick TOWARD the entry (less risk), never moved otherwise
- *  3. qty = the smallest of: allocation * leverage / price, Money Trade headroom, and the loss cap
- *     (|entry - stop| * qty + round-trip taker fee <= MAX_LOSS_PER_TRADE_PCT of equity), floored to the lot step
- *  4. optionally meet the venue minimum within free Money Trade and the active loss cap.
+ *  3. qty = allocation * leverage / price within available funds, floored to the venue lot step
+ *  4. optionally meet the venue minimum within available funds.
  */
 export function planOrder(p: PlanInput): Plan {
   const split = moneySplit(p);
@@ -199,10 +200,10 @@ export function planOrder(p: PlanInput): Plan {
   const fee = Math.max(p.takerFee ?? 0, rules.takerFee ?? 0);
   if (![step, minQty, minNotional].every((v) => Number.isFinite(v) && v > 0) || !Number.isFinite(fee) || fee < 0) return { ok: false, reason: 'Invalid exchange quantity, minimum or fee rule.', split };
 
-  // Stop: the given price, exactly. Only the internal debate (no stop price) derives one from stopPct.
+  // App entry paths derive protection from profile margin percentages. Explicit prices support low-level previews.
   let rawStop: number;
   if (p.stop != null) rawStop = p.stop;
-  else if (p.stopPct != null && p.stopPct > 0) rawStop = p.side === 'LONG' ? p.price * (1 - p.stopPct / 100) : p.price * (1 + p.stopPct / 100);
+  else if (p.stopPct != null && p.stopPct > 0) rawStop = p.side === 'LONG' ? p.price * (1 - p.stopPct / (100 * p.leverage)) : p.price * (1 + p.stopPct / (100 * p.leverage));
   else return { ok: false, reason: 'No stop loss. Every order needs one.', split };
   if (!(rawStop > 0)) return { ok: false, reason: 'No stop loss. Every order needs one.', split };
   if (p.side === 'LONG' ? rawStop >= p.price : rawStop <= p.price) return { ok: false, reason: `Stop ${rawStop} is on the wrong side of the entry ${p.price} for a ${p.side}.`, split };
@@ -211,8 +212,6 @@ export function planOrder(p: PlanInput): Plan {
   if (p.side === 'LONG' ? stop >= p.price : stop <= p.price) return { ok: false, reason: `Stop ${stop} is not beyond the entry ${p.price} after tick rounding.`, split };
   const dist = Math.abs(p.price - stop);
   const stopPct = (dist / p.price) * 100;
-  if (p.minStopPct != null && stopPct < p.minStopPct - 1e-9) return { ok: false, reason: `Stop ${stop} is ${round2(stopPct)}% from the entry ${p.price}, closer than the ${p.minStopPct}% floor. Not moving it; refusing.`, split };
-  if (p.maxStopPct != null && p.maxStopPct > 0 && stopPct > p.maxStopPct + 1e-9) return { ok: false, reason: `Stop ${stop} is ${round2(stopPct)}% from the entry ${p.price}, wider than the ${p.maxStopPct}% limit (DEFAULT_STOP_PCT). Not moving it; refusing.`, split };
 
   // Margin: allocation per order (Money Trade / N) times the risk factor, inside Money Trade headroom.
   const factor = Math.min(1, Math.max(0, p.sizeFactor));
@@ -223,13 +222,6 @@ export function planOrder(p: PlanInput): Plan {
   const capitalPerUnit = p.price / p.leverage + fee * p.price;
   let qtyMax = Math.min((margin * p.leverage) / p.price, headroom / capitalPerUnit);
 
-  // Loss cap including the round-trip taker fee: qty * (dist + fee * (entry + stop)) <= maxLoss.
-  // Loss cap base: the lower of balance and equity, so unrealized profit never raises the cap.
-  const equity = Math.min(p.balance, p.equity ?? p.balance);
-  const maxLoss = (equity * p.maxLossPerTradePct) / 100;
-  const lossPerUnit = dist + fee * (p.price + stop);
-  const qtyLoss = maxLoss / lossPerUnit;
-  if (qtyLoss < qtyMax) { qtyMax = qtyLoss; notes.push(`Size cut so a stop hit (with fees) loses at most ${p.maxLossPerTradePct}% of equity (${round2(maxLoss)} USDT).`); }
   if (rules.maxQty && qtyMax > rules.maxQty) { qtyMax = rules.maxQty; notes.push(`Capped at the venue max quantity ${rules.maxQty}.`); }
 
   let qty = floorTo(qtyMax, step);
@@ -237,12 +229,12 @@ export function planOrder(p: PlanInput): Plan {
   let adjusted = false;
   if (p.adjustToVenueMinimum && factor > 0 && qty < venueMinimum - 1e-12) {
     const requiredMargin = venueMinimum * p.price / p.leverage;
-    if (venueMinimum * capitalPerUnit <= headroom + 1e-9 && venueMinimum * lossPerUnit <= maxLoss + 1e-9 && (!rules.maxQty || venueMinimum <= rules.maxQty + 1e-12)) {
+    if (venueMinimum * capitalPerUnit <= headroom + 1e-9 && (!rules.maxQty || venueMinimum <= rules.maxQty + 1e-12)) {
       qty = venueMinimum; adjusted = true;
       notes.push(`Raised to exchange minimum quantity ${qty}: margin ${round4(requiredMargin)} USDT (requested allocation ${split.perOrder}).`);
     }
   }
-  const suggestion = p.n > 1 ? `Try a smaller N (for example ${p.n - 1}) so each order gets more money, or a closer stop.` : 'Add balance, lower the safety net, or use a closer stop.';
+  const suggestion = p.n > 1 ? `Try a smaller N (for example ${p.n - 1}) so each order gets more money.` : 'Add balance or lower the safety net.';
   if (qty < minQty - 1e-12 || qty <= 0) return { ok: false, reason: `Allowed size ${round6(qtyMax)} is below the minimum quantity ${minQty} (step ${step}) at ${p.price}. Not rounding up.`, split, suggestion };
   const notional = qty * p.price;
   if (notional < minNotional - 1e-9) return { ok: false, reason: `Order value ${round2(notional)} USDT (${qty} x ${p.price}) is below the minimum notional ${minNotional} USDT. Not rounding up.`, split, suggestion };
@@ -250,12 +242,14 @@ export function planOrder(p: PlanInput): Plan {
   const fees = fee * qty * (p.price + stop);
   const lossAtStop = dist * qty + fees;
   // Belt and braces: the floored plan must satisfy every cap.
-  if (margin > (adjusted ? headroom : Math.min(split.perOrder * factor, headroom)) + 1e-9 || qty * capitalPerUnit > headroom + 1e-9 || lossAtStop > maxLoss + 1e-9) return { ok: false, reason: 'Internal sizing check failed (margin or loss over the cap). Refusing.', split };
+  if (margin > (adjusted ? headroom : Math.min(split.perOrder * factor, headroom)) + 1e-9 || qty * capitalPerUnit > headroom + 1e-9) return { ok: false, reason: 'Internal sizing check failed (margin exceeds available funds). Refusing.', split };
 
   const r = p.takeProfitR != null && p.takeProfitR > 0
     ? p.takeProfitR
     : (p.takeProfitPct != null && stopPct > 0 ? p.takeProfitPct / stopPct : 2);
-  const tp = r > 0 ? tickToward(p.side === 'LONG' ? p.price + dist * r : p.price - dist * r, rules.tickSize, p.side === 'LONG' ? 'SHORT' : 'LONG') : null;
+  const targetDistance = p.takeProfitPct != null ? p.price * p.takeProfitPct / (100 * p.leverage) : dist * r;
+  const rawTp = p.side === 'LONG' ? p.price + targetDistance : p.price - targetDistance;
+  const tp = targetDistance > 0 && rawTp > 0 ? tickToward(rawTp, rules.tickSize, p.side === 'LONG' ? 'SHORT' : 'LONG') : null;
   return {
     ok: true, margin: round2(margin), notional: round2(notional), qty, stop, tp: tp != null && rules.tickSize > 0 ? tp : tp != null ? roundPrice(tp) : null, leverage: p.leverage,
     lossAtStop: round4(lossAtStop), fees: round4(fees), stopPct: round4(stopPct), takerFee: fee, rules: { ...rules, minQty, minNotional }, split, notes, takeProfitPct: p.takeProfitPct ?? round2(stopPct * r)

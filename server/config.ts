@@ -174,15 +174,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       minEntryConfidencePct: Math.min(100, Math.max(0, num(env, 'MIN_ENTRY_CONFIDENCE_PCT', DEFAULT_TRADING_SETTINGS.minEntryConfidencePct))),
       maxLeverage: Math.max(1, num(env, 'MAX_LEVERAGE', DEFAULT_TRADING_SETTINGS.maxLeverage)),
       ...(env.ORDER_SIZE_PCT ? { orderSizePct: num(env, 'ORDER_SIZE_PCT', 100) } : {}),
-      defaultStopPct: num(env, 'DEFAULT_STOP_PCT', 1.5),
-      minStopPct: num(env, 'MIN_STOP_PCT', 0.3),
+      defaultStopPct: num(env, 'DEFAULT_STOP_PCT', DEFAULT_TRADING_SETTINGS.defaultStopPct),
+      minStopPct: 0,
       maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', DEFAULT_TRADING_SETTINGS.maxLossPerTradePct),
       minOrderUsdt: num(env, 'MIN_ORDER_USDT', 5),
       takerFee: num(env, 'TAKER_FEE', 0.00055),
       takeProfitPct: num(env, 'TAKE_PROFIT_PCT', 60),
       takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 3)),
-      // cannot be switched off: clamped to 0.5..20 percent
-      dailyLossLimitPct: Math.min(20, Math.max(0.5, num(env, 'DAILY_LOSS_LIMIT_PCT', 3)))
+      // Daily loss follows the selected profile, including Aggressive's 25%.
+      dailyLossLimitPct: Math.min(25, Math.max(0.5, num(env, 'DAILY_LOSS_LIMIT_PCT', DEFAULT_TRADING_SETTINGS.dailyLossLimitPct)))
     },
     debate: {
       rounds: Math.min(4, Math.max(1, num(env, 'DEBATE_ROUNDS', 2))),

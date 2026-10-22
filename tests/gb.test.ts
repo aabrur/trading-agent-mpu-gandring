@@ -36,7 +36,7 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(sp.data).toMatchObject({ moneyTrade: 800, perOrder: 200 });
     const sz = await run('size', 'ETHUSDT', 'SHORT', '3100', '3140');
     expect(sz.ok).toBe(true);
-    expect((sz.data as { stop: number }).stop).toBe(3140);
+    expect((sz.data as { stop: number }).stop).toBeCloseTo(3100 * (1 + 20 / 300), 1);
   });
   it('event lines show in the office as Grok Bot agents speaking', async () => {
     const r = await run('event', 'market', 'ETH tape is heavy, sellers in control.', '--stance', 'SHORT', '--confidence', '0.7');
@@ -45,22 +45,18 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(built.desk.agents.market.stance).toBe('SHORT');
   });
   it('open goes through the risk gate caps, money split and mandatory stop; close all flattens', async () => {
-    // A stop wider than DEFAULT_STOP_PCT is refused, never tightened or moved, and nothing reaches the exchange.
-    const wide = await run('open', 'ETHUSDT', 'SHORT', '--confidence', '0.8', '--stop', '3600', '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop far above the range.');
-    expect(wide.ok).toBe(false);
-    expect(wide.text).toMatch(/wider than the 1.5% limit/);
-    expect(adapter.placed).toHaveLength(0);
     const mk = (await run('market', 'ETHUSDT')).data as { last?: number; bid?: number | null };
     const px = Number(mk.bid ?? mk.last);
-    const stop = Math.round(px * 1.012); // 1.2% above the bid, inside the 1.5% limit, on the fake tick
+    const stop = Math.round(px * 1.012); // Legacy stop input must not override the profile.
     const r = await run('open', 'ETHUSDT', 'SHORT', '--confidence', '0.8', '--stop', String(stop), '--leverage', '50', '--reason', 'Desk Lead: short ETH, stop above the range.');
     expect(r.ok).toBe(true);
     const notes = (r.data as { notes: string[] }).notes.join(' ');
     expect(notes).toMatch(/capped to 3x/);
     expect(adapter.placed).toHaveLength(1);
     expect(adapter.placed[0].leverage).toBeLessThanOrEqual(3);
-    // The given stop is used exactly (already on the tick), never moved.
-    expect(adapter.placed[0].stop).toBe(stop);
+    // The profile supplies protection, regardless of legacy agent stop input.
+    expect(adapter.placed[0].stop).toBeCloseTo((await adapter.ticker('ETHUSDT')) * (1 + 20 / 300), 0);
+    expect(adapter.placed[0].stop).not.toBe(stop);
     const pos = await run('positions');
     expect((pos.data as unknown[]).length).toBe(1);
     const acc = await run('account');
@@ -71,10 +67,13 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(cl.ok).toBe(true);
     expect(adapter.closes).toBe(1);
   });
-  it('refuses a stop on the wrong side', async () => {
+  it('uses profile protection even when a legacy ticket sends a wrong-side stop', async () => {
     const r = await run('open', 'SOLUSDT', 'LONG', '--confidence', '0.8', '--stop', '999999');
-    expect(r.ok).toBe(false);
-    expect(r.text).toMatch(/wrong side/);
+    expect(r.ok).toBe(true);
+    const placed = adapter.placed.at(-1)!;
+    expect(placed.stop).toBeLessThan(999999);
+    expect(placed.stop).toBeGreaterThan(0);
+    expect((await run('close', 'all')).ok).toBe(true);
   });
   it('write commands need the secret', async () => {
     const r = await gb(['open', 'ETHUSDT', 'LONG'], { env: { ...env, AGENT_EVENT_SECRET: 'nope-nope-nope-nope-nope-1' }, baseUrl });

@@ -43,12 +43,13 @@ describe('sizing with exchange rules (Aster)', () => {
     expect(p.ok).toBe(false);
     if (!p.ok) expect(p.reason).toMatch(/Not rounding up/);
   });
-  it('a wide stop shrinks qty instead of moving the stop; a loss cap that leaves less than the minimum refuses', () => {
+  it('does not shrink allocation for a legacy equity loss cap', () => {
     const wide = planOrder({ ...desk, maxLossPerTradePct: 1, price: 1167.02, side: 'LONG', stop: 1100, rules: zecRules }); // 5.7% stop, 0.144 USDT cap
-    expect(wide.ok).toBe(false); // 0.144 / 68.3 = 0.002 ZEC = 2.3 USDT < 5 min notional
+    expect(wide.ok).toBe(true);
+    if (wide.ok) { expect(wide.qty).toBe(0.014); expect(wide.lossAtStop).toBeGreaterThan(0.1444); }
     const ok = planOrder({ ...desk, balance: 100, equity: 100, safetyNet: 20, n: 1, maxLossPerTradePct: 1, price: 1167.02, side: 'LONG', stop: 1100, rules: zecRules });
     expect(ok.ok).toBe(true);
-    if (ok.ok) { expect(ok.stop).toBe(1100); expect(ok.lossAtStop).toBeLessThanOrEqual(1); expect(ok.qty).toBe(0.014); }
+    if (ok.ok) { expect(ok.stop).toBe(1100); expect(ok.lossAtStop).toBeGreaterThan(1); expect(ok.margin).toBeGreaterThan(79); }
   });
   it('never moves the stop: only tick rounding toward the entry, both sides', () => {
     const l = planOrder({ ...desk, price: 1167.02, side: 'LONG', stop: 1161.004, rules: zecRules });
@@ -62,29 +63,28 @@ describe('sizing with exchange rules (Aster)', () => {
       if (p.ok) expect(p.stop).toBe(stop);
     }
   });
-  it('refuses wrong-side stops and stops closer than MIN_STOP_PCT', () => {
+  it('refuses wrong-side prices but accepts a stop below the old minimum distance', () => {
     expect(planOrder({ ...desk, price: 1167.02, side: 'LONG', stop: 1170, rules: zecRules }).ok).toBe(false);
     expect(planOrder({ ...desk, price: 1167.02, side: 'SHORT', stop: 1160, rules: zecRules }).ok).toBe(false);
     const tight = planOrder({ ...desk, price: 1167.02, side: 'LONG', stop: 1165, rules: zecRules }); // 0.17%
-    expect(tight.ok).toBe(false);
-    if (!tight.ok) expect(tight.reason).toMatch(/0.3% floor/);
+    expect(tight.ok).toBe(true);
+    if (tight.ok) expect(tight.stop).toBe(1165);
   });
-  it('refuses a given stop wider than DEFAULT_STOP_PCT instead of tightening or accepting it', () => {
+  it('does not apply the old price-distance ceiling', () => {
     const wide = planOrder({ ...desk, maxStopPct: 1.5, price: 1167.02, side: 'LONG', stop: 1140, rules: zecRules }); // 2.3%
-    expect(wide.ok).toBe(false);
-    if (!wide.ok) expect(wide.reason).toMatch(/wider than the 1.5% limit/);
+    expect(wide.ok && wide.stop).toBe(1140);
     const short = planOrder({ ...desk, maxStopPct: 1.5, price: 1167.02, side: 'SHORT', stop: 1190, rules: zecRules }); // 1.97%
-    expect(short.ok).toBe(false);
+    expect(short.ok && short.stop).toBe(1190);
     const inside = planOrder({ ...desk, maxStopPct: 1.5, price: 1167.02, side: 'LONG', stop: 1161.0, rules: zecRules });
     expect(inside.ok && inside.stop).toBe(1161.0);
   });
-  it('unrealized profit never raises the loss cap (cap uses the lower of balance and equity)', () => {
+  it('does not add an equity-based size reduction', () => {
     const base = { ...desk, balance: 100, safetyNet: 20, n: 1, maxLossPerTradePct: 1, price: 1167.02, side: 'LONG' as const, stop: 1161.0, rules: zecRules };
     const flat = planOrder({ ...base, equity: 100 });
     const up = planOrder({ ...base, equity: 200 });
     const down = planOrder({ ...base, equity: 50 });
     expect(flat.ok && up.ok && down.ok).toBe(true);
-    if (flat.ok && up.ok && down.ok) { expect(up.qty).toBe(flat.qty); expect(down.qty).toBeLessThan(flat.qty); expect(down.lossAtStop).toBeLessThanOrEqual(0.5); }
+    if (flat.ok && up.ok && down.ok) { expect(up.qty).toBe(flat.qty); expect(down.qty).toBe(flat.qty); }
   });
   it('keeps the guards: safety net, N, Money Trade headroom', () => {
     expect(planOrder({ ...desk, balance: 3, equity: 3, price: 1167.02, side: 'LONG', stop: 1161, rules: zecRules }).ok).toBe(false);

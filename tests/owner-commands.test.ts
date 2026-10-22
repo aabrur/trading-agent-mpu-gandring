@@ -44,7 +44,7 @@ describe('Owner commands', () => {
   it('uses the same parser for channel actions and persists explicitly changed settings', async () => {
     const { desk, cfg } = fixture();
     await runCommand(desk, channelCommand('/set profile aggressive'));
-    expect(cfg.risk).toMatchObject({ minEntryConfidencePct: 80, maxLossPerTradePct: 50, maxLeverage: 20 });
+    expect(cfg.risk).toMatchObject({ minEntryConfidencePct: 60, maxLossPerTradePct: 50, maxLeverage: 20 });
     await runCommand(desk, channelCommand('/set size 1.5%'));
     expect(desk.book.split().perOrder).toBe(12);
     await runCommand(desk, channelCommand('/set leverage 10'));
@@ -202,7 +202,8 @@ describe('percentage allocation and exchange minimums', () => {
     expect(planOrder({ ...ticket, adjustToVenueMinimum: false }).ok).toBe(false);
   });
   it('never rounds the exchange minimum beyond funds, fees, venue max or the loss limit', () => {
-    for (const patch of [{ usedMargin: 79 }, { availableFunds: 4.99 }, { maxLossPerTradePct: 0.01 }, { rules: { ...ticket.rules!, maxQty: 0.02 } }, { sizeFactor: 0 }]) expect(planOrder({ ...ticket, ...patch }).ok).toBe(false);
+    for (const patch of [{ usedMargin: 79 }, { availableFunds: 4.99 }, { rules: { ...ticket.rules!, maxQty: 0.02 } }, { sizeFactor: 0 }]) expect(planOrder({ ...ticket, ...patch }).ok).toBe(false);
+    expect(planOrder({ ...ticket, maxLossPerTradePct: 0.01 }).ok).toBe(true);
     const plan = planOrder({ ...ticket, orderSizePct: 100, usedMargin: 0 });
     expect(plan.ok).toBe(true);
     if (plan.ok) expect(plan.margin + plan.qty * ticket.price * ticket.takerFee!).toBeLessThanOrEqual(80);

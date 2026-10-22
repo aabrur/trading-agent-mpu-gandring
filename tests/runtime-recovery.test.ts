@@ -40,20 +40,24 @@ describe('model response recovery', () => {
     expect(LeadSchema.parse({ action: 'HOLD', reason: 'Waiting' }).confidence).toBe(0.65);
     expect(LeadSchema.safeParse({ action: 'OPEN_LONG', confidence: 3, reason: 'bad' }).success).toBe(false);
   });
-  it('uses code ticket validation on a Risk format failure, preserving explicit rejections', async () => {
+  it('uses the profile without requesting Risk model sizing or its legacy equity loss cap', async () => {
     const config = cfg(), base = makeCaller(config);
     let mode: 'format' | 'reject' = 'format';
-    const desk = new Desk(config, async (request) => request.task === 'risk' ? mode === 'format' ? 'no JSON object' : '{"decision":"REJECT","reason":"Verified veto"}' : base(request), { reportsDir: null, learningsPath: null, killFile: null });
+    const caller = vi.fn(async (request: Parameters<typeof base>[0]) => request.task === 'risk' ? mode === 'format' ? 'no JSON object' : '{"decision":"REJECT","reason":"Verified veto"}' : base(request));
+    const desk = new Desk(config, caller, { reportsDir: null, learningsPath: null, killFile: null });
     const recovered = await desk.runDebate('ETHUSDT');
     expect(recovered.executed).toBe(true);
-    expect(desk.logs.some((line) => line.text.includes('deterministic ticket check passed'))).toBe(true);
+    expect(desk.logs.some((line) => line.text.includes('Owner profile:'))).toBe(true);
     await desk.command('close all');
     mode = 'reject';
-    expect((await desk.runDebate('ETHUSDT')).riskDecision).toBe('REJECT');
-    expect(desk.book.positions).toHaveLength(0);
+    expect((await desk.runDebate('ETHUSDT')).riskDecision).toBe('APPROVE');
+    expect(desk.book.positions).toHaveLength(1);
+    await desk.command('close all');
     mode = 'format'; config.risk.maxLossPerTradePct = 0.000001;
-    expect((await desk.runDebate('ETHUSDT')).executed).toBe(false);
-    expect(desk.book.positions).toHaveLength(0);
+    expect((await desk.runDebate('ETHUSDT')).executed).toBe(true);
+    expect(desk.book.positions).toHaveLength(1);
+    expect(caller.mock.calls.some(([request]) => request.task === 'risk')).toBe(false);
+    desk.stop();
   });
   it('allocates sufficient output tokens to OpenRouter chat', async () => {
     const captured: Record<string, unknown>[] = [];

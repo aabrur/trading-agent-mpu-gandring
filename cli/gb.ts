@@ -25,8 +25,8 @@ const HELP = `Trading Agent Mpu Gandring agent CLI (no model keys needed)
   npm run gb -- account                              mode, balance, equity, daily loss stop
   npm run gb -- positions                            open positions with entry, stop, take profit, PnL
   npm run gb -- split [--balance B --safety S --n N] Money Trade = balance - safety net, per order = Money Trade / N
-  npm run gb -- size <symbol> <LONG|SHORT> <entry> <stop> [--leverage L]   size a ticket (read only)
-  npm run gb -- open <symbol> <LONG|SHORT> --stop P [--tp P] [--leverage L] [--confidence 0..1] [--reason "..."]
+  npm run gb -- size <symbol> <LONG|SHORT> <entry> [--leverage L]   preview profile SL/TP (read only)
+  npm run gb -- open <symbol> <LONG|SHORT> [--leverage L] [--confidence 0..1] [--reason "..."]   uses profile SL/TP
   npm run gb -- close <symbol|all>
   npm run gb -- report                               write a report now
   npm run gb -- event <agent> <text> [--stance LONG|SHORT|NEUTRAL --confidence 0.6 --target risk]
@@ -119,7 +119,7 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
       try {
         const st = await state();
         if (st.mode === 'LIVE' || st.mode === 'TESTNET') {
-          const preview = await call('POST', '/api/ops/size', { symbol: args[0] ?? '', side: args[1] ?? '', entry: Number(args[2]), stop: Number(args[3]), leverage: num(flags.leverage) });
+          const preview = await call('POST', '/api/ops/size', { symbol: args[0] ?? '', side: args[1] ?? '', entry: Number(args[2]), leverage: num(flags.leverage) });
           return preview.ok ? ok(preview.data, preview.text) : fail(preview.text ?? 'Venue ticket preview unavailable', preview.data);
         }
         book = { balance: st.paper.balance, equity: st.paper.equity ?? st.paper.balance, safetyNet: st.paper.safetyNet, n: st.paper.n, open: st.paper.positions.length, used: st.paper.usedMargin, mode: st.mode };
@@ -132,8 +132,7 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     }
     case 'open': {
       const s = normSymbol(args[0] ?? ''); const side = String(args[1] ?? '').toUpperCase();
-      if (!s || (side !== 'LONG' && side !== 'SHORT')) return fail('usage: open <symbol> <LONG|SHORT> --stop P [--tp P] [--leverage L] [--confidence 0..1]');
-      if (!(num(flags.stop)! > 0)) return fail('no stop: open needs --stop P (the Strategist stop price). Not opening without one. usage: open <symbol> <LONG|SHORT> --stop P [--tp P] [--leverage L] [--confidence 0..1]');
+      if (!s || (side !== 'LONG' && side !== 'SHORT')) return fail('usage: open <symbol> <LONG|SHORT> [--leverage L] [--confidence 0..1]');
       const body: Record<string, unknown> = { symbol: s, side };
       if (viaOps) body.autonomous = true;
       for (const k of ['stop', 'tp', 'leverage', 'confidence'] as const) if (num(flags[k]) !== undefined) body[k] = num(flags[k]);

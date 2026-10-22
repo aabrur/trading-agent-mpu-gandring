@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
 export const TradingFields = z.object({
-  dailyLossLimitPct: z.number().finite().min(0.5).max(20),
+  dailyLossLimitPct: z.number().finite().min(0.5).max(25),
   maxLossPerTradePct: z.number().finite().positive().max(100),
   minEntryConfidencePct: z.number().finite().min(0).max(100),
   maxLeverage: z.number().int().min(1).max(100),
   orderSizePct: z.number().finite().min(1.5).max(100).optional(),
   defaultStopPct: z.number().finite().positive().lt(100),
-  minStopPct: z.number().finite().positive().lt(100),
+  minStopPct: z.number().finite().nonnegative().lt(100),
   takeProfitPct: z.number().finite().positive().optional(),
   takeProfitR: z.number().finite().nonnegative(),
   minOrderUsdt: z.number().finite().positive(),
@@ -15,10 +15,8 @@ export const TradingFields = z.object({
   maxPositions: z.number().int().min(1).max(4)
 }).strict();
 
-export const TradingSettingsSchema = TradingFields.refine(
-  (v) => v.minStopPct <= v.defaultStopPct,
-  { message: 'Minimum stop must not exceed maximum stop.', path: ['minStopPct'] }
-);
+// Legacy sizing fields remain readable in saved profiles; execution uses margin SL/TP.
+export const TradingSettingsSchema = TradingFields;
 
 export type TradingSettings = z.infer<typeof TradingFields>;
 export type TradingPresetId = 'default' | 'balance' | 'profit' | 'aggressive';
@@ -29,12 +27,12 @@ export const TRADING_PROFILES: readonly TradingProfile[] = ['current', 'default'
 export type TradingNetwork = 'testnet' | 'mainnet';
 
 export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze({
-  dailyLossLimitPct: 4,
+  dailyLossLimitPct: 10,
   maxLossPerTradePct: 20,
-  minEntryConfidencePct: 50,
+  minEntryConfidencePct: 60,
   maxLeverage: 5,
   defaultStopPct: 20,
-  minStopPct: 1.0,
+  minStopPct: 0,
   takeProfitPct: 60,
   takeProfitR: 3.0,
   minOrderUsdt: 5,
@@ -51,12 +49,12 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
     name: 'Default',
     description: 'Baseline auto-trading mode with TP 60% and SL 20%.',
     values: {
-      dailyLossLimitPct: 4,
+      dailyLossLimitPct: 10,
       maxLossPerTradePct: 20,
-      minEntryConfidencePct: 50,
+      minEntryConfidencePct: 60,
       maxLeverage: 5,
       defaultStopPct: 20,
-      minStopPct: 1.0,
+      minStopPct: 0,
       takeProfitPct: 60,
       takeProfitR: 3.0,
       maxPositions: 3
@@ -66,12 +64,12 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
     name: 'Balance',
     description: 'Balanced auto-trading mode with TP 60% and SL 30%.',
     values: {
-      dailyLossLimitPct: 5,
+      dailyLossLimitPct: 15,
       maxLossPerTradePct: 30,
       minEntryConfidencePct: 60,
       maxLeverage: 10,
       defaultStopPct: 30,
-      minStopPct: 1.2,
+      minStopPct: 0,
       takeProfitPct: 60,
       takeProfitR: 2.0,
       maxPositions: 3
@@ -79,14 +77,14 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
   },
   profit: {
     name: 'Profit',
-    description: 'Profit momentum mode with TP 70% and SL 40%.',
+    description: 'Profit momentum mode with TP 70% and SL 40% of margin.',
     values: {
-      dailyLossLimitPct: 8,
+      dailyLossLimitPct: 20,
       maxLossPerTradePct: 40,
-      minEntryConfidencePct: 70,
+      minEntryConfidencePct: 60,
       maxLeverage: 15,
       defaultStopPct: 40,
-      minStopPct: 1.5,
+      minStopPct: 0,
       takeProfitPct: 70,
       takeProfitR: 1.75,
       maxPositions: 2
@@ -96,12 +94,12 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
     name: 'Aggressive',
     description: 'High risk high reward mode with TP 80% and SL 50%.',
     values: {
-      dailyLossLimitPct: 12,
+      dailyLossLimitPct: 25,
       maxLossPerTradePct: 50,
-      minEntryConfidencePct: 80,
+      minEntryConfidencePct: 60,
       maxLeverage: 20,
       defaultStopPct: 50,
-      minStopPct: 1.8,
+      minStopPct: 0,
       takeProfitPct: 80,
       takeProfitR: 1.6,
       maxPositions: 2

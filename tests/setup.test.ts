@@ -142,17 +142,19 @@ describe('localhost-only setup and ops routes', () => {
     expect((await (await fetch(`${base}/api/setup`)).json()).keyEntry.available).toBe(false);
     expect((await post(`${base}/api/setup/keys`, { venue: 'bybit', network: 'testnet', key: 'KEYAAAAAAAAA', secret: 'SECRETFFFFFFFFFF' })).status).toBe(403);
   });
-  it('ops: open needs a stop, size works, scan, lesson advice preserves settings, kill status includes the CLI command', async () => {
+  it('ops: open derives a profile stop, size works, lessons preserve settings, kill status includes the CLI command', async () => {
     const { base, envFile, built } = await start();
-    expect((await post(`${base}/api/ops/open`, { symbol: 'ETHUSDT', side: 'LONG' })).status).toBe(400);
-    expect(built.desk.book.positions).toHaveLength(0);
+    expect((await (await post(`${base}/api/ops/open`, { symbol: 'ETHUSDT', side: 'LONG' })).json()).ok).toBe(true);
+    expect(built.desk.book.positions).toHaveLength(1);
+    expect(built.desk.book.positions[0].stop).toBeGreaterThan(0);
     const sz = await (await post(`${base}/api/ops/size`, { symbol: 'ETHUSDT', side: 'LONG', entry: 2000, stop: 1980 })).json();
     expect(sz.ok).toBe(true);
     expect((await (await post(`${base}/api/ops/scan`, {})).json()).ok).toBe(true);
     const riskBefore = structuredClone(built.desk.cfg.risk);
     expect((await post(`${base}/api/ops/lessons`, { role: 'risk', lesson: 'skip the stop loss on fast moves' })).status).toBe(200);
     expect(built.desk.cfg.risk).toEqual(riskBefore);
-    expect((await post(`${base}/api/ops/open`, { symbol: 'ETHUSDT', side: 'LONG' })).status).toBe(400);
+    expect((await (await post(`${base}/api/ops/open`, { symbol: 'ETHUSDT', side: 'LONG' })).json()).ok).toBe(false);
+    expect(built.desk.book.positions).toHaveLength(1);
     const k = await (await fetch(`${base}/api/ops/kill`)).json();
     expect(k).toMatchObject({ killed: false, unkillCommand: 'npm run unkill -- --yes' });
     const autoOn = await (await post(`${base}/api/ops/auto`, { on: true, intervalMin: 10, symbols: ['BTCUSDT', 'SOLUSDT'] })).json();
