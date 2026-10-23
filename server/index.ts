@@ -60,12 +60,15 @@ async function startServer() {
   const inboundServer = (ch.discord.inbound || ch.slack.inbound || ch.whatsapp.inbound) && ch.commands
     ? inbound.listen(ch.inbound.port, ch.inbound.host, () => log(`chat command webhooks on http://${ch.inbound.host}:${ch.inbound.port}/api/channels/* (point your tunnel at this port only)`))
     : null;
-  const shutdown = () => { auto.stop(); reporter.stop(); lead.stop(); inboundServer?.close(); desk.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500).unref(); };
+  desk.recordActivity({ kind: 'process', source: 'server', level: 'info', status: 'started', text: 'Trading Agent Mpu Gandring server started' });
+  const shutdown = () => { desk.recordActivity({ kind: 'process', source: 'server', level: 'info', status: 'stopping', text: 'Server shutting down' }); auto.stop(); reporter.stop(); lead.stop(); inboundServer?.close(); desk.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500).unref(); };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('unhandledRejection', (reason) => {
     log(`[unhandledRejection] ${safe(String(reason))}`);
+    desk.recordError('process:unhandledRejection', String(reason));
   });
+  process.on('uncaughtExceptionMonitor', (error) => desk.recordError('process:uncaughtException', error.message));
 }
 
 startServer();

@@ -9,7 +9,8 @@ const TOOLS = [
   { id: 'ops', label: 'Ops', path: 'M4 7h16M7 4v6m10 4v6M4 17h16' },
   { id: 'book', label: 'Portfolio', path: 'M4 5h7l1 2 1-2h7v15h-7l-1 1-1-1H4zM12 7v14' },
   { id: 'lessons', label: 'Lessons', path: 'm4 8 8-4 8 4-8 4zM7 10v6l5 3 5-3v-6' },
-  { id: 'log', label: 'Log', path: 'M6 3h12v18H6zM9 8h6m-6 4h6m-6 4h4' }
+  { id: 'log', label: 'Log', path: 'M6 3h12v18H6zM9 8h6m-6 4h6m-6 4h4' },
+  { id: 'history', label: 'History', path: 'M3 11a9 9 0 1 1 2.6 7M3 4v7h7m2-5v6l4 2' }
 ] as const;
 
 export function WorkspaceTools({ state, command }: { state: DeskState; command: (text: string) => void }) {
@@ -42,12 +43,13 @@ export function WorkspaceTools({ state, command }: { state: DeskState; command: 
         <span>{tool.label}</span>
       </button>)}
     </nav>
-    <div className="tool-flyout" hidden={!active} onPointerEnter={() => setInsidePanel(true)} onPointerLeave={() => setInsidePanel(false)}>
+    <div className={`tool-flyout${active === 'log' || active === 'history' ? ' is-log' : ''}`} hidden={!active} onPointerEnter={() => setInsidePanel(true)} onPointerLeave={() => setInsidePanel(false)}>
       <button className="tool-close" onClick={() => { document.getElementById(`tool-${active}`)?.focus(); setActive(null); }} aria-label={lang === 'id' ? 'Tutup panel' : 'Close tool panel'}>×</button>
       <div className="tool-pane" id="pane-ops" hidden={active !== 'ops'}><DeskOps state={state} /></div>
       <div className="tool-pane" id="pane-book" hidden={active !== 'book'}><Portfolio state={state} command={command} /></div>
       <div className="tool-pane" id="pane-lessons" hidden={active !== 'lessons'}><Lessons state={state} /></div>
-      <div className="tool-pane" id="pane-log" hidden={active !== 'log'}><TradeLog state={state} /></div>
+      <div className="tool-pane" id="pane-log" hidden={active !== 'log'}><TradeLog state={state} active={active === 'log'} /></div>
+      <div className="tool-pane" id="pane-history" hidden={active !== 'history'}><TradeLog state={state} active={active === 'history'} view="history" /></div>
     </div>
   </div>;
 }

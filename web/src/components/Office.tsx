@@ -27,6 +27,7 @@ interface Props {
   selected: AgentId | null;
   spark: number[];
   onSelect: (id: AgentId) => void;
+  command?: (text: string, agent?: AgentId) => Promise<{ ok: boolean; reply?: string }>;
 }
 
 function useOfficeFight(state: DeskState, fights: Fight[]) {
@@ -145,7 +146,7 @@ function Agent({ a, pos, activity, desks, sp, fight, reaction, inDebate, selecte
   );
 }
 
-export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, children }: Props) {
+export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, command, children }: Props) {
   const { t } = useI18n();
   const officeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -270,7 +271,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         );
       })}
 
-      <OfficeDiscussion state={state} latest={latestSpeech} onSelect={onSelect} />
+      <OfficeDiscussion state={state} latest={latestSpeech} onSelect={onSelect} command={command} />
       </div>
     </div>
   );

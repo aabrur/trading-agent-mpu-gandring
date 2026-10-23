@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { installDiagnostics } from './diagnostics';
 import { verdictReactions, type SceneEvent } from './sceneDirector';
 import type { AgentId, DeskState, Fight, Reaction, Speech, Verdict } from './types';
 
 export function useDesk() {
+  useEffect(installDiagnostics, []);
   const [state, setState] = useState<DeskState | null>(null);
   const [connected, setConnected] = useState(false);
   const [speech, setSpeech] = useState<Partial<Record<AgentId, Speech>>>({});
@@ -16,13 +18,19 @@ export function useDesk() {
     let ws: WebSocket | null = null;
     let retry: number | undefined;
     let alive = true;
+    let socketFailureReported = false;
     const timers = new Set<number>();
     let reactionTimer: number | undefined;
     const later = (fn: () => void, ms: number) => { const id = window.setTimeout(() => { timers.delete(id); if (alive) fn(); }, ms); timers.add(id); return id; };
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/ws`);
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => { socketFailureReported = false; setConnected(true); };
+      ws.onerror = () => {
+        if (!alive || socketFailureReported) return;
+        socketFailureReported = true;
+        void fetch('/api/logs/client', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: 'websocket', message: 'Office live connection failed; reconnecting.', level: 'warn' }) }).catch(() => {});
+      };
       ws.onclose = () => { setConnected(false); if (alive) retry = window.setTimeout(connect, 1500); };
       ws.onmessage = (ev) => {
         const { type, payload } = JSON.parse(ev.data);
@@ -32,6 +40,8 @@ export function useDesk() {
           setSceneEvents((events) => events.some((e) => e.id === event.id) ? events : [...events.slice(-11), event]);
         }
         if (type === 'state') { setState(payload); if (!payload.debate) setMeter(null); }
+        else if (type === 'log') setState(current => current ? { ...current, logs: [...current.logs, payload].slice(-2000) } : current);
+        else if (type === 'room') setState(current => current ? { ...current, roomHistory: [...(current.roomHistory || []), payload].slice(-100) } : current);
         else if (type === 'speech') {
           const at = typeof payload.at === 'number' ? payload.at : Date.now();
           setSpeech((s) => ({ ...s, [payload.agent]: { ...payload, at } }));
@@ -75,7 +85,8 @@ export function useDesk() {
 
   const command = useCallback(async (text: string, agent?: AgentId) => {
     const res = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent }) });
-    return (await res.json()) as { ok: boolean; reply: string; command: string };
+    const result = await res.json() as { ok: boolean; reply?: string; error?: string; command?: string };
+    return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid' };
   }, []);
 
   return { state, connected, speech, fights, meter, reactions, sceneEvents, command };

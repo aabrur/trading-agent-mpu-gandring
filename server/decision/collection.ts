@@ -1,6 +1,7 @@
 import type { JevService } from './jev.js';
 import type { MarketSnapshot, NewsItem } from '../types.js';
 import type { WhaleBriefing } from '../market/whale.js';
+import { publishActivity } from '../activity.js';
 
 export type CollectionRoute = 'PARALLEL' | 'MARKET_FIRST' | 'NEWS_FIRST' | 'WHALE_FIRST';
 const routes: CollectionRoute[] = ['PARALLEL', 'MARKET_FIRST', 'NEWS_FIRST', 'WHALE_FIRST'];
@@ -53,8 +54,11 @@ export async function collectTradingData(input: {
     first === 'news' ? Promise.resolve(firstResult as PromiseSettledResult<NewsItem[]>) : settle(input.news),
     first === 'whale' ? Promise.resolve(firstResult as PromiseSettledResult<WhaleBriefing>) : settle(input.whale)
   ]);
-  if (marketResult.status === 'rejected') throw new Error('Live market collector unavailable; analysis cannot proceed on sample data.');
-  if (input.live && marketResult.value.example) throw new Error('Sample market observations are forbidden in live collection.');
+  if (marketResult.status === 'rejected' || (input.live && marketResult.value.example)) {
+    const text = marketResult.status === 'rejected' ? 'Live market collector unavailable; analysis cannot proceed on sample data.' : 'Sample market observations are forbidden in live collection.';
+    publishActivity({ kind: 'plugin', source: 'collector:market', level: 'error', status: 'failed', text: `${input.symbol}: ${text}`, durationMs: Date.now() - startedAt });
+    throw new Error(text);
+  }
   const news = newsResult.status === 'fulfilled' ? newsResult.value.filter(item => !input.live || !item.example) : [];
   const whale = whaleResult.status === 'fulfilled' ? whaleResult.value : {
     symbol: input.symbol, providerStatus: 'UNAVAILABLE' as const, providerName: 'Whale Alert', events: [], summary: 'On-chain provider unavailable', observedAt: Date.now(), disclaimer: 'Do not infer wallet activity from missing observations.'
@@ -65,6 +69,7 @@ export async function collectTradingData(input: {
     whale: { status: whale.providerStatus === 'CONFIGURED_LIVE' ? 'available' : 'unavailable', observedAt: whale.observedAt,
       ...(whale.providerStatus !== 'CONFIGURED_LIVE' ? { reason: whale.providerStatus } : {}) }
   } };
+  for (const [feed, result] of Object.entries(trace.feeds)) publishActivity({ kind: 'plugin', source: `collector:${feed}`, level: result.status === 'available' ? 'info' : 'warn', status: result.status, text: `${input.symbol} · ${feed}: ${result.reason || result.status}`, durationMs: trace.completedAt - startedAt });
   return { market: marketResult.value, news, whale, trace };
 }
 

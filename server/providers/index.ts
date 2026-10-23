@@ -3,6 +3,7 @@ import type { AgentId } from '../types.js';
 import type { TaskKind } from '../schemas.js';
 import { mockReply } from './mock.js';
 import { runLocalAgent } from './local.js';
+import { publishActivity } from '../activity.js';
 
 export interface ModelRequest {
   agent: AgentId;
@@ -27,7 +28,7 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
 }
 
 export function makeCaller(cfg: AppConfig): ModelCaller {
-  return async (req) => {
+  const call: ModelCaller = async (req) => {
     const { provider, model, system, user, task } = req;
     switch (provider) {
       case 'mock':
@@ -74,6 +75,19 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       }
       default:
         throw new Error(`unknown provider ${provider satisfies never}`);
+    }
+  };
+  return async (req) => {
+    const started = Date.now();
+    const entry = { kind: 'tool' as const, source: `${req.provider}:${req.model}`, agent: req.agent };
+    publishActivity({ ...entry, level: 'info', status: 'started', text: `${req.task} model request · attempt ${req.attempt}` });
+    try {
+      const reply = await call(req);
+      publishActivity({ ...entry, level: 'info', status: 'completed', text: `${req.task} model request completed`, durationMs: Date.now() - started });
+      return reply;
+    } catch (error) {
+      publishActivity({ ...entry, level: 'error', status: 'failed', text: `${req.task} model request failed: ${(error as Error).message}`, durationMs: Date.now() - started });
+      throw error;
     }
   };
 }

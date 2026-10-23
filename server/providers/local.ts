@@ -1,5 +1,6 @@
 // Native agent accounts stay in their own CLIs. The desk receives text replies through its existing schema/risk gate.
 import { spawn } from 'node:child_process';
+import { publishActivity } from '../activity.js';
 import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -122,8 +123,15 @@ export function recordResearchActivity(output: string) {
     try {
       const event = JSON.parse(line) as { type?: string; item?: { type?: string; server?: string; tool?: string; status?: string; error?: unknown; result?: { isError?: boolean } } };
       const item = event.item;
-      if (event.type !== 'item.completed' || item?.type !== 'mcp_tool_call' || !item.server || !item.tool) continue;
-      researchActivity.push({ server: item.server.slice(0, 100), tool: item.tool.slice(0, 100), status: item.error || item.result?.isError || item.status === 'failed' ? 'failed' : 'completed', at: Date.now() });
+      if (event.type !== 'item.completed' || !item?.type) continue;
+      const status = item.error || item.result?.isError || item.status === 'failed' ? 'failed' : 'completed';
+      if (item.type !== 'mcp_tool_call') {
+        if (['web_search', 'command_execution', 'function_call', 'dynamic_tool_call', 'plugin_call'].includes(item.type)) publishActivity({ kind: item.type === 'plugin_call' ? 'plugin' : 'tool', source: 'codex', level: status === 'failed' ? 'error' : 'info', status, text: `${item.type}: ${status}` });
+        continue;
+      }
+      if (!item.server || !item.tool) continue;
+      researchActivity.push({ server: item.server.slice(0, 100), tool: item.tool.slice(0, 100), status, at: Date.now() });
+      publishActivity({ kind: 'mcp', source: item.server, level: status === 'failed' ? 'error' : 'info', status, text: `${item.server}/${item.tool}: ${status}` });
       if (researchActivity.length > 100) researchActivity.splice(0, researchActivity.length - 100);
     } catch { /* Only structured CLI tool events establish tool usage. */ }
   }
@@ -135,6 +143,8 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
   const prior = tail; let release!: () => void; tail = new Promise<void>((r) => { release = r; });
   await prior;
   const folder = mkdtempSync(path.join(tmpdir(), 'mpu-agent-'));
+  const started = Date.now();
+  publishActivity({ kind: 'process', source: id, level: 'info', text: `${id} model process started`, status: 'started' });
   try {
     writeFileSync(path.join(folder, 'prompt.txt'), prompt, { mode: 0o600 });
     writeFileSync(path.join(folder, 'reasoner.md'), '---\nname: desk-reasoner\ndescription: Return a structured trading desk opinion\ntools: []\nsubagents: []\n---\nUse only the supplied facts. Return JSON only.\n', { mode: 0o600 });
@@ -143,21 +153,30 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
     const transports = Object.fromEntries(inventory.map(server => [server.name, server.transport]));
     const plan = localArgs(id, model, folder, prompt, policy, inventory.map(server => server.name), transports);
     Object.assign(plan.env, researchEnvironment(policy, transports, process.env));
-    return await new Promise<string>((resolve, reject) => {
+    const reply = await new Promise<string>((resolve, reject) => {
       const child = spawn(executable.file, [...executable.prefix, ...plan.args], { cwd: folder, env: { ...localEnvironment(process.env), ...plan.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
-      let output = '', size = 0, stopped = false, failure = '';
+      let output = '', eventBuffer = '', size = 0, stopped = false, failure = '';
       const stop = () => {
         if (stopped) return; stopped = true;
         if (process.platform === 'win32' && child.pid) { const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); killer.on('error', () => child.kill()); }
         else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
       };
       const timer = setTimeout(() => { failure = `${id} timed out. Check its sign-in and permission settings in Setup.`; stop(); }, 120_000);
-      const collect = (chunk: Buffer, keep: boolean) => { size += chunk.length; if (size > 1_000_000) { failure = `${id} returned too much output.`; stop(); } else if (keep) output += chunk.toString(); };
+      const collect = (chunk: Buffer, keep: boolean) => { size += chunk.length; if (size > 1_000_000) { failure = `${id} returned too much output.`; stop(); } else if (keep) {
+        const text = chunk.toString(); output += text; eventBuffer += text;
+        const lines = eventBuffer.split('\n'); eventBuffer = lines.pop() || '';
+        for (const line of lines) recordResearchActivity(line);
+      } };
       child.stdout.on('data', (v: Buffer) => collect(v, true)); child.stderr.on('data', (v: Buffer) => collect(v, false));
       child.stdin.on('error', () => {}); child.stdin.end(prompt);
       child.on('error', () => { clearTimeout(timer); reject(new Error(`${id} could not start. Check its installation.`)); });
-      child.on('close', (code) => { clearTimeout(timer); recordResearchActivity(output); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
+      child.on('close', (code) => { clearTimeout(timer); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
     });
+    publishActivity({ kind: 'process', source: id, level: 'info', status: 'completed', text: `${id} model process completed`, durationMs: Date.now() - started });
+    return reply;
+  } catch (error) {
+    publishActivity({ kind: 'process', source: id, level: 'error', status: 'failed', text: `${id} process failed: ${(error as Error).message}`, durationMs: Date.now() - started });
+    throw error;
   } finally { try { rmSync(folder, { recursive: true, force: true }); } finally { release(); } }
 }
 

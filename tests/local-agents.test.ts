@@ -75,6 +75,7 @@ describe('existing agent integration', () => {
       writeFileSync(path.join(folder, 'fake.js'), fake);
     } else writeFileSync(path.join(folder, 'codex'), `#!${process.execPath}\n${fake}`, { mode: 0o755 });
     vi.stubEnv('PATH', folder); vi.stubEnv('BYBIT_API_KEY', 'forbidden-secret'); vi.stubEnv('OPENAI_API_KEY', 'forbidden-secret');
+    vi.stubEnv('LOCAL_CODEX_RESEARCH_TOOLS', 'off'); vi.stubEnv('LOCAL_CODEX_MCP_TOOLS', '{}');
     const prompt = 'data only: $(do-not-run) & "quoted"';
     expect(JSON.parse(await runLocalAgent('codex:default', prompt))).toEqual({ reply: prompt });
   });

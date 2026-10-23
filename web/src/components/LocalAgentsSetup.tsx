@@ -87,7 +87,6 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
           </div>
           {message.load && <p role="status">{message.load}</p>}
           <div className="local-agent-list">
-            <CodexResearchSetup available={available} />
             <DataSourcesSetup available={available} />
             {agents.map((a) => (
               <section key={a.id} className="local-agent-row">
@@ -102,6 +101,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                   <button type="button" disabled={!available || !a.installed || !!busy || !!waiting[a.id] || !connected[a.id]} onClick={() => void action(a, 'test')}>{busy === a.id ? (lang === 'id' ? 'Bekerja...' : 'Working...') : t('setupLocalTestConnBtn')}</button>
                 </div>
                 {message[a.id] && <p className="wallet-note" role="status">{message[a.id]}</p>}
+                {a.id === 'codex' && <CodexResearchSetup available={available} />}
               </section>
             ))}
           </div>

@@ -1,4 +1,5 @@
 import express from 'express';
+import { onActivity } from './activity.js';
 import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { existsSync } from 'node:fs';
@@ -81,7 +82,29 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   const auto = new AutoTrader(desk);
   const reporter = new Reporter(desk, opts.reportsDir === undefined ? 'reports' : opts.reportsDir, opts.outboxPath);
   const app = express();
+  const unsubscribeActivity = onActivity(entry => desk.recordActivity(entry));
+  const frontendLogLimit = limiter(30, 60_000);
+  app.use((req, res, next) => {
+    const started = Date.now();
+    res.on('finish', () => {
+      if (!req.path.startsWith('/api/') || req.path === '/api/logs/client') return;
+      if (res.statusCode >= 400 || req.method !== 'GET' || req.path === '/api/research') desk.recordActivity({
+        kind: 'backend', source: 'http', level: res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info',
+        text: `${req.method} ${req.path} · HTTP ${res.statusCode}`, status: String(res.statusCode), durationMs: Date.now() - started,
+      });
+    });
+    next();
+  });
   app.use(express.json({ limit: '32kb' }));
+  app.post('/api/logs/client', (req, res) => {
+    const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
+    if (!access.ok) return res.status(403).json({ ok: false });
+    if (!frontendLogLimit(req.socket.remoteAddress || '')) return res.status(429).json({ ok: false });
+    const parsed = z.object({ message: z.string().min(1).max(1000), level: z.enum(['error', 'warn']), event: z.enum(['error', 'unhandledrejection', 'websocket', 'request']) }).strict().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ ok: false });
+    desk.recordActivity({ kind: 'frontend', source: `browser:${parsed.data.event}`, level: parsed.data.level, text: parsed.data.message, status: 'reported' });
+    res.json({ ok: true });
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, app: 'trading-agent-mpu-gandring', version: APP_VERSION, mode: cfg.tradingMode, appMode: cfg.appMode, exchange: cfg.live?.exchange ?? cfg.exchange.name, killed: desk.killed, tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off', agentEvents: cfg.agentEvents.enabled ? 'on' : 'off', marketSource: cfg.marketSource, bridge: cfg.bridge.enabled ? 'on' : 'off',
@@ -270,6 +293,13 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     app.get(/^\/(?!api|ws).*/, (_req, res) => res.sendFile(path.join(webDist, 'index.html')));
   }
 
+  app.use((error: Error & { status?: number }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    desk.recordError('http', error instanceof SyntaxError && error.status === 400 ? 'Malformed JSON request' : error.message);
+    if (res.headersSent) return next(error);
+    const status = error.status && error.status >= 400 && error.status < 600 ? error.status : 500;
+    res.status(status).json({ ok: false, error: status >= 500 ? 'The request failed. See the activity log.' : 'Invalid request.' });
+  });
+
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 128 * 1024 });
   wss.on('error', () => { /* ignore */ });
@@ -283,6 +313,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   });
   const origClose = server.close.bind(server);
   const cleanup = () => {
+    unsubscribeActivity();
     for (const { ev, fn } of listeners) desk.off(ev, fn);
     for (const c of wss.clients) {
       try { c.terminate(); } catch { /* ignore */ }

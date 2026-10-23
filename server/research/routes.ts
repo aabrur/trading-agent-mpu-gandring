@@ -15,6 +15,8 @@ export function mountResearchRoutes(app: express.Express, desk: Desk) {
     if (!parsed.success) return res.status(400).json({ ok: false, error: 'Choose a supported research tool and symbol.' });
     const { name, objective } = parsed.data;
     const symbol = normSymbol(parsed.data.symbol);
+    const started = Date.now();
+    desk.recordActivity({ kind: 'tool', source: 'mpu_research', level: 'info', status: 'started', text: `${name} · ${symbol}` });
     try {
       let data: unknown;
       if (name === 'market_snapshot') {
@@ -34,7 +36,11 @@ export function mountResearchRoutes(app: express.Express, desk: Desk) {
         const collected = await desk.collectResearchData(symbol, objective);
         data = { ...collected, market: { ...collected.market, candles: collected.market.candles.slice(-60) } };
       }
+      desk.recordActivity({ kind: 'tool', source: 'mpu_research', level: 'info', status: 'completed', text: `${name} · ${symbol}`, durationMs: Date.now() - started });
       return res.json({ ok: true, observedAt: Date.now(), tool: name, data });
-    } catch { return res.status(503).json({ ok: false, error: 'Research data currently unavailable. Do not substitute invented or sample values.' }); }
+    } catch (error) {
+      desk.recordActivity({ kind: 'tool', source: 'mpu_research', level: 'error', status: 'failed', text: `${name} · ${symbol}: ${error instanceof Error ? error.message : 'Research unavailable'}`, durationMs: Date.now() - started });
+      return res.status(503).json({ ok: false, error: 'Research data currently unavailable. Do not substitute invented or sample values.' });
+    }
   });
 }

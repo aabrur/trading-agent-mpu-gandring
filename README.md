@@ -14,6 +14,15 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
 
+## System Log, History and Office discussion (v0.0.0.3.19)
+
+- **Log** contains system diagnostics with separate filters for Tools, MCP, Plugins, Processes, Frontend, Backend, and errors/warnings. Entries show their source, status, timestamp and duration when available.
+- **History** contains trade records, chat sessions, agent discussions and commands. Both panels search all retained entries by content, participant, source, category, status, date and duration before limiting visible results. The server keeps 2,000 recent activity entries in memory; this is not a permanent activity archive.
+- **Desk chat** accepts messages to all six agents or one selected agent. Its taller transcript opens at the newest message. Log and History also follow new entries while at the bottom; scrolling up pauses following, and **Latest** resumes it.
+- Codex research controls are inside its existing **Setup > Local CLI Agents > Codex** connection card. Research activity is recorded in Log rather than Setup.
+
+Typecheck, production build and 517 offline tests passed. Browser interaction and responsive checks for these changes remain unverified because Computer Use was blocked by automatic approval review. See [verification details](docs/qa/2026-10-23-activity-log-office-discussion.md). This update does not authorize trading activation or restart an active LIVE desk.
+
 ## Live observations and Codex research (v0.0.0.3.18)
 
 OI changes, Deribit DVOL and put/call open-interest ratios use actual public observations with source and sample times. Missing measurements stay unavailable. Each technical timeframe uses its own valid closed candles; calculations preserve small-price precision.
@@ -121,7 +130,7 @@ SL/TP percentages use committed order margin. For example, Default at 5x uses a 
 
 ## Compact office controls (v0.0.0.3.16)
 
-- Open **Ops**, **Portfolio**, **Lessons**, or **Log** from the bubble menu at the right. Panels stay closed until selected. Close with the same bubble, the close button, Escape, or a click outside. On phones the menu sits at the bottom-right.
+- Open **Ops**, **Portfolio**, **Lessons**, **Log**, or **History** from the bubble menu at the right. Panels stay closed until selected. Close with the same bubble, the close button, Escape, or a click outside. On phones the menu sits at the bottom-right.
 - **Reports** sits beside the price chart on desktop and below it on narrow screens. Open activity and evidence only when needed.
 - The office **Desk chat** bubble sits in the lower-left corner with an 80% surface opacity and a glass effect. Click to read recent discussion; click a speaker's message to open that agent.
 - **Connect Wallet** opens a compact dropdown. Choose the installed EVM wallet explicitly when several extensions are present. Discovery follows [EIP-6963](https://eips.ethereum.org/EIPS/eip-6963); supported browser providers can include MetaMask, Rabby, and Phantom EVM. Solana-only providers are not used for Aster or Hyperliquid agent approvals.

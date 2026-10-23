@@ -133,7 +133,7 @@ function AppInner() {
       <TickerStrip state={state} />
       <main className="layout" id="office-workspace" tabIndex={-1}>
         <section className="stage">
-          <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected}>
+          <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected} command={command}>
             <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
             <Verdicts state={state} compact />
             <OpenOrders state={state} />

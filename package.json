@@ -1,12 +1,12 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.18",
-  "appVersion": "0.0.0.3.18",
+  "version": "0.3.19",
+  "appVersion": "0.0.0.3.19",
   "changelog": [
-    "OI changes and Deribit options metrics use live observations with source timestamps and explicit unavailable values.",
-    "Live analysis uses valid closed candles for each timeframe and preserves small-price precision.",
-    "Codex agents can use live web search and a read-only research MCP with explicit additional tool selections.",
-    "Jev directs data collection and reports feed availability; masked setup inputs preserve saved news and on-chain keys."
+    "System Log separates Tools, MCP, Plugins, Processes, frontend/backend diagnostics and errors.",
+    "History contains searchable trade records, chat sessions, agent discussions and commands.",
+    "Office discussion supports direct and group messages with latest-message scrolling and a taller transcript.",
+    "Codex research controls live inside its existing connection card; research activity appears in Log."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",

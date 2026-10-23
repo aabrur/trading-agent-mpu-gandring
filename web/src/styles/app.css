@@ -1020,7 +1020,7 @@ button:disabled { cursor: default; }
 .tool-bubbles button { display: grid; place-items: center; gap: 3px; width: 52px; min-height: 52px; padding: 7px 2px; color: var(--text-dim); background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 2px 6px rgba(var(--shadow-color), .1); }
 .tool-bubbles span { font-size: 9px; font-weight: 800; }
 .tool-bubbles button.is-active { color: var(--text); border-color: var(--teal); background: var(--panel-2); }
-.tool-flyout { position: absolute; right: calc(100% + 10px); top: 0; width: min(340px, calc(100vw - 94px)); max-height: calc(100dvh - 180px); overflow-y: auto; overflow-x: hidden; z-index: 1800; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.tool-flyout { --tool-height: calc(100dvh - 180px); position: absolute; right: calc(100% + 10px); top: 0; width: min(340px, calc(100vw - 94px)); max-height: var(--tool-height); overflow-y: auto; overflow-x: hidden; z-index: 1800; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
 .tool-flyout[hidden], .tool-pane[hidden] { display: none; }
 .tool-flyout .panel { box-shadow: none; border: 0; border-radius: 0; padding: 10px; }
 .tool-close { position: sticky; top: 5px; float: right; z-index: 1; min-width: 28px; min-height: 28px; margin: 5px 5px -30px 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 18px; }
@@ -1040,10 +1040,29 @@ button:disabled { cursor: default; }
 .discussion-bubble, .discussion-popover { background: color-mix(in srgb, var(--panel) 80%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); box-shadow: 0 3px 12px rgba(var(--shadow-color), .13); }
 .discussion-bubble { display: flex; gap: 7px; align-items: center; min-height: 36px; padding: 6px 10px; border-radius: 14px; font-size: 12px; font-weight: 800; }
 .discussion-bubble i { width: 6px; height: 6px; background: var(--teal); border-radius: 50%; }
-.discussion-popover { position: absolute; left: 0; bottom: calc(100% + 8px); width: min(340px, 76vw); border-radius: 12px; padding: 8px; }
+.discussion-popover { position: absolute; left: 0; bottom: calc(100% + 8px); width: min(340px, 76vw); max-height: min(75dvh, calc(var(--office-fit-height, 560px) - 76px)); display: flex; flex-direction: column; border-radius: 12px; padding: 8px; }
 .discussion-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
 .discussion-head button { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; font-size: 18px; }
-.discussion-lines { max-height: 190px; overflow: auto; margin-top: 5px; font-size: 12px; }
+.discussion-lines { min-height: 0; max-height: 280px; overflow: auto; overscroll-behavior: contain; margin-top: 5px; font-size: 12px; }
+.discussion-head, .discussion-compose { flex-shrink: 0; }
+.discussion-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 6px; }
+.discussion-compose label, .discussion-compose p { grid-column: 1 / -1; font-size: 12px; margin: 0; }
+.discussion-compose :is(textarea, select, button) { max-width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; font-size: 12px; padding: 6px 8px; }
+.discussion-compose textarea { width: 100%; resize: vertical; max-height: 90px; }
+.discussion-compose button { min-height: 36px; }
+.discussion-compose p { color: var(--short); }
+.codex-research-settings { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+.activity-log-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.activity-log-controls :is(input, select, button) { min-width: 0; max-width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 12px; padding: 5px 8px; }
+.activity-log-controls input { flex: 1 1 130px; }
+.tool-flyout.is-log { overflow: hidden; }
+.tool-flyout.is-log .log { display: flex; flex-direction: column; max-height: calc(var(--tool-height) - 2px); }
+.tool-flyout.is-log .log > :is(.panel-head, .activity-log-controls) { flex-shrink: 0; }
+.tool-flyout.is-log .log-body { min-height: 0; max-height: none; overscroll-behavior: contain; overflow-anchor: none; }
+.log-entries { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.log .line b, .log .line small { overflow-wrap: anywhere; font-size: 11px; }
+.log .line.level-error { border-left: 3px solid var(--short); background: color-mix(in srgb, var(--short) 8%, transparent); }
+.log .line.level-warn { border-left: 3px solid var(--warn); }
 .discussion-lines > button { display: grid; gap: 3px; width: 100%; border: 0; border-top: 1px solid var(--line); padding: 8px 2px; background: transparent; text-align: left; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .discussion-lines small { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
 .wallet-menu { position: relative; }
@@ -1072,7 +1091,7 @@ button:disabled { cursor: default; }
   .tool-flyout .desk-ops { --ops-control-height: 44px; }
   .tool-bubbles { display: flex; gap: 6px; }
   .tool-bubbles button { width: 48px; min-height: 48px; border-radius: 16px; }
-  .tool-flyout { right: 0; top: auto; bottom: calc(100% + 10px); width: min(300px, calc(100vw - 24px)); max-height: 72dvh; }
+  .tool-flyout { --tool-height: 72dvh; right: 0; top: auto; bottom: calc(100% + 10px); width: min(300px, calc(100vw - 24px)); }
   .wallet-dropdown { position: fixed; inset: 12px 12px auto; width: auto; max-height: calc(100dvh - 24px); }
   .discussion-bubble, .discussion-head button, .wallet-dropdown button, .wallet-dropdown select, .wallet-dropdown summary, .tool-close { min-height: 44px; }
   .discussion-head button, .tool-close { min-width: 44px; }

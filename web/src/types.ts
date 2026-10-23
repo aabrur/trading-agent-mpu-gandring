@@ -17,7 +17,7 @@ export interface Verdict {
   disagreement: number; camps: { bull: AgentId[]; bear: AgentId[]; neutral: AgentId[] };
   order?: { positionId?: string; status?: 'partial' | 'filled'; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number }; example: boolean; at: number;
 }
-export interface LogLine { at: number; kind: string; agent?: AgentId; text: string; example?: boolean }
+export interface LogLine { id?: string; at: number; kind: string; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: 'info' | 'warn' | 'error'; status?: string; durationMs?: number }
 export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at: number }
 export interface RoomMessage { id: string; at: number; from: AgentId | 'owner'; to?: AgentId | 'all' | 'owner'; text: string; symbol?: string; example?: boolean }
 export interface DeskState {

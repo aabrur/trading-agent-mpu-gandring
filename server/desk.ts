@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AppConfig } from './config.js';
+import type { ActivityEntry } from './activity.js';
 import { AGENT_IDS } from './config.js';
 import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, Action, RoomMessage } from './types.js';
 import { ROLES } from './agents/roles.js';
@@ -48,7 +49,7 @@ export interface AgentView {
   status: AgentStatus; mood: number; stance: Stance | null; confidence: number | null; lastLine: string;
 }
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
-export interface LogLine { at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'warn'; agent?: AgentId; text: string; example?: boolean }
+export interface LogLine { id?: string; at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'chat' | 'warn' | ActivityEntry['kind']; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: ActivityEntry['level']; status?: string; durationMs?: number }
 
 export interface DeskOptions { settingsFile?: string; opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
@@ -165,6 +166,11 @@ export class Desk extends EventEmitter {
   recordError(source: string, text: string) {
     this.errors.push({ at: Date.now(), source, text: safe(text).slice(0, 300) });
     if (this.errors.length > 200) this.errors.splice(0, this.errors.length - 200);
+    this.recordActivity({ kind: 'error', source, level: 'error', text, status: 'failed' });
+  }
+
+  recordActivity(entry: ActivityEntry) {
+    this.addLog(entry);
   }
 
   /** self-improving: store or reinforce a lesson and show it in the office. Refused if it would loosen a guard. */
@@ -234,7 +240,7 @@ export class Desk extends EventEmitter {
         equity: round2(this.book.balance + this.book.unrealized), positions: this.book.positions, closed: this.book.closed.slice(0, 20),
         minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, takeProfitR: this.cfg.risk.takeProfitR
       },
-      equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-120), chats: this.chats, roomHistory: this.roomHistory.slice(-100),
+      equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-2000), chats: this.chats, roomHistory: this.roomHistory.slice(-100),
       watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold,
       jev: { ...this.jev.status(), lastDecision: this.jevLast ?? this.jev.lastRecord },
       debateMode: this.cfg.debate.mode,
@@ -264,8 +270,8 @@ export class Desk extends EventEmitter {
   }
   private changed() { this.emit('state', this.snapshot()); }
   private addLog(l: Omit<LogLine, 'at'>) {
-    const line = { ...l, text: safe(l.text), at: Date.now() };
-    this.logs.push(line); if (this.logs.length > 400) this.logs.splice(0, this.logs.length - 400);
+    const line = { ...l, ...(l.source ? { source: safe(l.source).slice(0, 100) } : {}), text: safe(l.text), at: Date.now() };
+    this.logs.push(line); if (this.logs.length > 2000) this.logs.splice(0, this.logs.length - 2000);
     this.emit('log', line);
   }
   addRoomMessage(msg: Omit<RoomMessage, 'id' | 'at'> & { id?: string; at?: number }): RoomMessage {
@@ -280,6 +286,7 @@ export class Desk extends EventEmitter {
     };
     this.roomHistory.push(roomMsg);
     if (this.roomHistory.length > 100) this.roomHistory.splice(0, this.roomHistory.length - 100);
+    this.addLog({ id: `room:${roomMsg.id}`, kind: 'chat', source: 'discussion', from: roomMsg.from, to: roomMsg.to, text: roomMsg.text, example: roomMsg.example, level: 'info' });
     this.emit('room', roomMsg);
     return roomMsg;
   }
@@ -1465,7 +1472,7 @@ export class Desk extends EventEmitter {
     if (dest) this.chats[dest].push({ from: who, text: reply, at: Date.now() });
     if (dest && this.chats[dest].length > 60) this.chats[dest].splice(0, this.chats[dest].length - 60);
 
-    this.addLog({ kind: 'info', agent: who, text: reply });
+    this.addLog({ kind: 'info', agent: who, source: 'command', level: ok ? 'info' : 'error', status: ok ? 'completed' : 'failed', text: reply });
     if (cmd.type !== 'chat' && cmd.type !== 'help' && cmd.type !== 'status') void sendToGrokBot(this.cfg, 'command', { command: cmd.type, text: text.slice(0, 200), agent: agent ?? null, ok, reply }, this.opts.outboxPath);
     this.changed();
     return { ok, reply, command: cmd.type };

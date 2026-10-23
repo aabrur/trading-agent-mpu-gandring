@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { AgentId, DeskState, Verdict } from '../types';
 import { AGENT_ORDER } from '../types';
 import { PamorPattern } from './Keris';
@@ -8,6 +8,7 @@ import { fmt, fmtPx } from './format';
 import { useI18n } from '../i18n';
 import type { UpdateInfo } from './UpdateModal';
 import { WalletMenu } from './WalletMenu';
+import { activityEntries, activityForView, activityParticipants, filterActivity, type ActivityFilter, type ActivityView } from '../activityLog';
 export { fmt, fmtPx };
 
 const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec' };
@@ -617,26 +618,67 @@ export function Verdicts({ state, compact = false }: { state: DeskState; compact
   );
 }
 
-export function TradeLog({ state }: { state: DeskState }) {
-  const { t } = useI18n();
+export function TradeLog({ state, active = true, view = 'log' }: { state: DeskState; active?: boolean; view?: ActivityView }) {
+  const { t, lang } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
-  const [filter, setFilter] = useState<'all' | 'trades'>('all');
-  const lines = state.logs.filter((l) => filter === 'all' || ['trade', 'verdict'].includes(l.kind));
-  useEffect(() => { ref.current?.scrollTo({ top: ref.current.scrollHeight }); }, [lines.length]);
+  const entries = useRef<HTMLDivElement>(null);
+  const follow = useRef(true);
+  const wasActive = useRef(false);
+  const [filter, setFilter] = useState<ActivityFilter>('all');
+  const [query, setQuery] = useState('');
+  const [limit, setLimit] = useState(200);
+  const lines = filterActivity(activityForView(activityEntries(state), view), filter, query, state.agents);
+  const isHistory = view === 'history';
+  const searchLabel = isHistory ? 'Search history' : 'Search activity log';
+  const last = lines.at(-1);
+  useLayoutEffect(() => {
+    if (!active) { wasActive.current = false; return; }
+    if (!wasActive.current) follow.current = true;
+    wasActive.current = true;
+    if (follow.current && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [active, last?.at, last?.text, lines.length, filter, query, limit]);
+  useLayoutEffect(() => {
+    const element = ref.current, content = entries.current;
+    if (!active || !element || !content) return;
+    const observer = new ResizeObserver(() => { if (follow.current) element.scrollTop = element.scrollHeight; });
+    observer.observe(element); observer.observe(content);
+    return () => observer.disconnect();
+  }, [active]);
   return (
     <section className="panel log">
-      <div className="panel-head"><h2>{t('deskLog')}</h2>
-        <div className="seg"><button className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>{t('allFilter')}</button><button className={filter === 'trades' ? 'on' : ''} onClick={() => setFilter('trades')}>{t('tradesFilter')}</button></div>
+      <div className="panel-head"><h2>{isHistory ? 'History' : lang === 'id' ? 'Log sistem' : 'System log'}</h2>
+        <span>{lines.length} {lang === 'id' ? 'catatan' : 'entries'}</span>
       </div>
-      <div className="log-body" ref={ref}>
+      <div className="activity-log-controls">
+        <select aria-label={isHistory ? 'History filter' : 'Log filter'} value={filter} onChange={event => { follow.current = true; setFilter(event.target.value as ActivityFilter); }}>
+          <option value="all">{t('allFilter')}</option>
+          {isHistory ? <>
+          <option value="trades">{lang === 'id' ? 'Riwayat trading' : 'Trade history'}</option><option value="chat">{lang === 'id' ? 'Sesi chat' : 'Chat sessions'}</option>
+          <option value="discussion">{lang === 'id' ? 'Diskusi agen' : 'Agent discussions'}</option><option value="command">{lang === 'id' ? 'Perintah' : 'Commands'}</option>
+          </> : <>
+          <option value="tool">Tools</option><option value="mcp">MCP</option><option value="plugin">Plugins</option><option value="process">Processes</option>
+          <option value="frontend">Frontend</option><option value="backend">Backend</option>
+          <option value="errors">{lang === 'id' ? 'Error dan peringatan' : 'Errors and warnings'}</option>
+          </>}
+        </select>
+        <input type="search" aria-label={searchLabel} placeholder={isHistory ? (lang === 'id' ? 'Cari riwayat…' : 'Search history…') : lang === 'id' ? 'Cari aktivitas…' : 'Search activity…'} value={query} onChange={event => { follow.current = true; setQuery(event.target.value); }} />
+        <select aria-label="Visible log entries" value={limit} onChange={event => setLimit(Number(event.target.value))}><option value={200}>200</option><option value={500}>500</option><option value={2000}>2000</option></select>
+        <button type="button" onClick={() => { follow.current = true; ref.current?.scrollTo({ top: ref.current.scrollHeight }); }}>{lang === 'id' ? 'Terbaru' : 'Latest'}</button>
+      </div>
+      <div className="log-body" ref={ref} role="log" aria-live="polite" onScroll={() => { const element = ref.current; if (element) follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40; }}>
+        <div className="log-entries" ref={entries}>
         {!lines.length && <p className="muted">{filter === 'trades' ? t('noTradesYet') : t('noDeskActivity')}</p>}
-        {lines.map((l, i) => (
-          <div key={i} className={`line k-${l.kind}`}>
-            <time>{time(l.at)}</time>
-            {l.agent && <b style={{ color: state.agents[l.agent]?.color }}>{state.agents[l.agent]?.name}</b>}
+        {lines.slice(-limit).map((l, i) => (
+          <div key={l.id || `${l.at}-${i}`} className={`line k-${l.kind} level-${l.level || (l.kind === 'warn' ? 'warn' : 'info')}`}>
+            <time dateTime={new Date(l.at).toISOString()}>{new Date(l.at).toLocaleString()}</time>
+            <b>{l.source || l.kind}</b>
+            {l.from ? <b>{activityParticipants(l, state.agents)}</b> : l.agent && <b style={{ color: state.agents[l.agent]?.color }}>{state.agents[l.agent]?.name}</b>}
+            {l.status && <small>{l.status}</small>}
+            {'durationMs' in l && l.durationMs !== undefined && <small>{l.durationMs}ms</small>}
             <span>{l.text}</span>
           </div>
         ))}
+        </div>
       </div>
     </section>
   );
