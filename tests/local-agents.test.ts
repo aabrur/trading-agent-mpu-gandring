@@ -2,13 +2,38 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { localArgs, localEnvironment, localExecutable, localReply, localSelection, runLocalAgent } from '../server/providers/local.js';
+import { LOCAL_AGENTS, localArgs, localEnvironment, localExecutable, localLoginStatus, localReply, localSelection, runLocalAgent } from '../server/providers/local.js';
 import { loadConfig } from '../server/config.js';
 import { savePreferences } from '../server/setup/preferences.js';
 import { setEnv, readEnv } from '../cli/envfile.js';
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 describe('existing agent integration', () => {
+  it.each(LOCAL_AGENTS.map((agent) => agent.id))('confirms %s only after native auth or a valid model reply', async (id) => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'mpu-login-check-'));
+    const name = id === 'antigravity' ? 'agy' : id;
+    const entry = path.join(folder, process.platform === 'win32' ? 'fake.js' : name);
+    if (process.platform === 'win32') writeFileSync(path.join(folder, `${name}.cmd`), '@"%dp0%\\fake.js"');
+    const script = (source: string) => writeFileSync(entry, process.platform === 'win32' ? source : `#!${process.execPath}\n${source}`, { mode: 0o755 });
+    vi.stubEnv('PATH', folder);
+    vi.stubEnv('BYBIT_API_KEY', 'must-not-leak');
+    const guard = 'if(process.env.BYBIT_API_KEY)process.exit(9);';
+    script(`${guard}console.log('{"loggedIn":false,"reply":"not connected"}');process.exit(${id === 'codex' ? 1 : 0});`);
+    expect((await localLoginStatus(id, true)).connected).toBe(false);
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 20_000);
+    script(`${guard}console.log('{"loggedIn":true,"reply":"connected"}');`);
+    expect((await localLoginStatus(id, true)).connected).toBe(true);
+  });
+  it('does not call models for passive status checks or accept unknown executables', async () => {
+    expect(await localLoginStatus('unknown', true)).toEqual({ connected: false, state: 'missing' });
+    const folder = mkdtempSync(path.join(tmpdir(), 'mpu-passive-check-'));
+    const name = process.platform === 'win32' ? 'pi.cmd' : 'pi';
+    writeFileSync(path.join(folder, name), process.platform === 'win32' ? '@"%dp0%\\fake.js"' : `#!${process.execPath}\nprocess.exit(99);`, { mode: 0o755 });
+    writeFileSync(path.join(folder, 'fake.js'), 'process.exit(99);');
+    vi.stubEnv('PATH', folder);
+    expect(await localLoginStatus('pi')).toEqual({ connected: false, state: 'unknown' });
+  });
   it('never forwards venue keys or model tokens, and rejects arbitrary executables/models', () => {
     expect(localEnvironment({ PATH: 'path', USERPROFILE: 'profile', BYBIT_API_KEY: 'secret', OPENAI_API_KEY: 'secret', AGENT_EVENT_SECRET: 'secret', ANTHROPIC_AUTH_TOKEN: 'secret' })).toEqual({ PATH: 'path', USERPROFILE: 'profile' });
     expect(localExecutable('cmd.exe')).toBeNull();
@@ -28,7 +53,7 @@ describe('existing agent integration', () => {
     expect(localArgs('kimi', 'default', 'folder').args).toContain('--agent-file');
     expect(JSON.parse(localArgs('kilo', 'default', 'folder').env.KILO_CONFIG_CONTENT).permission['*']).toBe('deny');
     expect(localArgs('cline', 'default', 'folder').args).toEqual(expect.arrayContaining(['--auto-approve', 'false']));
-    expect(localArgs('grok', 'default', 'folder').args).toEqual(expect.arrayContaining(['--tools', '', '--deny', '*']));
+    expect(localArgs('grok', 'default', 'folder').args).toEqual(expect.arrayContaining(['--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']));
     expect(localArgs('antigravity', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--dangerously-skip-permissions', '--disable-slash-commands', '--output-format', 'json', '--print', 'hello']));
     expect(localArgs('antigravity', 'gemini-3.8-flash-high', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--model', 'gemini-3.8-flash-high', '--print', 'hello']));
   });
@@ -38,6 +63,7 @@ describe('existing agent integration', () => {
     expect(localReply(JSON.stringify({ type: 'result', result: reply }))).toBe(reply);
     expect(localReply(JSON.stringify({ type: 'text', part: { text: reply } }))).toBe(reply);
     expect(localReply(JSON.stringify({ type: 'say', say: 'text', text: reply }))).toBe(reply);
+    expect(localReply(JSON.stringify({ type: 'run_result', text: reply }))).toBe(reply);
     expect(localReply(JSON.stringify({ response: reply }))).toBe(reply);
     expect(localReply(reply)).toBe(reply);
   });

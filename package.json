@@ -1,12 +1,12 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.16",
-  "appVersion": "0.0.0.3.16",
+  "version": "0.3.17",
+  "appVersion": "0.0.0.3.17",
   "changelog": [
-    "Expanded chat context to 64,000 characters and input to 32,000 characters with graceful markdown recovery.",
-    "Added direct inter-agent communication, @mention and @all huddles, and autonomous askTeammate handoffs.",
-    "Integrated high-alpha market engine: L2 orderbook imbalance, CVD delta, MTF structure, Volume Profile POC/VAH/VAL, and Hyperliquid whale tracking.",
-    "Clarified architecture documentation: exactly 6 AI trading agents plus an optional Jev decision sidecar."
+    "Local CLI connections require an explicit Connect action and completed login before showing Connected.",
+    "Codex model choices include its local catalog cache; all eight CLI adapters accept a manual model ID.",
+    "Saving provider and model choices applies them to running agents without restarting the trading desk.",
+    "Compact Local CLI Agents typography and controls, plus a larger support popup with one support button."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",

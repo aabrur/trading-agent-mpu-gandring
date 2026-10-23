@@ -15,6 +15,9 @@ describe('Trakteer support popup', () => {
     expect(html).toContain('<dialog');
     expect(html).toContain('aria-labelledby=');
     expect(html).toContain('aria-describedby=');
-    expect(html).toContain('Maybe later');
+    expect(html).not.toContain('Maybe later');
+    expect(html).toContain('Enjoying Trading Agent Mpu Gandring?');
+    expect(html).toContain('Your support helps fund continued development.');
+    expect(html).toContain('trakteer-close-x');
   });
 });

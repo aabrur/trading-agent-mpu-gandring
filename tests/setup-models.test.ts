@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -7,9 +7,23 @@ import { createApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
 import { readEnv, setEnv } from '../cli/envfile.js';
 import { MODEL_CHOICES, modelChoices, modelSetupInfo, modelUpdates } from '../server/setup/models.js';
-import { makeCaller } from '../server/providers/index.js';
+import { makeCaller, type ModelCaller } from '../server/providers/index.js';
+import { LOCAL_AGENTS } from '../server/providers/local.js';
 
 describe('curated provider and model setup', () => {
+  it('lists visible models from the installed Codex catalog instead of limiting the account to two models', () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'mpu-codex-catalog-'));
+    writeFileSync(path.join(folder, 'models_cache.json'), JSON.stringify({ models: [
+      { slug: 'gpt-extra-local', display_name: 'Extra local', visibility: 'list' },
+      { slug: 'hidden-local', visibility: 'hide' }
+    ] }));
+    vi.stubEnv('CODEX_HOME', folder);
+    try {
+      const choices = modelSetupInfo({}).providers.find((provider) => provider.provider === 'local')!.models;
+      expect(choices.some((model) => model.id === 'codex:gpt-extra-local')).toBe(true);
+      expect(choices.some((model) => model.id === 'codex:hidden-local')).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('shows 10 API providers with 20 curated AI models each and dated token sources', () => {
     const entries = Object.entries(MODEL_CHOICES);
     expect(entries.length).toBe(12);
@@ -71,16 +85,62 @@ describe('curated provider and model setup', () => {
 describe('model setup API', () => {
   const servers: ReturnType<typeof createApp>[] = [];
   afterEach(() => { for (const a of servers.splice(0)) { a.desk.stop(); a.server.close(); } });
-  async function start(appMode = 'local') {
+  async function start(appMode = 'local', caller?: ModelCaller) {
     const envFile = path.join(mkdtempSync(path.join(tmpdir(), 'mg-models-')), '.env');
     setEnv(envFile, { TRADING_MODE: 'PAPER', AUTO_TRADING: 'off', OPENAI_API_KEY: 'existing-openai-secret' });
-    const a = createApp(loadConfig({ TRADING_MODE: 'PAPER', APP_MODE: appMode, HOST: '127.0.0.1', MARKET_SOURCE: 'sample', AUTO_TRADING: 'off' }), { reportsDir: null, learningsPath: null, envFile });
+    const a = createApp(loadConfig({ TRADING_MODE: 'PAPER', APP_MODE: appMode, HOST: '127.0.0.1', MARKET_SOURCE: 'sample', AUTO_TRADING: 'off', DEBATE_PACE_MS: '0' }), { reportsDir: null, learningsPath: null, envFile, caller });
     servers.push(a);
     await new Promise<void>((r) => a.server.listen(0, '127.0.0.1', r));
     return { base: `http://127.0.0.1:${(a.server.address() as AddressInfo).port}`, envFile };
   }
   const post = (url: string, body: unknown, headers: Record<string, string> = {}) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
   const choice = { defaultProvider: 'openai', defaultModel: 'gpt-6-luna' };
+
+  it('routes the next chat through the newly saved provider rather than the old mock configuration', async () => {
+    const caller = vi.fn<ModelCaller>(async () => JSON.stringify({ reply: 'Local model fixture response.' }));
+    const { base } = await start('local', caller);
+    await post(`${base}/api/setup/models`, { defaultProvider: 'local', defaultModel: 'codex:default' });
+    expect((await post(`${base}/api/command`, { text: 'hello there', agent: 'lead' })).status).toBe(200);
+    expect(caller).toHaveBeenCalled();
+    expect(caller.mock.calls.at(-1)![0]).toMatchObject({ provider: 'local', model: 'codex:default', task: 'chat' });
+    const state = await (await fetch(`${base}/api/state`)).json();
+    expect(state.chats.lead.some((line: { text: string }) => line.text === 'Local model fixture response.')).toBe(true);
+  });
+
+  it('applies a saved local provider to the running desk without restarting or changing trading state', async () => {
+    const { base } = await start();
+    const before = await (await fetch(`${base}/api/state`)).json();
+    const response = await post(`${base}/api/setup/models`, { defaultProvider: 'local', defaultModel: 'codex:default' });
+    expect(response.status).toBe(200);
+    const running = await (await fetch(`${base}/api/state`)).json();
+    expect(running.agents.lead.provider).toBe('local');
+    expect(running.agents.lead.model).toBe('codex:default');
+    expect(running.agents.lead.fellBackToMock).toBe(false);
+    expect(running.mode).toBe(before.mode);
+    expect(running.killed).toBe(before.killed);
+    expect(running.portfolio).toEqual(before.portfolio);
+  });
+
+  it.each(LOCAL_AGENTS.map((agent) => agent.id))('saves and applies a custom CLI model for %s to every running agent', async (id) => {
+    const { base } = await start();
+    const model = `${id}:provider/custom-model-v2`;
+    expect((await post(`${base}/api/setup/models`, { defaultProvider: 'local', defaultModel: model })).status).toBe(200);
+    const state = await (await fetch(`${base}/api/state`)).json();
+    for (const agent of Object.values(state.agents) as { provider: string; model: string }[]) {
+      expect(agent.provider).toBe('local');
+      expect(agent.model).toBe(model);
+    }
+    expect((await post(`${base}/api/setup/models`, { defaultProvider: 'local', defaultModel: `${id}:--bad-flag` })).status).toBe(400);
+  });
+
+  it('clears old per-agent overrides from the saved summary when applying a new default', async () => {
+    const { base } = await start();
+    await post(`${base}/api/setup/models`, { defaultProvider: 'local', defaultModel: 'codex:default', agents: { risk: { provider: 'local', model: 'claude:sonnet' } } });
+    await fetch(`${base}/api/setup/models`);
+    await post(`${base}/api/setup/models`, { defaultProvider: 'local', defaultModel: 'pi:default' });
+    const info = await (await fetch(`${base}/api/setup/models`)).json();
+    expect(info.agents.find((agent: { id: string }) => agent.id === 'risk')).toMatchObject({ model: 'pi:default', custom: false });
+  });
 
   it('saves masked keys and selections, keeps blank keys, and does not change trading settings', async () => {
     const { base, envFile } = await start();

@@ -1,7 +1,7 @@
 // Curated setup choices, shared by the CLI and office.
 import { AGENT_IDS, PROVIDERS, type ProviderName, type ApiProviderName } from '../config.js';
 import type { AgentId } from '../types.js';
-import { LOCAL_AGENTS } from '../providers/local.js';
+import { LOCAL_AGENTS, localModels, localSelection } from '../providers/local.js';
 
 export const MODEL_CATALOG_DATE = '2026-10-17';
 export const USAGE_SOURCE = { url: 'https://openrouter.ai/rankings', asOf: '2026-10-16', period: '7 days' };
@@ -267,7 +267,7 @@ export const defaultModel = (env: NodeJS.ProcessEnv, p: ProviderName) => env[pro
 
 /** Preserve a previously configured model without expanding the picker into a full provider directory. */
 export function modelChoices(env: NodeJS.ProcessEnv, p: ProviderName): ModelChoice[] {
-  const choices = [...MODEL_CHOICES[p]];
+  const choices = p === 'local' ? LOCAL_AGENTS.flatMap((agent) => localModels(agent.id).map((model) => m(`${agent.id}:${model}`, `${agent.label}: ${model === 'default' ? 'configured model' : model}`, 'CLI model; account access required'))) : [...MODEL_CHOICES[p]];
   const saved = [env[providerModelEnv(p)], ...AGENT_IDS.filter((a) => (env[`AGENT_${a.toUpperCase()}_PROVIDER`] || env.DEFAULT_PROVIDER || 'mock') === p).map((a) => env[`AGENT_${a.toUpperCase()}_MODEL`])];
   for (const id of saved) if (id && !choices.some((v) => v.id === id)) choices.push(m(id, id, 'Saved model'));
   return choices;
@@ -289,7 +289,11 @@ export function modelSetupInfo(env: NodeJS.ProcessEnv) {
 
 /** Validate the entire selection before producing any .env updates. Never returns a secret in an error. */
 export function modelUpdates(env: NodeJS.ProcessEnv, input: ModelSetupInput): Record<string, string | null> {
-  const valid = (p: ProviderName, model: string) => isProvider(p) && modelChoices(env, p).some((v) => v.id === model);
+  const valid = (p: ProviderName, model: string) => {
+    if (!isProvider(p)) return false;
+    if (p === 'local') { try { localSelection(model); return true; } catch { return false; } }
+    return modelChoices(env, p).some((v) => v.id === model);
+  };
   if (!valid(input.defaultProvider, input.defaultModel)) throw new Error('Choose a model from the selected provider.');
   const up: Record<string, string | null> = { DEFAULT_PROVIDER: input.defaultProvider, [providerModelEnv(input.defaultProvider)]: input.defaultModel };
   for (const a of AGENT_IDS) {

@@ -51,15 +51,16 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .trakteer-dialog { position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 16px 12px; border: 0; background: transparent; color: var(--text); }
 .trakteer-dialog[open] { display: flex; align-items: center; justify-content: center; }
 .trakteer-dialog::backdrop { background: rgba(20, 14, 8, .5); }
-.trakteer-popup-card { position: relative; width: min(540px, 100%); max-height: calc(100dvh - 32px); overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.trakteer-popup-card { position: relative; width: min(680px, 100%); max-height: calc(100dvh - 32px); overflow: auto; padding: clamp(22px, 4vw, 36px); display: flex; flex-direction: column; gap: 20px; text-align: left; }
 .trakteer-popup-card .trakteer-head { display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 2px; }
-.trakteer-popup-card .trakteer-head h2 { min-width: 0; overflow-wrap: anywhere; font-size: 16px; margin: 0; font-family: var(--font-head); font-weight: 600; color: var(--text); }
+.trakteer-popup-card .trakteer-head h2 { min-width: 0; overflow-wrap: anywhere; font-size: clamp(20px, 3vw, 26px); line-height: 1.25; margin: 0; font-family: var(--font-head); font-weight: 600; color: var(--text); }
 .trakteer-close-x { flex-shrink: 0; background: transparent; border: 0; font-size: 16px; font-weight: 700; color: var(--text-dim); padding: 2px 8px; cursor: pointer; border-radius: 6px; line-height: 1; }
 .trakteer-close-x:hover { background: var(--cream-deep); color: var(--text); }
-.trakteer-popup-body { margin: 0; font-size: 12px; line-height: 1.6; }
-.trakteer-popup-note { margin: 0; font-size: 11px; line-height: 1.5; color: var(--text-dim); }
+.trakteer-popup-body { margin: 0; font-size: 15px; line-height: 1.75; }
+.trakteer-popup-note { margin: 0; font-size: 12px; line-height: 1.5; text-align: center; color: var(--text-dim); }
 .trakteer-popup-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; }
-.trakteer-later-btn { justify-content: center; padding: 6px 20px; font-size: 12px; }
+.trakteer-popup-actions .trakteer-btn { justify-content: center; width: 100%; max-width: 360px; min-height: 52px; padding: 12px 24px !important; font-size: 16px !important; white-space: normal !important; text-align: center; }
+.trakteer-popup-card :focus-visible { outline: 3px solid var(--teal); outline-offset: 4px; }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; flex-shrink: 0; }
 .badge { font-size: var(--fs-xs); font-weight: 700; padding: 5px 11px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--panel); color: var(--text-dim); display: inline-flex; align-items: center; gap: 6px; }
 .badge.paper { color: #fff; background: var(--sage-deep); border-color: var(--sage-deep); letter-spacing: 0.06em; }
@@ -622,6 +623,21 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .local-agent-list { display: grid; gap: 8px; margin: 4px 0; }
 .local-agent-row { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; background: var(--panel); }
 .supervisor-instructions { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); background: var(--bg); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--line); margin: 4px 0 0; }
+.panel.setup .setup-local-pane { font-size: 12px; line-height: 1.45; gap: 8px; }
+.panel.setup .setup-local-pane .pane-header h3 { font-size: 14px; margin: 0 0 4px; }
+.panel.setup .setup-local-pane .local-agents { margin: 0; padding: 8px; }
+.panel.setup .setup-local-pane .local-agents-tabs { gap: 6px; margin-bottom: 8px; }
+.panel.setup .setup-local-pane .local-agent-tab-btn { font-size: 12px; padding: 5px 8px !important; min-height: 32px; }
+.panel.setup .setup-local-pane .local-agent-pane-head { gap: 6px; }
+.panel.setup .setup-local-pane .local-agent-pane-head p { min-width: min(220px, 100%); }
+.panel.setup .setup-local-pane .local-agent-list { gap: 6px; margin: 0; }
+.panel.setup .setup-local-pane .local-agent-row { min-width: 0; padding: 8px; }
+.panel.setup .setup-local-pane .local-agent-row b { font-size: 14px; }
+.panel.setup .setup-local-pane :is(p, span, a, code, pre, button) { font-size: 12px; overflow-wrap: anywhere; }
+.panel.setup .setup-local-pane .badge { padding: 2px 7px; }
+.panel.setup .setup-local-pane .setup-nav { gap: 6px; margin: 6px 0 0; }
+.panel.setup.setup-tabbed .setup-local-pane .local-agents button:not(.local-agent-tab-btn) { min-height: 32px; padding: 4px 8px; }
+.panel.setup .setup-local-pane .supervisor-instructions { min-width: 0; padding: 8px; }
 
 /* Compact DeskOps + Auto Trade Setup Box (Mpu Gandring · Quiet Ops: restrained cards, compact controls) */
 .panel.desk-ops { padding: 12px 14px; }

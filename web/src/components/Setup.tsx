@@ -170,7 +170,7 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
                 <JevSetup available={info.keyEntry.available} />
               </section>
 
-            <section className="setup-pane" hidden={activeTab !== 'local'}>
+            <section className="setup-pane setup-local-pane" hidden={activeTab !== 'local'}>
                 <div className="pane-header">
                   <h3>{t('setupLocalTitle')}</h3>
                   <p className="wallet-note">{t('setupLocalNote')}</p>

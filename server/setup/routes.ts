@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { AppConfig } from '../config.js';
 import type { Desk } from '../desk.js';
 import type { AutoTrader } from '../auto.js';
-import { AGENT_IDS } from '../config.js';
+import { AGENT_IDS, loadConfig } from '../config.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from '../exchange/index.js';
 import { walletAccess } from '../wallet.js';
 import { safe } from '../redact.js';
@@ -17,7 +17,7 @@ import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus } from 
 import { doctor } from './doctor.js';
 import { MODEL_KEY_ENV, modelSetupInfo, modelUpdates } from './models.js';
 import { setEnv } from '../../cli/envfile.js';
-import { localAgentStatus, openAgentLogin, runLocalAgent, localSelection } from '../providers/local.js';
+import { localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection } from '../providers/local.js';
 import { preferencesInfo, savePreferences } from './preferences.js';
 import { extractJson, SCHEMAS } from '../schemas.js';
 import { saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
@@ -79,7 +79,7 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   });
   app.get('/api/setup/models', (req, res) => {
     if (!gate(req, res)) return;
-    res.json({ ok: true, ...modelSetupInfo(setupEnv(c.envFile)) });
+    res.json({ ok: true, ...modelSetupInfo(setupEnv(c.envFile)), runningAgents: AGENT_IDS.map((id) => ({ id, ...c.cfg.agents[id] })) });
   });
   app.get('/api/setup/preferences', (req, res) => {
     if (!gate(req, res)) return;
@@ -131,6 +131,12 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     try { res.json({ ok: true, detail: await openAgentLogin(String(req.body?.id ?? '')) }); }
     catch { res.status(400).json({ ok: false, detail: 'Install that agent on PATH first, then reopen Setup.' }); }
   });
+  app.post('/api/setup/local-agents/status', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const id = String(req.body?.id ?? '');
+    try { localSelection(`${id}:default`); res.json({ ok: true, ...await localLoginStatus(id, req.body?.verify === true) }); }
+    catch { res.status(400).json({ ok: false, detail: 'Choose a local agent first.' }); }
+  });
   const testLim = c.limiter(3, 60_000);
   app.post('/api/setup/local-agents/test', async (req, res) => {
     if (!gate(req, res, true)) return;
@@ -151,9 +157,14 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     try {
       const env = setupEnv(c.envFile);
       const updates = modelUpdates(env, p.data);
+      const next = loadConfig(Object.fromEntries(Object.entries({ ...env, ...updates }).filter(([, value]) => value !== null)) as NodeJS.ProcessEnv);
       setEnv(c.envFile, updates);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null) delete process.env[key]; else process.env[key] = value;
+      }
+      c.desk.applyModelConfig(next);
       const missing = Object.entries(MODEL_KEY_ENV).filter(([provider, key]) => (provider === p.data.defaultProvider || Object.values(p.data.agents ?? {}).some((a) => a.provider === provider)) && !(updates[key] || env[key])).map(([provider]) => provider);
-      res.json({ ok: true, detail: `Provider and model choices saved. Restart the office to apply.${missing.length ? ` No key set for ${missing.join(', ')}; those agents will use mock.` : ''}` });
+      res.json({ ok: true, applied: true, detail: `Provider and model choices saved and applied to the running agents.${missing.length ? ` No key set for ${missing.join(', ')}; those agents will use mock.` : ''}` });
     } catch { res.status(400).json({ ok: false, detail: 'Choose a model from the selected provider; keys must not contain whitespace.' }); }
   });
   app.get('/api/setup/jev', (req, res) => {

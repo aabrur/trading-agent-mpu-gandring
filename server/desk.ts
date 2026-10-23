@@ -137,6 +137,15 @@ export class Desk extends EventEmitter {
 
   get grokbot() { return this.cfg.appMode === 'grokbot'; }
 
+  /** Apply only model settings; trading state and safety latches are untouched. */
+  applyModelConfig(next: AppConfig) {
+    this.cfg.agents = next.agents;
+    this.cfg.keys = next.keys;
+    this.cfg.baseUrls = next.baseUrls;
+    for (const id of AGENT_IDS) Object.assign(this.agents[id], next.agents[id]);
+    this.changed();
+  }
+
   /** Every model call goes through here: lessons, standing rules and scan alerts are fed into the prompt. */
   private async run<K extends Parameters<typeof runAgent>[3]>(agent: AgentId, task: K, input: Parameters<typeof runAgent<K>>[4]) {
     const rules = this.cfg.learning.on ? this.learnings.standingRules(agent).slice(-8).map((l) => l.lesson) : [];

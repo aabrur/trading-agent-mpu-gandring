@@ -291,11 +291,10 @@ export function TrakteerPopup({ onClose }: { onClose: () => void }) {
           <button type="button" className="trakteer-close-x" onClick={onClose} aria-label={t('closeModal')} title={t('closeModal')}>✕</button>
         </div>
         <p id={descriptionId} className="trakteer-popup-body">{t('trakteerBody')}</p>
-        <p className="trakteer-popup-note">{t('trakteerBrowserNote')}</p>
         <div className="trakteer-popup-actions">
           <a className="trakteer-btn" href="https://trakteer.id/aabrur/tip" target="_blank" rel="noopener noreferrer">{t('trakteerBtn')}</a>
-          <button type="button" className="badge setup-btn trakteer-later-btn" onClick={onClose}>{t('trakteerDismiss')}</button>
         </div>
+        <p className="trakteer-popup-note">{t('trakteerBrowserNote')}</p>
       </div>
     </dialog>
   );

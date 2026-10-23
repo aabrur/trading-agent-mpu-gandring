@@ -1,7 +1,7 @@
 // Native agent accounts stay in their own CLIs. The desk receives text replies through its existing schema/risk gate.
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 export const LOCAL_AGENTS = [
@@ -34,6 +34,23 @@ export const LOCAL_AGENTS = [
   }
 ] as const;
 export type LocalAgentId = (typeof LOCAL_AGENTS)[number]['id'];
+const modelIdOk = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}$/.test(value);
+/** Read model metadata only. Authentication files remain owned by the CLI. */
+export function localModels(id: LocalAgentId): string[] {
+  const models: string[] = [...LOCAL_AGENTS.find((agent) => agent.id === id)!.models];
+  if (id === 'codex') {
+    try {
+      const raw = readFileSync(path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'models_cache.json'), 'utf8');
+      if (raw.length <= 2_000_000) {
+        const cache: { models?: { slug?: unknown; visibility?: string }[] } = JSON.parse(raw);
+        if (Array.isArray(cache.models)) for (const model of cache.models.slice(0, 1000)) {
+          if (model.visibility === 'list' && modelIdOk(model.slug)) models.push(model.slug);
+        }
+      }
+    } catch { /* The configured default and manual model ID remain available without a cache. */ }
+  }
+  return [...new Set(models)];
+}
 const allowedEnv = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|LANG|LC_ALL|TERM|CODEX_HOME|CLAUDE_CONFIG_DIR|PI_CODING_AGENT_DIR|KIMI_CODE_HOME|ANTIGRAVITY_HOME|GEMINI_HOME|GEMINI_API_KEY)$/i;
 export const localEnvironment = (env: NodeJS.ProcessEnv) => Object.fromEntries(Object.entries(env).filter(([k]) => allowedEnv.test(k)));
 
@@ -58,7 +75,7 @@ export function localAgentStatus() { return LOCAL_AGENTS.map((a) => ({ ...a, ins
 export function localSelection(value: string) {
   const [rawId, ...parts] = value.split(':'); const id = rawId === 'agy' ? 'antigravity' : rawId; const model = parts.join(':') || 'default';
   const agent = LOCAL_AGENTS.find((a) => a.id === id);
-  if (!agent || !(agent.models as readonly string[]).includes(model)) throw new Error('Choose an available local agent and model.');
+  if (!agent || !modelIdOk(model)) throw new Error('Choose a local agent and a valid CLI model ID.');
   return { id: agent.id, model };
 }
 export function localArgs(id: LocalAgentId, model: string, folder: string, prompt = ''): { args: string[]; env: Record<string, string> } {
@@ -70,7 +87,7 @@ export function localArgs(id: LocalAgentId, model: string, folder: string, promp
     case 'kimi': args = ['--agent-file', path.join(folder, 'reasoner.md'), '--output-format', 'text', '-p', 'Respond to the input provided on stdin with JSON only.']; break;
     case 'kilo': args = ['--pure', 'run', '--format', 'json']; env = { KILO_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'deny' }, plugin: [] }) }; break;
     case 'cline': args = ['--json', '--plan', '--auto-approve', 'false', '--timeout', '110']; break;
-    case 'grok': args = ['--prompt-file', path.join(folder, 'prompt.txt'), '--tools', '', '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'text']; break;
+    case 'grok': args = ['--prompt-file', path.join(folder, 'prompt.txt'), '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']; break;
     case 'antigravity':
       args = ['--dangerously-skip-permissions', '--disable-slash-commands', '--output-format', 'json'];
       if (model !== 'default') args.push('--model', model);
@@ -89,6 +106,7 @@ export function localReply(output: string): string {
       if (obj.type === 'item.completed' && obj.item?.type === 'agent_message') texts.push(obj.item.text);
       else if (obj.type === 'text' && typeof obj.part?.text === 'string') texts.push(obj.part.text);
       else if (obj.type === 'say' && obj.say === 'text' && typeof obj.text === 'string') texts.push(obj.text);
+      else if (obj.type === 'run_result' && typeof obj.text === 'string') return obj.text;
       else if (obj.type === 'result' && typeof obj.result === 'string') return obj.result;
     } catch { /* Plain text replies are returned unchanged below. */ }
   }
@@ -125,15 +143,58 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
   } finally { try { rmSync(folder, { recursive: true, force: true }); } finally { release(); } }
 }
 
+const loginProcesses = new Map<string, 'pending' | 'finished' | 'failed'>();
+const connectionChecks = new Map<string, { at: number; result: Promise<{ connected: boolean; state: string }> }>();
+/** Ask the CLI for authentication status without reading or returning credentials. */
+export async function localLoginStatus(id: string, verify = false) {
+  id = id === 'agy' ? 'antigravity' : id;
+  const executable = localExecutable(id);
+  if (!executable) return { connected: false, state: 'missing' };
+  const loginState = loginProcesses.get(id);
+  if (loginState === 'pending' || loginState === 'failed') return { connected: false, state: loginState };
+  if (id !== 'codex' && id !== 'claude') {
+    if (!verify) return { connected: false, state: loginProcesses.get(id) || 'unknown' };
+    const previous = connectionChecks.get(id);
+    if (previous && Date.now() - previous.at < 15_000) return previous.result;
+    const result = (async () => {
+      try {
+        const reply = await runLocalAgent(`${id}:default`, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.');
+        const connected = JSON.parse(reply).reply === 'connected';
+        return { connected, state: connected ? 'connected' : 'pending' };
+      } catch { return { connected: false, state: 'pending' }; }
+    })();
+    const check = { at: Number.POSITIVE_INFINITY, result };
+    connectionChecks.set(id, check);
+    void result.finally(() => { check.at = Date.now(); });
+    return result;
+  }
+  const connected = await new Promise<boolean>((resolve) => {
+    const args = id === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'];
+    const child = spawn(executable.file, [...executable.prefix, ...args], { env: localEnvironment(process.env), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    let output = '';
+    child.stdout.on('data', (chunk: Buffer) => { if (output.length < 16_384) output += chunk.toString(); });
+    const timer = setTimeout(() => { child.kill(); resolve(false); }, 5000);
+    child.once('error', () => { clearTimeout(timer); resolve(false); });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      if (id !== 'claude') return resolve(code === 0);
+      try { resolve(code === 0 && JSON.parse(output).loggedIn === true); } catch { resolve(false); }
+    });
+  });
+  return { connected, state: connected ? 'connected' : loginState === 'finished' ? 'failed' : 'signed-out' };
+}
+
 /** Only a fixed, locally discovered login command can open an interactive terminal. No tokens are read or returned. */
 export async function openAgentLogin(id: string) {
   const normId = id === 'agy' ? 'antigravity' : id;
   const agent = LOCAL_AGENTS.find((a) => a.id === normId); const executable = localExecutable(normId);
   if (!agent || !executable) throw new Error('Install the agent on PATH first.');
+  connectionChecks.delete(normId);
+  if (loginProcesses.get(normId) === 'pending') return 'Sign-in is already open. Complete it in the browser or terminal.';
   let child;
   if (process.platform === 'win32') {
     const command = [executable.file, ...executable.prefix, ...agent.login].map((s) => `"${s}"`).join(' ');
-    child = spawn('cmd.exe', ['/d', '/s', '/k', `"${command}"`], { cwd: tmpdir(), detached: true, stdio: 'ignore', windowsHide: false });
+    child = spawn('cmd.exe', ['/d', '/s', '/c', `"${command}"`], { cwd: tmpdir(), detached: true, stdio: 'ignore', windowsHide: false });
   } else if (process.platform === 'darwin') {
     const file = path.join(mkdtempSync(path.join(tmpdir(), 'mpu-login-')), 'sign-in.command');
     const quote = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
@@ -141,5 +202,7 @@ export async function openAgentLogin(id: string) {
     child = spawn('open', ['-a', 'Terminal', file], { detached: true, stdio: 'ignore' });
   } else child = spawn('x-terminal-emulator', ['-e', executable.file, ...executable.prefix, ...agent.login], { cwd: tmpdir(), detached: true, stdio: 'ignore' });
   await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); child.unref();
-  return `Sign-in terminal opened. ${agent.id === 'pi' ? 'Type /login in Pi.' : agent.id === 'antigravity' ? 'Run agy in the terminal.' : 'Finish the agent’s own sign-in flow.'} Then test the connection.`;
+  loginProcesses.set(normId, 'pending');
+  if (process.platform !== 'darwin') child.once('close', (code) => loginProcesses.set(normId, code === 0 ? 'finished' : 'failed'));
+  return `Sign-in terminal opened. ${agent.id === 'pi' ? 'Type /login in Pi, choose your provider, then exit Pi after sign-in.' : agent.id === 'antigravity' ? 'Complete sign-in in Antigravity, then exit the agent terminal.' : 'Finish the agent’s own sign-in flow.'} Connection is checked after the login process finishes; a model check may use your account quota.`;
 }

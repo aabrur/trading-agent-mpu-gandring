@@ -14,6 +14,15 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
 
+## Local CLI connections and model activation (v0.0.0.3.17)
+
+- Open **Setup > Local CLI Agents**, click **Connect**, and complete the agent's own login. Opening Setup or refreshing installed agents does not establish a connection. Pi and Antigravity users finish sign-in, then exit the agent terminal so verification can continue.
+- In **Models & Providers**, choose **Agent on this computer** and a CLI. Codex choices include visible entries from its local `models_cache.json` when present. All eight CLI adapters also accept an exact **CLI model ID**; `default` keeps the CLI's configured model. Cached entries and manual IDs do not guarantee account access or remaining quota.
+- Click **Save** to apply the provider/model mapping to the running agents. The saved summary warns when saved and running choices differ. Logging into a CLI alone does not assign it to the desk. Model updates preserve trading mode, positions, safety settings and kill-switch state.
+- Local CLI Agents uses headings up to 14px, body and controls up to 12px, and compact spacing. The larger support popup has one support link and an accessible close button; **Maybe later** is removed. Trakteer opens in a new tab because its embed returned HTTP 403 during inspection.
+
+See [local CLI setup](docs/local-agents.md) and [verification evidence and limits](docs/qa/2026-10-23-local-agents/report.md). Existing running processes must load this release before its new server behavior is available. Do not restart a LIVE desk as part of an unattended update.
+
 ## Illustrated office (v0.0.0.3.16)
 
 The office uses supplied wood furniture, a shared carved discussion table, a stocked library, sky windows, hanging plants, lamps and a coffee corner. Six animated characters retain their own workstation, role accessories, activity, debate and chat controls. Day and night themes extend across the room, map panels, agent roster, markets and reports.
@@ -60,7 +69,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 ## What it does
 
 - **A real desk, not one bot (6 AI agents + Jev).** Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager and Execution Trader each have a job, a personality and their own model. The total setup is exactly 6 AI trading agents plus an optional Jev decision sidecar. The Desk Lead also keeps the trade journal: it grades every closed trade, writes one lesson and owns the periodic report.
-- **Bring your own brains.** Every agent can run on a different provider across 10 API providers with 20 AI models each: xAI, OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Groq, Mistral, Together and Fireworks, or a signed-in local agent CLI on your computer: Codex, Claude Code, Muse Code, Pi, Kimi Code, Kilo, Cline and Grok Build. Mix them so the arguments get interesting, or use a single provider API key across all six agents with different models.
+- **Bring your own brains.** Every agent can run on a different provider across 10 API providers with 20 AI models each: xAI, OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Groq, Mistral, Together and Fireworks, or a signed-in local agent CLI on your computer: Codex, Claude Code, Pi, Kimi Code, Kilo, Cline, Grok Build and Antigravity. Mix them so the arguments get interesting, or use a single provider API key across all six agents with different models.
 - **Works with zero keys.** A built-in `mock` provider runs offline and deterministic, so the demo always works. Its output is tagged EXAMPLE.
 - **Optional Jev decision sidecar.** TypeSafe Jev (`typesafe/jev-1.14`) over OpenRouter can classify market regime, news relevance, whale significance and debate conflicts. Off by default. Bring your own OpenRouter key. Shadow records only and does not block trading. Assist may enrich PAPER, TESTNET and LIVE analysis after an explicit Setup authorization. Jev never places, cancels or resizes orders. TypeSafe Direct is not included.
 - **Debate, then fight.** Bull and bear camps form from the agents' stances. A disagreement score drives the fight meter, and above the threshold they start swinging.
@@ -84,7 +93,7 @@ No model API keys needed: six Grok Bot agents are the employees and the brains, 
 - **A cozy office with brutal cartoon smoke-cloud fights and spectator reactions.** Wood floors, a woven rug, sky windows, a coffee corner and six round little bots with mitten hands. Each role has its own color and prop: tie, keris pin and journal papers for the Lead, headset for Market, glasses and newspaper for Research, beret and pencil for the Strategist, hard hat for Risk and cap and stopwatch for Execution. When disagreement crosses the threshold, agents dive into a cartoon dust/smoke cloud with flying fists, spinning stars, lightning bolts and impact bursts (`GEBUK!`, `POW!`, `WHAM!`, `BONK!`), while bystander bots react with worried expressions and speech without blocking execution.
 - **Interactive pop-up tutorial on every start.** A 9-step guided onboarding tour launches automatically on startup (and via **Setup > Tutorial** in the top bar), highlighting each section of the desk with a spotlight and directional arrow.
 - **Dual language mode: EN and ID.** Defaults to English (`EN`) and switches instantly to Bahasa Indonesia (`ID`) from the top bar (`EN ▾ ID`), backed by a strictly synchronized 1:1 translation dictionary verified by automated tests.
-- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.16`).** The lit-up version notification badge (`v0.0.0.3.16 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
+- **In-app Version & Lit-Up Update Notification (`v0.0.0.3.16`).** The lit-up version notification badge (`v0.0.0.3.17 · Update ↑`) in the top bar checks GitHub for new releases via `GET /api/update/status` and lets you pull and build the latest version in one click via `POST /api/update/apply`.
 - **Charts you can read.** A candlestick chart for the selected symbol with a price scale, time labels, the last price and dashed entry, stop and take profit lines for open paper positions. The paper book has an equity curve and allocation bars for the active percentage or Money Trade / N, and every desk monitor shows a sparkline.
 - **Day and night.** A toggle in the top bar. All colors and fonts live in `web/src/styles/tokens.css`.
 - **Live office feed.** Status, speech bubbles and fights stream over WebSocket, next to the fight meter, ticker strip, verdict cards and a desk log.
@@ -128,7 +137,7 @@ mpu
 
 After that, type `mpu` from any terminal. It starts the desk and opens the web UI after the server is ready. First launch opens Setup in PAPER with full auto off. Saved mode and auto settings apply on later launches. `mpu setup` opens settings directly; Ctrl+C stops the desk.
 
-In Setup (organized as a clean left-sidebar menu with locked background scroll), choose the desk settings, then a provider and model across 10 providers with 20 models each. One provider API key can serve several agents with different models. Choose **Agent on this computer** to reuse a signed-in Codex, Claude Code, Pi, Kimi Code, Kilo, Cline or Grok Build CLI. Side-by-side tabs for **Connect an agent** and **External supervisor** let you detect local CLI installations, open native sign-in, test connections, or copy supervisor poll commands. See [local agent connections](docs/local-agents.md).
+In Setup (organized as a clean left-sidebar menu with locked background scroll), choose the desk settings, then a provider and model across 10 providers with 20 models each. One provider API key can serve several agents with different models. Choose **Agent on this computer** to reuse a signed-in Codex, Claude Code, Pi, Kimi Code, Kilo, Cline, Grok Build or Antigravity CLI. Side-by-side tabs for **Connect an agent** and **External supervisor** let you detect local CLI installations, open native sign-in, test connections, or copy supervisor poll commands. See [local agent connections](docs/local-agents.md).
 
 Save each setup section, then **Apply saved settings and restart**. **Connect Wallet** is in the top bar immediately before **Setup** and lists DEX venues only (`Hyperliquid`, `Aster`, `dYdX v4`, `Paradex`, `Orderly`), along with live DEX balance reading and official deposit links. CEX venues (`Bybit`, `Binance`, `OKX`) are configured in **Setup > Exchange & Safety**.
 
@@ -154,7 +163,7 @@ Refused everywhere: main wallet private keys, seed phrases, keys that can withdr
 | Interactive onboarding tour | N/A | Launches on every start, or open **Setup > Tutorial** in the top bar |
 | Optional Jev decision sidecar | Setup > Models, `JEV_ENABLED=true` | Shadow does not block. LIVE ASSIST needs Setup authorization. Never places orders |
 | Switch UI language (`EN` default / `ID`) | N/A | **EN ▾ ID** toggle in top bar |
-| Check version (`v0.0.0.3.16`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.16 · Update ↑** button in top bar |
+| Check version (`v0.0.0.3.17`) & one-click update | `git pull --ff-only && npm run build` | Lit-up **v0.0.0.3.17 · Update ↑** button in top bar |
 | Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup > Exchange & Safety **Run doctor** |
 | Switch mode to TESTNET or LIVE | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup > Exchange & Safety |
 | What is configured with secrets masked | `npm run setup -- status` | Setup header and status lines |

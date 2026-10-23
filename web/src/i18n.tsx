@@ -188,10 +188,9 @@ export const en = {
 
   // Trakteer Popup
   trakteerBtn: 'Support on Trakteer',
-  trakteerTitle: 'Support Mpu Gandring with Cendol!',
-  trakteerBody: 'Enjoying the 6-agent trading desk? Treat the creator to a glass of Cendol on Trakteer to keep updates and new adapters coming.',
+  trakteerTitle: 'Enjoying Trading Agent Mpu Gandring?',
+  trakteerBody: 'If this desk has been useful and you enjoy spending time here, treat the creator to a glass of Cendol. Your support helps fund continued development. Thanks for making room for this little desk in your day.',
   trakteerBrowserNote: 'Opens the Trakteer support page in a new tab.',
-  trakteerDismiss: 'Maybe later',
 
   // Auto Trade & TopBar Balance
   autoTradeTitle: 'Auto Trade',
@@ -354,7 +353,7 @@ export const en = {
   setupLocalVerifiedBadge: 'Connection verified this session',
   setupLocalInstalledBadge: 'Installed · not yet tested',
   setupLocalNotOnPathBadge: 'Not found on PATH',
-  setupLocalOpenSignInBtn: 'Open sign-in',
+  setupLocalOpenSignInBtn: 'Connect',
   setupLocalTestConnBtn: 'Test connection',
   setupLocalSupervisorTitle: 'External Supervisor Poll Commands',
   setupLocalSupervisorSub: 'Run from terminal or your own AI supervisor agent',
@@ -693,10 +692,9 @@ export const id: Record<TranslationKey, string> = {
 
   // Trakteer Popup
   trakteerBtn: 'Dukung Saya di Trakteer',
-  trakteerTitle: 'Trakteer Cendol untuk Mpu Gandring!',
-  trakteerBody: 'Suka dengan meja trading 6 agen ini? Trakteer pembuatnya segelas Cendol supaya update fitur dan adapter baru terus jalan.',
+  trakteerTitle: 'Betah di Trading Agent Mpu Gandring?',
+  trakteerBody: 'Kalau meja ini berguna dan kamu senang memakainya, boleh traktir pembuatnya segelas Cendol. Dukunganmu membantu membiayai pengembangan berikutnya. Terima kasih sudah menjadikan meja kecil ini bagian dari harimu.',
   trakteerBrowserNote: 'Halaman dukungan Trakteer dibuka di tab baru.',
-  trakteerDismiss: 'Nanti dulu',
 
   // Auto Trade & TopBar Balance
   autoTradeTitle: 'Auto Trade',
@@ -858,7 +856,7 @@ export const id: Record<TranslationKey, string> = {
   setupLocalVerifiedBadge: 'Koneksi terverifikasi sesi ini',
   setupLocalInstalledBadge: 'Terpasang · belum diuji',
   setupLocalNotOnPathBadge: 'Tidak ditemukan di PATH',
-  setupLocalOpenSignInBtn: 'Buka login',
+  setupLocalOpenSignInBtn: 'Hubungkan',
   setupLocalTestConnBtn: 'Uji koneksi',
   setupLocalSupervisorTitle: 'Perintah Monitoring Supervisor Eksternal',
   setupLocalSupervisorSub: 'Jalankan dari terminal atau agen AI supervisor kamu',

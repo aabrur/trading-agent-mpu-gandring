@@ -4,7 +4,7 @@ import { useI18n } from '../i18n';
 interface Choice { id: string; label: string; tags: string[] }
 interface Selection { provider: string; model: string }
 interface Provider { provider: string; keyEnv: string | null; keySet: boolean; source: string; defaultModel: string; models: Choice[] }
-interface ModelsInfo { ok: boolean; checkedOn: string; usageSource: { url: string; asOf: string; period: string }; providers: Provider[]; defaultProvider: string; defaultModel: string; agents: (Selection & { id: string; custom: boolean })[] }
+interface ModelsInfo { ok: boolean; checkedOn: string; usageSource: { url: string; asOf: string; period: string }; providers: Provider[]; defaultProvider: string; defaultModel: string; agents: (Selection & { id: string; custom: boolean })[]; runningAgents?: (Selection & { id: string })[] }
 
 export function ModelsSetup({ available, appMode }: { available: boolean; appMode: string }) {
   const { t, lang } = useI18n();
@@ -46,7 +46,12 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
     </select></label>}
     <label>{label} {t('setupModelsModelLabel')} <select aria-label={`${label} model`} disabled={!available || busy} value={value.model} onChange={(e) => change({ ...value, model: e.target.value })}>
       {provider(value.provider).models.filter((m) => value.provider !== 'local' || m.id.split(':')[0] === value.model.split(':')[0]).map((m) => <option key={m.id} value={m.id}>{m.label} · {m.tags.join(', ')}</option>)}
+      {value.provider === 'local' && !provider('local').models.some((model) => model.id === value.model) && <option value={value.model}>{value.model} · {lang === 'id' ? 'ID model manual' : 'Manual model ID'}</option>}
     </select></label>
+    {value.provider === 'local' && <label>{label} {lang === 'id' ? 'ID model CLI' : 'CLI model ID'}
+      <input aria-label={`${label} CLI model ID`} disabled={!available || busy} value={value.model.slice(value.model.indexOf(':') + 1)} spellCheck={false} autoComplete="off" onChange={(e) => change({ ...value, model: `${value.model.split(':')[0]}:${e.target.value}` })} />
+      <small className="field-help">{lang === 'id' ? 'Gunakan default atau ID persis dari CLI agen. Akses dan kuota mengikuti akun agen.' : 'Use default or the exact model ID from the agent CLI. Access and quota depend on that account.'}</small>
+    </label>}
   </div>;
 
   async function save() {
@@ -61,9 +66,10 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   }
 
   return <section className="setup-models">
+    {info.runningAgents && info.agents.some((saved) => { const active = info.runningAgents!.find((agent) => agent.id === saved.id); return active && (active.provider !== saved.provider || active.model !== saved.model); }) && <p className="wallet-msg" role="status">{lang === 'id' ? 'Pilihan tersimpan berbeda dari agen yang sedang berjalan. Klik Edit models lalu Save untuk menerapkannya.' : 'Saved choices differ from the running agents. Click Edit models, then Save to apply them.'}</p>}
     {!editing && <><div className="setup-section-actions"><p className="wallet-note">{lang === 'id' ? 'Pilihan provider tersimpan. API key yang sudah ada tetap aman di komputer ini.' : 'Saved provider choices. Existing API keys stay on this computer.'}</p><button disabled={!available} onClick={() => { setMessage(''); setEditing(true); }}>{t('setupModelsEditBtn')}</button></div><dl className="setup-summary"><div><dt>Default</dt><dd>{info.defaultProvider} · {info.defaultModel}</dd></div>{info.agents.map((a) => <div key={a.id}><dt>{a.id}</dt><dd>{a.provider} · {a.model}</dd></div>)}</dl><p className="field-help">{info.providers.filter((p) => p.keyEnv && p.keySet).map((p) => p.provider).join(', ') || (lang === 'id' ? 'Tidak ada API key provider' : 'No provider API keys')}: {lang === 'id' ? 'key tersimpan tetap disembunyikan. Agen lokal memakai login mandiri.' : 'saved keys remain hidden. Local agents keep their own sign-in.'}</p></>}
     <form hidden={!editing} autoComplete="off" onChange={() => setMessage('')} onSubmit={(e) => { e.preventDefault(); void save(); }}>
-    <p className="wallet-note">{lang === 'id' ? `Dihimpun ${info.checkedOn}: 10 provider dengan 20 model AI untuk masing-masing.` : `Curated ${info.checkedOn}: 10 providers with 20 AI models each.`}</p>
+    <p className="wallet-note">{lang === 'id' ? `Katalog API ${info.checkedOn}: 10 provider dengan 20 model masing-masing. CLI lokal memakai model bawaan, cache katalog Codex bila tersedia, atau ID model manual.` : `API catalog ${info.checkedOn}: 10 providers with 20 models each. Local CLIs use configured defaults, the Codex catalog cache when available, or a manual model ID.`}</p>
     {controls(selection, setSelection, 'Default')}
     <label><input type="checkbox" disabled={!available || busy} checked={custom} onChange={(e) => { setCustom(e.target.checked); if (e.target.checked) setAgents(Object.fromEntries(info.agents.map((a) => [a.id, { ...selection }]))); }} /> {lang === 'id' ? 'Kustomisasi provider dan model untuk tiap agen' : 'Customize provider and model for each agent'}</label>
     {custom && info.agents.map((a) => <div key={a.id}>{controls(agents[a.id], (s) => setAgents((prev) => ({ ...prev, [a.id]: s })), a.id)}</div>)}
