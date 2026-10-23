@@ -14,6 +14,14 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
 
+## Live observations and Codex research (v0.0.0.3.18)
+
+OI changes, Deribit DVOL and put/call open-interest ratios use actual public observations with source and sample times. Missing measurements stay unavailable. Each technical timeframe uses its own valid closed candles; calculations preserve small-price precision.
+
+Open **Setup > Local CLI Agents** to enable live web search and the desk's read-only research MCP for Codex. Additional native MCP tools require explicit selections. Jev can direct collection priority while backend code fetches and processes the data. Masked news/on-chain inputs preserve existing keys when left empty. Installed plugins are not automatically enabled, and a configured key or connection does not establish live availability.
+
+See [live data and research setup](docs/live-data-research.md). This release does not alter Owner risk profiles or authorize trading activation.
+
 ## Local CLI connections and model activation (v0.0.0.3.17)
 
 - Open **Setup > Local CLI Agents**, click **Connect**, and complete the agent's own login. Opening Setup or refreshing installed agents does not establish a connection. Pi and Antigravity users finish sign-in, then exit the agent terminal so verification can continue.

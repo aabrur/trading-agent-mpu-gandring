@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
+import { CodexResearchSetup } from './CodexResearchSetup';
+import { DataSourcesSetup } from './DataSourcesSetup';
 
 interface LocalAgent { id: string; label: string; installed: boolean; docs: string; loginCommand: string; hint: string }
 export function LocalAgentsSetup({ available }: { available: boolean }) {
@@ -85,6 +87,8 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
           </div>
           {message.load && <p role="status">{message.load}</p>}
           <div className="local-agent-list">
+            <CodexResearchSetup available={available} />
+            <DataSourcesSetup available={available} />
             {agents.map((a) => (
               <section key={a.id} className="local-agent-row">
                 <div>

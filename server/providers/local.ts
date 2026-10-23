@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
+import { researchArgs, researchEnvironment, researchPolicy, type ResearchPolicy } from './research-policy.js';
 
 export const LOCAL_AGENTS = [
   { id: 'codex', label: 'Codex', login: ['login'], docs: 'https://developers.openai.com/codex/cli', models: ['default', 'gpt-6-astra', 'gpt-6.1-sol'] },
@@ -78,10 +79,10 @@ export function localSelection(value: string) {
   if (!agent || !modelIdOk(model)) throw new Error('Choose a local agent and a valid CLI model ID.');
   return { id: agent.id, model };
 }
-export function localArgs(id: LocalAgentId, model: string, folder: string, prompt = ''): { args: string[]; env: Record<string, string> } {
+export function localArgs(id: LocalAgentId, model: string, folder: string, prompt = '', policy: ResearchPolicy = { enabled: false, mcpTools: {} }, configuredServers: string[] = [], transports: Record<string, Record<string, unknown>> = {}): { args: string[]; env: Record<string, string> } {
   let args: string[] = [], env: Record<string, string> = {};
   switch (id) {
-    case 'codex': args = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--json', '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'plugins', '-c', 'mcp_servers={}', '-']; break;
+    case 'codex': args = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--json', '--disable', 'shell_tool', '--disable', 'unified_exec', ...researchArgs(policy, configuredServers, process.env.PORT || '8787', transports), '-']; break;
     case 'claude': args = ['--print', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--no-session-persistence']; break;
     case 'pi': args = ['--print', '--mode', 'text', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-session']; break;
     case 'kimi': args = ['--agent-file', path.join(folder, 'reasoner.md'), '--output-format', 'text', '-p', 'Respond to the input provided on stdin with JSON only.']; break;
@@ -114,6 +115,19 @@ export function localReply(output: string): string {
 }
 
 let tail = Promise.resolve();
+const researchActivity: { server: string; tool: string; status: string; at: number }[] = [];
+export const localResearchActivity = () => researchActivity.slice(-20);
+export function recordResearchActivity(output: string) {
+  for (const line of output.split(/\r?\n/)) {
+    try {
+      const event = JSON.parse(line) as { type?: string; item?: { type?: string; server?: string; tool?: string; status?: string; error?: unknown; result?: { isError?: boolean } } };
+      const item = event.item;
+      if (event.type !== 'item.completed' || item?.type !== 'mcp_tool_call' || !item.server || !item.tool) continue;
+      researchActivity.push({ server: item.server.slice(0, 100), tool: item.tool.slice(0, 100), status: item.error || item.result?.isError || item.status === 'failed' ? 'failed' : 'completed', at: Date.now() });
+      if (researchActivity.length > 100) researchActivity.splice(0, researchActivity.length - 100);
+    } catch { /* Only structured CLI tool events establish tool usage. */ }
+  }
+}
 export async function runLocalAgent(selection: string, prompt: string): Promise<string> {
   const { id, model } = localSelection(selection);
   const executable = localExecutable(id);
@@ -124,7 +138,11 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
   try {
     writeFileSync(path.join(folder, 'prompt.txt'), prompt, { mode: 0o600 });
     writeFileSync(path.join(folder, 'reasoner.md'), '---\nname: desk-reasoner\ndescription: Return a structured trading desk opinion\ntools: []\nsubagents: []\n---\nUse only the supplied facts. Return JSON only.\n', { mode: 0o600 });
-    const plan = localArgs(id, model, folder, prompt);
+    const policy = id === 'codex' ? researchPolicy() : { enabled: false, mcpTools: {} };
+    const inventory = policy.enabled ? await loadMcpInventory() : [];
+    const transports = Object.fromEntries(inventory.map(server => [server.name, server.transport]));
+    const plan = localArgs(id, model, folder, prompt, policy, inventory.map(server => server.name), transports);
+    Object.assign(plan.env, researchEnvironment(policy, transports, process.env));
     return await new Promise<string>((resolve, reject) => {
       const child = spawn(executable.file, [...executable.prefix, ...plan.args], { cwd: folder, env: { ...localEnvironment(process.env), ...plan.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
       let output = '', size = 0, stopped = false, failure = '';
@@ -138,9 +156,43 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
       child.stdout.on('data', (v: Buffer) => collect(v, true)); child.stderr.on('data', (v: Buffer) => collect(v, false));
       child.stdin.on('error', () => {}); child.stdin.end(prompt);
       child.on('error', () => { clearTimeout(timer); reject(new Error(`${id} could not start. Check its installation.`)); });
-      child.on('close', (code) => { clearTimeout(timer); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
+      child.on('close', (code) => { clearTimeout(timer); recordResearchActivity(output); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
     });
   } finally { try { rmSync(folder, { recursive: true, force: true }); } finally { release(); } }
+}
+
+/** Return metadata only; server headers and transport environments remain inside the CLI. */
+async function loadMcpInventory(): Promise<{ name: string; enabled: boolean; authStatus: string; transport: Record<string, unknown> }[]> {
+  const executable = localExecutable('codex');
+  if (!executable) return [];
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable.file, [...executable.prefix, 'mcp', 'list', '--json'], { env: localEnvironment(process.env), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    let output = '';
+    const timeout = setTimeout(() => { child.kill(); reject(new Error('Codex MCP inventory timed out')); }, 10_000);
+    child.stdout.on('data', (chunk: Buffer) => { if (output.length < 2_000_000) output += chunk.toString(); });
+    child.once('error', () => { clearTimeout(timeout); reject(new Error('Codex MCP inventory unavailable')); });
+    child.once('close', code => {
+      clearTimeout(timeout);
+      try {
+        const items: unknown = JSON.parse(output);
+        if (code !== 0 || !Array.isArray(items)) throw new Error();
+        resolve(items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && typeof item.name === 'string')
+          .map(item => ({ name: String(item.name), enabled: item.enabled === true, authStatus: String(item.auth_status ?? 'unknown'), transport: item.transport as Record<string, unknown> })));
+      } catch { reject(new Error('Codex MCP inventory could not be verified')); }
+    });
+  });
+}
+
+export async function localMcpInventory() {
+  return (await loadMcpInventory()).map(({ name, enabled, authStatus }) => ({ name, enabled, authStatus, status: 'configured_only' as const }));
+}
+
+export async function validateResearchConnections(policy: ResearchPolicy) {
+  if (!policy.enabled) return;
+  const inventory = await loadMcpInventory();
+  const transports = Object.fromEntries(inventory.map(server => [server.name, server.transport]));
+  researchArgs(policy, inventory.map(server => server.name), process.env.PORT || '8787', transports);
+  researchEnvironment(policy, transports, process.env);
 }
 
 const loginProcesses = new Map<string, 'pending' | 'finished' | 'failed'>();

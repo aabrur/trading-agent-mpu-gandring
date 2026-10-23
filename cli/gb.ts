@@ -82,7 +82,7 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     case 'market': {
       const s = normSymbol(args[0] ?? ''); if (!s) return fail('usage: market <symbol>');
       if (flags.source && !MARKET_SOURCES.includes(flags.source as never)) return fail(`--source must be one of ${MARKET_SOURCES.join(', ')}`);
-      const snap = await getSnapshot(s, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource);
+      const snap = await getSnapshot(s, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, cfg.tradingMode !== 'PAPER');
       const d = { symbol: s, last: snap.last, bid: snap.bid, ask: snap.ask, change24hPct: round2(snap.change24hPct), fundingRate: snap.fundingRate, source: snap.source, example: snap.example, at: snap.fetchedAt };
       return ok(d, `${s} ${d.last} (${d.change24hPct}% 24h) funding ${d.fundingRate ?? 'n/a'} from ${d.source}${d.example ? ' (SAMPLE, not live)' : ''}`);
     }
@@ -90,7 +90,7 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
       const s = normSymbol(args[0] ?? ''); const tf = (args[1] ?? '15m') as Timeframe;
       if (!s || !TIMEFRAMES.includes(tf)) return fail(`usage: candles <symbol> [${TIMEFRAMES.join('|')}]`);
       if (flags.source && !MARKET_SOURCES.includes(flags.source as never)) return fail(`--source must be one of ${MARKET_SOURCES.join(', ')}`);
-      const r = await getCandles(s, tf, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, num(flags.limit) ?? 100);
+      const r = await getCandles(s, tf, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, num(flags.limit) ?? 100, cfg.tradingMode !== 'PAPER');
       const d = { symbol: s, tf: r.tf, source: r.source, example: r.example, candles: r.candles.map((c) => ({ t: c.t, o: c.o, h: c.h, l: c.l, c: c.c, v: round2(c.v) })) };
       const last = d.candles.at(-1);
       return ok(d, `${s} ${r.tf}: ${d.candles.length} closed candles from ${r.source}${r.example ? ' (SAMPLE)' : ''}. Last close ${last?.c ?? 'n/a'}.`);

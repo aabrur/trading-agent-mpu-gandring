@@ -151,13 +151,14 @@ describe('Phase 3: High-Alpha Market Data & Technical Engine', () => {
   });
 
   it('calculates volatility metrics (ATR14, RealizedVol24h, Bollinger Band Width %)', () => {
-    const candles = generateCandles(60, 50000, 5);
+    const candles = generateCandles(97, 50000, 5).map((candle, index) => ({ ...candle, t: 1000 + index * 15 * 60_000 }));
     const vol = calculateVolatility(candles);
 
     expect(vol.atr14).toBeGreaterThan(0);
     expect(vol.atrPct).toBeGreaterThan(0);
     expect(vol.realizedVol24h).toBeGreaterThanOrEqual(0);
     expect(vol.bollingerBandWidthPct).toBeGreaterThan(0);
+    expect(calculateVolatility(candles.slice(-60)).realizedVol24h).toBeNull();
   });
 
   it('identifies trend regime across multi-timeframe structures', () => {

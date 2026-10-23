@@ -10,7 +10,7 @@ import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, A
 import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
 import type { ModelCaller } from './providers/index.js';
-import { getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem } from './market/index.js';
+import { getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem, liveNewsStatus } from './market/index.js';
 import { strategyVote, rsi, volumeDelta, atr } from './strategy.js';
 import { applyRiskGate } from './risk.js';
 import { planOrder, round2, roundPrice } from './money.js';
@@ -31,6 +31,7 @@ import { saveTradingProfile } from './setup/trading.js';
 import { setEnv } from '../cli/envfile.js';
 import { fenceData } from './untrusted.js';
 import { JevService } from './decision/jev.js';
+import { collectTradingData, type CollectionTrace } from './decision/collection.js';
 import { boundedPostState, boundedPreState, conflictQuestions, interpretAnswers, jevMayEnrichAgents, jevRoleContext, recordFromResult, selectPreQuestions } from './decision/evaluation.js';
 import { CycleTimer, type CycleTiming } from './decision/timing.js';
 import { classifyHoldReason, outcomeFor, type DecisionOutcome, type HoldReasonCode } from './decision/reasons.js';
@@ -83,6 +84,7 @@ export class Desk extends EventEmitter {
   lastScan: { at: number; findings: Finding[] } | null = null;
   jev!: JevService;
   jevLast: Record<string, unknown> | null = null;
+  collectionLast: CollectionTrace | null = null;
   lastCycle: { symbol: string; durationMs: number; stage: string; verdict: string | null; noTradeReason: string | null; executionStatus: string | null; reasonCode: string | null; outcome: string | null; timing: CycleTiming | null } | null = null;
   /** API, exchange and agent errors, for the scan and the reflection step */
   errors: { at: number; source: string; text: string }[] = [];
@@ -223,7 +225,7 @@ export class Desk extends EventEmitter {
       agentEvents: this.cfg.agentEvents.enabled, signals: this.signals.slice(0, 10),
       lessons: this.learnings.recent(12), standingRules: this.learnings.standingRules().slice(-8).reverse(), lessonsRefused: this.learnings.refused, scan: this.lastScan, scorecard: this.scorecard.rows(), learning: { on: this.cfg.learning.on, scan: this.cfg.learning.scan, promoteAfter: this.cfg.learning.promoteAfter },
       opportunities: this.opportunities, auto: { ...this.autoState, symbols: this.cfg.auto.symbols, maxHoldHours: this.cfg.auto.maxHoldHours },
-      reports: this.reports.slice(0, 12), reportIntervalMin: this.cfg.reports.intervalMin,
+      reports: this.reports.slice(0, 12), reportIntervalMin: this.cfg.reports.intervalMin, dataCollection: this.collectionLast,
       venueAccount: this.venueAccount, marketSource: this.cfg.marketSource, bridgeEnabled: this.cfg.bridge.enabled, paused: this.paused,
       agents: this.agents, tickers: this.tickers, debate: this.debate,
       paper: {
@@ -308,12 +310,24 @@ export class Desk extends EventEmitter {
   }
 
   // ---------- market ----------
+  async collectResearchData(symbol: string, objective = 'Collect complete live context for the next trading analysis') {
+    const collected = await collectTradingData({ symbol, objective, jev: this.jev, live: this.cfg.tradingMode !== 'PAPER',
+      market: () => this.marketSnapshot(symbol), news: () => getNewsFor(symbol, this.cfg), whale: () => getWhaleBriefing(symbol) });
+    this.collectionLast = collected.trace;
+    return collected;
+  }
+  private marketSnapshot(symbol: string) {
+    const source = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
+    return getSnapshot(symbol, source, this.cfg.tradingMode !== 'PAPER');
+  }
   async refreshTickers() {
-    const live = Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
+    const live = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
     let allSample = true;
     const symbols = [...new Set([...this.cfg.watchlist, ...this.cfg.auto.symbols])];
     await Promise.all(symbols.map(async (s) => {
-      const snap = await getSnapshot(s, live);
+      let snap;
+      try { snap = await getSnapshot(s, live, this.cfg.tradingMode !== 'PAPER'); }
+      catch { this.recordError('market', `${s}: live market data unavailable`); return; }
       if (snap.source !== 'sample') allSample = false;
       else if (live !== 'sample' && snap.errors.length) this.recordError('market', `${s}: ${snap.errors.join('; ')}`);
       this.updateTicker(snap);
@@ -497,7 +511,8 @@ export class Desk extends EventEmitter {
       // 1. Market Analyst
       this.setPhase('reading');
       this.setStatus('market', 'reading'); this.changed();
-      const snap = await timer.measure('marketData', () => getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample'));
+      const collected = await timer.measure('marketData', () => this.collectResearchData(symbol));
+      const snap = collected.market;
       this.updateTicker(snap);
       const dataTag = snap.example ? 'sample data (EXAMPLE)' : `${snap.source} public feed`;
       const closes = snap.candles.map((c) => c.c);
@@ -507,14 +522,12 @@ export class Desk extends EventEmitter {
       const c8 = snap.candles.at(-9)?.c, cl = snap.candles.at(-1)?.c;
       const change2h = c8 && cl ? round2(((cl - c8) / c8) * 100) : 0;
       const lastCandles = snap.candles.slice(-8).map((c) => ({ t: new Date(c.t).toISOString(), c: c.c }));
-      const newsP = getNewsFor(symbol, this.cfg).catch(() => getNews(symbol));
-      const whaleP = getWhaleBriefing(symbol).catch(() => ({
-        symbol, providerStatus: 'UNAVAILABLE' as const, providerName: 'Whale Alert', events: [], summary: 'Whale data unavailable', observedAt: Date.now(), disclaimer: ''
-      }));
+      const newsP = Promise.resolve(collected.news);
+      const whaleP = Promise.resolve(collected.whale);
       const mk = await timer.measure('marketAnalyst', () => this.run('market', 'opinion', {
         instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, ATR volatility ${atrVal}, relative candle volume ${vol.volRatio}x, and bullish-candle volume share ${(vol.takerBuyPressure * 100).toFixed(0)}% (INFERRED candle proxy, not taker order flow). Be sharp, quantitative, and directional (LONG or SHORT) unless the tape is flat.`,
         data: {
-          broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt },
+          broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt, evidence: snap.evidence },
           symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h,
           fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol,
           orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain,
@@ -530,7 +543,7 @@ export class Desk extends EventEmitter {
       this.setStatus('research', 'reading'); this.changed();
       const news = await newsP;
       const normalizedEvents = news.map((n) => normalizeLegacyItem(n, symbol));
-      const newsBriefing = buildNewsBriefing(symbol, normalizedEvents, this.cfg.news.provider === 'cryptopanic' && this.cfg.news.key ? 'CONFIGURED_LIVE' : 'SAMPLE_FALLBACK');
+      const newsBriefing = buildNewsBriefing(symbol, normalizedEvents, liveNewsStatus(news));
       const whaleBriefing = await whaleP;
       const tradeFlowProxy = {
         status: 'INFERRED', method: 'share of recent candle volume on candles closing at or above their open; not taker-side trades',
@@ -695,7 +708,7 @@ export class Desk extends EventEmitter {
         const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
         let execSnap = snap;
         if (!snapshotIsFresh(snap)) {
-          execSnap = await getSnapshot(symbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample');
+          execSnap = await this.marketSnapshot(symbol);
           this.updateTicker(execSnap);
         }
         const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap });
@@ -759,7 +772,7 @@ export class Desk extends EventEmitter {
 
   async runHuddle(message: string, targetAgents?: (AgentId | 'all')[], symbol?: string): Promise<{ ok: boolean; replies: Array<{ agent: AgentId; reply: string }> }> {
     const sym = symbol ? normSymbol(symbol) : (this.verdicts[0]?.symbol ?? this.cfg.watchlist[0] ?? 'BTCUSDT');
-    const snap = await getSnapshot(sym, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample').catch(() => null);
+    const snap = await this.marketSnapshot(sym).catch(() => null);
     if (snap) this.updateTicker(snap);
 
     const hasAll = !targetAgents || targetAgents.length === 0 || targetAgents.includes('all');
@@ -1136,7 +1149,7 @@ export class Desk extends EventEmitter {
     if (this.killed) return { ok: false, reply: 'kill switch is on', notes: [] };
     if (this.paused) return { ok: false, reply: 'desk is paused', notes: [] };
     if (this.book.positions.some((p) => p.symbol === symbol)) return { ok: false, reply: `already have a ${symbol} position`, notes: [] };
-    const snap = await getSnapshot(symbol, this.cfg.marketSource);
+    const snap = await this.marketSnapshot(symbol);
     this.updateTicker(snap);
     // Entry is the live ask (LONG) or bid (SHORT), not rounded: the stop distance and size are measured from it.
     const price = o.side === 'LONG' ? (snap.ask ?? snap.last) : (snap.bid ?? snap.last);
@@ -1156,7 +1169,7 @@ export class Desk extends EventEmitter {
     const symbols = /^all$/i.test(target) ? [...new Set(this.book.positions.map((p) => p.symbol))] : [normSymbol(target)].filter(Boolean);
     const closed: ClosedTrade[] = [];
     for (const sym of symbols) {
-      const snap = await getSnapshot(sym, this.cfg.marketSource);
+      const snap = await this.marketSnapshot(sym);
       this.updateTicker(snap);
       closed.push(...await this.executeClose(sym, snap.last, reason));
     }
@@ -1285,7 +1298,7 @@ export class Desk extends EventEmitter {
           const leverage = cmd.leverage ?? this.cfg.risk.maxLeverage;
           if (leverage > this.cfg.risk.maxLeverage) { ok = false; reply = `Requested ${leverage}x exceeds active ${this.cfg.risk.maxLeverage}x. Set leverage ${leverage} first.`; break; }
           if (this.killed || this.paused) { ok = false; reply = this.killed ? 'Kill switch is on.' : 'Desk is paused.'; break; }
-          const snap = this.opts.executor ? null : await getSnapshot(cmd.symbol, this.cfg.marketSource);
+          const snap = this.opts.executor ? null : await this.marketSnapshot(cmd.symbol);
           if (snap) this.updateTicker(snap);
           const price = snap ? (cmd.side === 'LONG' ? snap.ask ?? snap.last : snap.bid ?? snap.last) : 0;
           const result = await this.executeOpen(cmd.symbol, cmd.side, price, { sizeFactor: 1, leverage, orderSizePct: cmd.orderSizePct, stopPct: this.cfg.risk.defaultStopPct, autonomous: false, evidence: { source: 'owner command', command: text } }, snap?.example ?? false);
@@ -1370,7 +1383,7 @@ export class Desk extends EventEmitter {
           if (this.grokbot) { reply = `I am played by your Grok Bot agent in the "Trading Agent Mpu Gandring" group chat. Talk to me there. This office only shows what we post.`; break; }
           this.setStatus(target, 'typing'); this.changed();
 
-          const snap = await getSnapshot(detectedSymbol, Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample').catch(() => null);
+          const snap = await this.marketSnapshot(detectedSymbol).catch(() => null);
           if (snap) this.updateTicker(snap);
 
           let newsBriefingData: unknown = null;
@@ -1378,7 +1391,7 @@ export class Desk extends EventEmitter {
           if (target === 'research' || /berita|news|whale|onchain|catalyst/i.test(userQuery)) {
             const newsItems = await getNewsFor(detectedSymbol, this.cfg).catch(() => []);
             const normEvents = newsItems.map((n) => normalizeLegacyItem(n, detectedSymbol));
-            newsBriefingData = buildNewsBriefing(detectedSymbol, normEvents, this.cfg.news.provider === 'cryptopanic' && this.cfg.news.key ? 'CONFIGURED_LIVE' : 'SAMPLE_FALLBACK');
+            newsBriefingData = buildNewsBriefing(detectedSymbol, normEvents, liveNewsStatus(newsItems));
             whaleBriefingData = await getWhaleBriefing(detectedSymbol).catch(() => null);
           }
 

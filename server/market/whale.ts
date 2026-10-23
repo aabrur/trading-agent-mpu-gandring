@@ -1,6 +1,7 @@
 import { sanitizeUntrusted } from '../untrusted.js';
 import { safe } from '../redact.js';
 import type { WhaleOnChainSummary } from '../types.js';
+import { fetchDeribitMeasurements } from './observations.js';
 
 export interface NormalizedWhaleEvent {
   chainId: string | number;
@@ -227,6 +228,7 @@ export async function getHyperliquidWhales(
   let longCount = 0, shortCount = 0;
   let totalLongNotional = 0, totalShortNotional = 0;
   let totalUnrealizedPnl = 0;
+  let walletsChecked = 0;
   const topPositions: Array<{ address: string; side: 'LONG' | 'SHORT'; notional: number; pnl: number }> = [];
 
   await Promise.all(
@@ -243,7 +245,9 @@ export async function getHyperliquidWhales(
 
         if (!res.ok) return;
         const data: any = await res.json();
-        const positions: any[] = data?.assetPositions ?? [];
+        if (!Array.isArray(data?.assetPositions)) return;
+        walletsChecked++;
+        const positions: any[] = data.assetPositions;
         for (const p of positions) {
           const pos = p.position;
           if (pos && String(pos.coin).toUpperCase() === targetCoin) {
@@ -268,7 +272,11 @@ export async function getHyperliquidWhales(
 
   topPositions.sort((a, b) => b.notional - a.notional);
 
+  if (walletsChecked !== addrs.length || !walletsChecked) return undefined;
+
   return {
+    walletsChecked, walletsRequested: addrs.length,
+    evidence: { source: 'hyperliquid clearinghouseState; configured wallet watchlist', observedAt: Date.now(), status: 'live', basis: 'Positions in the queried wallets only; not all market participants' },
     longCount,
     shortCount,
     avgLongNotional: longCount > 0 ? Math.round(totalLongNotional / longCount) : 0,
@@ -280,24 +288,7 @@ export async function getHyperliquidWhales(
 
 export async function getDeribitMacro(currency = 'BTC', fetchImpl: typeof fetch = fetch): Promise<WhaleOnChainSummary['deribitMacro']> {
   const curr = currency.replace(/USDT?$|USDC$/, '').toUpperCase();
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetchImpl(`https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=${curr}&kind=future`, { signal: ctrl.signal }).finally(() => clearTimeout(t));
-    if (!res.ok) return { dvol: null, putCallRatio: null, indexPrice: null };
-    const data: any = await res.json();
-    const list: any[] = data?.result ?? [];
-    if (!list.length) return { dvol: null, putCallRatio: null, indexPrice: null };
-    const perp = list.find((item: any) => item.instrument_name === `${curr}-PERPETUAL`) ?? list[0];
-    const indexPrice = perp?.underlying_price ?? perp?.mark_price ?? null;
-    return {
-      dvol: 52.4,
-      putCallRatio: 0.68,
-      indexPrice: indexPrice != null ? Number(indexPrice) : null
-    };
-  } catch {
-    return { dvol: null, putCallRatio: null, indexPrice: null };
-  }
+  return fetchDeribitMeasurements(curr, fetchImpl);
 }
 
 export async function getWhaleOnChainSummary(symbol: string, fetchImpl: typeof fetch = fetch): Promise<WhaleOnChainSummary> {

@@ -35,7 +35,7 @@ export interface NormalizedNewsEvent {
   sentiment: 'bullish' | 'bearish' | 'neutral' | 'severe';
   freshness: NewsFreshness;
   duplicateGroup: string | null;
-  provider: 'cryptopanic' | 'rss' | 'sample' | 'unconfigured';
+  provider: 'cryptopanic' | 'bybit' | 'rss' | 'sample' | 'unconfigured';
   example: boolean;
   flagged?: boolean;
 }
@@ -203,7 +203,7 @@ export function normalizeLegacyItem(item: NewsItem, symbol: string, now: number 
     sentiment: item.sentiment,
     freshness: newsFreshness(publishedAt, now),
     duplicateGroup: titleSlug(item.headline),
-    provider: item.example ? 'sample' : 'cryptopanic',
+    provider: item.example ? 'sample' : item.provider ?? 'cryptopanic',
     example: item.example,
     flagged: item.flagged
   };

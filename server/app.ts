@@ -20,6 +20,7 @@ import { sanitizeUntrusted } from './untrusted.js';
 import type { LiveExecutor } from './live/executor.js';
 import { AutoTrader } from './auto.js';
 import { Reporter } from './reports.js';
+import { mountResearchRoutes } from './research/routes.js';
 import { WalletConnector, walletAccess, walletInfo, findSecretLike } from './wallet.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName, type Network } from './exchange/index.js';
 import { mountSetupRoutes, mountOpsRoutes, localClient } from './setup/routes.js';
@@ -140,6 +141,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   // Setup wizard and Desk ops panel (same shared modules as npm run setup / npm run gb). Localhost only.
   const routeCtx = { cfg, desk, auto, envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch, limiter };
   mountSetupRoutes(app, routeCtx);
+  mountResearchRoutes(app, desk);
   mountOpsRoutes(app, routeCtx);
   // Desk Lead supervisor and chat channels. Inbound chat webhooks get their own server (see channels/routes.ts).
   const onKill = () => auto.stop();
@@ -152,7 +154,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const symbol = normSymbol(String(req.query.symbol ?? cfg.watchlist[0] ?? 'BTCUSDT')).slice(0, 20);
     const hit = candleCache.get(symbol);
     if (hit && Date.now() - hit.at < 20_000) return res.json(hit.body);
-    const snap = await getSnapshot(symbol, cfg.marketSource);
+    const snap = await getSnapshot(symbol, cfg.marketSource, cfg.tradingMode !== 'PAPER');
     const body = {
       symbol, source: snap.source, example: snap.example, last: snap.last, change24hPct: snap.change24hPct,
       candles: snap.candles.slice(-200).map((c) => ({ time: Math.floor(c.t / 1000), open: c.o, high: c.h, low: c.l, close: c.c }))

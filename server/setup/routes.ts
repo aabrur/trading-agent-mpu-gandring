@@ -17,12 +17,14 @@ import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus } from 
 import { doctor } from './doctor.js';
 import { MODEL_KEY_ENV, modelSetupInfo, modelUpdates } from './models.js';
 import { setEnv } from '../../cli/envfile.js';
-import { localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection } from '../providers/local.js';
+import { localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection, localMcpInventory, localResearchActivity, validateResearchConnections } from '../providers/local.js';
+import { ResearchPolicyBody, researchPolicy } from '../providers/research-policy.js';
 import { preferencesInfo, savePreferences } from './preferences.js';
 import { extractJson, SCHEMAS } from '../schemas.js';
 import { saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
 import { tradingSettingsFromConfig } from '../trading-settings.js';
 import { JevSetupBody, jevSetupInfo, saveJevSetup } from './jev.js';
+import { DataSourcesBody, dataSourcesStatus, saveDataSources } from './data-sources.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const hostOk = (h: string) => /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(h);
@@ -126,6 +128,34 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     if (!gate(req, res)) return;
     res.json({ ok: true, agents: localAgentStatus() });
   });
+  app.get('/api/setup/data-sources', (req, res) => {
+    if (!gate(req, res)) return;
+    res.json({ ok: true, ...dataSourcesStatus(setupEnv(c.envFile)) });
+  });
+  app.post('/api/setup/data-sources', (req, res) => {
+    if (!gate(req, res, true)) return;
+    const values = DataSourcesBody.safeParse(req.body);
+    if (!values.success) return res.status(400).json({ ok: false, detail: 'Use the masked inputs for news and on-chain provider keys.' });
+    try { res.json(saveDataSources(c.envFile, c.cfg, values.data)); }
+    catch { res.status(400).json({ ok: false, detail: 'Data source settings could not be saved.' }); }
+  });
+  app.get('/api/setup/local-agents/research', async (req, res) => {
+    if (!gate(req, res)) return;
+    try { res.json({ ok: true, policy: researchPolicy(setupEnv(c.envFile)), connections: await localMcpInventory(), activity: localResearchActivity() }); }
+    catch { res.status(503).json({ ok: false, detail: 'Codex research connections could not be inspected. Configuration alone does not confirm a live connection.' }); }
+  });
+  app.post('/api/setup/local-agents/research', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const parsed = ResearchPolicyBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ ok: false, detail: 'Choose research access and explicit MCP tool names.' });
+    try {
+      await validateResearchConnections(parsed.data);
+      const updates = { LOCAL_CODEX_RESEARCH_TOOLS: parsed.data.enabled ? 'on' : 'off', LOCAL_CODEX_MCP_TOOLS: JSON.stringify(parsed.data.mcpTools) };
+      setEnv(c.envFile, updates);
+      Object.assign(process.env, updates);
+      res.json({ ok: true, detail: 'Research access saved. It applies to subsequent Codex calls. A connection is verified only after a successful tool call.' });
+    } catch { res.status(503).json({ ok: false, detail: 'Research settings were not saved. Use configured MCP servers, explicit read tools, and OAuth or environment credential references.' }); }
+  });
   app.post('/api/setup/local-agents/login', async (req, res) => {
     if (!gate(req, res, true)) return;
     try { res.json({ ok: true, detail: await openAgentLogin(String(req.body?.id ?? '')) }); }
@@ -169,7 +199,7 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   });
   app.get('/api/setup/jev', (req, res) => {
     if (!gate(req, res)) return;
-    res.json({ ok: true, ...jevSetupInfo(setupEnv(c.envFile), c.cfg.tradingMode, c.desk.jev.metrics, c.desk.jevLast) });
+    res.json({ ok: true, ...jevSetupInfo(setupEnv(c.envFile), c.cfg.tradingMode, c.desk.jev.metrics, c.desk.jevLast), dataCollection: c.desk.collectionLast });
   });
   app.post('/api/setup/jev', (req, res) => {
     if (!gate(req, res, true)) return;

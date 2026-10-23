@@ -16,6 +16,7 @@ interface JevInfo {
   liveAssistBlocked?: boolean;
   tradingMode?: string;
   detail?: string;
+  dataCollection?: { routedBy: string; route: string; completedAt: number; routing: { status: string; reason: string | null }; feeds: Record<string, { status: string }> } | null;
 }
 
 export function JevSetup({ available }: { available: boolean }) {
@@ -88,6 +89,12 @@ export function JevSetup({ available }: { available: boolean }) {
         <div><dt>{t('setupJevOpenrouterSet')}</dt><dd>{info.openrouterKeySet ? t('setupJevKeyPresent') : t('setupJevKeyMissing')}</dd></div>
         <div><dt>{t('setupJevDedicatedSet')}</dt><dd>{info.dedicatedKeySet ? t('setupJevKeyPresent') : t('setupJevKeyMissing')}</dd></div>
       </dl>
+      <p className="wallet-note">{lang === 'id' ? 'Jev juga dapat memprioritaskan pengumpulan data; backend menjalankan kolektor dan perhitungan.' : 'Jev can also prioritize data acquisition; the backend runs the collectors and calculations.'}</p>
+      {info.dataCollection && <div className="wallet-note" role="status">
+        <p>{lang === 'id' ? 'Pengumpulan terakhir' : 'Last collection'}: {info.dataCollection.routedBy} · {info.dataCollection.route} · {new Date(info.dataCollection.completedAt).toLocaleString()}</p>
+        <p>{Object.entries(info.dataCollection.feeds).map(([name, feed]) => `${name}: ${feed.status}`).join(' · ')}</p>
+        {info.dataCollection.routing.reason && <p>{info.dataCollection.routing.reason}</p>}
+      </div>}
       <form className="setup-keys" autoComplete="off" onSubmit={(e) => { e.preventDefault(); void save(); }}>
         <label className="setup-check"><input type="checkbox" disabled={!available || busy} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> {t('setupJevEnable')}</label>
         <div className="wallet-pick">

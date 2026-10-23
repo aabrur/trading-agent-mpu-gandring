@@ -89,13 +89,13 @@ export function atr(candles: Candle[], period = 14): number {
     trs.push(tr);
   }
   if (trs.length < period) {
-    return Math.round((trs.reduce((a, b) => a + b, 0) / trs.length) * 100) / 100;
+    return trs.reduce((a, b) => a + b, 0) / trs.length;
   }
   let a = trs.slice(0, period).reduce((x, y) => x + y, 0) / period;
   for (let i = period; i < trs.length; i++) {
     a = (a * (period - 1) + trs[i]) / period;
   }
-  return Math.round(a * 100) / 100;
+  return a;
 }
 
 export function calculateVolumeProfile(candles: Candle[], binsCount = 50): { sessionVwap: number; poc: number; vah: number; val: number } {
@@ -112,7 +112,7 @@ export function calculateVolumeProfile(candles: Candle[], binsCount = 50): { ses
   const sessionVwap = totalVol > 0 ? sumTypVol / totalVol : candles.at(-1)?.c ?? 0;
   if (minP >= maxP || totalVol === 0) {
     const p = candles.at(-1)?.c ?? 0;
-    return { sessionVwap: Math.round(sessionVwap * 100) / 100, poc: p, vah: p, val: p };
+    return { sessionVwap, poc: p, vah: p, val: p };
   }
   const step = (maxP - minP) / binsCount;
   const bins = new Float64Array(binsCount);
@@ -146,10 +146,10 @@ export function calculateVolumeProfile(candles: Candle[], binsCount = 50): { ses
   const val = minP + lowerIdx * step;
   const vah = minP + (upperIdx + 1) * step;
   return {
-    sessionVwap: Math.round(sessionVwap * 100) / 100,
-    poc: Math.round(poc * 100) / 100,
-    vah: Math.round(vah * 100) / 100,
-    val: Math.round(val * 100) / 100
+    sessionVwap,
+    poc,
+    vah,
+    val
   };
 }
 
@@ -167,28 +167,25 @@ export function calculateSwingLevels(candles: Candle[], lookback = 20): { recent
   const dist = Math.min(distHigh, distLow);
   const distPct = close > 0 ? (dist / close) * 100 : 0;
   return {
-    recentSwingHigh: Math.round(high * 100) / 100,
-    recentSwingLow: Math.round(low * 100) / 100,
+    recentSwingHigh: high,
+    recentSwingLow: low,
     distToLiquiditySweepPct: Math.round(distPct * 100) / 100
   };
 }
 
-export function calculateVolatility(candles: Candle[]): { atr14: number; atrPct: number; realizedVol24h: number; bollingerBandWidthPct: number } {
+export function calculateVolatility(candles: Candle[]): { atr14: number; atrPct: number; realizedVol24h: number | null; realizedVol24hBasis: string; bollingerBandWidthPct: number } {
   const close = candles.at(-1)?.c ?? 0;
   const a14 = atr(candles, 14);
   const atrPct = close > 0 ? Math.round((a14 / close) * 10000) / 100 : 0;
 
-  let rv = 0;
-  if (candles.length >= 20) {
+  let rv: number | null = null;
+  const day = candles.slice(-97);
+  if (day.length === 97 && day.every((c, i) => c.c > 0 && (!i || c.t - day[i - 1].t === 15 * 60_000))) {
     const returns: number[] = [];
-    for (let i = 1; i < candles.length; i++) {
-      if (candles[i - 1].c > 0 && candles[i].c > 0) {
-        returns.push(Math.log(candles[i].c / candles[i - 1].c));
-      }
+    for (let i = 1; i < day.length; i++) {
+      returns.push(Math.log(day[i].c / day[i - 1].c));
     }
-    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const variance = returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (returns.length - 1);
-    rv = Math.round(Math.sqrt(variance * 365.25 * 96) * 10000) / 100;
+    rv = Math.round(Math.sqrt(returns.reduce((sum, value) => sum + value * value, 0)) * 10000) / 100;
   }
 
   let bbWidth = 0;
@@ -204,16 +201,17 @@ export function calculateVolatility(candles: Candle[]): { atr14: number; atrPct:
     atr14: a14,
     atrPct,
     realizedVol24h: rv,
+    realizedVol24hBasis: 'Root sum squared log returns over exactly 96 closed 15m intervals, percent, not annualized',
     bollingerBandWidthPct: bbWidth
   };
 }
 
-export function determineTrendRegime(closes: number[]): { ema9: number; ema21: number; ema50: number; ema200: number; regime: 'STRONG_UPTREND' | 'STRONG_DOWNTREND' | 'RANGING_CHOP' | 'SQUEEZE_BREAKOUT' } {
+export function determineTrendRegime(closes: number[]): { ema9: number; ema21: number; ema50: number; ema200: number | null; regime: 'STRONG_UPTREND' | 'STRONG_DOWNTREND' | 'RANGING_CHOP' | 'SQUEEZE_BREAKOUT' } {
   const close = closes.at(-1) ?? 0;
   const e9 = ema(closes, 9).at(-1) || close;
   const e21 = ema(closes, 21).at(-1) || close;
   const e50 = ema(closes, 50).at(-1) || close;
-  const e200 = ema(closes, 200).at(-1) || close;
+  const e200 = ema(closes, 200).at(-1);
 
   let regime: 'STRONG_UPTREND' | 'STRONG_DOWNTREND' | 'RANGING_CHOP' | 'SQUEEZE_BREAKOUT' = 'RANGING_CHOP';
   if (close > e9 && e9 > e21 && e21 > e50) {
@@ -230,34 +228,36 @@ export function determineTrendRegime(closes: number[]): { ema9: number; ema21: n
   }
 
   return {
-    ema9: Math.round(e9 * 100) / 100,
-    ema21: Math.round(e21 * 100) / 100,
-    ema50: Math.round(e50 * 100) / 100,
-    ema200: Math.round(e200 * 100) / 100,
+    ema9: e9,
+    ema21: e21,
+    ema50: e50,
+    ema200: e200 ?? null,
     regime
   };
 }
 
 export function buildTechnicalSummary(candlesMap: { '5m'?: Candle[]; '15m'?: Candle[]; '1h'?: Candle[]; '4h'?: Candle[] }): TechnicalSummary {
   const base15m = candlesMap['15m'] ?? [];
-  const base5m = candlesMap['5m'] ?? base15m;
-  const base1h = candlesMap['1h'] ?? base15m;
-  const base4h = candlesMap['4h'] ?? base15m;
+  const base5m = candlesMap['5m'] ?? [];
+  const base1h = candlesMap['1h'] ?? [];
+  const base4h = candlesMap['4h'] ?? [];
+  const trend = (bars: Candle[]) => bars.length >= 50 ? determineTrendRegime(bars.map((c) => c.c)) : null;
 
   return {
+    derivation: { volumeProfile: 'Candle-weighted estimate, not exchange volume-at-price', swingLevels: 'Observed candle extrema; distance is a proxy, not measured liquidation liquidity', momentum: 'RSI on the stated closed-candle timeframe' },
     mtfTrend: {
-      '5m': determineTrendRegime(base5m.map((c) => c.c)),
-      '15m': determineTrendRegime(base15m.map((c) => c.c)),
-      '1h': determineTrendRegime(base1h.map((c) => c.c)),
-      '4h': determineTrendRegime(base4h.map((c) => c.c))
+      '5m': trend(base5m),
+      '15m': trend(base15m),
+      '1h': trend(base1h),
+      '4h': trend(base4h)
     },
-    volatility: calculateVolatility(base15m),
+    volatility: base15m.length >= 20 ? calculateVolatility(base15m) : null,
     momentum: {
-      rsi14_15m: rsi(base15m.map((c) => c.c), 14),
-      rsi14_1h: rsi(base1h.map((c) => c.c), 14),
-      rsi14_4h: rsi(base4h.map((c) => c.c), 14)
+      rsi14_15m: base15m.length > 14 ? rsi(base15m.map((c) => c.c), 14) : null,
+      rsi14_1h: base1h.length > 14 ? rsi(base1h.map((c) => c.c), 14) : null,
+      rsi14_4h: base4h.length > 14 ? rsi(base4h.map((c) => c.c), 14) : null
     },
-    volumeProfile: calculateVolumeProfile(base15m),
-    swingLevels: calculateSwingLevels(base15m)
+    volumeProfile: base15m.length ? calculateVolumeProfile(base15m) : null,
+    swingLevels: base15m.length ? calculateSwingLevels(base15m) : null
   };
 }

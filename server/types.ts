@@ -5,6 +5,16 @@ export type AgentStatus = 'idle' | 'reading' | 'thinking' | 'typing' | 'arguing'
 
 export interface Candle { t: number; o: number; h: number; l: number; c: number; v: number }
 
+export interface MeasurementEvidence {
+  source: string;
+  observedAt: number;
+  status: 'live' | 'unavailable';
+  sampleAt?: number;
+  baselineAt?: number;
+  basis?: string;
+  reason?: string;
+}
+
 export interface RoomMessage {
   id: string;
   at: number;
@@ -16,6 +26,7 @@ export interface RoomMessage {
 }
 
 export interface OrderbookSummary {
+  evidence?: MeasurementEvidence;
   bidAskImbalance05Pct: number;
   bidAskImbalance1Pct: number;
   spreadBps: number;
@@ -27,15 +38,17 @@ export interface OrderbookSummary {
 }
 
 export interface OrderflowSummary {
+  evidence?: MeasurementEvidence;
   takerBuyVol: number;
   takerSellVol: number;
   cvdDelta: number;
-  buySellRatio: number;
+  buySellRatio: number | null;
   deltaDivergence: boolean;
   tradesCount?: number;
 }
 
 export interface DerivativesSummary {
+  evidence?: Record<string, MeasurementEvidence>;
   fundingRate: number | null;
   predictedFunding: number | null;
   openInterest: number | null;
@@ -49,39 +62,44 @@ export interface DerivativesSummary {
 }
 
 export interface TechnicalSummary {
+  derivation?: Record<string, string>;
   mtfTrend: Record<'5m' | '15m' | '1h' | '4h', {
     ema9: number;
     ema21: number;
     ema50: number;
-    ema200: number;
+    ema200: number | null;
     regime: 'STRONG_UPTREND' | 'STRONG_DOWNTREND' | 'RANGING_CHOP' | 'SQUEEZE_BREAKOUT';
-  }>;
+  } | null>;
   volatility: {
     atr14: number;
     atrPct: number;
-    realizedVol24h: number;
+    realizedVol24h: number | null;
+    realizedVol24hBasis?: string;
     bollingerBandWidthPct: number;
-  };
+  } | null;
   momentum: {
-    rsi14_15m: number;
-    rsi14_1h: number;
-    rsi14_4h: number;
+    rsi14_15m: number | null;
+    rsi14_1h: number | null;
+    rsi14_4h: number | null;
   };
   volumeProfile: {
     sessionVwap: number;
     poc: number;
     vah: number;
     val: number;
-  };
+  } | null;
   swingLevels: {
     recentSwingHigh: number;
     recentSwingLow: number;
     distToLiquiditySweepPct: number;
-  };
+  } | null;
 }
 
 export interface WhaleOnChainSummary {
   hyperliquidWhales?: {
+    evidence?: MeasurementEvidence;
+    walletsChecked?: number;
+    walletsRequested?: number;
     longCount: number;
     shortCount: number;
     avgLongNotional: number;
@@ -90,6 +108,9 @@ export interface WhaleOnChainSummary {
     topPositions?: Array<{ address: string; side: 'LONG' | 'SHORT'; notional: number; pnl: number }>;
   };
   deribitMacro?: {
+    evidence?: Record<string, MeasurementEvidence>;
+    currency?: string;
+    putCallRatioBasis?: 'open_interest';
     dvol: number | null;
     putCallRatio: number | null;
     indexPrice: number | null;
@@ -99,6 +120,7 @@ export interface WhaleOnChainSummary {
 }
 
 export interface MarketSnapshot {
+  evidence?: Record<string, MeasurementEvidence>;
   symbol: string;
   source: 'bybit' | 'binance' | 'hyperliquid' | 'aster' | 'dydx' | 'paradex' | 'orderly' | 'sample';
   example: boolean;
@@ -117,6 +139,7 @@ export interface MarketSnapshot {
 }
 
 export interface NewsItem {
+  provider?: 'cryptopanic' | 'bybit' | 'sample';
   id: string;
   symbol: string;
   headline: string;
