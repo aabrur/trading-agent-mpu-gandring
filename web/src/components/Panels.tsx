@@ -175,14 +175,14 @@ export function TopBar({
           <div className="brand-title-row">
             <h1>
               Trading Agent <span>Mpu Gandring</span>
-              {onOpenUpdate && (
+              {onOpenUpdate && hasUpdate && (
                 <button
-                  className={`badge setup-btn version-btn${hasUpdate ? ' update-avail-badge new-update-badge' : ''}`}
+                  className="badge setup-btn version-btn update-avail-badge new-update-badge"
                   onClick={onOpenUpdate}
-                  title={hasUpdate ? `${t('updateAvailable')}: v${updateInfo?.latestVersion}` : `Version v${ver}`}
+                  title={`${t('updateAvailable')}: v${updateInfo?.latestVersion}`}
                 >
-                  {hasUpdate && <i className="update-notif-dot" aria-hidden="true" />}
-                  {hasUpdate ? t('newUpdateBadge') : `v${ver}`}
+                  <i className="update-notif-dot" aria-hidden="true" />
+                  {t('newUpdateBadge')}
                 </button>
               )}
             </h1>
@@ -214,8 +214,8 @@ export function TopBar({
                 {state.venue.name === 'bybit' && <span className="badge venue-v-badge" title="Bybit V">V</span>}
               </>
             )}
-            <span className="badge version-badge" title={`Trading Agent Mpu Gandring v${ver}`}>v{ver}</span>
             {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
+            {state?.version && <span className="badge version-badge" title={'Trading Agent Mpu Gandring v' + state.version}>v{state.version}</span>}
           </div>
         </div>
       </div>
@@ -545,11 +545,23 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   );
 }
 
-export function OpenOrders({ state }: { state: DeskState }) {
+export function OpenOrders({ state, command }: { state: DeskState; command?: (text: string) => Promise<{ ok: boolean; reply?: string }> | void }) {
   const { t, lang } = useI18n();
   const p = state.paper;
   const [nBusy, setNBusy] = useState(false);
+  const [closingBusy, setClosingBusy] = useState(false);
   const [nError, setNError] = useState<string | null>(null);
+  const runClose = async (cmd: string) => {
+    if (!command || closingBusy) return;
+    setClosingBusy(true);
+    setNError(null);
+    try {
+      const res = await command(cmd);
+      if (res && !res.ok && res.reply) setNError(res.reply);
+    } finally {
+      setClosingBusy(false);
+    }
+  };
   return <section className="office-orders" aria-label={t('openOrdersN')}>
       <div className="order-heading"><strong>{t('openOrdersN')}</strong><span>{p.positions.length}/{p.n} {t('usedSuffix')}</span></div>
       <div className="n-picker" role="group" aria-label={t('openOrdersN')}>
@@ -569,6 +581,55 @@ export function OpenOrders({ state }: { state: DeskState }) {
         <div><dt>{t('safetyNet')}</dt><dd>{fmt(p.safetyNet)}</dd></div>
       </dl>
       {!p.canOpen && <p className="order-warning">{t('atSafetyNet')}</p>}
+      <div className="office-open-pos">
+        <div className="office-open-head">
+          <span>{lang === 'id' ? 'Posisi terbuka' : 'Open positions'}</span>
+          <small>{p.positions.length}</small>
+        </div>
+        {p.positions.length === 0 ? (
+          <p className="office-open-empty">{t('noOpenPositions')}</p>
+        ) : (
+          <div className={`office-open-list${p.positions.length > 2 ? ' is-dense' : ''}`}>
+            {p.positions.map((x) => (
+              <div
+                key={x.id}
+                className={`office-open-item ${x.side}`}
+                title={`${x.side} ${x.symbol} · ${x.qty} @ ${fmtPx(x.entry)} · SL ${x.stop > 0 ? fmtPx(x.stop) : 'unavailable'}${x.tp ? ` · TP ${fmtPx(x.tp)}` : ''}`}
+              >
+                <b className="office-pos-sym">
+                  <i className={`office-side-pill ${x.side}`}>{x.side === 'LONG' ? 'L' : 'S'}</i>
+                  <span>{p.positions.length > 2 ? x.symbol.replace(/USDT$/, '') : x.symbol}</span>
+                  {p.positions.length <= 2 && <small>{x.leverage}x</small>}
+                </b>
+                <span className={`office-pos-pnl ${x.unrealizedPnl >= 0 ? 'up' : 'down'}`}>
+                  {x.unrealizedPnl >= 0 ? '+' : ''}{fmt(x.unrealizedPnl)}
+                </span>
+                {command && (
+                  <button
+                    type="button"
+                    className="office-pos-close"
+                    disabled={closingBusy}
+                    aria-label={`${t('closeBtn')} ${x.symbol}`}
+                    title={`${t('closeBtn')} ${x.symbol}`}
+                    onClick={() => void runClose(`close ${x.symbol}`)}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          className="office-close-all-btn"
+          disabled={closingBusy || p.positions.length === 0 || !command}
+          aria-busy={closingBusy}
+          onClick={() => void runClose('close all')}
+        >
+          {t('closeAll')}
+        </button>
+      </div>
   </section>;
 }
 
@@ -604,7 +665,9 @@ export function Verdicts({ state, compact = false }: { state: DeskState; compact
       <div className="panel-head"><h2>{t('verdictsTitle')}</h2><small className="muted">{t('verdictsSub')}</small></div>
       {state.verdicts.length === 0 && <p className="muted">{t('noVerdictYet')}</p>}
       <div className="verdict-list">
-        {state.verdicts.slice(0, compact ? 1 : 6).map((v) => (
+        {state.verdicts.slice(0, compact ? 2 : 6).map((v, idx) => {
+          const popId = idx === 0 ? detailId : `${detailId}-${idx}`;
+          return (
           <article key={v.id} className={`verdict a-${v.action}`} title={time(v.at)}>
             <div className="v-top">
               <span className="v-action">{ACTION_LABEL[v.action]}</span>
@@ -613,20 +676,21 @@ export function Verdicts({ state, compact = false }: { state: DeskState; compact
               <time>{time(v.at)}</time>
             </div>
             {compact ? <>
-              <button className="verdict-reason-trigger" type="button" popoverTarget={detailId}>{v.reason}</button>
-              <div id={detailId} popover="auto" className="office-verdict-popover" role="dialog" aria-label={t('verdictsTitle')}>
+              <button className="verdict-reason-trigger" type="button" popoverTarget={popId}>{v.reason}</button>
+              <div id={popId} popover="auto" className="office-verdict-popover" role="dialog" aria-label={t('verdictsTitle')}>
                 <strong>{ACTION_LABEL[v.action]} · {v.symbol}</strong><p>{v.reason}</p>
-                <button type="button" popoverTarget={detailId} popoverTargetAction="hide">{t('closeBtn')}</button>
+                <button type="button" popoverTarget={popId} popoverTargetAction="hide">{t('closeBtn')}</button>
               </div>
             </> : <p>{v.reason}</p>}
             <div className="v-meta">
               <span>risk {v.riskDecision}</span>
               <span>heat {Math.round(v.disagreement * 100)}%</span>
               <span>{v.executed ? `${state.mode === 'PAPER' ? 'Paper' : state.mode} ${v.executionStatus ?? v.order?.status ?? 'execution recorded'}` : t('noFill')}</span>
-              {v.order && <span>{v.order.qty} @ {fmtPx(v.order.entry)} · SL {fmtPx(v.order.stop)}{v.order.tp ? ` · TP ${fmtPx(v.order.tp)}` : ''}</span>}
+              {!compact && v.order && <span>{v.order.qty} @ {fmtPx(v.order.entry)} · SL {fmtPx(v.order.stop)}{v.order.tp ? ` · TP ${fmtPx(v.order.tp)}` : ''}</span>}
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

@@ -3,8 +3,43 @@ import { installDiagnostics } from './diagnostics';
 import { verdictReactions, type SceneEvent } from './sceneDirector';
 import type { AgentId, DeskState, Fight, Reaction, Speech, Verdict } from './types';
 
+const CONV_STORAGE_KEY = 'mpu_gandring_active_conversation_id';
+
+function getSavedConversationId(): string {
+  try {
+    const saved = localStorage.getItem(CONV_STORAGE_KEY);
+    if (saved && saved.trim()) return saved.trim();
+  } catch {}
+  return 'office';
+}
+
 export function useDesk() {
-  const conversationId = useRef(crypto.randomUUID());
+  const [activeConversationId, setActiveConversationId] = useState<string>(getSavedConversationId);
+  const conversationId = useRef(activeConversationId);
+  conversationId.current = activeConversationId;
+
+  const selectConversation = useCallback((id: string) => {
+    const next = id || 'office';
+    setActiveConversationId(next);
+    try { localStorage.setItem(CONV_STORAGE_KEY, next); } catch {}
+  }, []);
+
+  const newConversation = useCallback(async () => {
+    let freshId = '';
+    try {
+      const res = await fetch('/api/conversations/new', { method: 'POST' });
+      if (res.ok) {
+        const body = await res.json() as { ok: boolean; conversationId?: string };
+        if (body.ok && body.conversationId) freshId = body.conversationId;
+      }
+    } catch {}
+    if (!freshId) {
+      freshId = 'conv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+    }
+    setActiveConversationId(freshId);
+    try { localStorage.setItem(CONV_STORAGE_KEY, freshId); } catch {}
+    return freshId;
+  }, []);
   useEffect(installDiagnostics, []);
   const [state, setState] = useState<DeskState | null>(null);
   const [connected, setConnected] = useState(false);
@@ -90,5 +125,5 @@ export function useDesk() {
     return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid' };
   }, []);
 
-  return { state, connected, speech, fights, meter, reactions, sceneEvents, command };
+  return { state, connected, speech, fights, meter, reactions, sceneEvents, command, activeConversationId, selectConversation, newConversation };
 }

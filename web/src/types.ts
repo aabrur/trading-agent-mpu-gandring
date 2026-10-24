@@ -18,9 +18,12 @@ export interface Verdict {
   order?: { positionId?: string; status?: 'partial' | 'filled'; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number }; example: boolean; at: number;
 }
 export interface LogLine { id?: string; at: number; kind: string; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: 'info' | 'warn' | 'error'; status?: string; durationMs?: number }
-export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at: number }
-export interface RoomMessage { id: string; at: number; from: AgentId | 'owner'; to?: AgentId | 'all' | 'owner'; text: string; symbol?: string; example?: boolean }
+export interface ChatLine { id?: string; seq?: number; conversationId?: string; from: 'user' | AgentId | 'system'; text: string; at: number }
+export interface RoomMessage { id: string; seq?: number; conversationId?: string; at: number; from: AgentId | 'owner'; to?: AgentId | 'all' | 'owner'; text: string; symbol?: string; example?: boolean }
+export interface ConversationSummary { id: string; title?: string; createdAt: number; updatedAt: number; messageCount: number; lastMessage?: string; symbol?: string; }
 export interface DeskState {
+  version?: string;
+  conversations?: ConversationSummary[];
   accountState?: { hasTradableCapital: boolean | null; openPositionsCount: number; maxPositions: number; freeSlots: number; canOpenNewSlot: boolean; mode: string; source: string; status: string; observedAt: number | null };
   chatMetrics?: { agentCalls: number; modelAttempts: number; failures: number; lastLatencyMs: number; totalLatencyMs: number; tokenUsage: null; modelCost: null };
   capabilities?: Array<{ name: string; category: string; available: boolean; configured: boolean; status: string; reachable?: boolean; lastSuccessfulObservation?: number; requiresApiKey: boolean | 'provider-dependent'; keyConfigured?: boolean; limitations: string[] }>;
@@ -51,7 +54,13 @@ export interface DeskState {
     metrics?: { requests: number; success: number; errors: number; timeouts: number; lastLatencyMs: number | null; lastModel: string | null; lastCost: number | null; lastInputTokens: number | null; lastError: string | null };
   };
 }
-export interface Lesson { id: string; role: string; kind: string; symbol?: string; happened: string; rootCause: string; lesson: string; status: 'new' | 'confirmed' | 'promoted'; count: number; firstAt: number; lastAt: number; source: string }
+export interface Lesson {
+  id: string; role: string; kind: string; symbol?: string;
+  happened: string; rootCause: string; lesson: string;
+  condition?: string; evaluationStatus?: string;
+  sourceTradeIds?: string[]; sourceDecisionIds?: string[]; sourceMessageIds?: string[]; accountScope?: string;
+  status: 'new' | 'confirmed' | 'promoted'; count: number; firstAt: number; lastAt: number; source: string;
+}
 export interface Finding { level: 'ok' | 'info' | 'warn' | 'alert'; code: string; text: string }
 export interface RoleScore { role: string; name: string; calls: number; right: number; wrong: number; note: string }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }

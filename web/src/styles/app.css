@@ -131,12 +131,12 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .bot .foot { transform-box: fill-box; transform-origin: center; }
 .bot .eyes-normal { transform-box: view-box; transform-origin: 61px 62px; animation: blink 4.6s infinite; }
 .bot .eyes-happy, .bot .eyes-dizzy, .bot .brow-angry, .bot .brow-worried, .bot .sweat, .bot .mouth, .bot .mug { display: none; }
-.bot.face-happy .eyes-normal, .bot.face-dizzy .eyes-normal { display: none; }
+.bot.face-happy .eyes-normal, .bot.face-dizzy .eyes-normal, .bot.face-angry .mouth-smile, .bot.face-worried .mouth-smile, .bot.talking .mouth-smile { display: none; }
 .bot.face-happy .eyes-happy, .bot.face-dizzy .eyes-dizzy, .bot.face-angry .brow-angry, .bot.face-worried .brow-worried, .bot.face-worried .sweat { display: inline; }
 .bot.face-angry .eyes-normal { animation: none; transform: scaleY(0.72) translateY(4px); }
 .bot.face-worried .sweat { animation: sweat 1.2s ease-in infinite; transform-box: fill-box; }
 .bot.talking .mouth { display: inline; transform-box: fill-box; transform-origin: center; animation: mouth 0.24s ease-in-out infinite alternate; }
-.bot.pose-idle .mug { display: inline; }
+.bot.pose-idle .mug, .bot.pose-drink .mug { display: inline; }
 @keyframes blink { 0%, 93%, 100% { transform: scaleY(1); } 95.5% { transform: scaleY(0.08); } }
 @keyframes mouth { from { transform: scaleY(0.35); } to { transform: scaleY(1.15); } }
 @keyframes sweat { 0% { transform: translateY(-2px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(8px); opacity: 0; } }
@@ -145,6 +145,27 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .bot.pose-idle .body { animation: squash 2.6s ease-in-out infinite; }
 .bot.pose-idle .arm-l { animation: sip 7s ease-in-out infinite; }
 .bot.pose-idle .arm-r { animation: dangle 2.6s ease-in-out infinite; }
+.bot.pose-sit .body { animation: sitBreathe 3.2s ease-in-out infinite; }
+.bot.pose-sit .arm-l { animation: sitHandL 3.8s ease-in-out infinite alternate; }
+.bot.pose-sit .arm-r { animation: sitHandR 3.4s ease-in-out infinite alternate; }
+.bot.pose-sit .eyes-normal { animation: blink 4.8s infinite, eyeLook 6.4s ease-in-out infinite; }
+.bot.pose-read .body { animation: readNod 2.8s ease-in-out infinite; }
+.bot.pose-read .arm-l { transform: rotate(-28deg) translateY(-4px); animation: readHold 2.8s ease-in-out infinite alternate; }
+.bot.pose-read .arm-r { transform: rotate(22deg); animation: pageTurn 3.2s ease-in-out infinite; }
+.bot.pose-read .eyes-normal { animation: blink 5s infinite, eyeScan 2.4s ease-in-out infinite alternate; }
+.bot.pose-drink .body { animation: drinkSway 3s ease-in-out infinite; }
+.bot.pose-drink .arm-l { animation: drinkSip 3.6s ease-in-out infinite; }
+.bot.pose-drink .arm-r { animation: dangle 3s ease-in-out infinite; }
+.bot.pose-stretch .body { animation: stretchBody 2.6s ease-in-out infinite; }
+.bot.pose-stretch .arm-l { animation: stretchL 2.6s ease-in-out infinite; }
+.bot.pose-stretch .arm-r { animation: stretchR 2.6s ease-in-out infinite; }
+.bot.pose-observe .body { animation: observeLean 3.2s ease-in-out infinite; }
+.bot.pose-observe .arm-r { animation: observeScope 3.2s ease-in-out infinite alternate; }
+.bot.pose-observe .arm-l { animation: dangle 3.2s ease-in-out infinite; }
+.bot.pose-observe .eyes-normal { animation: blink 5s infinite, eyeScan 2.8s ease-in-out infinite alternate; }
+.bot.pose-pass .body { animation: passLean 2s ease-in-out infinite alternate; }
+.bot.pose-pass .arm-l { transform: rotate(-22deg); }
+.bot.pose-pass .arm-r { animation: passOffer 1.6s ease-in-out infinite alternate; }
 .bot.pose-walk .body { animation: hop 0.32s ease-in-out infinite; }
 .bot.pose-walk .foot-l { animation: step 0.32s ease-in-out infinite; }
 .bot.pose-walk .foot-r { animation: step 0.32s ease-in-out infinite reverse; }
@@ -153,10 +174,12 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .bot.pose-type .body { animation: squash 1.2s ease-in-out infinite; }
 .bot.pose-type .arm-l { animation: tapL 0.22s ease-in-out infinite alternate; }
 .bot.pose-type .arm-r { animation: tapR 0.22s ease-in-out infinite alternate-reverse; }
+.bot.pose-type .prop-type-fx { animation: typePulse 0.44s ease-in-out infinite alternate; }
 .bot.pose-point .arm-r { transform: rotate(-135deg); animation: wag 0.8s ease-in-out infinite alternate; }
 .bot.pose-point .body { animation: squash 2s ease-in-out infinite; }
-.bot.pose-think .arm-r { transform: rotate(58deg); }
-.bot.pose-think .body { transform: rotate(-4deg); }
+.bot.pose-think .arm-r { animation: thinkChin 2.2s ease-in-out infinite alternate; }
+.bot.pose-think .body { animation: thinkTilt 2.6s ease-in-out infinite alternate; }
+.bot.pose-think .prop-idea { transform-box: fill-box; transform-origin: center; animation: ideaPulse 1.6s ease-in-out infinite alternate; }
 .bot.pose-argue .body { animation: hop 0.5s ease-in-out infinite; }
 .bot.pose-argue .arm-r { animation: argueR 0.5s ease-in-out infinite alternate; }
 .bot.pose-argue .arm-l { animation: argueL 0.5s ease-in-out infinite alternate-reverse; }
@@ -171,6 +194,27 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .bot.pose-cheer .arm-r { animation: cheerR 0.55s ease-in-out infinite alternate; }
 
 @keyframes squash { 0%, 100% { transform: scale(1, 1); } 45% { transform: scale(1.045, 0.955); } 70% { transform: scale(0.98, 1.025); } }
+@keyframes sitBreathe { 0%, 100% { transform: translateY(1px) scale(1, 1); } 50% { transform: translateY(-2px) scale(1.025, 0.98); } }
+@keyframes sitHandL { from { transform: rotate(-14deg); } to { transform: rotate(-26deg); } }
+@keyframes sitHandR { from { transform: rotate(12deg); } to { transform: rotate(24deg); } }
+@keyframes eyeLook { 0%, 40%, 100% { transform: translateX(0); } 55%, 75% { transform: translateX(1.8px); } 20%, 30% { transform: translateX(-1.8px); } }
+@keyframes eyeScan { from { transform: translateX(-2px) translateY(1px); } to { transform: translateX(2.2px) translateY(1px); } }
+@keyframes readNod { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-2px) rotate(1.5deg); } }
+@keyframes readHold { from { transform: rotate(-26deg) translateY(-3px); } to { transform: rotate(-34deg) translateY(-5px); } }
+@keyframes pageTurn { 0%, 70%, 100% { transform: rotate(18deg); } 85% { transform: rotate(42deg); } }
+@keyframes drinkSway { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-2.5px) rotate(2deg); } }
+@keyframes drinkSip { 0%, 35%, 100% { transform: rotate(-18deg); } 55%, 78% { transform: rotate(88deg) translateY(-4px); } }
+@keyframes stretchBody { 0%, 100% { transform: scale(1, 1) translateY(0); } 50% { transform: scale(0.96, 1.06) translateY(-5px); } }
+@keyframes stretchL { 0%, 100% { transform: rotate(20deg); } 50% { transform: rotate(142deg); } }
+@keyframes stretchR { 0%, 100% { transform: rotate(-20deg); } 50% { transform: rotate(-142deg); } }
+@keyframes observeLean { 0%, 100% { transform: translateX(0) rotate(0deg); } 50% { transform: translateX(2px) rotate(2.5deg); } }
+@keyframes observeScope { from { transform: rotate(-68deg); } to { transform: rotate(-82deg); } }
+@keyframes passLean { from { transform: translateX(0) rotate(0deg); } to { transform: translateX(3px) rotate(3deg); } }
+@keyframes passOffer { from { transform: rotate(-55deg); } to { transform: rotate(-78deg); } }
+@keyframes thinkChin { from { transform: rotate(52deg); } to { transform: rotate(64deg); } }
+@keyframes thinkTilt { from { transform: rotate(-3.5deg) translateY(0); } to { transform: rotate(-1deg) translateY(-2px); } }
+@keyframes ideaPulse { from { transform: scale(0.85) rotate(-8deg); opacity: 0.75; } to { transform: scale(1.15) rotate(8deg); opacity: 1; } }
+@keyframes typePulse { from { opacity: 0.65; transform: translateY(0); } to { opacity: 1; transform: translateY(-1.5px); } }
 @keyframes hop { 0%, 100% { transform: translateY(0) scale(1.03, .97); } 50% { transform: translateY(-5px) scale(.98, 1.02); } }
 @keyframes jump { 0%, 100% { transform: translateY(0) scale(1.06, .94); } 50% { transform: translateY(-12px) scale(.96, 1.05); } }
 @keyframes step { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }

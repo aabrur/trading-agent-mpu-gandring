@@ -3,7 +3,7 @@ import csv
 import json
 import re
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageDraw
 
 root = Path(__file__).resolve().parents[1]
 source = root / 'web/public/mpu-gandring-assets'
@@ -11,6 +11,7 @@ output = root / 'web/public/office-assets'
 rows = {row['filename'][:-4]: row for row in csv.DictReader((source / 'mpu_gandring_assets_master.csv').open(encoding='utf-8-sig'))}
 # These intact high-resolution cutouts match the new references and have no missing bundle props.
 intact_sources = {
+    'mg_prop_lead_desk': '003_jar-carving_wooden-cabinet-1.png',
     'mg_prop_debate_table': '010_wooden-stool.png',
     'mg_prop_office_rug': '016_oval-plate.png',
     'mg_prop_floor_lamp': '013_lampshade_floor-lamp.png',
@@ -33,6 +34,14 @@ for name in sorted(names):
         # A repeating surface uses the interior wood grain, without the tile's illustrated rim.
         inset_x, inset_y = round(image.width * .12), round(image.height * .12)
         image = image.crop((inset_x, inset_y, image.width - inset_x, image.height - inset_y))
+    elif name == 'mg_prop_strategy_workbench':
+        # Restore the cream strategy pinboard behind the upper charts where border flood-fill removed the backing.
+        board = Image.new('RGBA', image.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(board)
+        draw.rectangle((40, 56, 46, 68), fill=(176, 129, 84, 255))
+        draw.rectangle((154, 56, 160, 68), fill=(176, 129, 84, 255))
+        draw.rounded_rectangle((28, 1, 174, 60), radius=6, fill=(250, 242, 226, 255), outline=(182, 136, 90, 255), width=3)
+        image = Image.alpha_composite(board, image)
     image.thumbnail((800, 800), Image.Resampling.LANCZOS)
     image.save(target, 'WEBP', quality=90, method=6)
     manifest.append(dict(file=target.name, source=selected, referenceImage=row['reference_image'], referenceCrop=row['reference_crop'], sourceWidth=source_width, sourceHeight=source_height, bytes=target.stat().st_size))

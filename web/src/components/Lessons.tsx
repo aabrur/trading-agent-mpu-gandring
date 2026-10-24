@@ -22,10 +22,28 @@ export function Lessons({ state }: { state: DeskState }) {
         <div className="scan-head">{t('standingRulesTitle')}</div>
         <ul>{rules.slice(0, 4).map((l) => <li key={l.id}><span className="tag promoted">rule</span> <b>{l.role}</b> {l.lesson}</li>)}</ul>
       </div>}
-      {lessons.length ? <ul className="lesson-list">{lessons.map((l) => (
-        <li key={l.id} title={`What happened: ${l.happened}\nRoot cause: ${l.rootCause}`}>
-          <span className={`tag ${l.status}`}>{l.status}{l.count > 1 ? ` x${l.count}` : ''}</span> <b>{l.role}</b>{l.symbol ? ` ${l.symbol}` : ''}: {l.lesson}
-        </li>))}</ul>
+      {lessons.length ? <ul className="lesson-list">{lessons.map((l) => {
+        const titleParts = [
+          `What happened: ${l.happened}`,
+          `Root cause: ${l.rootCause}`,
+          l.condition ? `Condition: ${l.condition}` : '',
+          l.accountScope ? `Scope: ${l.accountScope}` : '',
+          l.sourceTradeIds?.length ? `Sources: ${l.sourceTradeIds.join(', ')}` : '',
+          l.sourceDecisionIds?.length ? `Decisions: ${l.sourceDecisionIds.join(', ')}` : ''
+        ].filter(Boolean).join('\n');
+        return (
+          <li key={l.id} title={titleParts}>
+            <span className={`tag ${l.status}`}>{l.status}{l.count > 1 ? ` x${l.count}` : ''}</span>
+            {l.evaluationStatus && <span className={`tag eval-${l.evaluationStatus}`} style={{ marginLeft: 3, opacity: 0.85 }}>{l.evaluationStatus}</span>}
+            {' '}<b>{l.role}</b>{l.symbol ? ` ${l.symbol}` : ''}: {l.lesson}
+            {l.sourceTradeIds && l.sourceTradeIds.length > 0 && (
+              <span className="muted" style={{ marginLeft: 4, fontSize: '0.9em' }}>
+                [trade:{l.sourceTradeIds[0].slice(-6)}]
+              </span>
+            )}
+          </li>
+        );
+      })}</ul>
         : !rules.length && <p className="muted small">{t('lessonsEmpty')}</p>}
       {state.lessonsRefused > 0 && <p className="muted small">{state.lessonsRefused} {t('lessonsRefusedText')}</p>}
     </section>

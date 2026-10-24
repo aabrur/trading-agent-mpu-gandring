@@ -27,6 +27,24 @@
     "bytes": 4086
   },
   {
+    "file": "mg_env_wall_sconce.webp",
+    "source": "mg_batch_f/mg_env_wall_sconce.png",
+    "referenceImage": "mg_batch_f_catalog.jpg",
+    "referenceCrop": "296,148,444,296",
+    "sourceWidth": 40,
+    "sourceHeight": 82,
+    "bytes": 1138
+  },
+  {
+    "file": "mg_fx_coffee_steam.webp",
+    "source": "mg_batch_e/mg_fx_coffee_steam.png",
+    "referenceImage": "mg_batch_e_catalog.jpg",
+    "referenceCrop": "672,0,840,168",
+    "sourceWidth": 151,
+    "sourceHeight": 146,
+    "bytes": 2126
+  },
+  {
     "file": "mg_fx_execution_flash.webp",
     "source": "mg_batch_e/mg_fx_execution_flash.png",
     "referenceImage": "mg_batch_e_catalog.jpg",
@@ -72,6 +90,42 @@
     "bytes": 1852
   },
   {
+    "file": "mg_item_analyst_headset.webp",
+    "source": "mg_batch_b/mg_item_analyst_headset.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "366,0,549,183",
+    "sourceWidth": 92,
+    "sourceHeight": 118,
+    "bytes": 2546
+  },
+  {
+    "file": "mg_item_approval_stamp.webp",
+    "source": "mg_batch_b/mg_item_approval_stamp.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "183,183,366,366",
+    "sourceWidth": 74,
+    "sourceHeight": 106,
+    "bytes": 1908
+  },
+  {
+    "file": "mg_item_bookmarks.webp",
+    "source": "mg_batch_b/mg_item_bookmarks.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "183,548,366,731",
+    "sourceWidth": 127,
+    "sourceHeight": 131,
+    "bytes": 3748
+  },
+  {
+    "file": "mg_item_cactus_ornament.webp",
+    "source": "mg_batch_b/mg_item_cactus_ornament.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "1097,366,1280,548",
+    "sourceWidth": 82,
+    "sourceHeight": 123,
+    "bytes": 2552
+  },
+  {
     "file": "mg_item_coffee_mug_dustyblue.webp",
     "source": "mg_batch_b/mg_item_coffee_mug_dustyblue.png",
     "referenceImage": "mg_batch_b_catalog.jpg",
@@ -97,6 +151,33 @@
     "sourceWidth": 119,
     "sourceHeight": 101,
     "bytes": 2104
+  },
+  {
+    "file": "mg_item_desk_bell.webp",
+    "source": "mg_batch_b/mg_item_desk_bell.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "366,548,549,731",
+    "sourceWidth": 66,
+    "sourceHeight": 82,
+    "bytes": 1722
+  },
+  {
+    "file": "mg_item_desk_lantern.webp",
+    "source": "mg_batch_b/mg_item_desk_lantern.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "914,548,1097,731",
+    "sourceWidth": 63,
+    "sourceHeight": 113,
+    "bytes": 2088
+  },
+  {
+    "file": "mg_item_execution_stopwatch.webp",
+    "source": "mg_batch_b/mg_item_execution_stopwatch.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "549,183,731,366",
+    "sourceWidth": 90,
+    "sourceHeight": 116,
+    "bytes": 2442
   },
   {
     "file": "mg_item_keris_ornament.webp",
@@ -126,6 +207,33 @@
     "bytes": 1600
   },
   {
+    "file": "mg_item_reading_glasses.webp",
+    "source": "mg_batch_b/mg_item_reading_glasses.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "914,0,1097,183",
+    "sourceWidth": 131,
+    "sourceHeight": 52,
+    "bytes": 2036
+  },
+  {
+    "file": "mg_item_rolled_chart.webp",
+    "source": "mg_batch_b/mg_item_rolled_chart.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "0,548,183,731",
+    "sourceWidth": 121,
+    "sourceHeight": 78,
+    "bytes": 2066
+  },
+  {
+    "file": "mg_item_soft_cushion.webp",
+    "source": "mg_batch_b/mg_item_soft_cushion.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "731,548,914,731",
+    "sourceWidth": 131,
+    "sourceHeight": 103,
+    "bytes": 2778
+  },
+  {
     "file": "mg_item_strategy_notebook.webp",
     "source": "mg_batch_b/mg_item_strategy_notebook.png",
     "referenceImage": "mg_batch_b_catalog.jpg",
@@ -133,6 +241,24 @@
     "sourceWidth": 96,
     "sourceHeight": 111,
     "bytes": 2306
+  },
+  {
+    "file": "mg_item_token_medallion.webp",
+    "source": "mg_batch_b/mg_item_token_medallion.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "1097,548,1280,731",
+    "sourceWidth": 109,
+    "sourceHeight": 111,
+    "bytes": 4006
+  },
+  {
+    "file": "mg_item_trading_ticket.webp",
+    "source": "mg_batch_b/mg_item_trading_ticket.png",
+    "referenceImage": "mg_batch_b_catalog.jpg",
+    "referenceCrop": "731,183,914,366",
+    "sourceWidth": 118,
+    "sourceHeight": 100,
+    "bytes": 1844
   },
   {
     "file": "mg_prop_bookshelf.webp",
@@ -181,12 +307,12 @@
   },
   {
     "file": "mg_prop_lead_desk.webp",
-    "source": "mg_batch_a/mg_prop_lead_desk.png",
+    "source": "003_jar-carving_wooden-cabinet-1.png",
     "referenceImage": "mg_batch_a_catalog.jpg",
     "referenceCrop": "0,0,256,256",
-    "sourceWidth": 186,
-    "sourceHeight": 106,
-    "bytes": 3348
+    "sourceWidth": 1067,
+    "sourceHeight": 609,
+    "bytes": 48152
   },
   {
     "file": "mg_prop_market_workstation.webp",
@@ -267,7 +393,16 @@
     "referenceCrop": "768,0,1024,256",
     "sourceWidth": 189,
     "sourceHeight": 167,
-    "bytes": 4246
+    "bytes": 4870
+  },
+  {
+    "file": "mg_prop_wall_clock.webp",
+    "source": "mg_batch_a/mg_prop_wall_clock.png",
+    "referenceImage": "mg_batch_a_catalog.jpg",
+    "referenceCrop": "768,512,1024,768",
+    "sourceWidth": 145,
+    "sourceHeight": 143,
+    "bytes": 3046
   },
   {
     "file": "mg_prop_whiteboard.webp",

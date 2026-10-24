@@ -2,7 +2,9 @@ import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS } from './exchange/types.js';
 import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE } from './killswitch.js';
 import { adapterRules, publicRules, type InstrumentRules } from './exchange/rules.js';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, renameSync, existsSync } from 'node:fs';
+import type { ConversationSummary } from './types.js';
+import { APP_VERSION } from './updater.js';
 import path from 'node:path';
 import type { AppConfig } from './config.js';
 import type { ActivityEntry } from './activity.js';
@@ -57,7 +59,7 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { id?: string; at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'chat' | 'warn' | ActivityEntry['kind']; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: ActivityEntry['level']; status?: string; durationMs?: number }
 
-export interface DeskOptions { settingsFile?: string; opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv }
+export interface DeskOptions { settingsFile?: string; opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action; stop?: number; tp?: number }
@@ -72,6 +74,9 @@ export class Desk extends EventEmitter {
   logs: LogLine[] = [];
   chats: Record<AgentId, ChatLine[]>;
   roomHistory: RoomMessage[] = [];
+  conversationsRegistry: Record<string, ConversationSummary> = {};
+  conversationsPath: string | null = null;
+  messageSeq = 0;
   private conversations = new Map<string, string[]>();
   private snapshotCache = new Map<string, { at: number; promise: Promise<MarketSnapshot & { errors: string[] }> }>();
   researchObservations: Record<string, ToolObservation> = {};
@@ -145,7 +150,74 @@ export class Desk extends EventEmitter {
     // Tests never touch the real lessons file unless they pass a path.
     this.learnings = new Learnings(opts.learningsPath !== undefined ? opts.learningsPath : process.env.VITEST ? null : cfg.learning.path, cfg.learning.promoteAfter);
     this.jev = new JevService(opts.jevEnv ?? process.env, cfg.tradingMode, opts.jevFetch);
+    this.conversationsPath = opts.conversationsPath !== undefined ? opts.conversationsPath : process.env.VITEST ? null : 'data/conversations.json';
+    this.loadConversations();
     if (cfg.appMode === 'grokbot') for (const id of AGENT_IDS) Object.assign(this.agents[id], { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false });
+  }
+
+  loadConversations() {
+    if (!this.conversationsPath || !existsSync(this.conversationsPath)) return;
+    try {
+      const raw = readFileSync(this.conversationsPath, 'utf-8');
+      const data = JSON.parse(raw);
+      if (data && typeof data === 'object') {
+        if (data.conversations && typeof data.conversations === 'object') {
+          this.conversationsRegistry = data.conversations;
+        }
+        if (Array.isArray(data.roomHistory)) {
+          for (const m of data.roomHistory) {
+            if (m && m.id && !this.roomHistory.some((x) => x.id === m.id)) {
+              this.roomHistory.push(m);
+            }
+            if (typeof m.seq === 'number' && m.seq > this.messageSeq) this.messageSeq = m.seq;
+          }
+          if (this.roomHistory.length > 200) this.roomHistory.splice(0, this.roomHistory.length - 200);
+        }
+        if (data.chats && typeof data.chats === 'object') {
+          for (const role of AGENT_IDS) {
+            if (Array.isArray(data.chats[role])) {
+              for (const c of data.chats[role]) {
+                if (c && !this.chats[role].some((x) => (x.id && x.id === c.id) || (x.at === c.at && x.text === c.text))) {
+                  this.chats[role].push(c);
+                }
+                if (typeof c.seq === 'number' && c.seq > this.messageSeq) this.messageSeq = c.seq;
+              }
+              if (this.chats[role].length > 100) this.chats[role].splice(0, this.chats[role].length - 100);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      log('[conversations]', e);
+    }
+  }
+
+  saveConversations() {
+    if (!this.conversationsPath) return;
+    try {
+      const dir = path.dirname(this.conversationsPath);
+      mkdirSync(dir, { recursive: true });
+      const tmp = this.conversationsPath + '.tmp';
+      const payload = JSON.stringify({
+        version: APP_VERSION,
+        updatedAt: Date.now(),
+        conversations: this.conversationsRegistry,
+        roomHistory: this.roomHistory.slice(-200),
+        chats: this.chats
+      }, null, 2);
+      writeFileSync(tmp, payload, 'utf-8');
+      renameSync(tmp, this.conversationsPath);
+    } catch (e) {
+      log('[conversations]', e);
+    }
+  }
+
+  listConversations(): ConversationSummary[] {
+    const list = Object.values(this.conversationsRegistry);
+    if (!list.some((c) => c.id === 'office')) {
+      list.unshift({ id: 'office', title: 'Main Office', createdAt: 0, updatedAt: 0, messageCount: this.roomHistory.length });
+    }
+    return list.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   get grokbot() { return this.cfg.appMode === 'grokbot'; }
@@ -162,10 +234,18 @@ export class Desk extends EventEmitter {
   /** Every model call goes through here: lessons, standing rules and scan alerts are fed into the prompt. */
   private async run<K extends Parameters<typeof runAgent>[3]>(agent: AgentId, task: K, input: Parameters<typeof runAgent<K>>[4]) {
     const started = Date.now();
+    const currentScope = `${this.cfg.tradingMode}:${this.cfg.exchange.name || 'paper'}:${this.cfg.live?.network || 'mainnet'}`;
+    const detectedSym = (input.data as any)?.symbol || (input.data as any)?.detectedSymbol || (input.context as any)?.symbol || (input.context as any)?.detectedSymbol;
     const rules = this.cfg.learning.on ? this.learnings.standingRules(agent).slice(-8).map((l) => l.lesson) : [];
-    const lessons = this.cfg.learning.on ? this.learnings.forRole(agent, 5) : [];
+    const relevant = this.cfg.learning.on ? this.learnings.queryRelevant({ role: agent, symbol: detectedSym, accountScope: currentScope, limit: 6 }) : [];
+    const lessons = relevant.length ? relevant : (this.cfg.learning.on ? this.learnings.forRole(agent, 5) : []);
+    const formattedExperience = this.cfg.learning.on && relevant.length ? this.learnings.formatForPrompt(relevant) : '';
     const alerts = (this.lastScan?.findings ?? []).filter((f) => f.level === 'warn' || f.level === 'alert').map((f) => f.text);
-    const extra = [input.extraSystem ?? '', rules.length ? `Standing rules (advice only, never execution authorization; Boss changes settings through explicit commands):\n${fenceData('learned-advice', { rules })}` : ''].filter(Boolean).join('\n\n');
+    const extra = [
+      input.extraSystem ?? '',
+      rules.length ? `Standing rules (advice only, never execution authorization; Boss changes settings through explicit commands):\n${fenceData('learned-advice', { rules })}` : '',
+      formattedExperience ? `Evidence-based lessons and past verified trades:\n${formattedExperience}` : ''
+    ].filter(Boolean).join('\n\n');
     const res = await runAgent(this.cfg, this.call, agent, task, {
       ...input, extraSystem: extra || undefined,
       data: { ...input.data, accountState: this.accountState(), researchCapabilities: this.capabilities(), ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
@@ -241,7 +321,8 @@ export class Desk extends EventEmitter {
   snapshot() {
     const split = this.book.split();
     return {
-      app: 'Trading Agent Mpu Gandring', mode: this.cfg.tradingMode, appMode: this.cfg.appMode,
+      app: 'Trading Agent Mpu Gandring', version: APP_VERSION, mode: this.cfg.tradingMode, appMode: this.cfg.appMode,
+      conversations: this.listConversations(),
       live: this.cfg.live, killed: this.killed,
       venue: this.cfg.exchange.name ? { name: this.cfg.exchange.name, label: VENUE_LABEL[this.cfg.exchange.name], kind: VENUE_KIND[this.cfg.exchange.name], experimental: ADAPTER_STATUS[this.cfg.exchange.name] === 'experimental' } : null,
       dailyLoss: { limitPct: this.cfg.risk.dailyLossLimitPct, startEquity: this.day.startEquity, hit: this.day.lossHit },
@@ -393,18 +474,41 @@ export class Desk extends EventEmitter {
     this.logs.push(line); if (this.logs.length > 2000) this.logs.splice(0, this.logs.length - 2000);
     this.emit('log', line);
   }
-  addRoomMessage(msg: Omit<RoomMessage, 'id' | 'at'> & { id?: string; at?: number }): RoomMessage {
+  addRoomMessage(msg: Omit<RoomMessage, 'id' | 'at'> & { id?: string; at?: number; seq?: number }): RoomMessage {
+    const convId = msg.conversationId ?? 'office';
+    if (msg.id && this.roomHistory.some((m) => m.id === msg.id)) {
+      return this.roomHistory.find((m) => m.id === msg.id)!;
+    }
+    const cleanText = safe(msg.text);
+
     const roomMsg: RoomMessage = {
       id: msg.id ?? `room-${Date.now()}-${++this.speechSeq}`,
+      seq: msg.seq ?? ++this.messageSeq,
       at: msg.at ?? Date.now(),
       from: msg.from,
       to: msg.to ?? 'all',
-      text: safe(msg.text),
+      text: cleanText,
       symbol: msg.symbol,
+      conversationId: convId,
       example: msg.example
     };
     this.roomHistory.push(roomMsg);
-    if (this.roomHistory.length > 100) this.roomHistory.splice(0, this.roomHistory.length - 100);
+    if (this.roomHistory.length > 200) this.roomHistory.splice(0, this.roomHistory.length - 200);
+
+    const conv = this.conversationsRegistry[convId] ?? {
+      id: convId,
+      title: convId === 'office' ? 'Main Office' : (roomMsg.symbol ? `${roomMsg.symbol} Discussion` : 'Discussion'),
+      createdAt: roomMsg.at,
+      updatedAt: roomMsg.at,
+      messageCount: 0
+    };
+    conv.updatedAt = roomMsg.at;
+    conv.messageCount = (conv.messageCount || 0) + 1;
+    conv.lastMessage = roomMsg.text.slice(0, 80);
+    if (roomMsg.symbol && !conv.symbol) conv.symbol = roomMsg.symbol;
+    this.conversationsRegistry[convId] = conv;
+    this.saveConversations();
+
     this.addLog({ id: `room:${roomMsg.id}`, kind: 'chat', source: 'discussion', from: roomMsg.from, to: roomMsg.to, text: roomMsg.text, example: roomMsg.example, level: 'info' });
     this.emit('room', roomMsg);
     return roomMsg;
@@ -876,7 +980,7 @@ export class Desk extends EventEmitter {
           this.note('skipped', symbol, `HOLD: ${verdict.reason}`);
         } else {
           const price = roundPrice(reval.quote);
-          const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, evidence: { action, confidence: ld.data.confidence, reason: ld.data.reason, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
+          const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, evidence: { decisionId: id, action, confidence: ld.data.confidence, reason: ld.data.reason, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
           if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
           verdict.executed = res.ok;
           if (res.order) { verdict.order = res.order; verdict.executionStatus = res.order.status; }
@@ -1087,7 +1191,8 @@ export class Desk extends EventEmitter {
       live.account(clientId, qty, fill.avgPrice, qty);
     }
     const p = this.book.open({ symbol, side, qty, entry, stop: plan.stop, tp: plan.tp, margin: live ? qty * entry / plan.leverage : plan.margin, leverage: plan.leverage });
-    p.decisionEvidence = gate.evidence;
+    const currentScope = `${this.cfg.tradingMode}:${this.cfg.exchange.name || 'paper'}:${this.cfg.live?.network || 'mainnet'}`;
+    p.decisionEvidence = { ...(gate.evidence ?? {}), decisionId: (gate.evidence as any)?.decisionId ?? (gate.evidence as any)?.id, positionId: p.id, accountScope: currentScope };
     p.ownership = 'managed'; p.entryStatus = confirmedPrice ? 'confirmed' : 'estimated';
     if (clientId && live) { p.id = clientId; const intent = live.journal.intents.find((i) => i.clientId === clientId); if (intent) intent.positionId = p.id; }
     this.checkpoint();
@@ -1369,13 +1474,49 @@ export class Desk extends EventEmitter {
     this.scorecard.journaled();
     this.journal({ at: Date.now(), trade: t, grade: rv.grade, lesson: rv.lesson });
     const stop = /stop/i.test(t.reason);
+    const currentScope = `${this.cfg.tradingMode}:${this.cfg.exchange.name || 'paper'}:${this.cfg.live?.network || 'mainnet'}`;
+    const sourceDecisionId = (t.decisionEvidence as any)?.decisionId || (t.decisionEvidence as any)?.id;
+    const sourceTradeIds = [t.id].filter(Boolean) as string[];
+    const sourceDecisionIds = sourceDecisionId ? [sourceDecisionId] : undefined;
+    const evidenceRefs: import('./learnings.js').EvidenceRef[] = [{ type: 'trade', id: t.id, accountScope: currentScope, note: `pnl:${t.realizedPnl}` }];
     if (t.realizedPnl < 0 || stop) {
       const kind = stop ? 'stop' : 'loss';
       const happened = `${t.symbol} ${t.side} closed at ${t.exit} (${t.reason}), PnL ${t.realizedPnl} USDT.`;
-      this.learn({ role: 'lead', kind, symbol: t.symbol, happened, rootCause: stop ? 'price hit the stop loss' : 'the trade went against the desk', lesson: rv.lesson });
-      for (const role of wrong) this.learn({ role, kind, symbol: t.symbol, happened, rootCause: `${ROLES[role].name} backed the losing side at entry`, lesson: `On ${t.symbol}, compare the recorded invalidation and execution with my entry evidence before attributing the loss to direction.` });
+      this.learn({
+        role: 'lead', kind, symbol: t.symbol, happened,
+        rootCause: stop ? 'price hit the stop loss' : 'the trade went against the desk',
+        lesson: rv.lesson,
+        condition: `${t.symbol} ${t.side}`,
+        evaluationStatus: 'supported',
+        sourceTradeIds,
+        sourceDecisionIds,
+        evidenceRefs,
+        accountScope: currentScope
+      });
+      for (const role of wrong) this.learn({
+        role, kind, symbol: t.symbol, happened,
+        rootCause: `${ROLES[role].name} backed the losing side at entry`,
+        lesson: `On ${t.symbol}, compare the recorded invalidation and execution with my entry evidence before attributing the loss to direction.`,
+        condition: `${t.symbol} ${t.side}`,
+        evaluationStatus: 'supported',
+        sourceTradeIds,
+        sourceDecisionIds,
+        evidenceRefs,
+        accountScope: currentScope
+      });
     }
-    if (t.realizedPnl > 0 && !t.remainingQty) this.learn({ role: 'lead', kind: 'review', symbol: t.symbol, happened: `Positive trade outcome ${t.realizedPnl} USDT (${t.pnlStatus ?? 'paper'}).`, rootCause: 'Outcome observed; causal explanation remains an interpretation.', lesson: rv.lesson });
+    if (t.realizedPnl > 0 && !t.remainingQty) this.learn({
+      role: 'lead', kind: 'review', symbol: t.symbol,
+      happened: `Positive trade outcome ${t.realizedPnl} USDT (${t.pnlStatus ?? 'paper'}).`,
+      rootCause: 'Outcome observed; causal explanation remains an interpretation.',
+      lesson: rv.lesson,
+      condition: `${t.symbol} ${t.side}`,
+      evaluationStatus: 'supported',
+      sourceTradeIds,
+      sourceDecisionIds,
+      evidenceRefs,
+      accountScope: currentScope
+    });
     this.changed();
   }
 
@@ -1419,7 +1560,7 @@ export class Desk extends EventEmitter {
     const cmd = parseCommand(text);
     let who: AgentId = agent ?? 'lead';
 
-    const userLine: ChatLine = { from: 'user', text: safe(text), at: Date.now(), conversationId };
+    const userLine: ChatLine = { id: `chat-${Date.now()}-${++this.speechSeq}`, seq: ++this.messageSeq, from: 'user', text: safe(text), at: Date.now(), conversationId };
     if (agent) this.chats[agent].push(userLine);
     this.addLog({ kind: 'command', text: `${agent ? `to ${ROLES[agent].name}: ` : ''}${text.slice(0, 200)}` });
     let reply = '';
@@ -1604,8 +1745,22 @@ export class Desk extends EventEmitter {
     } catch (e) { ok = false; reply = `Could not do that: ${(e as Error).message}`; }
     reply = safe(reply);
     const dest = agent ?? who;
-    if (dest) this.chats[dest].push({ from: who, text: reply, at: Date.now(), conversationId });
-    if (dest && this.chats[dest].length > 60) this.chats[dest].splice(0, this.chats[dest].length - 60);
+    if (dest) {
+      this.chats[dest].push({ id: `chat-${Date.now()}-${++this.speechSeq}`, seq: ++this.messageSeq, from: who, text: reply, at: Date.now(), conversationId });
+      if (this.chats[dest].length > 100) this.chats[dest].splice(0, this.chats[dest].length - 100);
+      const conv = this.conversationsRegistry[conversationId] ?? {
+        id: conversationId,
+        title: conversationId === 'office' ? 'Main Office' : 'Conversation',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messageCount: 0
+      };
+      conv.updatedAt = Date.now();
+      conv.messageCount = (conv.messageCount || 0) + 1;
+      conv.lastMessage = reply.slice(0, 80);
+      this.conversationsRegistry[conversationId] = conv;
+      this.saveConversations();
+    }
 
     this.addLog({ kind: 'info', agent: who, source: 'command', level: ok ? 'info' : 'error', status: ok ? 'completed' : 'failed', text: reply });
     if (cmd.type !== 'chat' && cmd.type !== 'help' && cmd.type !== 'status') void sendToGrokBot(this.cfg, 'command', { command: cmd.type, text: text.slice(0, 200), agent: agent ?? null, ok, reply }, this.opts.outboxPath);

@@ -18,12 +18,23 @@ export interface MeasurementEvidence {
 export interface RoomMessage {
   conversationId?: string;
   id: string;
+  seq?: number;
   at: number;
   from: AgentId | 'owner';
   to?: AgentId | 'all' | 'owner';
   text: string;
   symbol?: string;
   example?: boolean;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title?: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+  lastMessage?: string;
+  symbol?: string;
 }
 
 export interface OrderbookSummary {
@@ -238,4 +249,10 @@ export interface Verdict {
 }
 
 export interface ChatLine {
-  conversationId?: string; from: 'user' | AgentId | 'system'; text: string; at: number }
+  id?: string;
+  seq?: number;
+  conversationId?: string;
+  from: 'user' | AgentId | 'system';
+  text: string;
+  at: number;
+}

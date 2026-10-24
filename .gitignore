@@ -27,3 +27,6 @@ data/opportunity-reviews.json
 data/opportunity-reviews.json.tmp
 data/execution-*.json.financial.json
 data/execution-*.json.financial.json.tmp
+
+data/conversations.json
+data/conversations.json.tmp

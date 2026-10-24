@@ -141,16 +141,20 @@ describe('office director', () => {
     }
   });
 
-  it('returns all six agents to their own seats after debate and keeps them there', () => {
+  it('returns all six agents to their own seats after debate and rotates idle breaks cleanly', () => {
     const input = sceneFixture(); input.events = [];
-    for (const phase of ['done', null]) {
-      input.state.debate = phase ? { id: 'finished', symbol: 'ETHUSDT', phase, round: 2, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } } : null;
-      for (let tick = 0; tick < 108; tick++) {
-        const activities = directScene({ ...input, tick });
-        for (const id of AGENT_ORDER) expect(officePositions(input.state, activities)[id]).toEqual(workstationPoint(id));
-      }
+    input.state.debate = { id: 'finished', symbol: 'ETHUSDT', phase: 'done', round: 2, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
+    for (let tick = 0; tick < 108; tick++) {
+      const activities = directScene({ ...input, tick });
+      for (const id of AGENT_ORDER) expect(officePositions(input.state, activities)[id]).toEqual(workstationPoint(id));
     }
+    input.state.debate = null;
     expect(Object.values(directScene(input)).every((a) => a.pose === 'sit' && !a.destination)).toBe(true);
+    const activeTick = directScene({ ...input, tick: 8 });
+    const positions = officePositions(input.state, activeTick);
+    for (const id of AGENT_ORDER) {
+      expect(positions[id]).toEqual(activeTick[id].destination ?? workstationPoint(id));
+    }
   });
 
 });

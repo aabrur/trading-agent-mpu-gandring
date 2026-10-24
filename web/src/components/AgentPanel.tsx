@@ -21,10 +21,13 @@ const QUICK_ID: Record<AgentId, string[]> = {
   execution: ['close all', 'status']
 };
 
-export function AgentPanel({ state, id, onClose, command }: { state: DeskState; id: AgentId; onClose: () => void; command: (t: string, a?: AgentId) => Promise<unknown> }) {
+export function AgentPanel({ state, id, onClose, command, conversationId }: { state: DeskState; id: AgentId; onClose: () => void; command: (t: string, a?: AgentId) => Promise<unknown>; conversationId?: string }) {
   const { t, lang } = useI18n();
   const a = state.agents[id];
-  const chat = state.chats[id] ?? [];
+  const allChat = state.chats[id] ?? [];
+  const chat = conversationId && conversationId !== 'office'
+    ? allChat.filter(c => (c.conversationId ?? 'office') === conversationId)
+    : allChat.filter(c => (c.conversationId ?? 'office') === 'office' || !c.conversationId);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
