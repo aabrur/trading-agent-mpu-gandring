@@ -4,6 +4,7 @@ import { publishActivity } from '../activity.js';
 import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
+import { AgentWorkQueue } from './work-queue.js';
 import { researchArgs, researchEnvironment, researchPolicy, type ResearchPolicy } from './research-policy.js';
 
 export const LOCAL_AGENTS = [
@@ -115,7 +116,7 @@ export function localReply(output: string): string {
   return texts.length ? texts.join('\n') : output.trim();
 }
 
-let tail = Promise.resolve();
+const workQueue = new AgentWorkQueue(3);
 const researchActivity: { server: string; tool: string; status: string; at: number }[] = [];
 export const localResearchActivity = () => researchActivity.slice(-20);
 export function recordResearchActivity(output: string) {
@@ -136,16 +137,16 @@ export function recordResearchActivity(output: string) {
     } catch { /* Only structured CLI tool events establish tool usage. */ }
   }
 }
-export async function runLocalAgent(selection: string, prompt: string): Promise<string> {
+export async function runLocalAgent(selection: string, prompt: string, signal?: AbortSignal): Promise<string> {
   const { id, model } = localSelection(selection);
   const executable = localExecutable(id);
   if (!executable) throw new Error(`${id} is not installed on PATH. Open Setup to connect it.`);
-  const prior = tail; let release!: () => void; tail = new Promise<void>((r) => { release = r; });
-  await prior;
-  const folder = mkdtempSync(path.join(tmpdir(), 'mpu-agent-'));
+  const release = await workQueue.acquire(signal);
+  let folder = '';
   const started = Date.now();
   publishActivity({ kind: 'process', source: id, level: 'info', text: `${id} model process started`, status: 'started' });
   try {
+    folder = mkdtempSync(path.join(tmpdir(), 'mpu-agent-'));
     writeFileSync(path.join(folder, 'prompt.txt'), prompt, { mode: 0o600 });
     writeFileSync(path.join(folder, 'reasoner.md'), '---\nname: desk-reasoner\ndescription: Return a structured trading desk opinion\ntools: []\nsubagents: []\n---\nUse only the supplied facts. Return JSON only.\n', { mode: 0o600 });
     const policy = id === 'codex' ? researchPolicy() : { enabled: false, mcpTools: {} };
@@ -162,6 +163,9 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
         else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
       };
       const timer = setTimeout(() => { failure = `${id} timed out. Check its sign-in and permission settings in Setup.`; stop(); }, 120_000);
+      const abort = () => { failure = 'Model request cancelled'; stop(); };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
       const collect = (chunk: Buffer, keep: boolean) => { size += chunk.length; if (size > 1_000_000) { failure = `${id} returned too much output.`; stop(); } else if (keep) {
         const text = chunk.toString(); output += text; eventBuffer += text;
         const lines = eventBuffer.split('\n'); eventBuffer = lines.pop() || '';
@@ -169,15 +173,15 @@ export async function runLocalAgent(selection: string, prompt: string): Promise<
       } };
       child.stdout.on('data', (v: Buffer) => collect(v, true)); child.stderr.on('data', (v: Buffer) => collect(v, false));
       child.stdin.on('error', () => {}); child.stdin.end(prompt);
-      child.on('error', () => { clearTimeout(timer); reject(new Error(`${id} could not start. Check its installation.`)); });
-      child.on('close', (code) => { clearTimeout(timer); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
+      child.on('error', () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new Error(`${id} could not start. Check its installation.`)); });
+      child.on('close', (code) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
     });
     publishActivity({ kind: 'process', source: id, level: 'info', status: 'completed', text: `${id} model process completed`, durationMs: Date.now() - started });
     return reply;
   } catch (error) {
     publishActivity({ kind: 'process', source: id, level: 'error', status: 'failed', text: `${id} process failed: ${(error as Error).message}`, durationMs: Date.now() - started });
     throw error;
-  } finally { try { rmSync(folder, { recursive: true, force: true }); } finally { release(); } }
+  } finally { try { if (folder) rmSync(folder, { recursive: true, force: true }); } finally { release(); } }
 }
 
 /** Return metadata only; server headers and transport environments remain inside the CLI. */

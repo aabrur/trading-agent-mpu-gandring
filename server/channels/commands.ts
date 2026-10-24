@@ -120,10 +120,10 @@ export function reportText(desk: Desk): string {
 }
 
 /** Run a parsed command. kill without "confirm" only explains; with confirm it trips the persisted kill switch. */
-export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void): Promise<string> {
+export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void, conversationId = 'channel'): Promise<string> {
   if (!p.ok) return p.reply;
   switch (p.cmd) {
-    case 'owner': return safe((await desk.command(p.text)).reply);
+    case 'owner': return safe((await desk.command(p.text, undefined, conversationId)).reply);
     case 'help': return HELP_TEXT;
     case 'status': return statusText(desk);
     case 'positions': return positionsText(desk);
@@ -140,7 +140,7 @@ export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void): Pr
     }
     case 'ask':
     case 'chat': {
-      const res = await desk.command(p.text, p.agent);
+      const res = await desk.command(p.text, p.agent, conversationId);
       return safe(`[${p.agent.toUpperCase()}]: ${res.reply}`);
     }
     case 'watchlist': {

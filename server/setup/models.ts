@@ -138,25 +138,25 @@ export const MODEL_CHOICES: Record<ProviderName, ModelChoice[]> = {
   ],
   openrouter: [
     m('anthropic/claude-opus-5.5', 'Claude Opus 5.5', 'Frontier', 'Token usage #8 on OpenRouter'),
-    m('openai/gpt-6-astra', 'GPT-6 Astra', 'Frontier'),
+    m('anthropic/claude-sonnet-5.5', 'Claude Sonnet 5.5', 'Frontier'),
+    m('anthropic/claude-haiku-5.5', 'Claude Haiku 5.5', 'Fast'),
+    m('openai/gpt-6.1-sol', 'GPT-6.1 Sol', 'Frontier'),
+    m('openai/gpt-6-luna', 'GPT-6 Luna', 'Frontier'),
     m('google/gemini-4-argon', 'Gemini 4 Argon', 'Frontier'),
     m('deepseek/deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', 'Token usage #1 on OpenRouter'),
+    m('deepseek/deepseek-v4.1-flash-1017', 'DeepSeek V4.1 Flash 1017', 'Frontier snapshot'),
     m('stepfun/step-5-preview', 'Step 5 Preview', 'Token usage #2 on OpenRouter'),
+    m('z-ai/glm-5.3', 'GLM 5.3', 'General'),
     m('z-ai/glm-5.3-flash', 'GLM 5.3 Flash', 'Token usage #3 on OpenRouter'),
+    m('moonshotai/kimi-k3', 'Kimi K3', 'Reasoning'),
+    m('xiaomi/mimo-v2.6-flash', 'Mimo V2.6 Flash', 'Fast'),
+    m('minimax/minimax-m3.1-flash', 'MiniMax M3.1 Flash', 'Fast'),
     m('x-ai/grok-4.7', 'Grok 4.7', 'Frontier'),
-    m('anthropic/claude-sonnet-5.5', 'Claude Sonnet 5.5', 'Frontier'),
-    m('openai/gpt-6.1-sol', 'GPT-6.1 Sol', 'Frontier'),
+    m('openai/gpt-6-astra', 'GPT-6 Astra', 'Frontier'),
     m('qwen/qwen-3.5-max', 'Qwen 3.5 Max', 'Frontier'),
     m('meta-llama/llama-4-maverick', 'Llama 4 Maverick', 'Open weights'),
     m('mistralai/mistral-large-3', 'Mistral Large 3', 'Frontier'),
-    m('moonshotai/kimi-k2.5', 'Kimi K2.5', 'Reasoning'),
-    m('minimax/minimax-m2', 'MiniMax M2', 'General'),
-    m('nvidia/nemotron-3-ultra-550b-a55b:free', 'Nemotron 3 Ultra', 'Free', 'Token usage #7 on OpenRouter'),
-    m('nvidia/nemotron-3.5-super-vl:free', 'Nemotron 3.5 Super VL', 'Free'),
-    m('nvidia/nemotron-3.5-lightning:free', 'Nemotron 3.5 Lightning', 'Free'),
-    m('thinkingmachines/inkling:free', 'Inkling', 'Free'),
-    m('poolside/laguna-s-2.1:free', 'Laguna S 2.1', 'Free'),
-    m('cohere/north-mini-code:free', 'North Mini Code', 'Free')
+    m('nvidia/nemotron-3-ultra-550b-a55b:free', 'Nemotron 3 Ultra', 'Free', 'Token usage #7 on OpenRouter')
   ],
   groq: [
     m('llama-3.3-70b-versatile', 'Llama 3.3 70B Versatile', 'Fast LPU'),
@@ -247,6 +247,48 @@ export const MODEL_CHOICES: Record<ProviderName, ModelChoice[]> = {
     m('accounts/fireworks/models/glm-4p5', 'GLM 4.5', 'General')
   ]
 };
+export interface ModelPreset {
+  id: string;
+  label: string;
+  description: string;
+  defaultProvider: ProviderName;
+  defaultModel: string;
+  agents: Record<AgentId, ModelSelection>;
+}
+
+export const MODEL_PRESETS: ModelPreset[] = [
+  {
+    id: 'performance_first',
+    label: 'Performance-First Candidate',
+    description: 'Claude Opus 5.5 Lead, Sonnet 5.5 Market, Gemini 4 Argon Research, GPT-6 Luna Strategist/Execution, Haiku 5.5 Risk via OpenRouter.',
+    defaultProvider: 'openrouter',
+    defaultModel: 'anthropic/claude-opus-5.5',
+    agents: {
+      lead: { provider: 'openrouter', model: 'anthropic/claude-opus-5.5' },
+      market: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5.5' },
+      research: { provider: 'openrouter', model: 'google/gemini-4-argon' },
+      strategist: { provider: 'openrouter', model: 'openai/gpt-6-luna' },
+      risk: { provider: 'openrouter', model: 'anthropic/claude-haiku-5.5' },
+      execution: { provider: 'openrouter', model: 'openai/gpt-6-luna' }
+    }
+  },
+  {
+    id: 'cost_optimized',
+    label: 'Cost-Optimized Challenger',
+    description: 'Claude Sonnet 5.5 Lead, DeepSeek V4.1 Flash Market/Research/Strategist, Claude Haiku 5.5 Risk/Execution via OpenRouter.',
+    defaultProvider: 'openrouter',
+    defaultModel: 'anthropic/claude-sonnet-5.5',
+    agents: {
+      lead: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5.5' },
+      market: { provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
+      research: { provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
+      strategist: { provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
+      risk: { provider: 'openrouter', model: 'anthropic/claude-haiku-5.5' },
+      execution: { provider: 'openrouter', model: 'anthropic/claude-haiku-5.5' }
+    }
+  }
+];
+
 export const MODEL_SOURCES: Record<ProviderName, string> = {
   mock: '',
   local: 'https://developers.openai.com/codex/cli',
@@ -277,6 +319,7 @@ export function modelSetupInfo(env: NodeJS.ProcessEnv) {
   const p = isProvider(env.DEFAULT_PROVIDER) ? env.DEFAULT_PROVIDER : 'mock';
   return {
     checkedOn: MODEL_CATALOG_DATE, usageSource: USAGE_SOURCE,
+    presets: MODEL_PRESETS,
     providers: PROVIDERS.map((provider) => ({ provider, keyEnv: provider === 'mock' || provider === 'local' ? null : MODEL_KEY_ENV[provider], keySet: provider === 'mock' || provider === 'local' || !!env[MODEL_KEY_ENV[provider]], source: MODEL_SOURCES[provider], models: modelChoices(env, provider), defaultModel: defaultModel(env, provider) })),
     defaultProvider: p, defaultModel: defaultModel(env, p),
     agents: AGENT_IDS.map((id) => {

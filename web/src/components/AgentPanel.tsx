@@ -27,12 +27,18 @@ export function AgentPanel({ state, id, onClose, command }: { state: DeskState; 
   const chat = state.chats[id] ?? [];
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }, [chat.length]);
   const send = async (t: string) => {
     if (!t.trim() || busy) return;
-    setBusy(true); setText('');
-    try { await command(t, id); } finally { setBusy(false); }
+    setBusy(true); setError('');
+    try {
+      const result = await command(t, id) as { ok?: boolean; reply?: string };
+      if (result?.ok === false) throw new Error(result.reply || 'Message could not be sent');
+      setText('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Office not reachable'); }
+    finally { setBusy(false); }
   };
   const quickList = lang === 'id' ? QUICK_ID[id] : QUICK_EN[id];
   return (
@@ -61,10 +67,11 @@ export function AgentPanel({ state, id, onClose, command }: { state: DeskState; 
       </div>
       <div className="ap-quick">{quickList.map((q) => <button key={q} onClick={() => send(q)}>{q}</button>)}</div>
       <form className="ap-input" onSubmit={(e) => { e.preventDefault(); void send(text); }}>
-        <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
+        <textarea rows={3} disabled={busy} name="agent-message" aria-describedby={error ? 'agent-message-error' : undefined} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(text); }
         }} aria-label={`Message ${a.name}`} placeholder={`${t('apMsgPlaceholder')} ${a.name}...`} maxLength={32000} />
-        <button type="submit" disabled={busy}>{t('apSendBtn')}</button>
+        <button type="submit" disabled={busy} aria-busy={busy}>{t('apSendBtn')}</button>
+        {error && <p id="agent-message-error" role="alert">{error}</p>}
       </form>
     </aside>
   );

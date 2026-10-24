@@ -56,7 +56,12 @@ export const ReviewSchema = z.object({
 
 export const ChatSchema = z.object({
   reply: boundedText(64000),
-  commandToExecute: z.string().min(1).max(200).optional(),
+  commandToExecute: z.preprocess(value => value === null || typeof value === 'string' && !value.trim() ? undefined : value, z.string().trim().min(1).max(200).optional()),
+  askTeammates: z.array(z.object({
+    to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),
+    question: z.string().trim().min(1).max(2000),
+    symbol: z.string().regex(/^[A-Z0-9]{2,24}$/).optional()
+  })).max(5).nullable().optional(),
   askTeammate: z.object({
     to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),
     question: z.string().min(1).max(2000)
@@ -82,7 +87,7 @@ export const SCHEMA_HINTS: Record<TaskKind, string> = {
   lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences"}',
   risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":1..125,"stopPct":positive percentage points up to 50 (2 means 2%),"reason":"1..1500 characters"}. APPROVE/REDUCE require all numeric fields as JSON numbers. REJECT may omit sizing. Never substitute null or strings for numbers.',
   review: '{"lesson":"one sentence","grade":"A|B|C|D|F"}',
-  chat: '{"reply":"answer in character, up to 64000 characters","commandToExecute":"optional exact supported command explicitly requested by Boss","askTeammate":{"to":"lead|market|research|strategist|risk|execution","question":"question"} or null}'
+  chat: '{"reply":"answer in character, up to 64000 characters","commandToExecute":"optional exact supported command explicitly requested by Boss","askTeammates":[{"to":"lead|market|research|strategist|risk|execution","question":"one assigned question","symbol":"optional symbol"}],"askTeammate":"legacy single request object or null"}. Use structured askTeammates for real consultation. Never claim completed handoffs before receiving their results.'
 };
 
 // Pull the first JSON object out of a model reply (handles ```json fences and chatter).

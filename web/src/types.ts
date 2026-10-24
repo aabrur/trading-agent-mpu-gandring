@@ -21,6 +21,9 @@ export interface LogLine { id?: string; at: number; kind: string; agent?: AgentI
 export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at: number }
 export interface RoomMessage { id: string; at: number; from: AgentId | 'owner'; to?: AgentId | 'all' | 'owner'; text: string; symbol?: string; example?: boolean }
 export interface DeskState {
+  accountState?: { hasTradableCapital: boolean | null; openPositionsCount: number; maxPositions: number; freeSlots: number; canOpenNewSlot: boolean; mode: string; source: string; status: string; observedAt: number | null };
+  chatMetrics?: { agentCalls: number; modelAttempts: number; failures: number; lastLatencyMs: number; totalLatencyMs: number; tokenUsage: null; modelCost: null };
+  capabilities?: Array<{ name: string; category: string; available: boolean; configured: boolean; status: string; reachable?: boolean; lastSuccessfulObservation?: number; requiresApiKey: boolean | 'provider-dependent'; keyConfigured?: boolean; limitations: string[] }>;
   trading?: { network: 'testnet' | 'mainnet' | null; profile: import('../../server/trading-settings').TradingProfile; values: import('../../server/trading-settings').TradingSettings };
   app: string; mode: 'PAPER' | 'TESTNET' | 'LIVE'; appMode: 'local' | 'grokbot'; marketSource: string; bridgeEnabled: boolean; paused: boolean;
   live: { exchange: string; network: string; experimental: boolean } | null; killed: boolean;

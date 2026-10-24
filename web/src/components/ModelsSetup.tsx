@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
 
 interface Choice { id: string; label: string; tags: string[] }
+interface Preset { id: string; label: string; description: string; defaultProvider: string; defaultModel: string; agents: Record<string, Selection> }
 interface Selection { provider: string; model: string }
 interface Provider { provider: string; keyEnv: string | null; keySet: boolean; source: string; defaultModel: string; models: Choice[] }
-interface ModelsInfo { ok: boolean; checkedOn: string; usageSource: { url: string; asOf: string; period: string }; providers: Provider[]; defaultProvider: string; defaultModel: string; agents: (Selection & { id: string; custom: boolean })[]; runningAgents?: (Selection & { id: string })[] }
+interface ModelsInfo { ok: boolean; checkedOn: string; usageSource: { url: string; asOf: string; period: string }; presets?: Preset[]; providers: Provider[]; defaultProvider: string; defaultModel: string; agents: (Selection & { id: string; custom: boolean })[]; runningAgents?: (Selection & { id: string })[] }
 
 export function ModelsSetup({ available, appMode }: { available: boolean; appMode: string }) {
   const { t, lang } = useI18n();
@@ -70,6 +71,21 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
     {!editing && <><div className="setup-section-actions"><p className="wallet-note">{lang === 'id' ? 'Pilihan provider tersimpan. API key yang sudah ada tetap aman di komputer ini.' : 'Saved provider choices. Existing API keys stay on this computer.'}</p><button disabled={!available} onClick={() => { setMessage(''); setEditing(true); }}>{t('setupModelsEditBtn')}</button></div><dl className="setup-summary"><div><dt>Default</dt><dd>{info.defaultProvider} · {info.defaultModel}</dd></div>{info.agents.map((a) => <div key={a.id}><dt>{a.id}</dt><dd>{a.provider} · {a.model}</dd></div>)}</dl><p className="field-help">{info.providers.filter((p) => p.keyEnv && p.keySet).map((p) => p.provider).join(', ') || (lang === 'id' ? 'Tidak ada API key provider' : 'No provider API keys')}: {lang === 'id' ? 'key tersimpan tetap disembunyikan. Agen lokal memakai login mandiri.' : 'saved keys remain hidden. Local agents keep their own sign-in.'}</p></>}
     <form hidden={!editing} autoComplete="off" onChange={() => setMessage('')} onSubmit={(e) => { e.preventDefault(); void save(); }}>
     <p className="wallet-note">{lang === 'id' ? `Katalog API ${info.checkedOn}: 10 provider dengan 20 model masing-masing. CLI lokal memakai model bawaan, cache katalog Codex bila tersedia, atau ID model manual.` : `API catalog ${info.checkedOn}: 10 providers with 20 models each. Local CLIs use configured defaults, the Codex catalog cache when available, or a manual model ID.`}</p>
+    {info.presets && info.presets.length > 0 && <div className="setup-presets" style={{ marginBottom: '1rem', padding: '0.75rem', background: 'var(--panel-subtle, rgba(255,255,255,0.03))', borderRadius: '6px' }}>
+      <p style={{ margin: '0 0 0.5rem 0', fontWeight: 600 }}>{lang === 'id' ? 'Preset Stack Model Rekomendasi' : 'Recommended Model Stack Presets'}</p>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        {info.presets.map((preset) => <button key={preset.id} type="button" disabled={!available || busy} onClick={() => {
+          setSelection({ provider: preset.defaultProvider, model: preset.defaultModel });
+          setAgents(Object.fromEntries(Object.entries(preset.agents).map(([id, sel]) => [id, { provider: sel.provider, model: sel.model }])));
+          setCustom(true);
+          setMessage(lang === 'id' ? `Preset ${preset.label} dimuat. Klik Simpan untuk menerapkan.` : `Loaded ${preset.label}. Click Save to apply.`);
+          setOk(true);
+        }} title={preset.description}>
+          {preset.label}
+        </button>)}
+      </div>
+      <small className="field-help" style={{ display: 'block', marginTop: '0.5rem' }}>{lang === 'id' ? 'Kandidat berbasis benchmark, bukan jaminan profitabilitas trading. Klik Simpan untuk menerapkan.' : 'Benchmark-informed candidates, not a guarantee of trading profitability. Click Save to apply.'}</small>
+    </div>}
     {controls(selection, setSelection, 'Default')}
     <label><input type="checkbox" disabled={!available || busy} checked={custom} onChange={(e) => { setCustom(e.target.checked); if (e.target.checked) setAgents(Object.fromEntries(info.agents.map((a) => [a.id, { ...selection }]))); }} /> {lang === 'id' ? 'Kustomisasi provider dan model untuk tiap agen' : 'Customize provider and model for each agent'}</label>
     {custom && info.agents.map((a) => <div key={a.id}>{controls(agents[a.id], (s) => setAgents((prev) => ({ ...prev, [a.id]: s })), a.id)}</div>)}

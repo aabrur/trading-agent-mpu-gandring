@@ -4,6 +4,7 @@ import { verdictReactions, type SceneEvent } from './sceneDirector';
 import type { AgentId, DeskState, Fight, Reaction, Speech, Verdict } from './types';
 
 export function useDesk() {
+  const conversationId = useRef(crypto.randomUUID());
   useEffect(installDiagnostics, []);
   const [state, setState] = useState<DeskState | null>(null);
   const [connected, setConnected] = useState(false);
@@ -84,7 +85,7 @@ export function useDesk() {
   }, []);
 
   const command = useCallback(async (text: string, agent?: AgentId) => {
-    const res = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent }) });
+    const res = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent, conversationId: conversationId.current }) });
     const result = await res.json() as { ok: boolean; reply?: string; error?: string; command?: string };
     return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid' };
   }, []);

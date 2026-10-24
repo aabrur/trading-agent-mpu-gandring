@@ -16,6 +16,7 @@ export interface MeasurementEvidence {
 }
 
 export interface RoomMessage {
+  conversationId?: string;
   id: string;
   at: number;
   from: AgentId | 'owner';
@@ -26,6 +27,16 @@ export interface RoomMessage {
 }
 
 export interface OrderbookSummary {
+  liquidityChanges?: import('./market/microstructure.js').LiquidityChanges | null;
+  bidObservedCoveragePct?: number;
+  askObservedCoveragePct?: number;
+  maxObservedCoveragePct?: number;
+  requestedVenue?: string;
+  actualDataVenue?: string;
+  dataType?: string;
+  sourceEndpoint?: string;
+  depthBands?: Record<'0.5%' | '1.0%' | '2.0%', import('./market/microstructure.js').DepthBand>;
+  levelsReturned?: { bids: number; asks: number };
   evidence?: MeasurementEvidence;
   bidAskImbalance05Pct: number;
   bidAskImbalance1Pct: number;
@@ -38,6 +49,11 @@ export interface OrderbookSummary {
 }
 
 export interface OrderflowSummary {
+  requestedVenue?: string;
+  actualDataVenue?: string;
+  dataType?: string;
+  sourceEndpoint?: string;
+  rollingWindows?: Record<'1m' | '5m' | '15m', import('./market/microstructure.js').FlowWindow>;
   evidence?: MeasurementEvidence;
   takerBuyVol: number;
   takerSellVol: number;
@@ -48,6 +64,7 @@ export interface OrderflowSummary {
 }
 
 export interface DerivativesSummary {
+  positioning?: import('./market/positioning.js').PositioningSummary;
   evidence?: Record<string, MeasurementEvidence>;
   fundingRate: number | null;
   predictedFunding: number | null;
@@ -97,6 +114,8 @@ export interface TechnicalSummary {
 
 export interface WhaleOnChainSummary {
   hyperliquidWhales?: {
+    coverageStatus?: string;
+    coverageNote?: string;
     evidence?: MeasurementEvidence;
     walletsChecked?: number;
     walletsRequested?: number;
@@ -120,6 +139,7 @@ export interface WhaleOnChainSummary {
 }
 
 export interface MarketSnapshot {
+  tacticalTradePlan?: import('./market/tactical.js').TacticalTradePlan;
   evidence?: Record<string, MeasurementEvidence>;
   symbol: string;
   source: 'bybit' | 'binance' | 'hyperliquid' | 'aster' | 'dydx' | 'paradex' | 'orderly' | 'sample';
@@ -139,6 +159,10 @@ export interface MarketSnapshot {
 }
 
 export interface NewsItem {
+  observedAt?: number;
+  affectedAssets?: string[];
+  eventCategory?: string;
+  evidenceStatus?: string;
   provider?: 'cryptopanic' | 'bybit' | 'sample';
   id: string;
   symbol: string;
@@ -213,4 +237,5 @@ export interface Verdict {
   at: number;
 }
 
-export interface ChatLine { from: 'user' | AgentId | 'system'; text: string; at: number }
+export interface ChatLine {
+  conversationId?: string; from: 'user' | AgentId | 'system'; text: string; at: number }

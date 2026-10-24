@@ -46,7 +46,7 @@ export function createInboundApp(c: RouteCtx & { lead: DeskLead; onKill?: () => 
     const text = [b.data?.name ?? '', ...(b.data?.options ?? []).map((o) => String(o.value ?? ''))].join(' ');
     const p = parseCommand(text);
     if (p.ok && p.cmd === 'kill' && p.confirm) { reply('Kill switch triggered. The result follows in the channel.'); const r = await runCommand(c.desk, p, c.onKill); void c.lead.hub.send('discord', r); return; }
-    reply(await runCommand(c.desk, p, c.onKill));
+    reply(await runCommand(c.desk, p, c.onKill, `discord:${b.member?.user?.id ?? b.user?.id}`));
   });
 
   // ---- Slack slash command (form encoded; signature over the raw body) ----
@@ -62,7 +62,7 @@ export function createInboundApp(c: RouteCtx & { lead: DeskLead; onKill?: () => 
     if (!allowed(s.allowed, f.get('user_id'))) return reply('You are not on this desk\'s allowlist.');
     const p = parseCommand(f.get('text') || 'help');
     if (p.ok && p.cmd === 'kill' && p.confirm) { reply('Kill switch triggered. The result follows in the channel.'); const r = await runCommand(c.desk, p, c.onKill); void c.lead.hub.send('slack', r); return; }
-    reply(await runCommand(c.desk, p, c.onKill));
+    reply(await runCommand(c.desk, p, c.onKill, `slack:${f.get('team_id')}:${f.get('user_id')}`));
   });
 
   // ---- WhatsApp Cloud API webhook ----
@@ -82,7 +82,7 @@ export function createInboundApp(c: RouteCtx & { lead: DeskLead; onKill?: () => 
     for (const m of (b.entry ?? []).flatMap((e) => (e.changes ?? []).flatMap((ch) => ch.value?.messages ?? []))) {
       if (m.type !== 'text' || !m.from) continue;
       if (!cc().commands || !allowed(w.allowed, m.from)) { log('[desk lead] ignored a WhatsApp message from a number not on the allowlist (or commands off)'); continue; }
-      const r = await runCommand(c.desk, parseCommand(m.text?.body ?? ''), c.onKill);
+      const r = await runCommand(c.desk, parseCommand(m.text?.body ?? ''), c.onKill, `whatsapp:${m.from}`);
       await whatsappSend(w, r, c.fetchImpl ?? fetch, m.from, true); // reply inside the 24 hour window they just opened
     }
   });

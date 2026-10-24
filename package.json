@@ -1,12 +1,12 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.19",
-  "appVersion": "0.0.0.3.19",
+  "version": "0.3.20",
+  "appVersion": "0.0.0.3.20",
   "changelog": [
-    "System Log separates Tools, MCP, Plugins, Processes, frontend/backend diagnostics and errors.",
-    "History contains searchable trade records, chat sessions, agent discussions and commands.",
-    "Office discussion supports direct and group messages with latest-message scrolling and a taller transcript.",
-    "Codex research controls live inside its existing connection card; research activity appears in Log."
+    "Multi-agent structured collaboration and parallel handoffs across all desk agents.",
+    "Sticky symbol conversation memory and independent capital vs position-slot tracking.",
+    "Market microstructure engine with CVD, order-flow divergence, and Aster native data.",
+    "Frontier model catalog with native structured outputs, generation tuning, and benchmark harness."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",
@@ -53,7 +53,8 @@
     "trade": "tsx cli/trade.ts",
     "autostart:install": "tsx cli/autostart.ts install",
     "autostart:remove": "tsx cli/autostart.ts remove",
-    "autostart:status": "tsx cli/autostart.ts status"
+    "autostart:status": "tsx cli/autostart.ts status",
+    "bench:models": "tsx cli/bench-models.ts"
   },
   "keywords": [
     "trading",

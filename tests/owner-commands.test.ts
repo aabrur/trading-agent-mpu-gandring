@@ -164,7 +164,7 @@ describe('Owner commands', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it('enforces local Owner access over HTTP and WebSocket, accepting a complete 2500-character chat', async () => {
+  it('enforces local Owner access over HTTP and WebSocket, accepting a complete 32000-character chat', async () => {
     const { cfg } = fixture();
     const caller = vi.fn(async () => '{"reply":"Received."}');
     const built = createApp(cfg, { caller, reportsDir: null, learningsPath: null });
@@ -173,9 +173,9 @@ describe('Owner commands', () => {
     const post = (text: string, origin?: string) => fetch(`http://127.0.0.1:${port}/api/command`, { method: 'POST', headers: { 'content-type': 'application/json', ...(origin ? { origin } : {}) }, body: JSON.stringify({ text }) });
     try {
       expect((await post('buy BTC', 'https://untrusted.example')).status).toBe(403);
-      expect((await post('x'.repeat(2501))).status).toBe(400);
-      expect((await post('x'.repeat(2500))).status).toBe(200);
-      expect(built.desk.chats.lead[0].text).toHaveLength(2500);
+      expect((await post('x'.repeat(32001))).status).toBe(400);
+      expect((await post('x'.repeat(32000))).status).toBe(200);
+      expect(built.desk.chats.lead[0].text).toHaveLength(32000);
       const client = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: 'https://untrusted.example' });
       const blocked = await new Promise<{ ok: boolean }>((resolve, reject) => {
         client.on('error', reject);

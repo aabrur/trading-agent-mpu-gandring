@@ -293,16 +293,17 @@ export function DeskOps({ state }: { state: DeskState }) {
             <button type="button" className={state.debateMode === 'fast' ? 'on' : ''} disabled={busy} onClick={() => void setDebateMode('fast')}>{t('opsDebateFast')}</button>
           </div>
         </div>
-        <p className="ops-last-cycle" role="status">{t('opsLastCycle')}: {state.lastCycle?.symbol ? `${state.lastCycle.symbol} · ${state.lastCycle.verdict ?? '—'}${lastOutcome ? ` · ${lastOutcome}` : ''}` : (lang === 'id' ? 'Belum ada siklus.' : 'No cycle yet.')}</p>
+        <p className="ops-last-cycle" role="status">{t('opsLastCycle')}: {state.lastCycle?.symbol ? `${state.lastCycle.symbol} · ${state.lastCycle.verdict ?? '-'}${lastOutcome ? ` · ${lastOutcome}` : ''}` : (lang === 'id' ? 'Belum ada siklus.' : 'No cycle yet.')}</p>
         <p className="ops-slots-line">{lang === 'id' ? 'Slot' : 'Slots'} {state.paper.positions.length}/{confirmedN} · ${state.paper.perOrder}/ord</p>
+        {state.accountState && <p className="ops-slots-line">{lang === 'id' ? 'Modal tersedia' : 'Capital available'}: {state.accountState.hasTradableCapital === null ? 'UNKNOWN' : state.accountState.hasTradableCapital ? 'YES' : 'NO'} · {lang === 'id' ? 'Slot kosong' : 'Free slots'}: {state.accountState.freeSlots} · {state.accountState.source} ({state.accountState.status})</p>}
         <details className="ops-details">
           <summary>{lang === 'id' ? 'Rincian siklus' : 'Cycle details'}</summary>
           <dl className="setup-summary">
             <div><dt>{t('opsCycleStage')}</dt><dd>{state.debate?.phase ?? state.lastCycle?.stage ?? 'idle'}</dd></div>
-            <div><dt>{t('opsLastCycle')}</dt><dd>{state.lastCycle?.durationMs == null ? '—' : `${state.lastCycle.durationMs} ms`}{state.lastCycle?.symbol ? ` · ${state.lastCycle.symbol}` : ''}</dd></div>
-            <div><dt>{t('opsLastVerdict')}</dt><dd>{state.lastCycle?.verdict ?? state.verdicts[0]?.action ?? '—'}</dd></div>
-            <div><dt>{t('opsNoTradeReason')}</dt><dd>{state.lastCycle?.noTradeReason ?? '—'}</dd></div>
-            <div><dt>{t('opsLastExecution')}</dt><dd>{lastOutcome ?? '—'}</dd></div>
+            <div><dt>{t('opsLastCycle')}</dt><dd>{state.lastCycle?.durationMs == null ? '-' : `${state.lastCycle.durationMs} ms`}{state.lastCycle?.symbol ? ` · ${state.lastCycle.symbol}` : ''}</dd></div>
+            <div><dt>{t('opsLastVerdict')}</dt><dd>{state.lastCycle?.verdict ?? state.verdicts[0]?.action ?? '-'}</dd></div>
+            <div><dt>{t('opsNoTradeReason')}</dt><dd>{state.lastCycle?.noTradeReason ?? '-'}</dd></div>
+            <div><dt>{t('opsLastExecution')}</dt><dd>{lastOutcome ?? '-'}</dd></div>
           </dl>
         </details>
         <details className="ops-details">

@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { closedLiveCandles, fetchOpenInterestChanges, measuredNumber } from './observations.js';
 import { getLiveAnnouncements } from './live-news.js';
+import { noteTradeRequest, normalizeTrades, summarizeDepth, summarizeOrderflow, tradeRequestLimit, type NormalizedTradeInput } from './microstructure.js';
+import { fetchPositioning } from './positioning.js';
 
 type Source = MarketSnapshot['source'];
 const ORDER: Source[] = ['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly'];
@@ -121,18 +123,23 @@ async function fromDex(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: st
   return { symbol, source: src, example: false, last, change24hPct: change, fundingRate: Number.isFinite(funding) ? funding : null, bid, ask, candles: closedOnly(candles), fetchedAt: Date.now() };
 }
 
-export async function fetchL2Orderbook(symbol: string, source: Source): Promise<OrderbookSummary | null> {
+export async function fetchL2Orderbook(symbol: string, source: Source, requestedVenue: Source = source): Promise<OrderbookSummary | null> {
   const coin = coinOf(symbol);
   try {
     let bids: [number, number][] = [];
     let asks: [number, number][] = [];
+    const base = process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com';
 
-    if (source === 'bybit' || source === 'aster') {
-      const ob = await getJson(`https://api.bybit.com/v5/market/orderbook?category=linear&symbol=${symbol}&limit=50`, undefined, 3000);
+    if (source === 'bybit') {
+      const ob = await getJson(`https://api.bybit.com/v5/market/orderbook?category=linear&symbol=${symbol}&limit=200`, undefined, 3000);
       bids = (ob?.result?.b ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
       asks = (ob?.result?.a ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
+    } else if (source === 'aster') {
+      const ob = await getJson(`${base}/fapi/v3/depth?symbol=${coin}USDT&limit=100`, undefined, 3000);
+      bids = (ob?.bids ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
+      asks = (ob?.asks ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
     } else if (source === 'binance') {
-      const ob = await getJson(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=50`, undefined, 3000);
+      const ob = await getJson(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=100`, undefined, 3000);
       bids = (ob?.bids ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
       asks = (ob?.asks ?? []).map((row: [string, string]) => [+row[0], +row[1]]);
     } else if (source === 'hyperliquid') {
@@ -157,6 +164,8 @@ export async function fetchL2Orderbook(symbol: string, source: Source): Promise<
     const spreadBps = mid > 0 ? Math.round(((bestAsk - bestBid) / mid) * 10000 * 100) / 100 : 0;
     const microPrice = (bestBid * bestAskQty + bestAsk * bestBidQty) / (bestBidQty + bestAskQty);
 
+    const observedAt = Date.now();
+    const depth = summarizeDepth(bids, asks, mid, { historyKey: `${source}:${symbol}`, observedAt });
     let bidVol05 = 0, askVol05 = 0;
     let bidVol1 = 0, askVol1 = 0;
     let topBidWall: { price: number; size: number } | null = null;
@@ -177,7 +186,11 @@ export async function fetchL2Orderbook(symbol: string, source: Source): Promise<
     const imb1 = (bidVol1 + askVol1) > 0 ? Math.round((bidVol1 / (bidVol1 + askVol1)) * 100) / 100 : 0.5;
 
     return {
-      evidence: { source: source === 'aster' ? 'bybit' : source, observedAt: Date.now(), status: 'live', basis: 'Imbalance calculated from the returned depth levels; not the full exchange order book' },
+      evidence: { source, observedAt, status: 'live', basis: 'Depth bands are limited to returned levels and include measured price-range coverage' },
+      requestedVenue, actualDataVenue: source, dataType: requestedVenue === source ? 'native' : 'external_proxy',
+      sourceEndpoint: source === 'aster' ? `${base}/fapi/v3/depth` : source === 'bybit' ? 'https://api.bybit.com/v5/market/orderbook' : source === 'binance' ? 'https://fapi.binance.com/fapi/v1/depth' : source,
+      levelsReturned: { bids: bids.length, asks: asks.length },
+      ...depth,
       bidAskImbalance05Pct: imb05,
       bidAskImbalance1Pct: imb1,
       spreadBps,
@@ -192,58 +205,34 @@ export async function fetchL2Orderbook(symbol: string, source: Source): Promise<
   }
 }
 
-export async function fetchRecentTrades(symbol: string, source: Source): Promise<OrderflowSummary | null> {
+export async function fetchRecentTrades(symbol: string, source: Source, requestedVenue: Source = source): Promise<OrderflowSummary | null> {
   try {
-    let takerBuyVol = 0, takerSellVol = 0, tradesCount = 0;
-    const prices: number[] = [];
-
-    if (source === 'bybit' || source === 'aster') {
-      const res = await getJson(`https://api.bybit.com/v5/market/recent-trade?category=linear&symbol=${symbol}&limit=50`, undefined, 3000);
-      const list: any[] = res?.result?.list ?? [];
-      tradesCount = list.length;
-      for (const t of list) {
-        const sz = Number(t.size ?? 0);
-        const p = Number(t.price ?? 0);
-        prices.push(p);
-        if (t.side === 'Buy') takerBuyVol += sz;
-        else takerSellVol += sz;
-      }
+    const coin = coinOf(symbol);
+    let rows: any[] = [], endpoint = '', actualVenue = source;
+    const historyKey = `${source}:${symbol}`;
+    const limit = tradeRequestLimit(historyKey);
+    if (source === 'bybit') {
+      endpoint = 'https://api.bybit.com/v5/market/recent-trade';
+      const res = await getJson(`${endpoint}?category=linear&symbol=${symbol}&limit=${limit}`, undefined, 3000);
+      rows = res?.result?.list ?? [];
+    } else if (source === 'aster') {
+      endpoint = `${process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com'}/fapi/v3/aggTrades`;
+      rows = await getJson(`${endpoint}?symbol=${coin}USDT&limit=${limit}`, undefined, 3000);
     } else if (source === 'binance') {
-      const list: any[] = await getJson(`https://fapi.binance.com/fapi/v1/aggTrades?symbol=${symbol}&limit=50`, undefined, 3000);
-      tradesCount = Array.isArray(list) ? list.length : 0;
-      if (Array.isArray(list)) {
-        for (const t of list) {
-          const sz = Number(t.q ?? 0);
-          const p = Number(t.p ?? 0);
-          prices.push(p);
-          if (t.m === false) takerBuyVol += sz;
-          else takerSellVol += sz;
-        }
-      }
-    }
-
-    if (!tradesCount) return null;
-
-    const cvdDelta = Math.round((takerBuyVol - takerSellVol) * 100) / 100;
-    const buySellRatio = takerSellVol > 0 ? Math.round((takerBuyVol / takerSellVol) * 100) / 100 : null;
-
-    let deltaDivergence = false;
-    if (prices.length >= 10) {
-      const priceDelta = prices[prices.length - 1] - prices[0];
-      if ((priceDelta > 0 && cvdDelta < 0) || (priceDelta < 0 && cvdDelta > 0)) {
-        deltaDivergence = true;
-      }
-    }
-
-    return {
-      evidence: { source: source === 'aster' ? 'bybit' : source, observedAt: Date.now(), status: 'live', basis: 'Recent public trade sample; taker classification as reported by the venue' },
-      takerBuyVol: Math.round(takerBuyVol * 100) / 100,
-      takerSellVol: Math.round(takerSellVol * 100) / 100,
-      cvdDelta,
-      buySellRatio,
-      deltaDivergence,
-      tradesCount
-    };
+      endpoint = 'https://fapi.binance.com/fapi/v1/aggTrades';
+      rows = await getJson(`${endpoint}?symbol=${symbol}&limit=${limit}`, undefined, 3000);
+    } else return null;
+    const trades: NormalizedTradeInput[] = rows.map((t: any) => source === 'bybit' ? {
+      id: t.execId ?? t.seq, time: t.time, price: t.price, quantity: t.size, takerSide: t.side
+    } : {
+      id: t.a ?? t.id, time: t.T, price: t.p ?? t.price,
+      quantity: t.q ?? t.qty, takerSide: (t.m ?? t.isBuyerMaker) ? 'Sell' : 'Buy'
+    });
+    noteTradeRequest(historyKey, rows.length, limit);
+    const now = Date.now();
+    if (rows.length > 0 && normalizeTrades(trades).filter(trade => trade.time <= now).length === 0) return null;
+    return summarizeOrderflow(trades, { now, observedAt: now, venue: requestedVenue, actualDataVenue: actualVenue,
+      dataType: requestedVenue === actualVenue ? 'native' : 'external_proxy', sourceEndpoint: endpoint, historyKey, emptyActivity: rows.length === 0 }) as OrderflowSummary;
   } catch {
     return null;
   }
@@ -259,11 +248,11 @@ export async function fetchDerivatives(symbol: string, source: Source, lastPrice
     let fundingVenue = 'bybit';
     const multiVenueFunding: Record<string, { fundingRate: number | null; openInterest?: number | null }> = {};
 
-    const [bybitRes, binanceRes, hlRes, oiChanges] = await Promise.all([
+    const [bybitRes, binanceRes, hlRes, oiChanges, positioning] = await Promise.all([
       getJson(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`, undefined, 3000).catch(() => null),
       getJson(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`, undefined, 3000).catch(() => null),
       getJson('https://api.hyperliquid.xyz/info', { method: 'POST', body: JSON.stringify({ type: 'metaAndAssetCtxs' }) }, 3000).catch(() => null),
-      fetchOpenInterestChanges(symbol)
+      fetchOpenInterestChanges(symbol), fetchPositioning(symbol)
     ]);
 
     if (bybitRes?.result?.list?.[0]) {
@@ -302,6 +291,13 @@ export async function fetchDerivatives(symbol: string, source: Source, lastPrice
     }
 
     const evidence = { ...oiChanges.evidence };
+    const currentOiValue = measuredNumber(bybitRes?.result?.list?.[0]?.openInterestValue);
+    if (currentOiValue !== null) {
+      positioning.openInterestValue = currentOiValue;
+      positioning.evidence.openInterestValue = { source: 'Bybit GET /v5/market/tickers; category=linear', observedAt: Date.now(), status: 'live' };
+      positioning.venues.bybit.openInterestValue = currentOiValue;
+      positioning.venues.bybit.evidence.openInterestValue = positioning.evidence.openInterestValue;
+    }
     for (const [name, value, venue] of [
       ['fundingRate', fundingRate, fundingVenue], ['predictedFunding', predictedFunding, 'bybit'],
       ['openInterest', openInterest, fundingVenue], ['spotPerpBasisBps', spotPerpBasisBps, 'binance']
@@ -314,7 +310,8 @@ export async function fetchDerivatives(symbol: string, source: Source, lastPrice
       ...oiChanges,
       evidence,
       spotPerpBasisBps,
-      multiVenueFunding
+      multiVenueFunding,
+      positioning
     };
   } catch {
     return null;
@@ -336,8 +333,8 @@ export async function getSnapshot(symbol: string, preferred: Source, liveOnly = 
         snap.candles = closedLiveCandles(snap.candles, 15 * 60_000);
         if (Number.isFinite(snap.last) && snap.last > 0 && snap.candles.length >= 55) {
           const [orderbook, orderflow, derivatives, whaleOnChain, mtf5m, mtf1h, mtf4h] = await Promise.all([
-            fetchL2Orderbook(symbol, src).catch(() => null),
-            fetchRecentTrades(symbol, src).catch(() => null),
+            fetchL2Orderbook(symbol, src, preferred).catch(() => null),
+            fetchRecentTrades(symbol, src, preferred).catch(() => null),
             fetchDerivatives(symbol, src, snap.last).catch(() => null),
             getWhaleOnChainSummary(symbol).catch(() => null),
             getCandles(symbol, '5m', src, 250, true).catch(() => null),

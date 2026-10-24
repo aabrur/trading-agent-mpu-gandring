@@ -70,7 +70,7 @@ export class DeskLead {
     const m = u.message; if (!m || typeof m.text !== 'string') return null;
     const tg = this.cfg.telegram;
     if (String(m.chat?.id ?? '') !== tg.chatId || !allowed(tg.allowed, m.from?.id)) { log('[desk lead] ignored a Telegram message from a chat or user not on the allowlist'); return null; }
-    const reply = await runCommand(this.desk, parseCommand(m.text), this.onKill);
+    const reply = await runCommand(this.desk, parseCommand(m.text), this.onKill, `telegram:${m.chat?.id}:${m.from?.id}`);
     await this.hub.send('telegram', reply);
     return reply;
   }

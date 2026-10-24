@@ -27,7 +27,9 @@ export interface NormalizedWhaleEvent {
 export interface WhaleBriefing {
   symbol: string;
   providerStatus: 'CONFIGURED_LIVE' | 'UNCONFIGURED' | 'UNAVAILABLE';
+  dataStatus?: 'DATA_AVAILABLE' | 'NO_RELEVANT_EVENTS' | 'UNCONFIGURED' | 'UNAVAILABLE';
   providerName: string;
+  source?: string;
   events: NormalizedWhaleEvent[];
   summary: string;
   observedAt: number;
@@ -111,9 +113,86 @@ function confirmationStatus(tx: { hash?: unknown; block_number?: unknown }): Nor
 const whaleCache = new Map<string, { at: number; briefing: WhaleBriefing }>();
 export function resetWhaleCache() { whaleCache.clear(); }
 
+export async function getEnterpriseWhaleBriefing(
+  symbol: string,
+  blockchain: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<WhaleBriefing> {
+  const coin = symbol.replace(/USDT?$|USDC$/, '').toUpperCase();
+  const startSec = Math.floor((Date.now() - 24 * 3600 * 1000) / 1000);
+  const host = 'https://leviathan.whale-alert.io';
+  const heightUrl = `${host}/${encodeURIComponent(blockchain)}/height_at_time/${startSec}?api_key=${encodeURIComponent(apiKey)}`;
+  const heightRes = await fetchImpl(heightUrl);
+  if (!heightRes.ok) throw new Error(`Whale Alert Enterprise height_at_time HTTP ${heightRes.status}`);
+  const heightData: any = await heightRes.json();
+  const startHeight = heightData?.height;
+  if (startHeight == null) throw new Error('Whale Alert Enterprise height_at_time response omitted height');
+
+  const txUrl = `${host}/${encodeURIComponent(blockchain)}/transactions?api_key=${encodeURIComponent(apiKey)}&start_height=${startHeight}&symbol=${encodeURIComponent(coin.toLowerCase())}`;
+  const txRes = await fetchImpl(txUrl);
+  if (!txRes.ok) throw new Error(`Whale Alert Enterprise transactions HTTP ${txRes.status}`);
+  const txData: any = await txRes.json();
+  const rawTxs: any[] = Array.isArray(txData?.transactions) ? txData.transactions : [];
+
+  const events: NormalizedWhaleEvent[] = [];
+  for (const tx of rawTxs) {
+    const hash = tx.hash != null && String(tx.hash).trim() !== '' ? String(tx.hash) : '';
+    const blockNumber = optionalNumber(tx.height);
+    const tsSec = optionalNumber(tx.timestamp);
+    const timestamp = tsSec == null ? null : (tsSec < 1e12 ? tsSec * 1000 : tsSec);
+    const subTxs: any[] = Array.isArray(tx.sub_transactions) ? tx.sub_transactions : [];
+    for (const sub of subTxs) {
+      const fromInput = sub.inputs?.[0];
+      const toOutput = sub.outputs?.[0];
+      const fromEntity = fromInput?.owner ? String(fromInput.owner) : null;
+      const toEntity = toOutput?.owner ? String(toOutput.owner) : null;
+      const amt = optionalNumber(fromInput?.amount ?? toOutput?.amount);
+      const unitPrice = optionalNumber(sub.unit_price_usd);
+      const usd = unitPrice != null && amt != null ? unitPrice * amt : null;
+      const { classification, interpretation } = classifyTransfer(fromEntity, toEntity, amt ?? 0, coin, usd);
+
+      events.push({
+        chainId: blockchain,
+        txHash: hash,
+        blockNumber,
+        timestamp,
+        tokenAddress: null,
+        tokenSymbol: sub.symbol ? String(sub.symbol).toUpperCase() : coin,
+        rawAmount: String(amt ?? ''),
+        normalizedAmount: amt,
+        usdValueOrNull: usd,
+        fromAddress: String(fromInput?.address ?? 'unknown'),
+        toAddress: String(toOutput?.address ?? 'unknown'),
+        fromEntityOrNull: fromEntity,
+        toEntityOrNull: toEntity,
+        attributionConfidence: attributionConfidence(fromEntity, toEntity),
+        confirmationStatus: hash && blockNumber != null ? 'confirmed' : 'unverified',
+        source: 'whale-alert-enterprise',
+        classification,
+        interpretation
+      });
+    }
+  }
+
+  return {
+    symbol: coin,
+    providerStatus: 'CONFIGURED_LIVE',
+    dataStatus: events.length ? 'DATA_AVAILABLE' : 'NO_RELEVANT_EVENTS',
+    providerName: 'Whale Alert Enterprise API',
+    source: 'Whale Alert Enterprise API',
+    events,
+    summary: events.length === 0
+      ? `No large on-chain transactions recorded for ${coin} in the last 24h via Enterprise API.`
+      : `${events.length} transfer(s) observed via Enterprise API. Top event: ${events[0].interpretation}`,
+    observedAt: Date.now(),
+    disclaimer: 'Enterprise feed data maps sub-transactions to direction classifications.'
+  };
+}
+
 export async function getWhaleBriefing(
   symbol: string,
-  env: { WHALE_ALERT_API_KEY?: string } = process.env,
+  env: { WHALE_ALERT_API_KEY?: string; WHALE_ALERT_ENTERPRISE_API?: string; WHALE_ALERT_CHAIN?: string; WHALE_ALERT_BLOCKCHAIN?: string } = process.env,
   fetchImpl: typeof fetch = fetch
 ): Promise<WhaleBriefing> {
   const coin = symbol.replace(/USDT?$|USDC$/, '').toUpperCase();
@@ -127,7 +206,9 @@ export async function getWhaleBriefing(
     const briefing: WhaleBriefing = {
       symbol: coin,
       providerStatus: 'UNCONFIGURED',
+      dataStatus: 'UNCONFIGURED',
       providerName: 'Whale Alert / Explorer API',
+      source: 'Whale Alert Transactions API',
       events: [],
       summary: `On-chain whale provider unconfigured for ${coin}. To enable real on-chain transaction monitoring, set WHALE_ALERT_API_KEY in environment. Candle volume proxies must never be confused with on-chain wallet tracking.`,
       observedAt: Date.now(),
@@ -135,6 +216,43 @@ export async function getWhaleBriefing(
     };
     whaleCache.set(coin, { at: Date.now(), briefing });
     return briefing;
+  }
+
+  if (env.WHALE_ALERT_ENTERPRISE_API === 'yes' || env.WHALE_ALERT_ENTERPRISE_API === 'true') {
+    const chain = env.WHALE_ALERT_CHAIN || env.WHALE_ALERT_BLOCKCHAIN;
+    if (!chain) {
+      const briefing: WhaleBriefing = {
+        symbol: coin,
+        providerStatus: 'UNCONFIGURED',
+        dataStatus: 'UNCONFIGURED',
+        providerName: 'Whale Alert Enterprise API',
+        source: 'Whale Alert Enterprise API',
+        events: [],
+        summary: 'Whale Alert Enterprise API is enabled but WHALE_ALERT_CHAIN is unconfigured.',
+        observedAt: Date.now(),
+        disclaimer: 'Whale Alert Enterprise API requires a chain mapping.'
+      };
+      whaleCache.set(coin, { at: Date.now(), briefing });
+      return briefing;
+    }
+    try {
+      const res = await getEnterpriseWhaleBriefing(coin, chain, apiKey, fetchImpl);
+      whaleCache.set(coin, { at: Date.now(), briefing: res });
+      return res;
+    } catch (e) {
+      const briefing: WhaleBriefing = {
+        symbol: coin,
+        providerStatus: 'UNAVAILABLE',
+        dataStatus: 'UNAVAILABLE',
+        providerName: 'Whale Alert Enterprise API',
+        source: 'Whale Alert Enterprise API',
+        events: [],
+        summary: `Whale Alert Enterprise API query failed: ${safe((e as Error).message)}.`,
+        observedAt: Date.now(),
+        disclaimer: 'Whale Alert Enterprise API unavailable.'
+      };
+      return briefing;
+    }
   }
 
   // Live Whale Alert provider
@@ -147,9 +265,16 @@ export async function getWhaleBriefing(
     const res = await fetchImpl(url, { signal: ctrl.signal });
     if (!res.ok) throw new Error(`Whale Alert HTTP ${res.status}`);
     const data: any = await res.json();
-    const rawTxs: any[] = data?.transactions ?? [];
+    if (!Array.isArray(data?.transactions)) throw new Error('Whale Alert response omitted transactions');
+    const rawTxs: any[] = data.transactions;
+    const seen = new Set<string>();
 
-    const events: NormalizedWhaleEvent[] = rawTxs.slice(0, 10).map((tx: any) => {
+    const events: NormalizedWhaleEvent[] = rawTxs.filter((tx: any) => {
+      const key = tx?.hash == null ? '' : String(tx.hash);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 10).map((tx: any) => {
       const fromEntity = tx.from?.owner ? String(tx.from.owner) : null;
       const toEntity = tx.to?.owner ? String(tx.to.owner) : null;
       const amt = optionalNumber(tx.amount);
@@ -187,7 +312,9 @@ export async function getWhaleBriefing(
     const briefing: WhaleBriefing = {
       symbol: coin,
       providerStatus: 'CONFIGURED_LIVE',
+      dataStatus: events.length ? 'DATA_AVAILABLE' : 'NO_RELEVANT_EVENTS',
       providerName: 'Whale Alert API',
+      source: 'Whale Alert Transactions API',
       events,
       summary,
       observedAt: Date.now(),
@@ -199,7 +326,9 @@ export async function getWhaleBriefing(
     const briefing: WhaleBriefing = {
       symbol: coin,
       providerStatus: 'UNAVAILABLE',
+      dataStatus: 'UNAVAILABLE',
       providerName: 'Whale Alert API',
+      source: 'Whale Alert Transactions API',
       events: [],
       summary: `Whale Alert API query failed: ${safe((e as Error).message)}. Real on-chain data temporarily unavailable.`,
       observedAt: Date.now(),
@@ -217,12 +346,24 @@ const DEFAULT_HYPERLIQUID_WHALES = [
   '0x010461c14e146acc353886173f13590d2717c563'
 ];
 
+export type HyperliquidWatchlistResult = NonNullable<WhaleOnChainSummary['hyperliquidWhales']> & {
+  coverageStatus: 'DATA_AVAILABLE' | 'NO_RELEVANT_EVENTS' | 'PARTIAL' | 'UNAVAILABLE';
+  coverageNote: string;
+  watchlistSource: 'configured' | 'built_in_sample';
+};
+
 export async function getHyperliquidWhales(
   coin: string,
   addresses?: string[],
   fetchImpl: typeof fetch = fetch
-): Promise<WhaleOnChainSummary['hyperliquidWhales']> {
-  const addrs = addresses && addresses.length ? addresses : (process.env.HYPERLIQUID_WHALE_ADDRESSES ? process.env.HYPERLIQUID_WHALE_ADDRESSES.split(',').map((a) => a.trim()).filter(Boolean) : DEFAULT_HYPERLIQUID_WHALES);
+): Promise<HyperliquidWatchlistResult | undefined> {
+  const envValue = process.env.HYPERLIQUID_WHALE_ADDRESSES;
+  const envAddresses = envValue?.split(',').map((a) => a.trim()).filter((a) => /^0x[a-f\d]{40}$/i.test(a));
+  const configuredByCaller = addresses !== undefined;
+  const watchlistSource = configuredByCaller || envValue !== undefined ? 'configured' : 'built_in_sample';
+  const configured = configuredByCaller ? addresses : envValue !== undefined ? envAddresses ?? [] : DEFAULT_HYPERLIQUID_WHALES;
+  const addrs = [...new Set(configured.filter((a) => /^0x[a-f\d]{40}$/i.test(a)))];
+  if (!addrs.length) return undefined;
   const targetCoin = coin.replace(/USDT?$|USDC$/, '').toUpperCase();
 
   let longCount = 0, shortCount = 0;
@@ -272,9 +413,12 @@ export async function getHyperliquidWhales(
 
   topPositions.sort((a, b) => b.notional - a.notional);
 
-  if (walletsChecked !== addrs.length || !walletsChecked) return undefined;
+  if (!walletsChecked) return undefined;
 
   return {
+    coverageStatus: walletsChecked !== addrs.length ? 'PARTIAL' : longCount + shortCount ? 'DATA_AVAILABLE' : 'NO_RELEVANT_EVENTS',
+    coverageNote: `Queried ${walletsChecked} of ${addrs.length} ${watchlistSource === 'configured' ? 'configured' : 'built-in sample'} watchlist addresses. This is not market-wide positioning coverage.`,
+    watchlistSource,
     walletsChecked, walletsRequested: addrs.length,
     evidence: { source: 'hyperliquid clearinghouseState; configured wallet watchlist', observedAt: Date.now(), status: 'live', basis: 'Positions in the queried wallets only; not all market participants' },
     longCount,

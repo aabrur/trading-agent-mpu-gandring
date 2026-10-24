@@ -38,6 +38,12 @@ import { CycleTimer, type CycleTiming } from './decision/timing.js';
 import { classifyHoldReason, outcomeFor, type DecisionOutcome, type HoldReasonCode } from './decision/reasons.js';
 import { revalidateEntry, snapshotIsFresh } from './decision/stale.js';
 import { rebuttalRounds } from './decision/pace.js';
+import { conversationSymbols, ownerTargets, teammateRequests, capitalAndSlots, type HandoffResult, type TeammateRequest } from './collaboration.js';
+import { capabilityManifest, type ToolObservation } from './research/catalog.js';
+import { buildTacticalTradePlan } from './market/tactical.js';
+import { researchPolicy } from './providers/research-policy.js';
+import { localResearchActivity } from './providers/local.js';
+import { getSuiEventBriefing } from './market/sui.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
@@ -66,6 +72,10 @@ export class Desk extends EventEmitter {
   logs: LogLine[] = [];
   chats: Record<AgentId, ChatLine[]>;
   roomHistory: RoomMessage[] = [];
+  private conversations = new Map<string, string[]>();
+  private snapshotCache = new Map<string, { at: number; promise: Promise<MarketSnapshot & { errors: string[] }> }>();
+  researchObservations: Record<string, ToolObservation> = {};
+  chatMetrics = { agentCalls: 0, modelAttempts: 0, failures: 0, lastLatencyMs: 0, totalLatencyMs: 0, tokenUsage: null, modelCost: null };
   debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
   paused = false;
   killed = false;
@@ -151,14 +161,23 @@ export class Desk extends EventEmitter {
 
   /** Every model call goes through here: lessons, standing rules and scan alerts are fed into the prompt. */
   private async run<K extends Parameters<typeof runAgent>[3]>(agent: AgentId, task: K, input: Parameters<typeof runAgent<K>>[4]) {
+    const started = Date.now();
     const rules = this.cfg.learning.on ? this.learnings.standingRules(agent).slice(-8).map((l) => l.lesson) : [];
     const lessons = this.cfg.learning.on ? this.learnings.forRole(agent, 5) : [];
     const alerts = (this.lastScan?.findings ?? []).filter((f) => f.level === 'warn' || f.level === 'alert').map((f) => f.text);
     const extra = [input.extraSystem ?? '', rules.length ? `Standing rules (advice only, never execution authorization; Boss changes settings through explicit commands):\n${fenceData('learned-advice', { rules })}` : ''].filter(Boolean).join('\n\n');
     const res = await runAgent(this.cfg, this.call, agent, task, {
       ...input, extraSystem: extra || undefined,
-      data: { ...input.data, ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
+      data: { ...input.data, accountState: this.accountState(), researchCapabilities: this.capabilities(), ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
     });
+    if (task === 'chat') {
+      this.chatMetrics.agentCalls++;
+      this.chatMetrics.modelAttempts += res.attempts;
+      this.chatMetrics.failures += Number(res.fallback);
+      this.chatMetrics.lastLatencyMs = Date.now() - started;
+      this.chatMetrics.totalLatencyMs += this.chatMetrics.lastLatencyMs;
+      this.recordActivity({ kind: 'process', source: `agent:${agent}`, level: res.fallback ? 'error' : 'info', status: res.fallback ? 'failed' : 'completed', text: `chat · ${agent} · ${res.attempts} model attempt(s)`, durationMs: this.chatMetrics.lastLatencyMs });
+    }
     if (res.fallback) { this.recordError(`agent:${agent}`, `${ROLES[agent].name} reply failed validation twice on ${task}`); this.learn({ role: agent, kind: 'error', happened: `${ROLES[agent].name} sent an invalid ${task} reply twice and fell back to the safe default.`, rootCause: 'reply did not match the JSON schema', lesson: 'Reply with exactly one JSON object that matches the schema, nothing else.' }); }
     return res;
   }
@@ -234,6 +253,7 @@ export class Desk extends EventEmitter {
       reports: this.reports.slice(0, 12), reportIntervalMin: this.cfg.reports.intervalMin, dataCollection: this.collectionLast,
       venueAccount: this.venueAccount, marketSource: this.cfg.marketSource, bridgeEnabled: this.cfg.bridge.enabled, paused: this.paused,
       agents: this.agents, tickers: this.tickers, debate: this.debate,
+      accountState: this.accountState(), capabilities: this.capabilities(), chatMetrics: { ...this.chatMetrics },
       paper: {
         balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n, moneyTrade: split.moneyTrade, perOrder: split.perOrder, orderSizePct: split.orderSizePct,
         canOpen: split.canOpen, usedMargin: this.book.usedMargin, unrealized: this.book.unrealized,
@@ -246,6 +266,38 @@ export class Desk extends EventEmitter {
       debateMode: this.cfg.debate.mode,
       lastCycle: this.lastCycle
     };
+  }
+  capabilities() {
+    const manifest = capabilityManifest(this.cfg, this.collectionLast, this.researchObservations);
+    for (const [name, category, configured, requiresApiKey] of [
+      ['whale_alert', 'on-chain transfers', !!process.env.WHALE_ALERT_API_KEY, true],
+      ['sui_graphql', 'Sui Move event sample', !!process.env.SUI_GRAPHQL_URL, 'provider-dependent'],
+      ['hyperliquid', 'public watchlist positions', true, false],
+      ['jev', 'optional classification', this.cfg.jev.enabled && (this.cfg.jev.openrouterKeySet || this.cfg.jev.dedicatedKeySet), true]
+    ] as const) manifest.push({ name, category, available: true, configured, requiresApiKey, status: configured ? 'CONFIGURED' : 'UNCONFIGURED', limitations: [name === 'whale_alert' ? 'Subscription-specific route must be supported; configured keys alone do not prove compatibility.' : 'Source coverage is bounded; configuration is not connectivity proof.'] });
+    try {
+      const policy = researchPolicy();
+      const activity = localResearchActivity();
+      for (const [server, tools] of Object.entries(policy.mcpTools)) {
+        const latest = activity.filter(item => item.server === server && tools.includes(item.tool)).at(-1);
+        manifest.push({ name: server, category: 'selected external MCP', available: policy.enabled, configured: true,
+          status: !policy.enabled ? 'UNAVAILABLE' : !latest ? 'CONFIGURED' : latest.status === 'failed' ? 'ERROR' : 'CONNECTED',
+          requiresApiKey: 'provider-dependent', limitations: [`Selected tools: ${tools.join(', ')}`, 'Selected metadata is not a live connection test. Only structured CLI activity proves invocation.'] });
+      }
+      for (const item of manifest.filter(item => item.category === 'read-only research')) item.limitations.push(`Native Codex research policy: ${policy.enabled ? 'enabled' : 'disabled'}.`);
+    } catch { manifest.push({ name: 'native_research_policy', category: 'configuration', available: false, configured: false, status: 'ERROR', requiresApiKey: false, limitations: ['Research policy is invalid.'] }); }
+    return manifest;
+  }
+  accountState() {
+    const paper = this.cfg.tradingMode === 'PAPER';
+    const account = this.venueAccount;
+    const confirmed = !!account && account.status === 'confirmed' && Date.now() >= account.at && Date.now() - account.at <= 60_000;
+    const positions = paper ? this.book.positions : account?.positions ?? this.book.positions;
+    const capital = paper ? this.book.split().canOpen : confirmed ? account.available > 0 && account.equity > this.book.safetyNet : null;
+    return { ...capitalAndSlots(capital, positions.length, this.book.n), mode: this.cfg.tradingMode,
+      source: paper ? 'paper' : account ? 'exchange' : 'journal', observedAt: account?.at ?? null,
+      status: paper ? 'current' : confirmed ? 'confirmed' : 'unverified',
+      scope: 'Capital and slot observations only; not aggregate order readiness. paper.canOpen retains its allocation meaning.' };
   }
   /** Daily loss stop: once equity falls DAILY_LOSS_LIMIT_PCT below the day's start, no new orders until tomorrow (UTC). */
   checkDay() {
@@ -325,7 +377,14 @@ export class Desk extends EventEmitter {
   }
   private marketSnapshot(symbol: string) {
     const source = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
-    return getSnapshot(symbol, source, this.cfg.tradingMode !== 'PAPER');
+    const key = `${source}:${symbol}:${this.cfg.tradingMode}`;
+    const hit = this.snapshotCache.get(key);
+    if (hit && Date.now() - hit.at < 5000) return hit.promise;
+    const promise = getSnapshot(symbol, source, this.cfg.tradingMode !== 'PAPER').then(snapshot => ({ ...snapshot, tacticalTradePlan: buildTacticalTradePlan(snapshot) }));
+    this.snapshotCache.set(key, { at: Date.now(), promise });
+    if (this.snapshotCache.size > 40) this.snapshotCache.delete(this.snapshotCache.keys().next().value!);
+    void promise.catch(() => { if (this.snapshotCache.get(key)?.promise === promise) this.snapshotCache.delete(key); });
+    return promise;
   }
   async refreshTickers() {
     const live = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
@@ -605,7 +664,7 @@ export class Desk extends EventEmitter {
       const rule = strategyVote(snap.candles);
       const st = await timer.measure('strategist', () => this.run('strategist', 'opinion', {
         instruction: `The EMA rule on closed 15m bars produced the result below for ${symbol}. Your stance must match the rule side (ABSTAIN means NEUTRAL). Explain it in your voice.`,
-        data: { symbol, rule, technicalSummary: snap.technicalSummary, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'strategist') : undefined },
+        data: { symbol, rule, technicalSummary: snap.technicalSummary, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap), jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'strategist') : undefined },
         context: { symbol, rule }
       }));
       const ruleStance: Stance = rule.side === 'ABSTAIN' ? 'NEUTRAL' : rule.side;
@@ -664,7 +723,7 @@ export class Desk extends EventEmitter {
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
         instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, CLOSE requires strategyInvalidated=true (opposite closed-bar direction beyond EMA21 with opposing five-bar momentum), or a verified critical event. A minor EMA9 crossing, unrealized loss, or changed agent vote alone is insufficient. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
-        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
+        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap) }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       }));
       let action: Action = ld.data.action;
@@ -777,101 +836,80 @@ export class Desk extends EventEmitter {
     }
   }
 
-  async runHuddle(message: string, targetAgents?: (AgentId | 'all')[], symbol?: string): Promise<{ ok: boolean; replies: Array<{ agent: AgentId; reply: string }> }> {
-    const sym = symbol ? normSymbol(symbol) : (this.verdicts[0]?.symbol ?? this.cfg.watchlist[0] ?? 'BTCUSDT');
-    const snap = await this.marketSnapshot(sym).catch(() => null);
-    if (snap) this.updateTicker(snap);
-
-    const hasAll = !targetAgents || targetAgents.length === 0 || targetAgents.includes('all');
-    const agentsToCall: AgentId[] = hasAll
-      ? ['market', 'research', 'strategist', 'risk', 'execution', 'lead']
-      : (targetAgents.filter((a): a is AgentId => a !== 'all') as AgentId[]);
-
-    const replies: Array<{ agent: AgentId; reply: string }> = [];
-
-    for (const agent of agentsToCall) {
-      if (this.stopFlag || this.killed) break;
-      this.setStatus(agent, 'thinking');
-      this.changed();
-
-      const recentRoom = this.roomHistory.slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
-      const openPositions = this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty, unrealizedPnl: p.unrealizedPnl }));
-
-      const res = await this.run(agent, 'chat', {
-        instruction: `Huddle discussion with Boss and teammates on ${sym}. Provide your direct domain perspective. You can build upon or challenge previous agent comments in the room discussion. Do NOT trigger voting or debates, and do NOT execute orders unless explicitly instructed.`,
-        data: {
-          ownerMessage: message,
-          detectedSymbol: sym,
-          roomDiscussion: recentRoom,
-          openPositions,
-          marketSnapshot: snap ? {
-            last: snap.last,
-            change24hPct: snap.change24hPct,
-            orderbook: snap.orderbook,
-            orderflow: snap.orderflow,
-            derivatives: snap.derivatives,
-            technicalSummary: snap.technicalSummary,
-            whaleOnChain: snap.whaleOnChain
-          } : null,
-          paper: this.book.split()
-        },
-        context: {
-          message,
-          roomDiscussion: recentRoom,
-          openPositions,
-          detectedSymbol: sym
-        }
-      });
-
-      this.setStatus(agent, 'idle');
-      const agentReply = res.data.reply;
-      replies.push({ agent, reply: agentReply });
-      this.addRoomMessage({ from: agent, to: 'all', text: agentReply, symbol: sym, example: res.example });
-      await this.say(agent, agentReply, res.example, 'idle');
-
-      if (res.data.askTeammate && res.data.askTeammate.to && res.data.askTeammate.question) {
-        await this.handleTeammateHandoff(agent, res.data.askTeammate.to, res.data.askTeammate.question, sym, 1, 3);
-      }
+  async runHuddle(message: string, targetAgents?: (AgentId | 'all')[], symbol?: string, conversationId = 'office', signal?: AbortSignal): Promise<{ ok: boolean; replies: Array<{ agent: AgentId; reply: string }>; results: HandoffResult[] }> {
+    const symbols = this.resolveConversation(message, conversationId, symbol);
+    const sym = symbols[0];
+    const wantsLead = !targetAgents?.length || targetAgents.includes('all') || targetAgents.includes('lead');
+    const targets = !targetAgents?.length || targetAgents.includes('all') ? AGENT_IDS.filter(id => id !== 'lead') : [...new Set(targetAgents)].filter((id): id is AgentId => id !== 'all' && id !== 'lead');
+    const visited = new Set<AgentId>(['lead']);
+    const results = await this.consult(targets.map(to => ({ to, question: message })), 'lead', symbols, conversationId, visited, 0, signal);
+    if (wantsLead && !this.killed && !this.stopFlag && !signal?.aborted) {
+      const synthesis = await this.chatFinding('lead', message, symbols, conversationId, { completedHandoffs: results }, 'Synthesize the actual completed teammate findings for Boss. Identify failures, conflicts and missing evidence. Do not claim failed agents answered. Do not delegate again or execute commands.', signal);
+      results.push(synthesis);
     }
-
-    return { ok: true, replies };
+    return { ok: results.every(result => result.status === 'completed'), replies: results.map(({ agent, reply }) => ({ agent, reply })), results };
   }
 
-  private async handleTeammateHandoff(fromAgent: AgentId, toAgent: AgentId, question: string, symbol: string, hop = 1, maxHops = 3): Promise<void> {
-    if (hop > maxHops || this.stopFlag || this.killed) return;
-    if (!AGENT_IDS.includes(toAgent) || toAgent === fromAgent) return;
-    this.setStatus(toAgent, 'thinking');
-    this.changed();
+  private resolveConversation(message: string, id: string, selection?: string): string[] {
+    const explicit = conversationSymbols(message, [...this.cfg.watchlist, ...this.cfg.auto.symbols]);
+    const symbols = explicit.length ? explicit : selection ? [normSymbol(selection)] : this.conversations.get(id) ?? [this.cfg.watchlist[0] ?? 'BTCUSDT'];
+    this.conversations.delete(id);
+    this.conversations.set(id, symbols);
+    if (this.conversations.size > 100) this.conversations.delete(this.conversations.keys().next().value!);
+    return [...symbols];
+  }
 
-    const recentRoom = this.roomHistory.slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
-    const openPositions = this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty, unrealizedPnl: p.unrealizedPnl }));
+  private needsMarketContext(message: string) {
+    return conversationSymbols(message, [...this.cfg.watchlist, ...this.cfg.auto.symbols]).length > 0 || /market|pasar|harga|price|flow|whale|on.?chain|funding|oi\b|chart|trend|setup|posisi|position|berita|news|catalyst|tape|momentum|order.?book|anal[yi]/i.test(message);
+  }
 
-    const res = await this.run(toAgent, 'chat', {
-      instruction: `${ROLES[fromAgent].name} asked you directly: "${question}". Answer clearly and concisely using your domain knowledge and current room context. If needed, you may ask another teammate via askTeammate.`,
-      data: {
-        colleagueQuestion: question,
-        fromAgent,
-        detectedSymbol: symbol,
-        roomDiscussion: recentRoom,
-        openPositions,
-        paper: this.book.split()
-      },
-      context: {
-        question,
-        fromAgent,
-        roomDiscussion: recentRoom,
-        detectedSymbol: symbol
-      }
-    });
+  private async chatResearchContext(message: string, agent: AgentId, symbol: string) {
+    if (!(agent === 'research' && this.needsMarketContext(message)) && !/berita|news|whale|on.?chain|catalyst|event/i.test(message)) return {};
+    const [news, whale, sui] = await Promise.all([
+      getNewsFor(symbol, this.cfg).catch(() => []), getWhaleBriefing(symbol).catch(() => null),
+      symbol === 'SUIUSDT' ? getSuiEventBriefing(symbol) : Promise.resolve(null)
+    ]);
+    return { newsBriefing: buildNewsBriefing(symbol, news.map(item => normalizeLegacyItem(item, symbol)), liveNewsStatus(news)), whaleBriefing: whale, suiEvents: sui };
+  }
 
-    this.setStatus(toAgent, 'idle');
-    const answer = res.data.reply;
-    this.addRoomMessage({ from: toAgent, to: fromAgent, text: answer, symbol, example: res.example });
-    await this.say(toAgent, answer, res.example, 'idle');
+  private async chatFinding(agent: AgentId, question: string, symbols: string[], conversationId: string, extra: Record<string, unknown> = {}, instruction = 'Answer the assigned question with your own domain evidence. This is read-only consultation; commandToExecute is ignored. Use askTeammates only for necessary follow-up questions.', signal?: AbortSignal): Promise<HandoffResult & { requests?: TeammateRequest[] }> {
+    const started = Date.now();
+    if (this.killed || this.stopFlag || signal?.aborted) return { agent, status: 'cancelled', reply: 'Consultation cancelled.', durationMs: 0 };
+    this.setStatus(agent, 'thinking');
+    this.recordActivity({ kind: 'tool', source: 'collaboration', level: 'info', status: 'started', text: `${agent} consultation on ${symbols.join(', ')}` });
+    try {
+      const [snapshots, researchContext] = await Promise.all([
+        this.needsMarketContext(question) ? Promise.all(symbols.slice(0, 4).map(symbol => this.marketSnapshot(symbol).catch(() => null))) : Promise.resolve([]),
+        this.chatResearchContext(question, agent, symbols[0])
+      ]);
+      const room = this.roomHistory.filter(item => (item.conversationId ?? 'office') === conversationId).slice(-15);
+      const res = await this.run(agent, 'chat', {
+        instruction, signal,
+        data: { ownerMessage: question, assignedQuestion: question, detectedSymbol: symbols[0], detectedSymbols: symbols, marketSnapshots: snapshots.map(snap => snap ? { ...snap, candles: [] } : null), roomDiscussion: room, ...researchContext, ...extra },
+        context: { message: question, detectedSymbol: symbols[0], detectedSymbols: symbols, conversationId, ...extra }
+      });
+      const status = res.fallback ? 'failed' : 'completed';
+      const reply = res.fallback ? `${ROLES[agent].name} request failed: model response unavailable.` : res.data.reply;
+      const result = { agent, reply, status, durationMs: Date.now() - started, ...(res.fallback ? { error: 'Model response unavailable' } : {}) } satisfies HandoffResult;
+      this.addRoomMessage({ from: agent, to: 'all', text: reply, symbol: symbols[0], conversationId, example: res.example });
+      this.chats[agent].push({ from: agent, text: reply, at: Date.now(), conversationId });
+      this.chats[agent] = this.chats[agent].slice(-60);
+      this.recordActivity({ kind: 'tool', source: 'collaboration', level: status === 'failed' ? 'error' : 'info', status, text: `${agent} consultation ${status}`, durationMs: result.durationMs });
+      await this.say(agent, reply, res.example, 'idle');
+      return { ...result, requests: res.fallback ? [] : teammateRequests(res.data, agent) };
+    } catch {
+      this.recordActivity({ kind: 'tool', source: 'collaboration', level: 'error', status: 'failed', text: `${agent} consultation failed`, durationMs: Date.now() - started });
+      return { agent, status: 'failed', reply: `${ROLES[agent].name} request failed: unavailable.`, error: 'Consultation unavailable', durationMs: Date.now() - started };
+    } finally { this.setStatus(agent, 'idle'); }
+  }
 
-    if (res.data.askTeammate && res.data.askTeammate.to && res.data.askTeammate.question && res.data.askTeammate.to !== toAgent) {
-      await this.handleTeammateHandoff(toAgent, res.data.askTeammate.to, res.data.askTeammate.question, symbol, hop + 1, maxHops);
-    }
+  private async consult(requests: TeammateRequest[], from: AgentId, symbols: string[], conversationId: string, visited: Set<AgentId>, hop: number, signal?: AbortSignal): Promise<HandoffResult[]> {
+    if (hop >= 3 || signal?.aborted) return [];
+    const eligible = requests.filter(request => request.to !== from && !visited.has(request.to));
+    for (const request of eligible) visited.add(request.to);
+    const answers = await Promise.all(eligible.map(request => this.chatFinding(request.to, request.question, request.symbol && symbols.includes(normSymbol(request.symbol)) ? [normSymbol(request.symbol)] : symbols, conversationId, { fromAgent: from }, undefined, signal)));
+    const nested = await Promise.all(answers.map(answer => this.consult(answer.requests ?? [], answer.agent, symbols, conversationId, visited, hop + 1, signal)));
+    return [...answers.map(({ requests: _requests, ...answer }) => answer), ...nested.flat()];
   }
 
   async previewTicket(i: { symbol: string; side: 'LONG' | 'SHORT'; entry?: number; stop?: number; leverage?: number }) {
@@ -1274,14 +1312,15 @@ export class Desk extends EventEmitter {
     });
   }
 
-  async command(text: string, agent?: AgentId): Promise<{ ok: boolean; reply: string; command: Command['type'] }> {
+  async command(text: string, agent?: AgentId, conversationId = 'office', signal?: AbortSignal): Promise<{ ok: boolean; reply: string; command: Command['type'] }> {
+    if (signal?.aborted) return { ok: false, reply: 'Chat cancelled.', command: 'chat' };
     if (text.length > 32000) return { ok: false, reply: 'Message exceeds 32000 characters.', command: 'invalid' };
     const addressed = text.match(/^(lead|market|research|strategist|risk|execution)[\s,:]+(.+)$/is);
     if (addressed) { agent = addressed[1].toLowerCase() as AgentId; text = addressed[2]; }
     const cmd = parseCommand(text);
     let who: AgentId = agent ?? 'lead';
 
-    const userLine: ChatLine = { from: 'user', text: safe(text), at: Date.now() };
+    const userLine: ChatLine = { from: 'user', text: safe(text), at: Date.now(), conversationId };
     if (agent) this.chats[agent].push(userLine);
     this.addLog({ kind: 'command', text: `${agent ? `to ${ROLES[agent].name}: ` : ''}${text.slice(0, 200)}` });
     let reply = '';
@@ -1363,25 +1402,22 @@ export class Desk extends EventEmitter {
             userQuery = matchTarget[2] || userQuery;
           }
 
-          const symMatch = userQuery.match(/\b(BTC|ETH|SOL|BNB|XRP|DOGE|AVAX|LINK|SUI|ADA|NEAR|APT)(?:USDT)?\b/i);
-          const detectedSymbol = symMatch ? normSymbol(symMatch[0]) : (this.verdicts[0]?.symbol ?? this.cfg.watchlist[0] ?? 'BTCUSDT');
-
-          // Multi-agent mention fan-out or @all huddle
-          const isMultiAgent = cmd.mentions && (cmd.mentions.includes('all') || cmd.mentions.length > 1);
-          if (isMultiAgent) {
+          const detectedSymbols = this.resolveConversation(userQuery, conversationId);
+          const detectedSymbol = detectedSymbols[0];
+          const targets = ownerTargets(userQuery);
+          if (targets.includes('all') || targets.length > 1) {
             who = 'lead';
-            this.addRoomMessage({ from: 'owner', to: 'all', text: userQuery, symbol: detectedSymbol });
-            const huddleRes = await this.runHuddle(userQuery, cmd.mentions, detectedSymbol);
-            reply = huddleRes.replies.map((r) => `**${ROLES[r.agent].name}**: ${r.reply}`).join('\n\n');
+            this.addRoomMessage({ from: 'owner', to: 'all', text: userQuery, symbol: detectedSymbol, conversationId });
+            const huddleTargets: (AgentId | 'all')[] = targets.includes('all') ? ['all'] : [...targets, 'lead'];
+            const huddle = await this.runHuddle(userQuery, huddleTargets, detectedSymbol, conversationId, signal);
+            ok = huddle.ok;
+            reply = huddle.replies.map(result => `**${ROLES[result.agent].name}**: ${result.reply}`).join('\n\n');
             break;
           }
-
-          if (cmd.mentions && cmd.mentions.length === 1 && cmd.mentions[0] !== 'all') {
-            target = cmd.mentions[0];
-          }
+          if (targets.length === 1 && targets[0] !== 'all') target = targets[0];
           who = target;
           if (!agent) this.chats[target].push(userLine);
-          this.addRoomMessage({ from: 'owner', to: target, text: userQuery, symbol: detectedSymbol });
+          this.addRoomMessage({ from: 'owner', to: target, text: userQuery, symbol: detectedSymbol, conversationId });
 
           if (/\b(wrong|salah|don'?t|do not|jangan|stop doing|bad call|mistake|keliru|should have|harusnya|never again)\b/i.test(userQuery)) {
             const l = this.learn({ role: target, kind: 'correction', happened: `Owner corrected ${ROLES[target].name}: "${userQuery.slice(0, 160)}"`, rootCause: 'owner feedback from the office chat', lesson: userQuery.slice(0, 200), source: 'owner' });
@@ -1390,31 +1426,27 @@ export class Desk extends EventEmitter {
           if (this.grokbot) { reply = `I am played by your Grok Bot agent in the "Trading Agent Mpu Gandring" group chat. Talk to me there. This office only shows what we post.`; break; }
           this.setStatus(target, 'typing'); this.changed();
 
-          const snap = await this.marketSnapshot(detectedSymbol).catch(() => null);
+          const [snapshots, researchContext] = await Promise.all([
+            this.needsMarketContext(userQuery) ? Promise.all(detectedSymbols.slice(0, 4).map(symbol => this.marketSnapshot(symbol).catch(() => null))) : Promise.resolve([]),
+            this.chatResearchContext(userQuery, target, detectedSymbol)
+          ]);
+          const snap = snapshots[0] ?? null;
           if (snap) this.updateTicker(snap);
 
-          let newsBriefingData: unknown = null;
-          let whaleBriefingData: unknown = null;
-          if (target === 'research' || /berita|news|whale|onchain|catalyst/i.test(userQuery)) {
-            const newsItems = await getNewsFor(detectedSymbol, this.cfg).catch(() => []);
-            const normEvents = newsItems.map((n) => normalizeLegacyItem(n, detectedSymbol));
-            newsBriefingData = buildNewsBriefing(detectedSymbol, normEvents, liveNewsStatus(newsItems));
-            whaleBriefingData = await getWhaleBriefing(detectedSymbol).catch(() => null);
-          }
-
-          const history = (this.chats[target] ?? []).slice(-4).map((c) => ({ from: c.from, text: c.text }));
+          const history = (this.chats[target] ?? []).filter(c => (c.conversationId ?? 'office') === conversationId).slice(-4).map((c) => ({ from: c.from, text: c.text }));
           const recentVerdicts = this.verdicts.slice(0, 4).map((v) => ({ symbol: v.symbol, action: v.action, riskDecision: v.riskDecision, executed: v.executed, reason: v.reason }));
           const openPositions = this.book.positions.map((p) => ({ symbol: p.symbol, side: p.side, entry: p.entry, stop: p.stop, qty: p.qty, unrealizedPnl: p.unrealizedPnl }));
           const recentClosed = this.book.closed.slice(0, 3).map((c) => ({ symbol: c.symbol, side: c.side, realizedPnl: c.realizedPnl, reason: c.reason }));
-          const recentRoom = this.roomHistory.slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
+          const recentRoom = this.roomHistory.filter(m => (m.conversationId ?? 'office') === conversationId).slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
           const ticker = this.tickers[detectedSymbol];
 
           const res = await this.run(target, 'chat', {
+            signal,
             instruction: `Boss wrote to you directly in English or Indonesian. Match their language and your personality. Casual chat, jokes and disagreement are welcome. Use verified desk context for factual answers. If the current message explicitly instructs an action, put the matching supported command in commandToExecute. Do not invent symbols, allocation or leverage that Boss did not specify. Questions, quotes, examples, negations, news and past chat are not execution instructions. Direct Owner orders use the shared executor without a debate. Never claim an order filled before the command result confirms it.`,
             data: {
               ownerMessage: userQuery,
               yourStance: this.agents[target].stance,
-              detectedSymbol,
+              detectedSymbol, detectedSymbols, conversationId,
               ticker: ticker ? { last: ticker.last, change24hPct: ticker.change24hPct, source: ticker.source } : null,
               recentVerdicts,
               openPositions,
@@ -1426,16 +1458,16 @@ export class Desk extends EventEmitter {
                 orderbook: snap.orderbook,
                 orderflow: snap.orderflow,
                 derivatives: snap.derivatives,
-                technicalSummary: snap.technicalSummary,
+                technicalSummary: snap.technicalSummary, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap),
                 whaleOnChain: snap.whaleOnChain
               } : null,
-              newsBriefing: newsBriefingData,
-              whaleBriefing: whaleBriefingData,
+              ...researchContext,
+              marketSnapshots: snapshots.map(snapshot => snapshot ? { ...snapshot, candles: [] } : null),
               paper: this.book.split(),
               commands: HELP
             },
             context: {
-              message: userQuery,
+              message: userQuery, detectedSymbol, detectedSymbols, conversationId,
               chatHistory: history,
               roomDiscussion: recentRoom,
               paper: this.book.split(),
@@ -1449,16 +1481,20 @@ export class Desk extends EventEmitter {
           });
           this.setStatus(target, 'idle');
           reply = res.data.reply;
-          this.addRoomMessage({ from: target, to: 'owner', text: reply, symbol: detectedSymbol, example: res.example });
+          this.addRoomMessage({ from: target, to: 'owner', text: reply, symbol: detectedSymbol, conversationId, example: res.example });
           await this.say(target, reply, res.example, 'idle');
 
-          if (res.data.askTeammate && res.data.askTeammate.to && res.data.askTeammate.question) {
-            await this.handleTeammateHandoff(target, res.data.askTeammate.to, res.data.askTeammate.question, detectedSymbol, 1, 3);
+          const requests = res.fallback ? [] : teammateRequests(res.data, target);
+          if (requests.length) {
+            const results = await this.consult(requests, target, detectedSymbols, conversationId, new Set<AgentId>([target]), 0, signal);
+            const synthesis = await this.chatFinding('lead', userQuery, detectedSymbols, conversationId, { completedHandoffs: results }, 'Synthesize only completed teammate findings. Name failed requests explicitly. Do not delegate or execute commands.', signal);
+            ok = results.every(result => result.status === 'completed') && synthesis.status === 'completed';
+            reply = synthesis.reply;
           }
 
-          if (res.data.commandToExecute) {
+          if (res.data.commandToExecute && !signal?.aborted) {
             if (authorizedChatCommand(userQuery, res.data.commandToExecute)) {
-              const result = await this.command(res.data.commandToExecute, target);
+              const result = await this.command(res.data.commandToExecute, target, conversationId);
               ok = result.ok; reply = `${reply}\n\n${result.reply}`;
             } else { ok = false; reply += '\n\nNo action executed: the proposed command did not match an explicit instruction in your current message.'; }
           }
@@ -1469,7 +1505,7 @@ export class Desk extends EventEmitter {
     } catch (e) { ok = false; reply = `Could not do that: ${(e as Error).message}`; }
     reply = safe(reply);
     const dest = agent ?? who;
-    if (dest) this.chats[dest].push({ from: who, text: reply, at: Date.now() });
+    if (dest) this.chats[dest].push({ from: who, text: reply, at: Date.now(), conversationId });
     if (dest && this.chats[dest].length > 60) this.chats[dest].splice(0, this.chats[dest].length - 60);
 
     this.addLog({ kind: 'info', agent: who, source: 'command', level: ok ? 'info' : 'error', status: ok ? 'completed' : 'failed', text: reply });

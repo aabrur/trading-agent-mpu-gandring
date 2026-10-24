@@ -19,37 +19,38 @@ export const FALLBACK: { [K in TaskKind]: Out<K> } = {
   chat: { reply: 'I could not put together a valid answer just now. Try again.' }
 };
 
-export interface RunResult<K extends TaskKind> { data: Out<K>; fallback: boolean; example: boolean; provider: string; model: string; attempts: number }
+export interface RunResult<K extends TaskKind> { data: Out<K>; fallback: boolean; example: boolean; provider: string; model: string; attempts: number; failureKind?: 'schema' | 'provider' | 'timeout' | 'rate_limit' | null; lastError?: string }
 
 export async function runAgent<K extends TaskKind>(
   cfg: AppConfig, call: ModelCaller, agent: AgentId, task: K,
-  input: { instruction: string; data: Record<string, unknown>; context: Record<string, unknown>; extraSystem?: string }
+  input: { instruction: string; data: Record<string, unknown>; context: Record<string, unknown>; extraSystem?: string; signal?: AbortSignal }
 ): Promise<RunResult<K>> {
   const { provider, model } = cfg.agents[agent];
   const system = systemPrompt(agent, input.extraSystem);
   const baseUser = [input.instruction, fenceData('desk', input.data), `Respond with JSON only: ${SCHEMA_HINTS[task]}`].join('\n\n');
   const schema = SCHEMAS[task] as Schemas[K];
   let lastErr = '';
-  let lastRaw = '';
+  let lastFailureKind: 'schema' | 'provider' | 'timeout' | 'rate_limit' | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (input.signal?.aborted) throw new Error('Model request cancelled');
     const user = attempt === 1 ? baseUser : `${baseUser}\n\nYour previous reply was invalid (${lastErr}). Send only the JSON object.`;
     try {
-      const raw = await call({ agent, task, provider, model, system, user, context: input.context, attempt });
-      lastRaw = raw;
+      const raw = await call({ agent, task, provider, model, system, user, context: input.context, attempt, signal: input.signal });
       const parsed = schema.safeParse(extractJson(raw, task));
-      if (parsed.success) return { data: parsed.data as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: attempt };
+      if (parsed.success) return { data: parsed.data as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: attempt, failureKind: null };
+      lastFailureKind = 'schema';
       lastErr = parsed.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     } catch (e) {
-      lastErr = safe((e as Error).message).slice(0, 120);
+      const msg = (e as Error).message;
+      if (/timeout|timed out/i.test(msg)) lastFailureKind = 'timeout';
+      else if (/429|rate limit/i.test(msg)) lastFailureKind = 'rate_limit';
+      else lastFailureKind = 'provider';
+      lastErr = safe(msg).slice(0, 120);
     }
     log(`[agent:${agent}] ${task} attempt ${attempt} invalid: ${lastErr}`);
-  }
-  if (task === 'chat' && lastRaw.trim()) {
-    const clean = lastRaw.trim().replace(/^```(?:json|markdown)?/i, '').replace(/```$/, '').trim();
-    return { data: { reply: clean, askTeammate: null } as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: 2 };
   }
   const fallback = task === 'risk'
     ? { ...FALLBACK.risk, reason: `${FALLBACK.risk.reason} Validation: ${safe(lastErr).slice(0, 240)}` }
     : FALLBACK[task];
-  return { data: fallback as Out<K>, fallback: true, example: provider === 'mock', provider, model, attempts: 2 };
+  return { data: fallback as Out<K>, fallback: true, example: provider === 'mock', provider, model, attempts: 2, failureKind: lastFailureKind, lastError: lastErr };
 }

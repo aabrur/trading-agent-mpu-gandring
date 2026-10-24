@@ -14,6 +14,13 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
 
+## Multi-Agent Collaboration, Market Intelligence & Frontier Model Optimization (v0.0.0.3.20)
+
+- **Multi-Agent Collaboration**: Structured teammate handoffs with `askTeammates`, parallel fan-out for independent calls, bounded recursion, and explicit Desk Lead synthesis.
+- **Sticky Symbol Memory**: Conversation-scoped symbol context ensuring follow-up queries retain the active asset without being hijacked by background auto-trading cycles.
+- **Microstructure & Tactical Intelligence**: Chronological CVD calculation across 1m, 5m, and 15m intervals, order-flow divergence detection, native Aster depth/trades collection, and non-self-referential swing confirmation.
+- **Frontier AI Model Optimization**: Curated October 2026 model catalog (Anthropic Claude 5.5, OpenAI GPT-6.1, Google Gemini 4 Argon, DeepSeek v4.1, Z-AI GLM 5.3, Kimi k3, MiniMax m3.1), native JSON schema enforcement, model preset profiles (Performance-First and Cost-Optimized), and a model benchmark harness with cost budgeting.
+
 ## System Log, History and Office discussion (v0.0.0.3.19)
 
 - **Log** contains system diagnostics with separate filters for Tools, MCP, Plugins, Processes, Frontend, Backend, and errors/warnings. Entries show their source, status, timestamp and duration when available.

@@ -95,6 +95,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     });
     next();
   });
+  app.use('/api/command', express.json({ limit: '256kb' }));
   app.use(express.json({ limit: '32kb' }));
   app.post('/api/logs/client', (req, res) => {
     const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
@@ -107,8 +108,29 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   });
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, app: 'trading-agent-mpu-gandring', version: APP_VERSION, mode: cfg.tradingMode, appMode: cfg.appMode, exchange: cfg.live?.exchange ?? cfg.exchange.name, killed: desk.killed, tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off', agentEvents: cfg.agentEvents.enabled ? 'on' : 'off', marketSource: cfg.marketSource, bridge: cfg.bridge.enabled ? 'on' : 'off',
-      agents: Object.fromEntries(AGENT_IDS.map((id) => [id, cfg.appMode === 'grokbot' ? { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false } : { provider: cfg.agents[id].provider, model: cfg.agents[id].model, fellBackToMock: cfg.agents[id].fellBackToMock }])) });
+    const fellBackAgents = cfg.appMode !== 'grokbot' ? AGENT_IDS.filter((id) => cfg.agents[id].fellBackToMock) : [];
+    res.json({
+      ok: true, app: 'trading-agent-mpu-gandring', version: APP_VERSION, mode: cfg.tradingMode, appMode: cfg.appMode,
+      exchange: cfg.live?.exchange ?? cfg.exchange.name,
+      killed: desk.killed,
+      tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off',
+      agentEvents: cfg.agentEvents.enabled ? 'on' : 'off',
+      marketSource: cfg.marketSource,
+      bridge: cfg.bridge.enabled ? 'on' : 'off',
+      agents: Object.fromEntries(AGENT_IDS.map((id) => [id, cfg.appMode === 'grokbot' ? { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false } : { provider: cfg.agents[id].provider, model: cfg.agents[id].model, fellBackToMock: cfg.agents[id].fellBackToMock }])),
+      providers: {
+        warnings: fellBackAgents.length ? `Agents falling back to mock: ${fellBackAgents.join(', ')}` : null,
+        states: Object.fromEntries(AGENT_IDS.map((id) => {
+          const a = cfg.agents[id];
+          return [id, {
+            provider: a.provider,
+            model: a.model,
+            fellBackToMock: a.fellBackToMock,
+            status: a.provider === 'mock' ? (a.fellBackToMock ? 'FELL_BACK_TO_MOCK' : 'MOCK_SELECTED') : (a.provider === 'local' ? 'LOCAL_ACCOUNT' : 'CONFIGURED')
+          }];
+        }))
+      }
+    });
   });
   app.get('/api/state', (_req, res) => res.json(desk.snapshot()));
   app.get('/api/jev', (_req, res) => res.json({ ok: true, ...desk.jev.status(), lastDecision: desk.jevLast }));
@@ -200,11 +222,17 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
     if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });
     const text = String(req.body?.text ?? '');
-    if (text.length > 2500) return res.status(400).json({ ok: false, error: 'Message exceeds 2500 characters' });
+    if (text.length > 32000) return res.status(400).json({ ok: false, error: 'Message exceeds 32000 characters' });
     const agent = req.body?.agent as AgentId | undefined;
     if (!text.trim()) return res.status(400).json({ ok: false, error: 'empty command' });
     if (agent && !AGENT_IDS.includes(agent)) return res.status(400).json({ ok: false, error: 'unknown agent' });
-    res.json(await desk.command(text, agent));
+    const conversationId = req.body?.conversationId ?? 'office';
+    if (typeof conversationId !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(conversationId)) return res.status(400).json({ ok: false, error: 'Invalid conversation id' });
+    const controller = new AbortController();
+    const cancel = () => { if (!res.writableEnded) controller.abort(); };
+    res.once('close', cancel);
+    try { res.json(await desk.command(text, agent, conversationId, controller.signal)); }
+    finally { res.removeListener('close', cancel); }
   });
 
   app.get('/api/reports', (_req, res) => res.json({ reports: desk.reports.slice(0, 50) }));

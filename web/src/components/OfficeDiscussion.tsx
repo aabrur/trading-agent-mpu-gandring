@@ -56,7 +56,7 @@ export function OfficeDiscussion({ state, latest, onSelect, command }: { state: 
           <option value="all">{lang === 'id' ? 'Semua agen' : 'All agents'}</option>
           {Object.values(state.agents).map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
         </select></label>
-        <textarea aria-label="Discussion message" placeholder={lang === 'id' ? 'Tulis pesan untuk meja trading…' : 'Message the desk…'} value={text} maxLength={2495} rows={2} disabled={busy} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+        <textarea aria-label="Discussion message" name="discussion-message" placeholder={lang === 'id' ? 'Tulis pesan untuk meja trading…' : 'Message the desk…'} value={text} maxLength={31995} rows={2} disabled={busy} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
         <button type="submit" disabled={!command || busy || !text.trim()} aria-busy={busy}>{busy ? (lang === 'id' ? 'Mengirim…' : 'Sending…') : (lang === 'id' ? 'Kirim' : 'Send')}</button>
         {error && <p role="alert">{error}</p>}
       </form>
