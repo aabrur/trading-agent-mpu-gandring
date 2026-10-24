@@ -2,7 +2,7 @@ import type { AgentId } from './types.js';
 import { AGENT_IDS } from './config.js';
 import { normSymbol } from './commands.js';
 
-export interface TeammateRequest { to: AgentId; question: string; symbol?: string }
+export interface TeammateRequest { to: AgentId; question: string; symbol?: string | null }
 export interface HandoffResult { agent: AgentId; reply: string; status: 'completed' | 'failed' | 'cancelled'; durationMs: number; error?: string }
 
 /** Only current authored prose is eligible, never quoted examples or fenced data. */

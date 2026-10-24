@@ -18,6 +18,9 @@ All notable changes to Trading Agent Mpu Gandring are documented in this file.
 - LIVE capital availability reporting now derives from exchange-confirmed account balances rather than paper book state.
 - Tactical breakout and reversal swing validation corrected to use historical swing points without self-referential test-candle lookbacks.
 - Desk Lead synthesis in huddles now only triggers when the Desk Lead is targeted or when addressing the full desk.
+- Strict JSON Schema compatibility corrected for `risk` (pure root object) and `chat` (nullable fields in required array) for OpenAI and OpenRouter strict structured outputs.
+- OpenRouter structured outputs now pass `provider: { require_parameters: true }` to enforce endpoint capability routing.
+- Benchmark harness (`cli/bench-models.ts`) upgraded to test all 6 desk agents, enforce a hard spending ceiling via `--budget-usd`, and compute true directional consensus across agents.
 
 ## [v0.0.0.3.19] - 2026-10-23
 - System Log separates Tools, MCP, Plugins, Processes, and frontend/backend diagnostics.

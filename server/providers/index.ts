@@ -61,14 +61,32 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
         };
         if (params.reasoningEffort) body.reasoning_effort = params.reasoningEffort;
         if (params.temperature !== undefined) body.temperature = params.temperature;
-        if (params.responseFormat) body.response_format = params.responseFormat;
+        if (params.responseFormat) {
+          body.response_format = params.responseFormat;
+          if (provider === 'openrouter') {
+            body.provider = { ...((body.provider as Record<string, unknown>) || {}), require_parameters: true };
+          }
+        }
 
         try {
           const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
           return String(data?.choices?.[0]?.message?.content ?? '');
         } catch (err) {
           if (body.response_format && String((err as Error).message).includes('400')) {
+            // First attempt graceful downgrade to json_object before stripping format entirely
+            if (typeof body.response_format === 'object' && 'type' in body.response_format && body.response_format.type === 'json_schema') {
+              body.response_format = { type: 'json_object' };
+              try {
+                const retryJson = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
+                return String(retryJson?.choices?.[0]?.message?.content ?? '');
+              } catch {
+                // If json_object also rejects with 400, proceed to prompt-only fallback
+              }
+            }
             delete body.response_format;
+            if (body.provider && typeof body.provider === 'object') {
+              delete (body.provider as Record<string, unknown>).require_parameters;
+            }
             const retry = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
             return String(retry?.choices?.[0]?.message?.content ?? '');
           }

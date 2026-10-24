@@ -60,7 +60,7 @@ export const ChatSchema = z.object({
   askTeammates: z.array(z.object({
     to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),
     question: z.string().trim().min(1).max(2000),
-    symbol: z.string().regex(/^[A-Z0-9]{2,24}$/).optional()
+    symbol: z.string().regex(/^[A-Z0-9]{2,24}$/).nullable().optional()
   })).max(5).nullable().optional(),
   askTeammate: z.object({
     to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),

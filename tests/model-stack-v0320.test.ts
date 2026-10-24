@@ -81,13 +81,41 @@ describe('Frontier Model Stack & Capabilities (v0.0.0.3.20)', () => {
     expect(standardParams.temperature).toBe(0.2);
   });
 
-  it('produces valid task json schemas for all task kinds without transform errors', () => {
+  it('produces strict OpenAI-compliant JSON schemas with root type object and complete required arrays', () => {
     const tasks = ['opinion', 'research', 'rebuttal', 'lead', 'risk', 'review', 'chat'] as const;
     for (const task of tasks) {
-      const schema = getTaskJsonSchema(task);
+      const schema = getTaskJsonSchema(task) as {
+        type?: string;
+        properties?: Record<string, unknown>;
+        required?: string[];
+        additionalProperties?: boolean;
+        anyOf?: unknown[];
+        oneOf?: unknown[];
+      };
       expect(schema).toBeDefined();
-      expect(typeof schema).toBe('object');
+      expect(schema.type).toBe('object');
+      expect(schema.additionalProperties).toBe(false);
+      expect(schema.anyOf).toBeUndefined();
+      expect(schema.oneOf).toBeUndefined();
+      expect(schema.properties).toBeDefined();
+      expect(schema.required).toBeDefined();
+
+      // In strict mode, every property key must be declared in required
+      const propKeys = Object.keys(schema.properties ?? {});
+      for (const key of propKeys) {
+        expect(schema.required).toContain(key);
+      }
     }
+
+    // Explicit check for risk schema
+    const riskSchema = getTaskJsonSchema('risk') as any;
+    expect(riskSchema.type).toBe('object');
+    expect(riskSchema.required).toEqual(['decision', 'sizeFactor', 'leverage', 'stopPct', 'reason']);
+
+    // Explicit check for chat schema
+    const chatSchema = getTaskJsonSchema('chat') as any;
+    expect(chatSchema.type).toBe('object');
+    expect(chatSchema.required).toEqual(['reply', 'commandToExecute', 'askTeammates', 'askTeammate']);
   });
 
   it('captures failureKind on schema parse failure vs provider network error', async () => {
@@ -135,26 +163,50 @@ describe('Frontier Model Stack & Capabilities (v0.0.0.3.20)', () => {
     expect(providerRes.lastError).toContain('HTTP 500');
   });
 
-  it('benchmarks models with dry-run and refuses live benchmark without budget', async () => {
+  it('benchmarks all six agents with dry-run and calculates true directional consensus', async () => {
     // Should throw if not dry-run and no budget
     await expect(runStackBenchmark('performance', false, 0)).rejects.toThrow(
       /explicit --budget-usd > 0/
     );
 
-    // Should succeed on dry-run
+    // Dry run should execute all 6 desk agents
     const metrics = await runStackBenchmark('performance', true, 0);
     expect(metrics.stack).toBe('performance');
-    expect(metrics.totalCalls).toBeGreaterThan(0);
-    expect(metrics.validJsonCount).toBe(metrics.totalCalls);
-    expect(metrics.schemaCompliantCount).toBe(metrics.totalCalls);
+    expect(metrics.totalCalls).toBe(6);
+    expect(metrics.validJsonCount).toBe(6);
+    expect(metrics.schemaCompliantCount).toBe(6);
+    expect(metrics.directionalAgreementPct).toBe(100);
     expect(metrics.retriesCount).toBe(0);
+    expect(metrics.budgetExceeded).toBe(false);
+
+    // Verify consensus calculation when all agents vote SHORT
+    const shortCaller = async (req: any) => {
+      if (req.task === 'opinion') return JSON.stringify({ stance: 'SHORT', confidence: 0.9, argument: 'Bearish divergence.' });
+      if (req.task === 'research') return JSON.stringify({ vote: 'SHORT', confidence: 0.85, argument: 'Heavy distribution.', sources: ['whales'] });
+      if (req.task === 'lead') return JSON.stringify({ action: 'OPEN_SHORT', confidence: 0.9, reason: 'Trend reversal.' });
+      if (req.task === 'risk') return JSON.stringify({ decision: 'APPROVE', sizeFactor: 1, leverage: 5, stopPct: 2, reason: 'Controlled risk.' });
+      return JSON.stringify({ reply: 'Short bias noted.' });
+    };
+
+    const shortMetrics = await runStackBenchmark('cost', true, 0, shortCaller);
+    expect(shortMetrics.directionalAgreementPct).toBe(100);
+  });
+
+  it('enforces hard budget ceiling in benchmark runner', async () => {
+    // A live caller with a micro-budget of 0.000001 USD must halt before completing all tasks
+    const dummyCaller = async () => JSON.stringify({ stance: 'LONG', confidence: 0.8, argument: 'Test' });
+    const tightBudgetMetrics = await runStackBenchmark('cost', false, 0.000001, dummyCaller);
+    expect(tightBudgetMetrics.budgetExceeded).toBe(true);
+    expect(tightBudgetMetrics.totalCalls).toBe(6);
+    expect(tightBudgetMetrics.validJsonCount).toBeLessThan(6);
   });
 
   it('parses bench CLI arguments correctly', () => {
-    const args = parseArgs(['--stack', 'performance', '--budget-usd', '5', '--dry-run', '--json']);
+    const args = parseArgs(['--stack', 'performance', '--budget-usd', '5', '--dry-run', '--fixtures', 'data/sample/news.json', '--json']);
     expect(args.stack).toBe('performance');
     expect(args.budgetUsd).toBe(5);
     expect(args.dryRun).toBe(true);
+    expect(args.fixtures).toBe('data/sample/news.json');
     expect(args.json).toBe(true);
   });
 });

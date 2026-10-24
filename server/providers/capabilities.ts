@@ -12,24 +12,30 @@ import {
 import type { ProviderName } from '../config.js';
 
 const text = z.string().min(1).max(1500);
-const RiskSizing = z.object({
-  decision: z.enum(['APPROVE', 'REDUCE']),
+// Root object schema for Risk in strict mode (OpenAI and OpenRouter strict structured outputs require root type: object).
+const StrictRiskJsonSchema = z.object({
+  decision: z.enum(['APPROVE', 'REDUCE', 'REJECT']),
   sizeFactor: z.number().min(0).max(1),
   leverage: z.number().min(1).max(125),
-  stopPct: z.number().finite().positive().max(50),
+  stopPct: z.number().min(0).max(50),
   reason: text
 });
 
-const RiskJsonSchema = z.discriminatedUnion('decision', [
-  RiskSizing,
-  z.object({
-    decision: z.literal('REJECT'),
-    sizeFactor: z.number().min(0).max(1).optional(),
-    leverage: z.number().min(1).max(125).optional(),
-    stopPct: z.number().finite().nonnegative().max(50).optional(),
-    reason: text
-  })
-]);
+const StrictTeammateQuestion = z.object({
+  to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),
+  question: z.string().min(1).max(2000),
+  symbol: z.string().regex(/^[A-Z0-9]{2,24}$/).nullable()
+});
+
+const StrictChatJsonSchema = z.object({
+  reply: z.string().min(1).max(64000),
+  commandToExecute: z.string().trim().min(1).max(200).nullable(),
+  askTeammates: z.array(StrictTeammateQuestion).max(5).nullable(),
+  askTeammate: z.object({
+    to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),
+    question: z.string().min(1).max(2000)
+  }).nullable()
+});
 
 export function getTaskJsonSchema(task: TaskKind): Record<string, unknown> {
   switch (task) {
@@ -42,11 +48,11 @@ export function getTaskJsonSchema(task: TaskKind): Record<string, unknown> {
     case 'lead':
       return z.toJSONSchema(LeadSchema);
     case 'risk':
-      return z.toJSONSchema(RiskJsonSchema);
+      return z.toJSONSchema(StrictRiskJsonSchema);
     case 'review':
       return z.toJSONSchema(ReviewSchema);
     case 'chat':
-      return z.toJSONSchema(ChatSchema);
+      return z.toJSONSchema(StrictChatJsonSchema);
   }
 }
 
@@ -72,7 +78,8 @@ const OPENROUTER_STRUCTURED_MODELS = new Set([
 
 export function supportsStrictJsonSchema(provider: ProviderName, model: string): boolean {
   if (provider === 'openrouter') {
-    return OPENROUTER_STRUCTURED_MODELS.has(model);
+    return OPENROUTER_STRUCTURED_MODELS.has(model) ||
+      /^(anthropic\/claude-[35]|openai\/gpt-[456]|google\/gemini-[124]|deepseek\/deepseek|z-ai\/glm|moonshotai\/kimi|xiaomi\/mimo|minimax\/minimax|qwen\/qwen|mistralai\/mistral)/.test(model);
   }
   if (provider === 'openai') {
     return /^(gpt-6|gpt-5|gpt-4o|gpt-4\.1|o1|o3|o4)/.test(model);
