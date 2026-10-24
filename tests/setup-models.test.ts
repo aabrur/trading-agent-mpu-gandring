@@ -29,12 +29,12 @@ describe('curated provider and model setup', () => {
     expect(entries.length).toBe(12);
     for (const [p, models] of entries) {
       if (p === 'mock') expect(models.length).toBe(1);
-      else if (p === 'local') expect(models.length).toBe(23);
+      else if (p === 'local') expect(models.length).toBe(LOCAL_AGENTS.flatMap((a) => a.models).length);
       else expect(models.length).toBe(20);
       expect(new Set(models.map((m) => m.id)).size).toBe(models.length);
       expect(models.filter((m) => m.tags.some((t) => t.startsWith('Free'))).length).toBeLessThanOrEqual(6);
       expect(models.some((m) => /image|tts|embedding|:batch/.test(m.id))).toBe(false);
-      if (!['openrouter', 'together', 'fireworks'].includes(p)) expect(models.some((m) => m.id.includes('/'))).toBe(false);
+      if (!['openrouter', 'together', 'fireworks', 'local'].includes(p)) expect(models.some((m) => m.id.includes('/'))).toBe(false);
     }
     const info = modelSetupInfo({ DEFAULT_PROVIDER: 'openai', OPENAI_API_KEY: 'secret-not-for-output' });
     expect(info.usageSource.asOf).toBe('2026-10-16');

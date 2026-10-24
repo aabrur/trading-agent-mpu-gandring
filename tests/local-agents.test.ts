@@ -1,17 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { LOCAL_AGENTS, localArgs, localEnvironment, localExecutable, localLoginStatus, localReply, localSelection, runLocalAgent } from '../server/providers/local.js';
+import { LOCAL_AGENTS, localAgentSettings, localAgentSettingsUpdate, localArgs, localEnvironment, localExecutable, localLoginStatus, localReply, localSelection, runLocalAgent } from '../server/providers/local.js';
 import { loadConfig } from '../server/config.js';
 import { savePreferences } from '../server/setup/preferences.js';
 import { setEnv, readEnv } from '../cli/envfile.js';
 
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 describe('existing agent integration', () => {
-  it.each(LOCAL_AGENTS.map((agent) => agent.id))('confirms %s only after native auth or a valid model reply', async (id) => {
+  it.each(LOCAL_AGENTS.map((agent) => [agent.id, agent.bin] as const))('confirms %s only after native auth or a valid model reply', async (id, name) => {
     const folder = mkdtempSync(path.join(tmpdir(), 'mpu-login-check-'));
-    const name = id === 'antigravity' ? 'agy' : id;
     const entry = path.join(folder, process.platform === 'win32' ? 'fake.js' : name);
     if (process.platform === 'win32') writeFileSync(path.join(folder, `${name}.cmd`), '@"%dp0%\\fake.js"');
     const script = (source: string) => writeFileSync(entry, process.platform === 'win32' ? source : `#!${process.execPath}\n${source}`, { mode: 0o755 });
@@ -56,6 +55,66 @@ describe('existing agent integration', () => {
     expect(localArgs('grok', 'default', 'folder').args).toEqual(expect.arrayContaining(['--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']));
     expect(localArgs('antigravity', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--dangerously-skip-permissions', '--disable-slash-commands', '--output-format', 'json', '--print', 'hello']));
     expect(localArgs('antigravity', 'gemini-3.8-flash-high', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--model', 'gemini-3.8-flash-high', '--print', 'hello']));
+  });
+  it('runs the added agents in their non-acting modes', () => {
+    const hermes = localArgs('hermes', 'default', 'folder', 'hello').args;
+    expect(hermes).toEqual(expect.arrayContaining(['-z', 'hello', '--safe-mode', '-t', 'todo']));
+    expect(hermes).not.toContain('--yolo');
+    expect(localArgs('openclaw', 'default', 'folder', 'hello').args).toEqual(['infer', 'model', 'run', '--local', '--prompt', 'hello']);
+    expect(localArgs('copilot', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['-p', 'hello', '-s', '--available-tools', '--disable-builtin-mcps']));
+    expect(localArgs('copilot', 'default', 'folder', 'hello').args.join(' ')).not.toMatch(/allow-all|yolo/);
+    const cursor = localArgs('cursor', 'auto', 'folder', 'hello').args;
+    expect(cursor).toEqual(expect.arrayContaining(['-p', '--mode', 'ask', '--output-format', 'json', '--model', 'auto']));
+    expect(cursor.at(-1)).toBe('hello');
+    expect(cursor.join(' ')).not.toMatch(/--force|--yolo/);
+    expect(localArgs('qwen', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--approval-mode', 'plan', '-p', 'hello']));
+    const opencode = localArgs('opencode', 'default', 'folder', 'hello');
+    expect(opencode.args).toEqual(['run', '--format', 'json']);
+    expect(JSON.parse(opencode.env.OPENCODE_CONFIG_CONTENT).permission['*']).toBe('deny');
+    expect(localArgs('muse', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['exec', '--prompt-file', path.join('folder', 'prompt.txt')]));
+    expect(localArgs('muse', 'default', 'folder', 'hello').args.join(' ')).not.toMatch(/disable-approval|yolo/);
+  });
+  it('applies per-agent effort and provider only where the CLI supports them', () => {
+    expect(localArgs('hermes', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'high', provider: 'openrouter' }).args).toEqual(expect.arrayContaining(['--reasoning', 'high', '--provider', 'openrouter']));
+    expect(localArgs('copilot', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'low' }).args).toEqual(expect.arrayContaining(['--reasoning-effort', 'low']));
+    expect(localArgs('openclaw', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'adaptive' }).args).toEqual(expect.arrayContaining(['--thinking', 'adaptive']));
+    expect(localArgs('claude', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'high' }).args).not.toContain('high');
+  });
+  it('validates and stores per-agent settings without touching other agents', () => {
+    const saved = localAgentSettingsUpdate('hermes', { model: 'anthropic/claude-sonnet-5-5', effort: 'high', provider: 'openrouter' }, { LOCAL_AGENT_SETTINGS: JSON.stringify({ codex: { model: 'gpt-6-astra' } }) });
+    expect(JSON.parse(saved)).toEqual({ codex: { model: 'gpt-6-astra' }, hermes: { model: 'anthropic/claude-sonnet-5-5', effort: 'high', provider: 'openrouter' } });
+    expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: saved }).hermes?.effort).toBe('high');
+    expect(JSON.parse(localAgentSettingsUpdate('hermes', { model: 'default' }, { LOCAL_AGENT_SETTINGS: saved })).hermes).toBeUndefined();
+    expect(() => localAgentSettingsUpdate('claude', { effort: 'high' })).toThrow();
+    expect(() => localAgentSettingsUpdate('copilot', { effort: 'ultra' })).toThrow();
+    expect(() => localAgentSettingsUpdate('codex', { provider: 'openrouter' })).toThrow();
+    expect(() => localAgentSettingsUpdate('codex', { model: '--yolo' })).toThrow();
+    expect(() => localAgentSettingsUpdate('unknown', {})).toThrow();
+    expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: '{"claude":{"effort":"high"},"hermes":{"provider":"--x"}}' })).toEqual({});
+    expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: 'not json' })).toEqual({});
+  });
+  it('finds npm shims whose entry script has no extension, like Kilo and Cline', () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'mpu-npm-shim-'));
+    const entry = path.join(folder, 'node_modules', '@kilocode', 'cli', 'bin', 'kilo');
+    mkdirSync(path.dirname(entry), { recursive: true });
+    writeFileSync(entry, '#!/usr/bin/env node\nconsole.log("kilo")\n');
+    writeFileSync(path.join(folder, 'kilo.cmd'), '@ECHO off\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n)\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@kilocode\\cli\\bin\\kilo" %*\r\n');
+    writeFileSync(path.join(folder, 'cline.cmd'), '"%_prog%"  "%dp0%\\node_modules\\cline\\bin\\cline" %*\r\n');
+    mkdirSync(path.join(folder, 'node_modules', 'cline', 'bin'), { recursive: true });
+    writeFileSync(path.join(folder, 'node_modules', 'cline', 'bin', 'cline'), 'not a node script');
+    if (process.platform !== 'win32') return;
+    expect(localExecutable('kilo', { PATH: folder })).toEqual({ file: process.execPath, prefix: [entry] });
+    expect(localExecutable('cline', { PATH: folder })).toBeNull();
+  });
+  it('uses the saved default model when the desk selection is the configured model', async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'mpu-default-model-'));
+    const fake = `process.stdin.resume();process.stdin.on('end',()=>{const i=process.argv.indexOf('--model');console.log(JSON.stringify({reply:i<0?'none':process.argv[i+1]}));});`;
+    if (process.platform === 'win32') { writeFileSync(path.join(folder, 'claude.cmd'), '@"%dp0%\\fake.js"'); writeFileSync(path.join(folder, 'fake.js'), fake); }
+    else writeFileSync(path.join(folder, 'claude'), `#!${process.execPath}\n${fake}`, { mode: 0o755 });
+    vi.stubEnv('PATH', folder);
+    vi.stubEnv('LOCAL_AGENT_SETTINGS', JSON.stringify({ claude: { model: 'sonnet' } }));
+    expect(JSON.parse(await runLocalAgent('claude:default', 'x'))).toEqual({ reply: 'sonnet' });
+    expect(JSON.parse(await runLocalAgent('claude:opus', 'x'))).toEqual({ reply: 'opus' });
   });
   it('extracts model text from Codex, Claude, Kilo, Cline, and Antigravity envelopes', () => {
     const reply = '{"reply":"connected"}';

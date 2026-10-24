@@ -2,6 +2,18 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.3.22] - 2026-10-24
+
+### Added
+- Expanded local CLI agents catalog: Hermes Agent, OpenClaw, GitHub Copilot CLI, Cursor Agent, Qwen Code, OpenCode, and Muse Code alongside existing Codex, Claude Code, Pi, Kimi Code, Kilo, Cline, Grok Build, and Antigravity.
+- Integrated non-CLI external AI supervisors: Grok Bot, Claude Cowork / Desktop, Dot (New Computer), Muse (app), ChatGPT Agent, Manus, and Perplexity Comet with copyable prompt cards and supervisor poll endpoints.
+- Per-agent isolated settings drawer: customize temperature, top_p, and custom CLI invocation arguments per agent with full persistence and reset capabilities.
+- Live topbar version indicator `v0.0.0.3.22` and Bybit `V` badge beside venue indicators.
+
+### Changed
+- Refactored Local CLI agent card layout with clean status tags, dedicated drawer panels, and direct login commands.
+- Updated setup model catalog and documentation to reflect 15 supported CLI agents and 7 external supervisor integrations.
+
 ## [v0.0.0.3.20] - 2026-10-24
 
 ### Added

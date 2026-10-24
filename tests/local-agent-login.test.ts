@@ -10,9 +10,8 @@ vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('explicit agent login completion', () => {
-  it.each(LOCAL_AGENTS.map((agent) => agent.id))('%s cannot connect while login is pending or cancelled, even with an existing account', async (id) => {
+  it.each(LOCAL_AGENTS.map((agent) => [agent.id, agent.bin] as const))('%s cannot connect while login is pending or cancelled, even with an existing account', async (id, name) => {
     const folder = mkdtempSync(path.join(tmpdir(), 'mpu-login-lifecycle-'));
-    const name = id === 'antigravity' ? 'agy' : id;
     writeFileSync(path.join(folder, `${name}${process.platform === 'win32' ? '.cmd' : ''}`), process.platform === 'win32' ? '@"%dp0%\\fake.js"' : '', { mode: 0o755 });
     writeFileSync(path.join(folder, 'fake.js'), '');
     vi.stubEnv('PATH', folder);

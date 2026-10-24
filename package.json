@@ -1,12 +1,12 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.20",
-  "appVersion": "0.0.0.3.20",
+  "version": "0.3.22",
+  "appVersion": "0.0.0.3.22",
   "changelog": [
-    "Multi-agent structured collaboration and parallel handoffs across all desk agents.",
-    "Sticky symbol conversation memory and independent capital vs position-slot tracking.",
-    "Market microstructure engine with CVD, order-flow divergence, and Aster native data.",
-    "Frontier model catalog with native structured outputs, generation tuning, and benchmark harness."
+    "Expanded local CLI agents catalog with Hermes Agent, OpenClaw, GitHub Copilot CLI, Cursor Agent, Qwen Code, OpenCode, and Muse Code.",
+    "Integrated non-CLI external AI supervisors including Grok Bot, Claude Cowork, Dot, Muse, ChatGPT Agent, Manus, and Perplexity Comet with copyable prompts.",
+    "Per-agent isolated settings drawer for temperature, top_p, and custom inference flags.",
+    "Persistent version indicator v0.0.0.3.22 and Bybit V badge in the topbar brand metadata."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",

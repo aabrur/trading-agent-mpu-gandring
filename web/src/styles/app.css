@@ -527,6 +527,22 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 
 /* venue keys / connect wallet */
 .venue-badge { color: var(--text); }
+.venue-v-badge {
+  background: var(--card-2, rgba(255, 250, 240, 0.7));
+  color: var(--brass, #c9973c);
+  border-color: rgba(201, 151, 60, 0.35);
+  font-weight: 800;
+  font-size: 10px;
+  padding: 1px 7px;
+  letter-spacing: 0.05em;
+}
+.brand-meta .version-badge {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--panel-2, rgba(255, 255, 255, 0.5));
+  border-color: var(--line);
+}
 .wallet-pick { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 .wallet-pick select { border: 1.5px solid var(--line); background: var(--panel-2); border-radius: var(--radius-sm); padding: 7px 10px; font-weight: 700; }
 .wallet-actions { display: grid; gap: 8px; margin-bottom: 8px; }
@@ -621,7 +637,26 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .local-agent-pane-head p { flex: 1; min-width: 220px; margin: 0; }
 .setup-section > summary { cursor: pointer; font-weight: 800; padding: 12px 0; border-top: 1px solid var(--line); }
 .local-agent-list { display: grid; gap: 8px; margin: 4px 0; }
-.local-agent-row { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; background: var(--panel); }
+.local-agent-row { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s ease; }
+.local-agent-row:hover { border-color: var(--line-bright, #444); }
+.local-agent-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.local-agent-info { flex: 1; min-width: 240px; }
+.local-agent-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.local-agent-drawer { margin-top: 6px; padding: 10px; border-top: 1px dashed var(--line); background: var(--panel-2); border-radius: var(--radius-sm); display: grid; gap: 8px; }
+.local-agent-drawer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.local-agent-drawer label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; font-weight: 600; }
+.local-agent-drawer select, .local-agent-drawer input { padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 12px; }
+
+/* Non-CLI External Supervisors */
+.supervisor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 10px; margin-top: 8px; }
+.supervisor-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; background: var(--panel); display: flex; flex-direction: column; gap: 6px; }
+.supervisor-card-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.supervisor-card-title { font-weight: 800; font-size: 13px; color: var(--text); }
+.supervisor-card-desc { font-size: 11.5px; color: var(--text-dim); margin: 0; line-height: 1.4; }
+.supervisor-card-prompt { position: relative; margin-top: 4px; }
+.supervisor-card-prompt pre { margin: 0; font-size: 11px; max-height: 110px; overflow-y: auto; background: var(--bg); padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--line); line-height: 1.35; white-space: pre-wrap; word-break: break-word; }
+.supervisor-card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.copy-prompt-btn { font-size: 11px !important; padding: 3px 8px !important; min-height: 26px !important; }
 .supervisor-instructions { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); background: var(--bg); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--line); margin: 4px 0 0; }
 .panel.setup .setup-local-pane { font-size: 12px; line-height: 1.45; gap: 8px; }
 .panel.setup .setup-local-pane .pane-header h3 { font-size: 14px; margin: 0 0 4px; }

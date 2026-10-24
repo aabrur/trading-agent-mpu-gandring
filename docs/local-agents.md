@@ -12,6 +12,13 @@ Run `mpu`, open Setup, and expand **Connect an agent you already use**. Installe
 | Cline | `cline auth` | Cline's configured provider/model or exact CLI model ID |
 | Grok Build | `grok login` | Grok's configured model or exact CLI model ID |
 | Antigravity | `agy` | Configured model, catalog choices or exact CLI model ID |
+| Hermes Agent | `hermes setup` | Configured model, catalog models, reasoning effort, provider override |
+| OpenClaw | `openclaw configure` | Configured model, thinking level, provider/model ID |
+| GitHub Copilot | `copilot login` | Configured model, auto, reasoning effort, CLI model ID |
+| Cursor Agent | `cursor-agent login` | Configured model, auto, ask mode, CLI model ID |
+| Qwen Code | `qwen login` | Configured model, plan mode, CLI model ID |
+| OpenCode | `opencode login` | Configured model, sandboxed permissions, CLI model ID |
+| Muse Code | `muse login` | Configured model, prompt file execution, CLI model ID |
 
 After signing in and testing, choose **Agent on this computer**, then the local agent and model. Enable per-agent customization to mix connections. Save to apply the mapping to the running agents without restarting. Logging into a CLI does not assign it to the desk automatically. Model access and quota are checked by the CLI when called. Account eligibility, available models, quotas and billing are controlled by each agent's provider. The desk does not read or copy its OAuth tokens. Login opens an interactive terminal; Linux needs a terminal emulator. An agent available only as an editor extension needs its CLI installed first.
 

@@ -17,7 +17,7 @@ import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus } from 
 import { doctor } from './doctor.js';
 import { MODEL_KEY_ENV, modelSetupInfo, modelUpdates } from './models.js';
 import { setEnv } from '../../cli/envfile.js';
-import { localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection, localMcpInventory, localResearchActivity, validateResearchConnections } from '../providers/local.js';
+import { localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection, localMcpInventory, localResearchActivity, validateResearchConnections, localAgentSettings, localAgentSettingsUpdate } from '../providers/local.js';
 import { ResearchPolicyBody, researchPolicy } from '../providers/research-policy.js';
 import { preferencesInfo, savePreferences } from './preferences.js';
 import { extractJson, SCHEMAS } from '../schemas.js';
@@ -126,7 +126,21 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   });
   app.get('/api/setup/local-agents', (req, res) => {
     if (!gate(req, res)) return;
-    res.json({ ok: true, agents: localAgentStatus() });
+    res.json({ ok: true, agents: localAgentStatus(), settings: localAgentSettings(setupEnv(c.envFile)) });
+  });
+  app.post('/api/setup/local-agents/settings', (req, res) => {
+    if (!gate(req, res, true)) return;
+    const { id, settings } = req.body ?? {};
+    try {
+      const currentEnv = setupEnv(c.envFile);
+      const updatedJson = localAgentSettingsUpdate(String(id), settings ?? {}, currentEnv);
+      const updates = { LOCAL_AGENT_SETTINGS: updatedJson };
+      setEnv(c.envFile, updates);
+      Object.assign(process.env, updates);
+      res.json({ ok: true, detail: 'Agent settings saved.', settings: localAgentSettings(process.env) });
+    } catch (e) {
+      res.status(400).json({ ok: false, detail: (e as Error).message });
+    }
   });
   app.get('/api/setup/data-sources', (req, res) => {
     if (!gate(req, res)) return;

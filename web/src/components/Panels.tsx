@@ -93,7 +93,7 @@ export function TopBar({
       setRestartReply(lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
     } finally { setRestarting(false); }
   };
-  const ver = updateInfo?.currentVersion ?? '0.0.0.2.3';
+  const ver = updateInfo?.currentVersion ?? '0.0.0.3.22';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
   void onOpenTrakteer;
 
@@ -175,14 +175,14 @@ export function TopBar({
           <div className="brand-title-row">
             <h1>
               Trading Agent <span>Mpu Gandring</span>
-              {hasUpdate && onOpenUpdate && (
+              {onOpenUpdate && (
                 <button
-                  className="badge setup-btn version-btn update-avail-badge new-update-badge"
+                  className={`badge setup-btn version-btn${hasUpdate ? ' update-avail-badge new-update-badge' : ''}`}
                   onClick={onOpenUpdate}
-                  title={`${t('updateAvailable')}: v${updateInfo?.latestVersion}`}
+                  title={hasUpdate ? `${t('updateAvailable')}: v${updateInfo?.latestVersion}` : `Version v${ver}`}
                 >
-                  <i className="update-notif-dot" aria-hidden="true" />
-                  {t('newUpdateBadge')}
+                  {hasUpdate && <i className="update-notif-dot" aria-hidden="true" />}
+                  {hasUpdate ? t('newUpdateBadge') : `v${ver}`}
                 </button>
               )}
             </h1>
@@ -190,17 +190,31 @@ export function TopBar({
           </div>
           <div className="brand-meta">
             {state?.mode === 'LIVE'
-              ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}</span>
+              ? (
+                <>
+                  <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}</span>
+                  {(state.venue?.name === 'bybit' || state.live?.exchange === 'bybit') && <span className="badge venue-v-badge" title="Bybit V">V</span>}
+                </>
+              )
               : state?.mode === 'TESTNET'
-                ? <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
+                ? (
+                  <>
+                    <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
+                    {(state.venue?.name === 'bybit' || state.live?.exchange === 'bybit') && <span className="badge venue-v-badge" title="Bybit V">V</span>}
+                  </>
+                )
                 : <span className="badge paper" title="Simulated trades only">{t('paperMode')}</span>}
             {state?.auto?.on && <span className="badge auto-badge" title="Agents trade on their own, no approval step">AUTO · {state.auto.intervalMin}m</span>}
             {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
             {state?.killed && <span className="badge warn">{t('killSwitchOn')}</span>}
             {state?.dailyLoss?.hit && <span className="badge warn">{t('dailyLossStop')}</span>}
             {state?.venue && state.mode !== 'LIVE' && state.mode !== 'TESTNET' && (
-              <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}</span>
+              <>
+                <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}</span>
+                {state.venue.name === 'bybit' && <span className="badge venue-v-badge" title="Bybit V">V</span>}
+              </>
             )}
+            <span className="badge version-badge" title={`Trading Agent Mpu Gandring v${ver}`}>v{ver}</span>
             {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
           </div>
         </div>
