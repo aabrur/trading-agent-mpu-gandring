@@ -47,7 +47,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       case 'fireworks': {
         const base = cfg.baseUrls[provider].replace(/\/$/, '');
         const extra: Record<string, string> = provider === 'openrouter' ? {
-          'HTTP-Referer': 'https://github.com/aabrur/trading-agent-mpu-gandring',
+          'HTTP-Referer': cfg.openrouterHttpReferer,
           'X-Title': 'Trading Agent Mpu Gandring',
           'X-OpenRouter-Title': 'Trading Agent Mpu Gandring'
         } : {};

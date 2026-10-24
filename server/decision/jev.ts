@@ -190,7 +190,7 @@ export async function submitDecisions(opts: {
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${opts.key}`,
-        'HTTP-Referer': 'https://github.com/aabrur/trading-agent-mpu-gandring',
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://aabrur.github.io/trading-agent-mpu-gandring/',
         'X-Title': 'Trading Agent Mpu Gandring',
         'X-OpenRouter-Title': 'Trading Agent Mpu Gandring'
       },

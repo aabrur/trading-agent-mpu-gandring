@@ -40,6 +40,7 @@ export interface AppConfig {
   tradingview: { widget: boolean; passphrase: string; webhookEnabled: boolean; prefix: string };
   news: { provider: 'sample' | 'cryptopanic'; key: string; baseUrl: string };
   port: number;
+  openrouterHttpReferer: string;
   keys: Record<ApiProviderName, string>;
   baseUrls: Record<'xai' | 'openai' | 'deepseek' | 'openrouter' | 'groq' | 'mistral' | 'together' | 'fireworks', string>;
   defaultModels: Record<ProviderName, string>;
@@ -152,6 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     tradingview: { widget: /^(1|on|yes|true)$/i.test(env.TRADINGVIEW_WIDGET ?? ''), passphrase: tvPass, webhookEnabled: !!tvPass, prefix: (env.TRADINGVIEW_EXCHANGE_PREFIX || 'BYBIT').trim().toUpperCase() },
     news: { provider: newsProvider as AppConfig['news']['provider'], key: (env.CRYPTOPANIC_API_KEY ?? '').trim(), baseUrl: (env.CRYPTOPANIC_BASE_URL || 'https://cryptopanic.com/api/developer/v2/posts/').trim() },
     port: num(env, 'PORT', 8787),
+    openrouterHttpReferer: (env.OPENROUTER_HTTP_REFERER || 'https://aabrur.github.io/trading-agent-mpu-gandring/').trim(),
     keys,
     baseUrls: {
       xai: env.XAI_BASE_URL || 'https://api.x.ai/v1',
