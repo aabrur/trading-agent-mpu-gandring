@@ -14,6 +14,32 @@ You watch all of it live in a little virtual office in your browser, and you can
 
 Screenshots use isolated PAPER/mock fixtures and simulated data. They demonstrate the interface, not exchange execution or trading results.
 
+## Verified Live Trading Results (Aster Perp DEX)
+
+Real money live execution on Aster perpetual DEX showing verified net profitability in full auto mode:
+
+<p align="center">
+  <img src="docs/prove/01-pnl-equity-curve.png" alt="Mpu Gandring Live PnL and Equity Curve" width="800" />
+</p>
+
+- **Net Profit**: +$10.66 (+35.41% ROI) in 4 days of continuous live operation.
+- **Account Equity**: Grew from initial capital to $30.11 with a steady upward equity curve.
+- **Total Trading Volume**: $6,734.12 across 122 completed trades.
+
+<p align="center">
+  <img src="docs/prove/02-perp-trade-summary.png" alt="Mpu Gandring Perp Trade Summary" width="800" />
+</p>
+
+- **Balanced Two-Way Execution**: 64 Longs and 58 Shorts. The agents adapt dynamically to market regimes instead of running one-directional bias.
+- **Strict Risk Compliance**: Zero liquidated positions, disciplined profit realization, and consistent fee coverage.
+
+<p align="center">
+  <img src="docs/prove/03-order-history-protected.png" alt="Mpu Gandring Protected Order History" width="800" />
+</p>
+
+- **Exchange-Side Stop Losses**: Every order (SUI, AVAX, HYPE, DOGE) rests verifiable trigger stops directly on exchange contracts.
+- **Privacy Protected**: Exact execution timestamps and explorer transaction hashes are masked to safeguard the owner's on-chain wallet address from correlation queries while keeping token pairs, trade sides, order types, and fill status transparent.
+
 ## Core Architecture & Capabilities (v0.0.0.3.20)
 
 - **Multi-Agent Collaboration**: Structured teammate handoffs with `askTeammates`, parallel fan-out for independent calls, bounded recursion, deduplication, and explicit Desk Lead synthesis.
