@@ -97,19 +97,70 @@ export class AutoTrader {
     try {
       if (d.cfg.learning.scan) d.scan();
       await d.closeStale(() => !cancelled());
-      // 1. Evaluate open positions first so any CLOSE decision frees up a slot out of N immediately.
-      const openSyms = [...new Set(d.book.positions.filter((p) => p.ownership !== 'external').map((p) => p.symbol))];
-      const ranking = (symbol: string) => { const evidence = d.opportunities[symbol]; return evidence && Date.now() - evidence.at < d.cfg.tickerRefreshSeconds * 3000 ? evidence.score : 0; };
-      const candidates = d.cfg.auto.symbols
-        .filter((s) => !openSyms.includes(s))
-        .sort((a, b) => ranking(b) - ranking(a));
-      const queue = [...openSyms, ...candidates];
-      for (const sym of queue) {
+
+      // PHASE A: Authoritative exchange reconciliation before determining the work queue
+      if (d.hasExecutor) {
+        try {
+          await d.syncLive();
+        } catch (e) {
+          log(`[auto] exchange reconciliation failed: ${safe((e as Error).message)}`);
+          d.recordError('exchange', `Reconciliation failed: ${(e as Error).message}`);
+        }
+      }
+
+      // PHASE B & C: Manage all existing managed open positions first
+      const managedPositions = d.book.positions.filter((p) => p.ownership !== 'external');
+      const openSyms = [...new Set(managedPositions.map((p) => p.symbol))];
+
+      for (const sym of openSyms) {
         if (cancelled()) break;
         for (let i = 0; d.debate && !cancelled() && i < 600; i++) await sleep(500); // a manual debate is running, wait for it
         if (cancelled()) break;
-        try { await d.runDebate(sym); ran.push(sym); }
-        catch (e) { log(`[auto] ${sym}: ${safe((e as Error).message)}`); }
+        try {
+          await d.runDebate(sym);
+          ran.push(sym);
+        } catch (e) {
+          log(`[auto] position review ${sym}: ${safe((e as Error).message)}`);
+        }
+      }
+
+      if (cancelled()) return { ran, skipped: 'cancelled' };
+
+      // PHASE D: Strict slot-based opportunity search
+      // freeSlots = max(0, configuredN - exchangeConfirmedOpenPositionCount - pendingOpenCount)
+      const slotState = d.availableSlots();
+
+      if (slotState.freeSlots === 0) {
+        const activeSymbols = d.book.positions.map((p) => p.symbol).join(', ') || 'none';
+        const capMsg = `[auto] CAPACITY_FULL / MANAGING_POSITIONS: ${slotState.occupiedSlots}/${slotState.configuredN} slots in use (${activeSymbols}). Entry search skipped.`;
+        log(capMsg);
+        d.addLog({ kind: 'info', text: capMsg });
+        d.note('skipped', 'AUTO', `CAPACITY_FULL / MANAGING_POSITIONS: ${slotState.occupiedSlots}/${slotState.configuredN} slots occupied (${activeSymbols}). Active positions monitored; new entry search skipped.`);
+      } else {
+        const ranking = (symbol: string) => {
+          const evidence = d.opportunities[symbol];
+          return evidence && Date.now() - evidence.at < d.cfg.tickerRefreshSeconds * 3000 ? evidence.score : 0;
+        };
+        const candidates = d.cfg.auto.symbols
+          .filter((s) => !d.book.positions.some((p) => p.symbol === s))
+          .sort((a, b) => ranking(b) - ranking(a));
+
+        for (const sym of candidates) {
+          if (cancelled()) break;
+          const currentSlots = d.availableSlots();
+          if (currentSlots.freeSlots <= 0) {
+            log(`[auto] CAPACITY_FULL: capacity reached during cycle (${currentSlots.occupiedSlots}/${currentSlots.configuredN}). Halting candidate evaluation.`);
+            break;
+          }
+          for (let i = 0; d.debate && !cancelled() && i < 600; i++) await sleep(500);
+          if (cancelled()) break;
+          try {
+            await d.runDebate(sym);
+            ran.push(sym);
+          } catch (e) {
+            log(`[auto] ${sym}: ${safe((e as Error).message)}`);
+          }
+        }
       }
       d.autoState.cycles++;
       if (d.autoState.cycles % d.cfg.learning.reflectEveryCycles === 0) d.reflect(started - 1);

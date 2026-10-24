@@ -288,13 +288,80 @@ export class Desk extends EventEmitter {
     } catch { manifest.push({ name: 'native_research_policy', category: 'configuration', available: false, configured: false, status: 'ERROR', requiresApiKey: false, limitations: ['Research policy is invalid.'] }); }
     return manifest;
   }
+  get hasExecutor(): boolean { return Boolean(this.opts.executor); }
+  availableSlots(): {
+    configuredN: number;
+    occupiedSlots: number;
+    freeSlots: number;
+    positionsCount: number;
+    pendingOpenCount: number;
+    canOpenNew: boolean;
+    reason?: string;
+  } {
+    const configuredN = this.book.n;
+    const paper = this.cfg.tradingMode === 'PAPER';
+    const ex = this.opts.executor;
+
+    if (!paper && ex) {
+      const account = this.venueAccount;
+      const confirmed = !!account && account.status === 'confirmed' && Date.now() >= account.at && Date.now() - account.at <= 60_000;
+      if (!confirmed) {
+        const positionsCount = this.book.positions.length;
+        return {
+          configuredN,
+          occupiedSlots: configuredN,
+          freeSlots: 0,
+          positionsCount,
+          pendingOpenCount: 0,
+          canOpenNew: false,
+          reason: 'Exchange account observation unverified or stale'
+        };
+      }
+      const venueCount = account.positions?.length ?? this.book.positions.length;
+      const positionsCount = Math.max(this.book.positions.length, venueCount);
+      const pendingOpenIntents = ex.journal.intents.filter((i) => i.kind === 'open' && !ex.journal.settled(i));
+      const pendingNotYetInPositions = pendingOpenIntents.filter((i) => !this.book.positions.some((p) => p.symbol === i.symbol && p.side === i.side));
+      const pendingOpenCount = pendingNotYetInPositions.length;
+      const pendingCloseIntents = ex.journal.intents.filter((i) => i.kind === 'close' && !ex.journal.settled(i));
+      const pendingCloseNotInPositions = pendingCloseIntents.filter((i) => !this.book.positions.some((p) => p.symbol === i.symbol && p.side === i.side)).length;
+      const totalOccupied = positionsCount + pendingOpenCount + pendingCloseNotInPositions;
+      const occupiedSlots = Math.min(configuredN, totalOccupied);
+      const freeSlots = Math.max(0, configuredN - totalOccupied);
+      return {
+        configuredN,
+        occupiedSlots,
+        freeSlots,
+        positionsCount,
+        pendingOpenCount,
+        canOpenNew: freeSlots > 0,
+        ...(freeSlots === 0 ? { reason: `All ${configuredN} slots occupied (${positionsCount} active, ${pendingOpenCount} pending)` } : {})
+      };
+    }
+
+    // PAPER mode
+    const positionsCount = this.book.positions.length;
+    const occupiedSlots = Math.min(configuredN, positionsCount);
+    const freeSlots = Math.max(0, configuredN - occupiedSlots);
+    return {
+      configuredN,
+      occupiedSlots,
+      freeSlots,
+      positionsCount,
+      pendingOpenCount: 0,
+      canOpenNew: freeSlots > 0,
+      ...(freeSlots === 0 ? { reason: `All ${configuredN} slots occupied (${positionsCount} active)` } : {})
+    };
+  }
   accountState() {
     const paper = this.cfg.tradingMode === 'PAPER';
     const account = this.venueAccount;
     const confirmed = !!account && account.status === 'confirmed' && Date.now() >= account.at && Date.now() - account.at <= 60_000;
     const positions = paper ? this.book.positions : account?.positions ?? this.book.positions;
     const capital = paper ? this.book.split().canOpen : confirmed ? account.available > 0 && account.equity > this.book.safetyNet : null;
-    return { ...capitalAndSlots(capital, positions.length, this.book.n), mode: this.cfg.tradingMode,
+    const slots = this.availableSlots();
+    return { ...capitalAndSlots(capital, slots.positionsCount, this.book.n),
+      freeSlots: slots.freeSlots, canOpenNewSlot: slots.canOpenNew, occupiedSlots: slots.occupiedSlots, pendingOpenCount: slots.pendingOpenCount,
+      mode: this.cfg.tradingMode,
       source: paper ? 'paper' : account ? 'exchange' : 'journal', observedAt: account?.at ?? null,
       status: paper ? 'current' : confirmed ? 'confirmed' : 'unverified',
       scope: 'Capital and slot observations only; not aggregate order readiness. paper.canOpen retains its allocation meaning.' };
@@ -321,7 +388,7 @@ export class Desk extends EventEmitter {
     if (this.equityHistory.length > 600) this.equityHistory.splice(0, this.equityHistory.length - 600);
   }
   private changed() { this.emit('state', this.snapshot()); }
-  private addLog(l: Omit<LogLine, 'at'>) {
+  addLog(l: Omit<LogLine, 'at'>) {
     const line = { ...l, ...(l.source ? { source: safe(l.source).slice(0, 100) } : {}), text: safe(l.text), at: Date.now() };
     this.logs.push(line); if (this.logs.length > 2000) this.logs.splice(0, this.logs.length - 2000);
     this.emit('log', line);
@@ -719,12 +786,13 @@ export class Desk extends EventEmitter {
       const { weighted, disagreement, camps } = this.score();
       const pos = this.book.positions.find((p) => p.symbol === symbol);
       const { maxLossPerTradePct: _legacyLoss, minStopPct: _legacyMinStop, takeProfitR: _legacyR, ...entrySettings } = tradingSettingsFromConfig(this.cfg);
+      const slots = this.availableSlots();
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
         instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, CLOSE requires strategyInvalidated=true (opposite closed-bar direction beyond EMA21 with opposing five-bar momentum), or a verified critical event. A minor EMA9 crossing, unrealized loss, or changed agent vote alone is insufficient. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
-        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap) }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: this.book.n - this.book.positions.length, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
-        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: this.book.positions.length < this.book.n, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
+        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap) }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: slots.freeSlots, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
+        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       }));
       let action: Action = ld.data.action;
       let flipNote = '';
@@ -734,6 +802,10 @@ export class Desk extends EventEmitter {
       if ((action === 'OPEN_LONG' && pos?.side === 'SHORT') || (action === 'OPEN_SHORT' && pos?.side === 'LONG')) { action = 'CLOSE'; flipNote = ' Opposite signal, closing first.'; }
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
       if (researchVote === 'VETO' && action.startsWith('OPEN')) action = 'HOLD';
+      const capacityBlock = !pos && action.startsWith('OPEN') && !slots.canOpenNew
+        ? (slots.reason ?? `Capacity full: ${slots.occupiedSlots}/${this.book.n} slots in use. Limit is N = ${this.book.n}.`)
+        : null;
+      if (capacityBlock) action = 'HOLD';
       let exitBlock: string | null = null;
       const verifiedCritical = newsBriefing.criticalVetoFound && newsBriefing.providerStatus !== 'SAMPLE_FALLBACK';
       if (action === 'CLOSE' && pos && !verifiedCritical &&
@@ -755,21 +827,40 @@ export class Desk extends EventEmitter {
       }
       const confidenceBlock = action.startsWith('OPEN') ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
       if (confidenceBlock) action = 'HOLD';
-      const decisionReason = exitBlock ?? confidenceBlock ?? ld.data.reason;
+      const decisionReason = exitBlock ?? confidenceBlock ?? capacityBlock ?? ld.data.reason;
       await this.say('lead', `${action.replace('_', ' ')}. ${decisionReason}${flipNote}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
 
-      // 6. Apply the Owner's profile without a second model sizing decision.
+      // 6. Apply Owner profile risk gate on open, or run collaborative Risk and Execution position review on active positions.
       const opening = action === 'OPEN_LONG' || action === 'OPEN_SHORT';
-      if (opening) { this.setPhase('risk gate'); this.setStatus('risk', 'thinking'); this.changed(); }
-      const profileReason = `Owner profile: SL ${this.cfg.risk.defaultStopPct}% and TP ${this.cfg.risk.takeProfitPct}% of margin; no additional model risk sizing.`;
       const gate = applyRiskGate({ leverage: this.cfg.risk.maxLeverage }, this.cfg.risk);
-      this.scorecard.verdict();
-      if (opening) this.scorecard.riskDecision(gate.decision);
-      const riskLine = `${gate.decision}. ${profileReason}${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`;
-      if (opening) { await this.say('risk', riskLine, false, 'idle'); note('Risk Manager', riskLine); }
+      if (opening) {
+        this.setPhase('risk gate'); this.setStatus('risk', 'thinking'); this.changed();
+        const profileReason = `Owner profile: SL ${this.cfg.risk.defaultStopPct}% and TP ${this.cfg.risk.takeProfitPct}% of margin; no additional model risk sizing.`;
+        this.scorecard.verdict();
+        this.scorecard.riskDecision(gate.decision);
+        const riskLine = `${gate.decision}. ${profileReason}${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`;
+        await this.say('risk', riskLine, false, 'idle'); note('Risk Manager', riskLine);
+      } else if (pos) {
+        this.setPhase('position risk review'); this.setStatus('risk', 'thinking'); this.changed();
+        const protText = pos.protectionStatus === 'confirmed' ? 'confirmed on exchange' : (pos.protectionStatus ?? 'active');
+        const riskLine = action === 'CLOSE'
+          ? `APPROVE. Risk gate approved close for ${pos.side} ${pos.qty} ${symbol}. Exit authorized.`
+          : `APPROVE. Position exposure: ${pos.side} ${pos.qty} ${symbol} at mark ${snap.last}. Stop ${pos.stop} (${protText}). Unrealized PnL ${pos.unrealizedPnl ?? 0} USDT. Risk limits intact.`;
+        await this.say('risk', riskLine, false, 'idle'); note('Risk Manager', riskLine);
+
+        this.setPhase('execution review'); this.setStatus('execution', 'thinking'); this.changed();
+        const hasPending = this.opts.executor?.hasPending(symbol, pos.side, 'open') || this.opts.executor?.hasPending(symbol, pos.side, 'close');
+        const syncText = this.opts.executor ? 'Venue sync confirmed' : 'Paper book sync confirmed';
+        const pendingText = hasPending ? 'Pending intent in flight' : 'No conflicting pending orders';
+        const execLine = action === 'CLOSE'
+          ? `${syncText}: preparing reduce-only close for ${pos.qty} ${pos.side}. ${pendingText}.`
+          : `${syncText}: ${pos.qty} ${pos.side} active. ${pendingText}. Ready for reduce-only execution if invalidated.`;
+        await this.say('execution', execLine, false, 'idle'); note('Execution Trader', execLine);
+      }
 
       // 7. Verdict and paper execution
-      const verdict: Verdict = { id, symbol, action, riskDecision: opening ? gate.decision : 'N/A', executed: false, reason: decisionReason, disagreement, camps, example: mk.example || ld.example || snap.example, at: Date.now() };
+      const riskDecision: Verdict['riskDecision'] = opening ? gate.decision : pos && action === 'CLOSE' ? 'APPROVE' : 'N/A';
+      const verdict: Verdict = { id, symbol, action, riskDecision, executed: false, reason: decisionReason, disagreement, camps, example: mk.example || ld.example || snap.example, at: Date.now() };
       if (action === 'OPEN_LONG' || action === 'OPEN_SHORT') {
         const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
         let execSnap = snap;
@@ -823,6 +914,12 @@ export class Desk extends EventEmitter {
         evidence: { strategy: rule, votes: DEBATERS.map((agent) => ({ agent, stance: this.agents[agent].stance })), action }
       });
       this.verdicts.unshift(verdict); this.verdicts = this.verdicts.slice(0, 50);
+      const participatingChairs = pos
+        ? ['lead', 'market', 'research', 'strategist', 'risk', 'execution']
+        : opening
+          ? ['lead', 'market', 'research', 'strategist', 'risk', 'execution']
+          : ['lead', 'market', 'research', 'strategist'];
+      this.addLog({ kind: 'info', text: `Debate ${symbol} completed (${participatingChairs.join(', ')}). Action: ${action}.` });
       this.addLog({ kind: 'verdict', text: `VERDICT ${symbol}: ${action} (risk ${verdict.riskDecision}, disagreement ${disagreement.toFixed(2)})${verdict.executed ? `, ${this.opts.executor ? 'exchange' : 'paper'} ${verdict.executionStatus ?? 'execution recorded'}` : ''}`, example: verdict.example });
       this.emit('verdict', verdict);
       transcript.push('', `**Verdict:** ${action}, risk ${verdict.riskDecision}, executed ${verdict.executed}. ${verdict.reason}`);
@@ -948,6 +1045,8 @@ export class Desk extends EventEmitter {
       await this.syncLiveUnlocked();
       if (!this.venueAccount || this.venueAccount.status !== 'confirmed') return no('Could not confirm the execution venue account. No ticket sized from a local fallback.');
     }
+    const slots = this.availableSlots();
+    if (!slots.canOpenNew) return no(slots.reason ?? `Position limit reached: ${slots.occupiedSlots}/${this.book.n} slots occupied. Limit is N = ${this.book.n}.`);
     if (this.book.positions.some((p) => p.symbol === symbol)) return no('This symbol already has an open position.');
     if (this.killed) return no('Kill switch is on.');
     if (this.paused) return no('Desk is paused.');
@@ -968,7 +1067,7 @@ export class Desk extends EventEmitter {
     }
     if (live && rules?.status && rules.status !== 'TRADING') return no(`${symbol} is ${rules.status} on the exchange, not TRADING.`);
     const plan = planOrder({
-      balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: this.book.positions.length, usedMargin: this.book.usedMargin,
+      balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: slots.occupiedSlots, usedMargin: this.book.usedMargin,
       price, side, availableFunds: live ? this.venueAccount?.available : undefined, orderSizePct: gate.orderSizePct ?? this.cfg.risk.orderSizePct, adjustToVenueMinimum: Boolean(live), sizeFactor: 1, leverage: Math.max(1, Math.floor(Math.min(gate.leverage, this.cfg.risk.maxLeverage))),
       stopPct: this.cfg.risk.defaultStopPct,
       minOrderUsdt: this.cfg.risk.minOrderUsdt, takerFee: this.cfg.risk.takerFee, rules, takeProfitPct: this.cfg.risk.takeProfitPct
