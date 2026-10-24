@@ -30,7 +30,7 @@ export function proactiveScan(desk: Desk, now = Date.now()): Finding[] {
   for (const p of book.positions) if (!(p.stop > 0)) out.push({ level: 'alert', code: 'no_stop', text: `${p.symbol} ${p.side} has no stop loss. Close it or set a stop now.` });
   // 3. API and exchange errors since the last scan (or the last 30 minutes)
   const since = desk.lastScan?.at ?? now - 30 * 60_000;
-  const errs = desk.errors.filter((e) => e.at >= since);
+  const errs = desk.errors.filter((e) => e.at >= since && !e.source.startsWith('agent:'));
   if (errs.length) out.push({ level: errs.length >= 3 ? 'alert' : 'warn', code: 'errors', text: `${errs.length} API or exchange error${errs.length > 1 ? 's' : ''} since the last scan. Latest: ${errs[errs.length - 1].text.slice(0, 160)}` });
   // 4. stale or sample data feed
   const symbols = cfg.auto.symbols.length ? cfg.auto.symbols : cfg.watchlist;

@@ -329,9 +329,15 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   }
 
   app.use((error: Error & { status?: number }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-    desk.recordError('http', error instanceof SyntaxError && error.status === 400 ? 'Malformed JSON request' : error.message);
-    if (res.headersSent) return next(error);
+    const isMalformedJson = error instanceof SyntaxError && error.status === 400;
     const status = error.status && error.status >= 400 && error.status < 600 ? error.status : 500;
+    const msg = isMalformedJson ? 'Malformed JSON request' : error.message;
+    if (status >= 500) {
+      desk.recordError('http', msg);
+    } else {
+      desk.recordActivity({ kind: 'backend', source: 'http', level: 'warn', text: msg, status: String(status) });
+    }
+    if (res.headersSent) return next(error);
     res.status(status).json({ ok: false, error: status >= 500 ? 'The request failed. See the activity log.' : 'Invalid request.' });
   });
 

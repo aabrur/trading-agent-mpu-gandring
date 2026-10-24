@@ -13,38 +13,32 @@ const TOOLS = [
   { id: 'history', label: 'History', path: 'M3 11a9 9 0 1 1 2.6 7M3 4v7h7m2-5v6l4 2' }
 ] as const;
 
-export function WorkspaceTools({ state, command }: { state: DeskState; command: (text: string) => void }) {
+export function WorkspaceTools({ state, command, onActiveChange }: { state: DeskState; command: (text: string) => void; onActiveChange?: (active: string | null) => void }) {
   const { lang } = useI18n();
   const [active, setActive] = useState<string | null>(null);
-  const [insidePanel, setInsidePanel] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!active || !insidePanel) return;
-    const bodyOverflow = document.body.style.overflow;
-    const htmlOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = 'hidden';
-    document.documentElement.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = bodyOverflow;
-      document.documentElement.style.overflow = htmlOverflow;
-    };
-  }, [active, insidePanel]);
+
+  const setTool = (id: string | null) => {
+    setActive(id);
+    onActiveChange?.(id);
+  };
+
   useEffect(() => {
     if (!active) return;
-    const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setActive(null); };
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setActive(null); document.getElementById(`tool-${active}`)?.focus(); } };
+    const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setTool(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setTool(null); document.getElementById(`tool-${active}`)?.focus(); } };
     document.addEventListener('pointerdown', close); document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', escape); };
   }, [active]);
   return <div className="workspace-tools" ref={root}>
     <nav className="tool-bubbles" aria-label={lang === 'id' ? 'Menu meja trading' : 'Desk tools'}>
-      {TOOLS.map((tool) => <button id={`tool-${tool.id}`} key={tool.id} className={active === tool.id ? 'is-active' : ''} aria-expanded={active === tool.id} aria-controls={`pane-${tool.id}`} onClick={() => { setInsidePanel(false); setActive(active === tool.id ? null : tool.id); }}>
+      {TOOLS.map((tool) => <button id={`tool-${tool.id}`} key={tool.id} className={active === tool.id ? 'is-active' : ''} aria-expanded={active === tool.id} aria-controls={`pane-${tool.id}`} onClick={() => setTool(active === tool.id ? null : tool.id)}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d={tool.path} /></svg>
         <span>{tool.label}</span>
       </button>)}
     </nav>
-    <div className={`tool-flyout${active === 'log' || active === 'history' ? ' is-log' : ''}`} hidden={!active} onPointerEnter={() => setInsidePanel(true)} onPointerLeave={() => setInsidePanel(false)}>
-      <button className="tool-close" onClick={() => { document.getElementById(`tool-${active}`)?.focus(); setActive(null); }} aria-label={lang === 'id' ? 'Tutup panel' : 'Close tool panel'}>×</button>
+    <div className={`tool-flyout${active === 'log' || active === 'history' ? ' is-log' : ''}`} hidden={!active}>
+      <button className="tool-close" onClick={() => { document.getElementById(`tool-${active}`)?.focus(); setTool(null); }} aria-label={lang === 'id' ? 'Tutup panel' : 'Close tool panel'}>×</button>
       <div className="tool-pane" id="pane-ops" hidden={active !== 'ops'}><DeskOps state={state} /></div>
       <div className="tool-pane" id="pane-book" hidden={active !== 'book'}><Portfolio state={state} command={command} /></div>
       <div className="tool-pane" id="pane-lessons" hidden={active !== 'lessons'}><Lessons state={state} /></div>

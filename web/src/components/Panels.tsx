@@ -665,7 +665,7 @@ export function Verdicts({ state, compact = false }: { state: DeskState; compact
       <div className="panel-head"><h2>{t('verdictsTitle')}</h2><small className="muted">{t('verdictsSub')}</small></div>
       {state.verdicts.length === 0 && <p className="muted">{t('noVerdictYet')}</p>}
       <div className="verdict-list">
-        {state.verdicts.slice(0, compact ? 2 : 6).map((v, idx) => {
+        {state.verdicts.slice(0, compact ? 3 : 6).map((v, idx) => {
           const popId = idx === 0 ? detailId : `${detailId}-${idx}`;
           return (
           <article key={v.id} className={`verdict a-${v.action}`} title={time(v.at)}>

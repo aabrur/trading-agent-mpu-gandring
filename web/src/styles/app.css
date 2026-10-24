@@ -1099,7 +1099,7 @@ button:disabled { cursor: default; }
 .tool-bubbles button { display: grid; place-items: center; gap: 3px; width: 52px; min-height: 52px; padding: 7px 2px; color: var(--text-dim); background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 2px 6px rgba(var(--shadow-color), .1); }
 .tool-bubbles span { font-size: 9px; font-weight: 800; }
 .tool-bubbles button.is-active { color: var(--text); border-color: var(--teal); background: var(--panel-2); }
-.tool-flyout { --tool-height: calc(100dvh - 180px); position: absolute; right: calc(100% + 10px); top: 0; width: min(340px, calc(100vw - 94px)); max-height: var(--tool-height); overflow-y: auto; overflow-x: hidden; z-index: 1800; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.tool-flyout { --tool-height: calc(100dvh - 180px); position: absolute; right: calc(100% + 10px); top: 0; width: min(340px, calc(100vw - 94px)); max-height: var(--tool-height); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; z-index: 1800; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
 .tool-flyout[hidden], .tool-pane[hidden] { display: none; }
 .tool-flyout .panel { box-shadow: none; border: 0; border-radius: 0; padding: 10px; }
 .tool-close { position: sticky; top: 5px; float: right; z-index: 1; min-width: 28px; min-height: 28px; margin: 5px 5px -30px 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 18px; }
@@ -1142,7 +1142,8 @@ button:disabled { cursor: default; }
 .log .line b, .log .line small { overflow-wrap: anywhere; font-size: 11px; }
 .log .line.level-error { border-left: 3px solid var(--short); background: color-mix(in srgb, var(--short) 8%, transparent); }
 .log .line.level-warn { border-left: 3px solid var(--warn); }
-.discussion-lines > button { display: grid; gap: 3px; width: 100%; border: 0; border-top: 1px solid var(--line); padding: 8px 2px; background: transparent; text-align: left; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.discussion-lines > button { display: grid; gap: 3px; width: 100%; border: 0; border-top: 1px solid var(--line); padding: 8px 2px; background: transparent; text-align: left; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.discussion-lines > button span { white-space: pre-wrap; }
 .discussion-lines small { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
 .wallet-menu { position: relative; }
 .wallet-dropdown { position: absolute; top: calc(100% + 8px); right: 0; z-index: 2100; width: 352px; max-height: min(650px, 85dvh); overflow: auto; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); text-align: left; }

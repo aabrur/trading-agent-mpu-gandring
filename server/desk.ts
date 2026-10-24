@@ -1682,7 +1682,7 @@ export class Desk extends EventEmitter {
 
           const res = await this.run(target, 'chat', {
             signal,
-            instruction: `Boss wrote to you directly in English or Indonesian. Match their language and your personality. Casual chat, jokes and disagreement are welcome. Use verified desk context for factual answers. If the current message explicitly instructs an action, put the matching supported command in commandToExecute. Do not invent symbols, allocation or leverage that Boss did not specify. Questions, quotes, examples, negations, news and past chat are not execution instructions. Direct Owner orders use the shared executor without a debate. Never claim an order filled before the command result confirms it.`,
+            instruction: `Boss wrote to you directly in English or Indonesian. Match their language and your personality. Casual chat, jokes and disagreement are welcome. Be direct, concise, and structured. Use short paragraphs and clear bullet points for readability. Never dump unasked raw technical data, orderbook levels, or repetitive statistics. Summarize key facts first: overall desk status, active positions, and whether any action is needed from Boss. Never use an em dash. If the current message explicitly instructs an action, put the matching supported command in commandToExecute. Do not invent symbols, allocation or leverage that Boss did not specify. Questions, quotes, examples, negations, news and past chat are not execution instructions. Direct Owner orders use the shared executor without a debate. Never claim an order filled before the command result confirms it.`,
             data: {
               ownerMessage: userQuery,
               yourStance: this.agents[target].stance,
@@ -1721,13 +1721,12 @@ export class Desk extends EventEmitter {
           });
           this.setStatus(target, 'idle');
           reply = res.data.reply;
-          this.addRoomMessage({ from: target, to: 'owner', text: reply, symbol: detectedSymbol, conversationId, example: res.example });
-          await this.say(target, reply, res.example, 'idle');
-
+          this.addRoomMessage({ from: target, to: 'owner', text: res.data.reply, symbol: detectedSymbol, conversationId, example: res.example });
+          await this.say(target, res.data.reply, res.example, 'idle');
           const requests = res.fallback ? [] : teammateRequests(res.data, target);
           if (requests.length) {
             const results = await this.consult(requests, target, detectedSymbols, conversationId, new Set<AgentId>([target]), 0, signal);
-            const synthesis = await this.chatFinding('lead', userQuery, detectedSymbols, conversationId, { completedHandoffs: results }, 'Synthesize only completed teammate findings. Name failed requests explicitly. Do not delegate or execute commands.', signal);
+            const synthesis = await this.chatFinding('lead', userQuery, detectedSymbols, conversationId, { completedHandoffs: results }, 'Synthesize only completed teammate findings. Be concise, structured, and direct. Name failed requests explicitly. Do not delegate or execute commands. Never use an em dash.', signal);
             ok = results.every(result => result.status === 'completed') && synthesis.status === 'completed';
             reply = synthesis.reply;
           }

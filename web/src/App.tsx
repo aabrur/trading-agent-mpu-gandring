@@ -147,7 +147,7 @@ function AppInner() {
           </div>
         </section>
         <aside className="side">
-          <WorkspaceTools state={state} command={(cmd) => void command(cmd)} />
+          <WorkspaceTools state={state} command={(cmd) => void command(cmd)} onActiveChange={(id) => { if (id) setSelected(null); }} />
         </aside>
       </main>
       {setup && <DeferredPanel label="Setup"><SetupWizard state={state} onClose={closeSetup} tradingProfile={setupEntry === '#setup-trading-default' ? 'default' : setupEntry === '#setup-trading-manual' ? 'manual' : undefined} /></DeferredPanel>}

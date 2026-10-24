@@ -1,12 +1,13 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.26",
-  "appVersion": "0.0.0.3.26",
+  "version": "0.3.27",
+  "appVersion": "0.0.0.3.27",
   "changelog": [
-    "Fixed Windows quoting and batch execution for Local CLI Agents with spaces in executable paths.",
-    "Decoupled native CLI authentication checks from stale failed process states, enabling instant reconnection for logged-in accounts.",
-    "Enabled Test connection button whenever a local agent CLI is installed, preventing lockouts.",
-    "Reconciled connected and verified state cleanly on panel open without burning model quota during polling."
+    "Eliminated WorkspaceTools flyout layout thrashing and jitter by removing scrollbar freezing.",
+    "Enlarged compact HUD metric indicators and increased compact verdicts view to 3 items for enhanced readability.",
+    "Streamlined agent direct chat with concise responses, no redundant team handoffs on 1-on-1 chats, and duplicate message deduplication.",
+    "Isolated HTTP client 4xx malformed requests from supervisor exchange error escalation counters.",
+    "Fixed Windows quoting and batch execution for Local CLI Agents with spaces in executable paths."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",
