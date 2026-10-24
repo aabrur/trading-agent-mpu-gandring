@@ -34,11 +34,11 @@ Real money live execution on Aster perpetual DEX showing verified net profitabil
 - **Strict Risk Compliance**: Zero liquidated positions, disciplined profit realization, and consistent fee coverage.
 
 <p align="center">
-  <img src="docs/prove/03-order-history-protected.png" alt="Mpu Gandring Protected Order History" width="800" />
+  <img src="docs/prove/03-order-history.png" alt="Mpu Gandring Live Order History on Aster DEX" width="800" />
 </p>
 
 - **Exchange-Side Stop Losses**: Every order (SUI, AVAX, HYPE, DOGE) rests verifiable trigger stops directly on exchange contracts.
-- **Privacy Protected**: Exact execution timestamps and explorer transaction hashes are masked to safeguard the owner's on-chain wallet address from correlation queries while keeping token pairs, trade sides, order types, and fill status transparent.
+- **Execution Authenticity**: Clean order logs demonstrating Market, Stop Market, and Take Profit executions with filled contracts and zero address exposure.
 
 ## Core Architecture & Capabilities (v0.0.0.3.20)
 
