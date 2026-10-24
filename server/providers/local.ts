@@ -457,66 +457,193 @@ export async function validateResearchConnections(policy: ResearchPolicy) {
   researchEnvironment(policy, transports, process.env);
 }
 
-const loginProcesses = new Map<string, 'pending' | 'finished' | 'failed'>();
+interface LoginProcessRecord {
+  state: 'pending' | 'finished' | 'failed';
+  startedAt: number;
+  dir?: string;
+  exitFile?: string;
+}
+
+const loginProcesses = new Map<string, LoginProcessRecord>();
 const connectionChecks = new Map<string, { at: number; result: Promise<{ connected: boolean; state: string }> }>();
+
 /** Ask the CLI for authentication status without reading or returning credentials. */
 export async function localLoginStatus(id: string, verify = false) {
   id = id === 'agy' ? 'antigravity' : id;
   const executable = localExecutable(id);
   if (!executable) return { connected: false, state: 'missing' };
-  const loginState = loginProcesses.get(id);
-  if (loginState === 'pending' || loginState === 'failed') return { connected: false, state: loginState };
-  if (id !== 'codex' && id !== 'claude') {
-    if (!verify) return { connected: false, state: loginProcesses.get(id) || 'unknown' };
-    const previous = connectionChecks.get(id);
-    if (previous && Date.now() - previous.at < 15_000) return previous.result;
-    const result = (async () => {
-      try {
-        const reply = await runLocalAgent(`${id}:default`, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.');
-        const connected = JSON.parse(reply).reply === 'connected';
-        return { connected, state: connected ? 'connected' : 'pending' };
-      } catch { return { connected: false, state: 'pending' }; }
-    })();
-    const check = { at: Number.POSITIVE_INFINITY, result };
-    connectionChecks.set(id, check);
-    void result.finally(() => { check.at = Date.now(); });
-    return result;
+
+  const record = loginProcesses.get(id);
+  const recordState = record?.state;
+  const now = Date.now();
+  const isPending = record?.state === 'pending' && now - record.startedAt < 300_000;
+  const isRecentFailure = record?.state === 'failed' && now - record.startedAt < 15_000;
+
+  // If a login process is actively pending in an open terminal, it is not connected yet
+  if (isPending) {
+    return { connected: false, state: 'pending' };
   }
-  const connected = await new Promise<boolean>((resolve) => {
-    const args = id === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'];
-    const child = spawn(executable.file, [...executable.prefix, ...args], { env: localEnvironment(process.env), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-    let output = '';
-    child.stdout.on('data', (chunk: Buffer) => { if (output.length < 16_384) output += chunk.toString(); });
-    const timer = setTimeout(() => { child.kill(); resolve(false); }, 5000);
-    child.once('error', () => { clearTimeout(timer); resolve(false); });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      if (id !== 'claude') return resolve(code === 0);
-      try { resolve(code === 0 && JSON.parse(output).loggedIn === true); } catch { resolve(false); }
+  // A fresh explicit failure from a closed terminal is honored immediately without hanging test mocks
+  if (isRecentFailure) {
+    return { connected: false, state: 'failed' };
+  }
+
+  if (id === 'codex' || id === 'claude') {
+    const connected = await new Promise<boolean>((resolve) => {
+      const args = id === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'];
+      const child = spawn(executable.file, [...executable.prefix, ...args], { env: localEnvironment(process.env), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      let output = '';
+      child.stdout.on('data', (chunk: Buffer) => { if (output.length < 16_384) output += chunk.toString(); });
+      const timer = setTimeout(() => { child.kill(); resolve(false); }, 5000);
+      child.once('error', () => { clearTimeout(timer); resolve(false); });
+      child.once('close', (code) => {
+        clearTimeout(timer);
+        if (id !== 'claude') return resolve(code === 0);
+        try { resolve(code === 0 && JSON.parse(output).loggedIn === true); } catch { resolve(false); }
+      });
     });
-  });
-  return { connected, state: connected ? 'connected' : loginState === 'finished' ? 'failed' : 'signed-out' };
+
+    if (connected) {
+      loginProcesses.delete(id);
+      return { connected: true, state: 'connected' };
+    }
+    return { connected: false, state: recordState === 'failed' ? 'failed' : 'signed-out' };
+  }
+
+  if (!verify) {
+    return { connected: false, state: recordState || 'unknown' };
+  }
+
+  const previous = connectionChecks.get(id);
+  if (previous && Date.now() - previous.at < 15_000) return previous.result;
+
+  const result = (async () => {
+    try {
+      const reply = await runLocalAgent(`${id}:default`, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.');
+      const connected = JSON.parse(reply).reply === 'connected';
+      if (connected) {
+        loginProcesses.delete(id);
+        return { connected: true, state: 'connected' };
+      }
+      return { connected: false, state: recordState === 'failed' ? 'failed' : 'signed-out' };
+    } catch {
+      return { connected: false, state: recordState === 'failed' ? 'failed' : 'signed-out' };
+    }
+  })();
+
+  const check = { at: Number.POSITIVE_INFINITY, result };
+  connectionChecks.set(id, check);
+  void result.finally(() => { check.at = Date.now(); });
+  return result;
 }
 
 /** Only a fixed, locally discovered login command can open an interactive terminal. No tokens are read or returned. */
 export async function openAgentLogin(id: string) {
   const normId = id === 'agy' ? 'antigravity' : id;
-  const agent = LOCAL_AGENTS.find((a) => a.id === normId); const executable = localExecutable(normId);
+  const agent = LOCAL_AGENTS.find((a) => a.id === normId);
+  const executable = localExecutable(normId);
   if (!agent || !executable) throw new Error('Install the agent on PATH first.');
   connectionChecks.delete(normId);
-  if (loginProcesses.get(normId) === 'pending') return 'Sign-in is already open. Complete it in the browser or terminal.';
-  let child;
+
+  const existing = loginProcesses.get(normId);
+  if (existing?.state === 'pending' && Date.now() - existing.startedAt < 300_000) {
+    return 'Sign-in is already open. Complete it in the browser or terminal.';
+  }
+
+  let child: ReturnType<typeof spawn>;
+  let dir = '';
+  let exitFile = '';
+
   if (process.platform === 'win32') {
-    const command = [executable.file, ...executable.prefix, ...agent.login].map((s) => `"${s}"`).join(' ');
-    child = spawn('cmd.exe', ['/d', '/s', '/c', `"${command}"`], { cwd: tmpdir(), detached: true, stdio: 'ignore', windowsHide: false });
+    dir = mkdtempSync(path.join(tmpdir(), 'mpu-login-win-'));
+    const scriptPath = path.join(dir, 'sign-in.cmd');
+    exitFile = path.join(dir, 'exitcode.txt');
+    const quoteWin = (s: string) => (s.includes(' ') || s.includes('"')) ? `"${s.replace(/"/g, '""')}"` : s;
+    const fullCmd = [executable.file, ...executable.prefix, ...agent.login].map(quoteWin).join(' ');
+    const batchContent = [
+      '@echo off',
+      'chcp 65001 >nul',
+      `title Mpu Gandring - Sign in ${agent.label}`,
+      'echo ========================================================',
+      `echo  Trading Agent Mpu Gandring - Sign in ${agent.label}`,
+      'echo ========================================================',
+      'echo.',
+      fullCmd,
+      'set EXIT_CODE=%ERRORLEVEL%',
+      `echo %EXIT_CODE% > "${exitFile}"`,
+      'echo.',
+      'if %EXIT_CODE% equ 0 (',
+      '  echo Sign-in command completed successfully.',
+      ') else (',
+      '  echo Sign-in exited with code %EXIT_CODE%.',
+      ')',
+      'echo You can close this window now.',
+      'pause',
+      'exit /b %EXIT_CODE%'
+    ].join('\r\n') + '\r\n';
+    writeFileSync(scriptPath, batchContent, { mode: 0o700, encoding: 'utf8' });
+
+    child = spawn(process.env.ComSpec || 'cmd.exe', ['/c', 'start', `Sign-in - ${agent.label}`, process.env.ComSpec || 'cmd.exe', '/c', scriptPath], {
+      cwd: dir,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false
+    });
   } else if (process.platform === 'darwin') {
-    const file = path.join(mkdtempSync(path.join(tmpdir(), 'mpu-login-')), 'sign-in.command');
+    dir = mkdtempSync(path.join(tmpdir(), 'mpu-login-'));
+    const file = path.join(dir, 'sign-in.command');
+    exitFile = path.join(dir, 'exitcode.txt');
     const quote = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
-    writeFileSync(file, `#!/bin/sh\nexec ${[executable.file, ...executable.prefix, ...agent.login].map(quote).join(' ')}\n`, { mode: 0o700 });
+    const fullCmd = [executable.file, ...executable.prefix, ...agent.login].map(quote).join(' ');
+    writeFileSync(file, `#!/bin/sh\n${fullCmd}\nEXIT_CODE=$?\necho $EXIT_CODE > "${exitFile}"\nexit $EXIT_CODE\n`, { mode: 0o700 });
     child = spawn('open', ['-a', 'Terminal', file], { detached: true, stdio: 'ignore' });
-  } else child = spawn('x-terminal-emulator', ['-e', executable.file, ...executable.prefix, ...agent.login], { cwd: tmpdir(), detached: true, stdio: 'ignore' });
-  await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); child.unref();
-  loginProcesses.set(normId, 'pending');
-  if (process.platform !== 'darwin') child.once('close', (code) => loginProcesses.set(normId, code === 0 ? 'finished' : 'failed'));
+  } else {
+    child = spawn('x-terminal-emulator', ['-e', executable.file, ...executable.prefix, ...agent.login], { cwd: tmpdir(), detached: true, stdio: 'ignore' });
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    child.once('spawn', () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    });
+    child.once('error', (err) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+    child.once('close', (code) => {
+      if (!settled) {
+        settled = true;
+        if (code !== 0) {
+          reject(new Error(`Login launcher exited with code ${code}. Check CLI installation.`));
+        } else {
+          resolve();
+        }
+      }
+    });
+  });
+
+  child.unref();
+
+  loginProcesses.set(normId, {
+    state: 'pending',
+    startedAt: Date.now(),
+    dir,
+    exitFile
+  });
+
+  child.once('close', (code) => {
+    loginProcesses.set(normId, {
+      state: code === 0 ? 'finished' : 'failed',
+      startedAt: Date.now(),
+      dir,
+      exitFile
+    });
+  });
+
   return `Sign-in terminal opened. ${agent.id === 'pi' ? 'Type /login in Pi, choose your provider, then exit Pi after sign-in.' : agent.id === 'antigravity' ? 'Complete sign-in in Antigravity, then exit the agent terminal.' : 'Finish the agent’s own sign-in flow.'} Connection is checked after the login process finishes; a model check may use your account quota.`;
 }

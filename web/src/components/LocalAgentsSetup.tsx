@@ -124,11 +124,28 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
   const load = () =>
     fetch('/api/setup/local-agents')
       .then((r) => r.json())
-      .then((d) => {
+      .then(async (d) => {
         if (d.ok) {
-          setAgents(d.agents || []);
+          const list: LocalAgent[] = d.agents || [];
+          setAgents(list);
           setSettings(d.settings || {});
           setEditSettings(d.settings || {});
+
+          const installed = list.filter((a) => a.installed);
+          if (installed.length > 0) {
+            const results = await Promise.allSettled(
+              installed.map((a) => status(a.id, false).then((st) => ({ id: a.id, connected: st.connected })))
+            );
+            const updates: Record<string, boolean> = {};
+            for (const r of results) {
+              if (r.status === 'fulfilled' && r.value.connected) {
+                updates[r.value.id] = true;
+              }
+            }
+            if (Object.keys(updates).length > 0) {
+              setConnected((old) => ({ ...old, ...updates }));
+            }
+          }
         }
       })
       .catch(() => setMessage({ load: lang === 'id' ? 'Gagal mendeteksi agen lokal. Coba Segarkan.' : 'Unable to detect local agents. Try Refresh.' }));
@@ -143,10 +160,10 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
     const timer = window.setTimeout(async () => {
       for (const [id, started] of Object.entries(waiting)) {
         try {
-          const result = await status(id, true);
+          const result = await status(id, false);
           if (cancelled) return;
           const expired = Date.now() - started > 300_000;
-          if (result.connected || result.state === 'failed' || result.state === 'missing' || expired) {
+          if (result.connected || result.state === 'finished' || result.state === 'failed' || result.state === 'missing' || expired) {
             setWaiting((old) => {
               const next = { ...old };
               delete next[id];
@@ -159,6 +176,13 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                 [id]: lang === 'id'
                   ? 'Connected. Akun agen siap digunakan. Test connection menguji balasan model dan memakai kuota.'
                   : 'Connected. The agent account is ready. Test connection checks a model reply and uses quota.'
+              }));
+            } else if (result.state === 'finished') {
+              setMessage((old) => ({
+                ...old,
+                [id]: lang === 'id'
+                  ? 'Terminal login selesai. Klik Test connection untuk menguji respon model.'
+                  : 'Sign-in terminal closed. Click Test connection to verify model connection.'
               }));
             } else {
               setMessage((old) => ({
@@ -207,7 +231,13 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
       });
       const d = await r.json();
       setMessage((old) => ({ ...old, [agent.id]: d.detail || d.error }));
-      if (type === 'test') setVerified((old) => ({ ...old, [agent.id]: r.ok && d.ok }));
+      if (type === 'test') {
+        const isOk = r.ok && d.ok;
+        setVerified((old) => ({ ...old, [agent.id]: isOk }));
+        if (isOk) {
+          setConnected((old) => ({ ...old, [agent.id]: true }));
+        }
+      }
       if (type === 'login' && r.ok && d.ok) setWaiting((old) => ({ ...old, [agent.id]: Date.now() }));
     } catch {
       setMessage((old) => ({ ...old, [agent.id]: lang === 'id' ? 'Meja trading tidak terjangkau. Coba lagi.' : 'Office not reachable. Try again.' }));
@@ -327,7 +357,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                       </button>
                       <button
                         type="button"
-                        disabled={!available || !a.installed || !!busy || !!waiting[a.id] || !connected[a.id]}
+                        disabled={!available || !a.installed || !!busy || !!waiting[a.id]}
                         onClick={() => void action(a, 'test')}
                       >
                         {busy === a.id ? (lang === 'id' ? 'Bekerja...' : 'Working...') : t('setupLocalTestConnBtn')}
