@@ -64,43 +64,57 @@ export function renderText(r: Omit<Report, 'text'>) {
   const m = r.monitoring;
   const alerts = r.scan.filter((f) => f.level === 'alert' || f.level === 'warn');
   const unprotected = r.positions.filter((p) => !(p.stop > 0) || (r.mode !== 'PAPER' && p.protectionStatus !== 'confirmed'));
+
+  const modeBadge = r.mode === 'LIVE' ? '🟢 LIVE' : r.mode === 'TESTNET' ? '🟡 TESTNET' : '⚪ PAPER';
+  const unrealizedBadge = r.unrealized > 0 ? '🟢' : r.unrealized < 0 ? '🔴' : '⚪';
+  const realizedBadge = r.realized > 0 ? '🟢' : r.realized < 0 ? '🔴' : '⚪';
+
   const lines = [
-    `Trading Agent Mpu Gandring | ${r.mode}${r.exchange ? ` / ${r.exchange}` : ''}`,
-    `Period (UTC): ${new Date(r.since).toISOString().slice(0, 10)} ${hhmm(r.since)} to ${new Date(r.at).toISOString().slice(0, 10)} ${hhmm(r.at)}`,
-    '',
-    'STATUS',
-    `Kill ${m ? (m.killed ? 'ON (desk stopped)' : 'OFF') : 'unknown'}`,
-    `Daily loss stop: ${r.dailyLoss.hit ? 'HIT' : 'not hit'} (limit ${r.dailyLoss.limitPct}% per UTC day)`,
-    `Protection ${unprotected.length ? `${unprotected.length} UNVERIFIED` : !r.positions.length ? 'not applicable: no open positions' : r.mode === 'PAPER' ? 'simulated (PAPER)' : 'confirmed on exchange for all open positions'}`,
-    `Auto: ${r.auto.on ? `ON, every ${r.auto.intervalMin} min` : 'OFF'} | ${m?.current ? `Analyzing ${short(m.current, 24)}` : m?.running ? 'Cycle running' : 'Idle'}`,
-    ...(alerts.length ? ['', 'ATTENTION', ...alerts.slice(0, 3).map((f) => `- ${f.level === 'alert' ? 'ALERT' : 'Warning'}: ${short(f.text, 220)}`)] : []),
+    `⚡ TRADING AGENT MPU GANDRING | ${modeBadge}${r.exchange ? ` / ${r.exchange}` : ''}`,
+    `⏱️ Period (UTC): ${new Date(r.since).toISOString().slice(0, 10)} ${hhmm(r.since)} to ${new Date(r.at).toISOString().slice(0, 10)} ${hhmm(r.at)}`,
+    '────────────────────────────────────────',
+    '📊 STATUS',
+    `• Kill ${m ? (m.killed ? 'ON (desk stopped)' : 'OFF') : 'unknown'}`,
+    `• Daily loss stop: ${r.dailyLoss.hit ? 'HIT 🚨' : 'not hit'} (limit ${r.dailyLoss.limitPct}% per UTC day)`,
+    `• Protection ${unprotected.length ? `${unprotected.length} UNVERIFIED` : !r.positions.length ? 'not applicable: no open positions' : r.mode === 'PAPER' ? 'simulated (PAPER)' : 'confirmed on exchange for all open positions'}`,
+    `• Auto: ${r.auto.on ? `ON, every ${r.auto.intervalMin} min` : 'OFF'} | ${m?.current ? `Analyzing ${short(m.current, 24)}` : m?.running ? 'Cycle running' : 'Idle'}`,
+    ...(alerts.length ? ['', '⚠️ ATTENTION', ...alerts.slice(0, 3).map((f) => `- ${f.level === 'alert' ? 'ALERT' : 'Warning'}: ${short(f.text, 220)}`)] : []),
     ...(alerts.length > 3 ? [`- ${alerts.length - 3} more findings in the office.`] : []),
-    '',
-    'CAPITAL (USDT)',
-    `Equity: ${r.equity} | Balance: ${r.balance}`,
-    `Protected reserve: ${r.safetyNet} | Tradable: ${r.moneyTrade}`,
-    `Allocation: ${r.orderSizePct == null ? `${r.moneyTrade} / ${r.n} slots` : `${r.orderSizePct}% of ${r.moneyTrade}`} = ${r.perOrder} per order`,
-    `Realized this period: ${signed(r.realized)} | Unrealized: ${signed(r.unrealized)}`,
-    '',
-    `POSITIONS (${r.positions.length})`,
-    ...(r.positions.length ? r.positions.slice(0, 6).map((p) => `${short(p.symbol, 24)} ${p.side} ${p.qty} · Entry ${p.entry} · SL ${p.stop > 0 ? p.stop : 'MISSING'} (${p.protectionStatus ?? (r.mode === 'PAPER' ? 'paper' : 'unverified')})${p.tp ? ` · TP ${p.tp}` : ''} · PnL ${signed(p.pnl)}`) : ['None']),
+    '────────────────────────────────────────',
+    '💰 CAPITAL (USDT)',
+    `• Equity: ${r.equity} | Balance: ${r.balance}`,
+    `• Protected reserve: ${r.safetyNet} | Tradable: ${r.moneyTrade}`,
+    `• Allocation: ${r.orderSizePct == null ? `${r.moneyTrade} / ${r.n} slots` : `${r.orderSizePct}% of ${r.moneyTrade}`} = ${r.perOrder} per order`,
+    `• Realized this period: ${signed(r.realized)} ${realizedBadge} | Unrealized: ${signed(r.unrealized)} ${unrealizedBadge}`,
+    '────────────────────────────────────────',
+    `📈 POSITIONS (${r.positions.length})`,
+    ...(r.positions.length
+      ? r.positions.slice(0, 6).map((p) => {
+          const badge = p.pnl > 0 ? '🟢' : p.pnl < 0 ? '🔴' : '⚪';
+          const trend = p.pnl > 0 ? '▲' : p.pnl < 0 ? '▼' : '―';
+          const notional = p.entry * p.qty;
+          const pct = notional > 0 ? round2((p.pnl / notional) * 100) : null;
+          const pctStr = pct !== null ? ` (${pct >= 0 ? '+' : ''}${pct}%)` : '';
+          return `${badge} ${short(p.symbol, 24)} ${p.side} ${p.qty} · Entry ${p.entry} · SL ${p.stop > 0 ? p.stop : 'MISSING'} (${p.protectionStatus ?? (r.mode === 'PAPER' ? 'paper' : 'unverified')})${p.tp ? ` · TP ${p.tp}` : ''} · PnL ${signed(p.pnl)}${pctStr} ${trend}`;
+        })
+      : ['None']),
     ...(r.positions.length > 6 ? [`${r.positions.length - 6} more positions in the office.`] : []),
-    '',
-    'ACTIVITY THIS PERIOD',
-    `Opened ${r.opened.length} | Closed ${r.closed.length} | Skipped ${r.skipped.length}`,
-    `Previous: ${m?.previous ? short([...new Set(m.previous.split(' · '))].join(' · ')) : 'none recorded'}`,
+    '────────────────────────────────────────',
+    '📋 ACTIVITY THIS PERIOD',
+    `• Opened ${r.opened.length} | Closed ${r.closed.length} | Skipped ${r.skipped.length}`,
+    `• Previous: ${m?.previous ? short([...new Set(m.previous.split(' · '))].join(' · ')) : 'none recorded'}`,
     ...r.closed.slice(-2).map((a) => `✓ ${hhmm(a.at)} ${short(a.symbol, 24)}: ${short(a.detail)}`),
     ...(r.skipped.length ? [`Latest skip: ${short(r.skipped.at(-1)!.symbol, 24)} · ${short(r.skipped.at(-1)!.detail)}`] : []),
-    `Watching: ${m?.symbols.length ? m.symbols.slice(0, 12).join(', ') + (m.symbols.length > 12 ? ` +${m.symbols.length - 12}` : '') : 'not recorded'}`,
-    '',
-    'ACCOUNTING (USDT)',
+    `• Watching: ${m?.symbols.length ? m.symbols.slice(0, 12).join(', ') + (m.symbols.length > 12 ? ` +${m.symbols.length - 12}` : '') : 'not recorded'}`,
+    '────────────────────────────────────────',
+    '📑 ACCOUNTING (USDT)',
     ...(r.accounting ? [
-      `Source: ${r.accounting.source} (${r.accounting.status})`,
-      `Realized: confirmed ${signed(r.accounting.confirmedRealized)} | estimated ${signed(r.accounting.estimatedRealized)}`,
-      `Unknown exits: ${r.accounting.unknownExits} | Fees: ${r.accounting.actualFees ?? 'unknown'} | Funding: ${r.accounting.funding ?? 'unknown'}`,
-      `Managed net: ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'}`
+      `• Source: ${r.accounting.source} (${r.accounting.status})`,
+      `• Realized: confirmed ${signed(r.accounting.confirmedRealized)} | estimated ${signed(r.accounting.estimatedRealized)}`,
+      `• Unknown exits: ${r.accounting.unknownExits} | Fees: ${r.accounting.actualFees ?? 'unknown'} | Funding: ${r.accounting.funding ?? 'unknown'}`,
+      `• Managed net: ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'}`
     ] : ['Evidence unavailable']),
-    '',
+    '────────────────────────────────────────',
     `Scorecard (Desk Lead): ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0) ? `${r.scorecard.reduce((n, x) => n + x.right, 0)} right / ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0)} scored calls` : 'no scored calls yet'}.`,
     `Lessons this period (${r.lessons.length}): ${r.lessons.length ? [...new Set(r.lessons.map((l) => l.lesson))].slice(0, 2).map((l) => short(l, 100)).join(' / ') : 'none'}`,
     `Needs you: ${m?.killed ? 'review the cause before releasing the kill switch' : r.dailyLoss.hit ? 'daily loss stop hit; new orders are blocked' : unprotected.length ? 'check unverified position protection now' : alerts.length ? 'review the warnings above' : 'nothing'}.`,
