@@ -31,13 +31,13 @@ export function channelConfig(env: NodeJS.ProcessEnv): ChannelConfig {
   const sl = { webhookUrl: s(env, 'SLACK_WEBHOOK_URL'), signingSecret: s(env, 'SLACK_SIGNING_SECRET'), allowed: list(env, 'SLACK_ALLOWED_USER_IDS') };
   const wa = { token: s(env, 'WHATSAPP_ACCESS_TOKEN'), phoneNumberId: s(env, 'WHATSAPP_PHONE_NUMBER_ID'), to: s(env, 'WHATSAPP_TO').replace(/^\+/, ''), appSecret: s(env, 'WHATSAPP_APP_SECRET'), verifyToken: s(env, 'WHATSAPP_VERIFY_TOKEN'), allowed: list(env, 'WHATSAPP_ALLOWED_NUMBERS'),
     graphVersion: /^v\d+\.\d+$/.test(s(env, 'WHATSAPP_GRAPH_VERSION')) ? s(env, 'WHATSAPP_GRAPH_VERSION') : 'v26.0', template: s(env, 'WHATSAPP_TEMPLATE_NAME'), templateLang: s(env, 'WHATSAPP_TEMPLATE_LANG') || 'en_US' };
-  const any = !!(tg.token && tg.chatId) || !!(dc.botToken && dc.channelId) || DISCORD_WEBHOOK_RE.test(dc.webhookUrl) || SLACK_WEBHOOK_RE.test(sl.webhookUrl) || !!(wa.token && wa.phoneNumberId && wa.to);
+  const any = !!(tg.token && tg.chatId) || !!(dc.botToken && (dc.channelId || dc.allowed.length > 0)) || DISCORD_WEBHOOK_RE.test(dc.webhookUrl) || SLACK_WEBHOOK_RE.test(sl.webhookUrl) || !!(wa.token && wa.phoneNumberId && wa.to);
   return {
     commands: /^on$/i.test(s(env, 'CHANNEL_COMMANDS')),
     inbound: { port: Math.max(1, Math.min(65535, n(env, 'CHANNEL_WEBHOOK_PORT', 8788))), host: s(env, 'CHANNEL_WEBHOOK_HOST') || '127.0.0.1' },
     supervisor: { on: any && !/^off$/i.test(s(env, 'SUPERVISOR')), intervalMin: Math.max(1, n(env, 'SUPERVISOR_INTERVAL_MIN', 5)), cooldownMin: Math.max(1, n(env, 'ALERT_COOLDOWN_MIN', 30)) },
     telegram: { ...tg, enabled: !!(tg.token && tg.chatId) },
-    discord: { ...dc, enabled: !!(dc.botToken && dc.channelId) || DISCORD_WEBHOOK_RE.test(dc.webhookUrl), inbound: dc.delivery === 'http' && /^[0-9a-f]{64}$/.test(dc.publicKey) },
+    discord: { ...dc, enabled: !!(dc.botToken && (dc.channelId || dc.allowed.length > 0)) || DISCORD_WEBHOOK_RE.test(dc.webhookUrl), inbound: dc.delivery === 'http' && /^[0-9a-f]{64}$/.test(dc.publicKey) },
     slack: { ...sl, enabled: SLACK_WEBHOOK_RE.test(sl.webhookUrl), inbound: !!sl.signingSecret },
     whatsapp: { ...wa, enabled: !!(wa.token && wa.phoneNumberId && wa.to), inbound: !!(wa.appSecret && wa.verifyToken && wa.token && wa.phoneNumberId) }
   };

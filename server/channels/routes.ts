@@ -141,7 +141,7 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
   app.post('/api/setup/channels/discord-sync', async (req, res) => {
     if (!gate(req, res, true)) return;
     const env = setupEnv(c.envFile);
-    try { res.json({ok: true, ...await syncDiscordCommands(env.DISCORD_BOT_TOKEN || '', env.DISCORD_APPLICATION_ID || '', env.DISCORD_GUILD_ID || '', c.fetchImpl ?? fetch), detail: '/mpu commands registered and verified.'}); }
+    try { res.json({ok: true, ...await syncDiscordCommands(env.DISCORD_BOT_TOKEN || '', env.DISCORD_APPLICATION_ID || '', env.DISCORD_GUILD_ID || undefined, c.fetchImpl ?? fetch), detail: '/mpu commands registered and verified.'}); }
     catch (error) { res.status(422).json({ok: false, detail: safe((error as Error).message)}); }
   });
   app.post('/api/setup/channels/telegram-sync', async (req, res) => {
@@ -174,15 +174,20 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
         try {
           const guildId = p.data.values.DISCORD_GUILD_ID || env.DISCORD_GUILD_ID;
           const channelId = p.data.values.DISCORD_CHANNEL_ID || env.DISCORD_CHANNEL_ID;
+          const allowedUsers = (p.data.values.DISCORD_ALLOWED_USER_IDS || env.DISCORD_ALLOWED_USER_IDS || '').trim();
           const inspected = await inspectDiscordBot(token, guildId, c.fetchImpl ?? fetch);
-          if (!guildId || !channelId || !inspected.channels.some(channel => channel.id === channelId)) throw new Error('Select a server and eligible text channel first.');
+          if (guildId && channelId) {
+            if (!inspected.channels.some(channel => channel.id === channelId)) throw new Error('Select an eligible text channel from the chosen server.');
+          } else if (!allowedUsers && !p.data.values.DISCORD_WEBHOOK_URL && !env.DISCORD_WEBHOOK_URL) {
+            throw new Error('Select a server and channel, or provide allowed User IDs for Direct Message (DM) chat.');
+          }
           p.data.values.DISCORD_APPLICATION_ID = inspected.application.id;
           p.data.values.DISCORD_DELIVERY = inspected.delivery;
           if (inspected.application.verify_key) p.data.values.DISCORD_PUBLIC_KEY = inspected.application.verify_key;
           // Validate fields before the externally visible command registration.
           const error = checkChannelInput('discord', p.data.values, env);
           if (error) throw new Error(error);
-          await syncDiscordCommands(token, inspected.application.id, guildId, c.fetchImpl ?? fetch);
+          await syncDiscordCommands(token, inspected.application.id, guildId || undefined, c.fetchImpl ?? fetch);
         } catch (error) { return res.status(422).json({ok: false, detail: safe((error as Error).message)}); }
       }
     }

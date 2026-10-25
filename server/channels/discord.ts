@@ -45,15 +45,30 @@ export const MPU_DISCORD_COMMAND = { name: 'mpu', description: 'Trading Agent Mp
   { name: 'set', description: 'Existing Owner settings command', type: 1, options: [option('setting', 'profile, size, leverage, n, safety', true), option('value', 'Setting value', true)] },
   { name: 'kill', description: 'Existing kill confirmation flow', type: 1, options: [option('confirm', 'Type confirm to execute')] }
 ] };
-export async function syncDiscordCommands(token: string, appId: string, guildId: string, fetchImpl: typeof fetch = fetch) {
-  snowflake.parse(appId); snowflake.parse(guildId);
-  const route = `/applications/${appId}/guilds/${guildId}/commands`;
+export async function syncDiscordCommands(token: string, appId: string, guildId?: string, fetchImpl: typeof fetch = fetch) {
+  snowflake.parse(appId);
+  if (guildId) snowflake.parse(guildId);
+  const route = guildId ? `/applications/${appId}/guilds/${guildId}/commands` : `/applications/${appId}/commands`;
   // POST upserts this name only. Never bulk-overwrite unrelated application commands.
   await discordApi(token, route, fetchImpl, 'POST', MPU_DISCORD_COMMAND);
   const registered = z.array(z.object({ id: snowflake, name: z.string(), options: z.array(z.object({ name: z.string() })).optional() })).parse(await discordApi(token, route, fetchImpl));
   const command = registered.find(c => c.name === 'mpu');
   if (!command || !MPU_DISCORD_COMMAND.options.every(option => command.options?.some(o => o.name === option.name))) throw new Error('Discord command read-back did not confirm all /mpu subcommands.');
   return { registered: true, count: 1, commandId: command.id };
+}
+
+const dmChannelCache = new Map<string, string>();
+export function recordDiscordDmChannel(token: string, userId: string, channelId: string) {
+  if (token && userId && channelId) dmChannelCache.set(`${token}:${userId}`, channelId);
+}
+export async function resolveDiscordDmChannel(token: string, userId: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+  const key = `${token}:${userId}`;
+  const cached = dmChannelCache.get(key);
+  if (cached) return cached;
+  const res = (await discordApi(token, '/users/@me/channels', fetchImpl, 'POST', { recipient_id: userId })) as { id?: string } | null;
+  if (!res?.id) throw new Error('Could not open DM channel with Discord user.');
+  dmChannelCache.set(key, res.id);
+  return res.id;
 }
 
 export interface DiscordOption { name?: string; type?: number; value?: unknown; options?: DiscordOption[] }
@@ -71,7 +86,9 @@ export function discordCommandText(data: DiscordInteraction['data']): string {
 }
 export function discordRefusal(c: ChannelConfig, interaction: DiscordInteraction): string | null {
   if (!c.commands) return 'Chat commands are off on this desk (CHANNEL_COMMANDS=off).';
-  if (!allowed(c.discord.allowed, interaction.member?.user?.id ?? interaction.user?.id)) return 'You are not on this desk\'s allowlist.';
+  const userId = interaction.member?.user?.id ?? interaction.user?.id;
+  if (!allowed(c.discord.allowed, userId)) return 'You are not on this desk\'s allowlist.';
+  if (!interaction.guild_id) return null;
   if (c.discord.guildId && interaction.guild_id !== c.discord.guildId || c.discord.channelId && interaction.channel_id !== c.discord.channelId) return 'Use the configured server and channel.';
   return null;
 }
@@ -126,6 +143,10 @@ export class DiscordGateway {
     const now = Date.now(); for (const [id, at] of this.seen) if (now - at > 900_000) this.seen.delete(id);
     this.seen.set(interaction.id, now);
     const c = this.config();
+    const userId = interaction.member?.user?.id ?? interaction.user?.id;
+    if (userId && interaction.channel_id && !interaction.guild_id && c.discord.botToken) {
+      recordDiscordDmChannel(c.discord.botToken, userId, interaction.channel_id);
+    }
     const refusal = discordRefusal(c, interaction);
     try {
       const response = await this.fetchImpl(`${API}/interactions/${interaction.id}/${interaction.token}/callback`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(refusal ? {type: 4, data: {content: refusal, flags: 64, allowed_mentions: {parse: []}}} : {type: 5, data: {flags: 64}}), signal: AbortSignal.timeout(2500)});

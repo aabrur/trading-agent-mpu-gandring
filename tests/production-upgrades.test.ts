@@ -88,12 +88,25 @@ describe('Discord bot integration', () => {
     expect((await syncDiscordCommands(token, '123', '456', request)).registered).toBe(true);
     expect(request.mock.calls.map(([, init]) => init?.method)).toEqual(['POST', 'GET']);
     expect(String(request.mock.calls[0][0])).toContain('/guilds/456/commands');
+
+    const globalReq = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {id: '123', ...MPU_DISCORD_COMMAND} : [{id: '123', ...MPU_DISCORD_COMMAND}])));
+    expect((await syncDiscordCommands(token, '123', undefined, globalReq)).registered).toBe(true);
+    expect(String(globalReq.mock.calls[0][0])).toBe('https://discord.com/api/v10/applications/123/commands');
   });
-  it('uses Bot API outbound delivery without a webhook', async () => {
+  it('uses Bot API outbound delivery without a webhook and resolves DMs', async () => {
     const request = vi.fn(async () => new Response('{}'));
     const cfg = channelConfig({DISCORD_BOT_TOKEN: token, DISCORD_CHANNEL_ID: '789'});
     expect(await discordSend(cfg.discord, 'fixture', request)).toBe('sent');
     expect(request.mock.calls[0][0]).toBe('https://discord.com/api/v10/channels/789/messages');
+
+    const dmReq = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes('/users/@me/channels')) return new Response(JSON.stringify({id: 'dm_channel_999'}));
+      return new Response('{}');
+    });
+    const dmCfg = channelConfig({DISCORD_BOT_TOKEN: token, DISCORD_ALLOWED_USER_IDS: 'user_boss'});
+    expect(await discordSend(dmCfg.discord, 'dm alert', dmReq)).toBe('sent');
+    expect(String(dmReq.mock.calls[0][0])).toBe('https://discord.com/api/v10/users/@me/channels');
+    expect(String(dmReq.mock.calls[1][0])).toBe('https://discord.com/api/v10/channels/dm_channel_999/messages');
   });
   it('parses named nested values in command order and preserves Owner authorization', () => {
     expect(discordCommandText({name: 'mpu', options: [{name: 'open', options: [{name: 'symbol', value: 'BTCUSDT'}, {name: 'leverage', value: 3}, {name: 'side', value: 'long'}, {name: 'size', value: 10}]}]})).toBe('open long BTCUSDT 10% 3x');
@@ -101,5 +114,7 @@ describe('Discord bot integration', () => {
     const cfg = channelConfig({CHANNEL_COMMANDS: 'on', DISCORD_ALLOWED_USER_IDS: '123', DISCORD_CHANNEL_ID: '789', DISCORD_GUILD_ID: '456'});
     expect(discordRefusal(cfg, {user: {id: '999'}, channel_id: '789', guild_id: '456'})).toContain('allowlist');
     expect(discordRefusal(cfg, {user: {id: '123'}, channel_id: '789', guild_id: '456'})).toBeNull();
+    // Direct Message (DM) has no guild_id: allowlist user is authorized in DM
+    expect(discordRefusal(cfg, {user: {id: '123'}, channel_id: 'dm_123'})).toBeNull();
   });
 });
