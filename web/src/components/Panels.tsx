@@ -271,7 +271,6 @@ export function TrakteerPopup({
   const { t, lang } = useI18n();
   const id = lang === 'id';
   const dialog = useRef<HTMLDialogElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const titleId = useId();
   const descriptionId = useId();
   const [qty, setQty] = useState<number>(1);
@@ -305,26 +304,27 @@ export function TrakteerPopup({
   }, [paying, qty, supporter, message, onConfirmCendol, onClose]);
 
   const totalIdr = qty * CENDOL_UNIT_IDR;
-  const refHref = typeof window !== 'undefined' ? window.location.href : 'http://127.0.0.1:5173';
-  const embedModalUrl = `https://trakteer.id/v1/aabrur/tip/embed/modal?embedId=0&quantity=${qty}&supporter_name=${encodeURIComponent(supporter.trim() || 'Supporter')}&support_message=${encodeURIComponent(message.trim())}&ref=${encodeURIComponent(refHref)}`;
+
+  const openTrakteerWindow = () => {
+    if (typeof window === 'undefined') return;
+    const checkoutUrl = `https://trakteer.id/aabrur/tip?quantity=${qty}${supporter.trim() ? `&supporter_name=${encodeURIComponent(supporter.trim())}` : ''}${message.trim() ? `&support_message=${encodeURIComponent(message.trim())}` : ''}`;
+    const w = 480;
+    const h = 720;
+    const left = typeof window.screen !== 'undefined' ? Math.max(0, Math.round((window.screen.width - w) / 2)) : 100;
+    const top = typeof window.screen !== 'undefined' ? Math.max(0, Math.round((window.screen.height - h) / 2)) : 100;
+    const win = window.open(
+      checkoutUrl,
+      'trakteer_checkout',
+      `popup=yes,width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no`
+    );
+    if (win) {
+      try { win.focus(); } catch { /* ignore */ }
+    }
+  };
 
   const handlePayNow = () => {
     setPaying(true);
-    try {
-      const w = window as unknown as {
-        trbtnOverlay?: {
-          init: (text: string, color: string, url: string, icon: string, size: string, pos: string) => number;
-          draw: (id: number) => void;
-        };
-      };
-      if (!w.trbtnOverlay && typeof document !== 'undefined' && !document.querySelector('script[data-trbtn-overlay="1"]')) {
-        const s = document.createElement('script');
-        s.src = 'https://edge-cdn.trakteer.id/js/trbtn-overlay.min.js?v=14-05-2025';
-        s.async = true;
-        s.dataset.trbtnOverlay = '1';
-        document.head.appendChild(s);
-      }
-    } catch { /* ignore */ }
+    openTrakteerWindow();
   };
 
   const handleCompleteAndCelebrate = async () => {
@@ -422,18 +422,31 @@ export function TrakteerPopup({
               <span>{id ? `Pembayaran ${qty} Cendol (Rp ${totalIdr.toLocaleString('id-ID')})` : `Checkout ${qty} Cendol (Rp ${totalIdr.toLocaleString('id-ID')})`}</span>
               <button type="button" className="cendol-back-btn" onClick={() => setPaying(false)}>{id ? 'Ubah jumlah' : 'Edit quantity'}</button>
             </div>
-            <div className="trakteer-iframe-wrap">
-              <iframe
-                ref={iframeRef}
-                src={embedModalUrl}
-                title="Trakteer Cendol Checkout"
-                className="trakteer-iframe"
-                onLoad={(e) => {
-                  try {
-                    e.currentTarget.contentWindow?.postMessage({ type: 'embed.openModal' }, '*');
-                  } catch { /* ignore */ }
-                }}
-              />
+            <div className="cendol-popup-active-card">
+              <div className="cendol-status-icon-wrap">
+                <img
+                  src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+                  alt=""
+                  className="cendol-status-icon"
+                />
+              </div>
+              <div className="cendol-status-info">
+                <strong>{id ? 'Jendela Pembayaran Trakteer Terbuka' : 'Trakteer Payment Window Opened'}</strong>
+                <p>
+                  {id
+                    ? 'Selesaikan transaksi di jendela popup (QRIS / E-Wallet). Setelah selesai, klik tombol di bawah untuk mengirim cendol ke meja trading!'
+                    : 'Complete your transaction in the popup window (QRIS / E-Wallet). Once finished, click the button below to send cendol to the trading desk!'}
+                </p>
+              </div>
+              <div className="cendol-popup-links">
+                <button
+                  type="button"
+                  className="cendol-reopen-btn"
+                  onClick={openTrakteerWindow}
+                >
+                  {id ? '↗ Buka Ulang Jendela Pembayaran' : '↗ Reopen Payment Window'}
+                </button>
+              </div>
             </div>
           </div>
         )}
