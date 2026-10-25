@@ -17,7 +17,7 @@ import { verifyDiscord, verifyMeta, verifySlack, sameToken } from './verify.js';
 import { whatsappSend } from './adapters.js';
 import type { DeskLead } from './supervisor.js';
 import { CHANNEL_GUIDES, CHANNEL_LINKS_CHECKED_ON, NOT_SHIPPED, SUPERVISOR_ENV } from './guide.js';
-import { channelStatus, checkChannelInput, saveChannel, testChannel, telegramChats, isChannel, discordRegisterCommand } from './setup.js';
+import { channelStatus, checkChannelInput, saveChannel, testChannel, telegramChats, isChannel, discordRegisterCommand, syncTelegramCommands, syncSlackCommands, syncWhatsAppCommands } from './setup.js';
 import { CHANNELS } from './config.js';
 
 type RawReq = express.Request & { rawBody?: Buffer };
@@ -143,6 +143,24 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
     const env = setupEnv(c.envFile);
     try { res.json({ok: true, ...await syncDiscordCommands(env.DISCORD_BOT_TOKEN || '', env.DISCORD_APPLICATION_ID || '', env.DISCORD_GUILD_ID || '', c.fetchImpl ?? fetch), detail: '/mpu commands registered and verified.'}); }
     catch (error) { res.status(422).json({ok: false, detail: safe((error as Error).message)}); }
+  });
+  app.post('/api/setup/channels/telegram-sync', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const env = setupEnv(c.envFile);
+    const r = await syncTelegramCommands((env.TELEGRAM_BOT_TOKEN ?? '').trim(), c.fetchImpl ?? fetch);
+    res.status(r.ok ? 200 : 422).json(r);
+  });
+  app.post('/api/setup/channels/slack-sync', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const env = setupEnv(c.envFile);
+    const r = await syncSlackCommands(env, c.fetchImpl ?? fetch);
+    res.status(r.ok ? 200 : 422).json(r);
+  });
+  app.post('/api/setup/channels/whatsapp-sync', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const env = setupEnv(c.envFile);
+    const r = await syncWhatsAppCommands(env, c.fetchImpl ?? fetch);
+    res.status(r.ok ? 200 : 422).json(r);
   });
   const SaveBody = z.object({ channel: z.enum(CHANNELS), values: z.record(z.string(), z.string().max(700)), commands: z.boolean().optional() }).strict();
   app.post('/api/setup/channels/save', async (req, res) => {

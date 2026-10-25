@@ -52,10 +52,28 @@ export function ChannelsSetup() {
     } catch { if (generation === requestGeneration.current) setMsg({ok: false, text: 'Discord validation failed.'}); }
     finally { if (generation === requestGeneration.current) setBusy(false); }
   }
-  async function syncCommands() {
+  async function syncDiscordCommands() {
     setBusy(true);
     try { const result = await post('/api/setup/channels/discord-sync', {}); setMsg({ok: result.ok, text: result.detail}); }
     catch { setMsg({ok: false, text: 'Discord synchronization failed.'}); }
+    finally { setBusy(false); }
+  }
+  async function syncTelegramCommands() {
+    setBusy(true);
+    try { const result = await post('/api/setup/channels/telegram-sync', {}); setMsg({ok: result.ok, text: result.detail}); }
+    catch { setMsg({ok: false, text: lang === 'id' ? 'Sinkronisasi Telegram gagal.' : 'Telegram synchronization failed.'}); }
+    finally { setBusy(false); }
+  }
+  async function syncSlackCommands() {
+    setBusy(true);
+    try { const result = await post('/api/setup/channels/slack-sync', {}); setMsg({ok: result.ok, text: result.detail}); }
+    catch { setMsg({ok: false, text: lang === 'id' ? 'Sinkronisasi Slack gagal.' : 'Slack synchronization failed.'}); }
+    finally { setBusy(false); }
+  }
+  async function syncWhatsAppCommands() {
+    setBusy(true);
+    try { const result = await post('/api/setup/channels/whatsapp-sync', {}); setMsg({ok: result.ok, text: result.detail}); }
+    catch { setMsg({ok: false, text: lang === 'id' ? 'Sinkronisasi WhatsApp gagal.' : 'WhatsApp synchronization failed.'}); }
     finally { setBusy(false); }
   }
 
@@ -64,8 +82,42 @@ export function ChannelsSetup() {
       <p className="wallet-note">{t('setupChannelsNote')}</p>
       <div className="seg" role="group" aria-label="channel">{info.guides.map((x) => <button key={x.channel} className={ch === x.channel ? 'on' : ''} onClick={() => { setAt(0); setCh(x.channel); }}>{x.label}</button>)}</div>
       <div className="setup-section-actions"><p className="wallet-note">{st.enabled ? t('setupChannelsConnReady') : t('setupChannelsNoConn')} {t('setupChannelsSafeCommands')} {info.status.commands ? (lang === 'id' ? 'aktif' : 'on') : (lang === 'id' ? 'mati' : 'off')}.</p>{!editing && <button disabled={!info.entry.available} onClick={() => { setCommands(info.status.commands); setEditing(true); }}>{t('setupChannelsEditBtn')} ({g.label})</button>}</div>
-      {!editing && <><dl className="setup-summary">{st.fields.map((f) => <div key={f.env}><dt>{f.env}</dt><dd>{f.set ? f.shown ?? (lang === 'id' ? 'Tersimpan · disembunyikan' : 'Saved · hidden') : (lang === 'id' ? 'Belum diatur' : 'Not set')}</dd></div>)}</dl><button disabled={busy || !st.enabled} onClick={test}>{t('setupChannelsSendTestBtn')}</button></>}
-      {ch === 'discord' && <p role="status">Discord: {info.discordConnection || 'unknown'} <button type="button" disabled={busy || !st.enabled} onClick={() => void syncCommands()}>{lang === 'id' ? 'Sinkronkan Perintah Sekarang' : 'Sync Commands Now'}</button></p>}
+      {!editing && (
+        <>
+          <dl className="setup-summary">
+            {st.fields.map((f) => (
+              <div key={f.env}>
+                <dt>{f.env}</dt>
+                <dd>{f.set ? f.shown ?? (lang === 'id' ? 'Tersimpan · disembunyikan' : 'Saved · hidden') : (lang === 'id' ? 'Belum diatur' : 'Not set')}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="setup-nav" style={{ marginTop: '8px' }}>
+            <button disabled={busy || !st.enabled} onClick={test}>{t('setupChannelsSendTestBtn')}</button>
+            {ch === 'telegram' && (
+              <button type="button" disabled={busy || !st.enabled} onClick={() => void syncTelegramCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah Telegram' : 'Sync Telegram Commands'}
+              </button>
+            )}
+            {ch === 'discord' && (
+              <button type="button" disabled={busy || !st.enabled} onClick={() => void syncDiscordCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah Discord' : 'Sync Discord Commands'}
+              </button>
+            )}
+            {ch === 'slack' && (
+              <button type="button" disabled={busy || !st.enabled} onClick={() => void syncSlackCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah Slack' : 'Sync Slack Commands'}
+              </button>
+            )}
+            {ch === 'whatsapp' && (
+              <button type="button" disabled={busy || !st.enabled} onClick={() => void syncWhatsAppCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah WhatsApp' : 'Sync WhatsApp Commands'}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {ch === 'discord' && !editing && <p role="status">Discord: {info.discordConnection || 'unknown'}</p>}
       <div hidden={!editing}>
       <p className="wallet-note small">{g.official}. {lang === 'id' ? 'Kirim:' : 'Posts:'} {g.outbound}. {lang === 'id' ? 'Perintah:' : 'Commands:'} {g.inbound}.</p>
       <details className="setup-reference"><summary>{lang === 'id' ? 'Panduan koneksi' : 'Connection guide'}</summary>
@@ -86,7 +138,30 @@ export function ChannelsSetup() {
               <label>Channel<select disabled={busy} value={vals.DISCORD_CHANNEL_ID || ''} onChange={e => setVals(old => ({...old, DISCORD_CHANNEL_ID: e.target.value}))}><option value="">{lang === 'id' ? 'Pilih channel' : 'Select channel'}</option>{discordBot.channels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></label></>}
           </div>}
           <label className="setup-check"><input type="checkbox" checked={commands} onChange={(e) => setCommands(e.target.checked)} /> <span>{t('setupChannelsAllowCommandsCheck')}</span></label>
-          <button disabled={busy} type="submit">{t('setupChannelsSaveBtn')}</button> <button type="button" disabled={busy || !st.enabled} onClick={test}>{t('setupChannelsSendTestBtn')}</button>
+          <div className="setup-nav" style={{ marginTop: '8px' }}>
+            <button disabled={busy} type="submit">{t('setupChannelsSaveBtn')}</button>
+            <button type="button" disabled={busy || !st.enabled} onClick={test}>{t('setupChannelsSendTestBtn')}</button>
+            {ch === 'telegram' && (
+              <button type="button" disabled={busy || (!st.enabled && !vals.TELEGRAM_BOT_TOKEN)} onClick={() => void syncTelegramCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah Telegram' : 'Sync Telegram Commands'}
+              </button>
+            )}
+            {ch === 'discord' && (
+              <button type="button" disabled={busy || (!st.enabled && !vals.DISCORD_BOT_TOKEN)} onClick={() => void syncDiscordCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah Discord' : 'Sync Discord Commands'}
+              </button>
+            )}
+            {ch === 'slack' && (
+              <button type="button" disabled={busy || (!st.enabled && !vals.SLACK_WEBHOOK_URL)} onClick={() => void syncSlackCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah Slack' : 'Sync Slack Commands'}
+              </button>
+            )}
+            {ch === 'whatsapp' && (
+              <button type="button" disabled={busy || (!st.enabled && !vals.WHATSAPP_ACCESS_TOKEN)} onClick={() => void syncWhatsAppCommands()}>
+                {lang === 'id' ? 'Sinkronkan Perintah WhatsApp' : 'Sync WhatsApp Commands'}
+              </button>
+            )}
+          </div>
         </form>
       ) : <p className="wallet-note">{lang === 'id' ? `Input dinonaktifkan di sini: ${info.entry.reason} Gunakan` : `Entry is off here: ${info.entry.reason} Use`} <code>npm run channels -- setup {ch}</code> {lang === 'id' ? 'atau secret store platform kamu.' : 'or your platform secret mechanism.'}</p>}
       <p className="wallet-note small">{lang === 'id' ? 'Kredensial lama tetap dipakai jika kolom dikosongkan. Secret tidak pernah ditampilkan kembali. Restart meja trading setelah menyimpan.' : 'Existing values are retained when left blank. Secrets are never loaded back into inputs. Restart the desk after saving.'}</p>

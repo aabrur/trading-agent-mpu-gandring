@@ -13,7 +13,7 @@ import { parseCommand, allowed, SAFE_COMMANDS } from '../server/channels/command
 import { verifySlack, verifyMeta, verifyDiscord } from '../server/channels/verify.js';
 import { ChannelHub } from '../server/channels/adapters.js';
 import { CHANNEL_GUIDES, allChannelLinks, NOT_SHIPPED } from '../server/channels/guide.js';
-import { checkChannelInput, saveChannel, testChannel, telegramChats, channelStatus } from '../server/channels/setup.js';
+import { checkChannelInput, saveChannel, testChannel, telegramChats, channelStatus, syncTelegramCommands, syncSlackCommands, syncWhatsAppCommands } from '../server/channels/setup.js';
 
 const TG_TOKEN = '123456789:' + 'A'.repeat(35);
 const SLACK_SECRET = 'f'.repeat(32);
@@ -179,7 +179,7 @@ describe('Desk Lead and inbound routes', () => {
     const inb = built.inbound.listen(0, '127.0.0.1'); servers.push(inb);
     await new Promise<void>((r) => built.server.listen(0, '127.0.0.1', () => r())); servers.push(built.server);
     await new Promise((r) => setTimeout(r, 10));
-    return { ...built, sent, base: `http://127.0.0.1:${(built.server.address() as AddressInfo).port}`, inBase: `http://127.0.0.1:${(inb.address() as AddressInfo).port}` };
+    return { ...built, sent, f, envFile: path.join(d, '.env'), base: `http://127.0.0.1:${(built.server.address() as AddressInfo).port}`, inBase: `http://127.0.0.1:${(inb.address() as AddressInfo).port}` };
   }
   const slackReq = (inBase: string, fields: Record<string, string>, secret = SLACK_SECRET) => {
     const body = new URLSearchParams(fields).toString(); const ts = now();
@@ -261,5 +261,36 @@ describe('Desk Lead and inbound routes', () => {
     const g = await boot({ ...allEnv, APP_MODE: 'grokbot' });
     const r = await fetch(`${g.base}/api/setup/channels/save`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channel: 'telegram', values: { TELEGRAM_BOT_TOKEN: TG_TOKEN, TELEGRAM_CHAT_ID: '1' } }) });
     expect(r.status).toBe(403);
+  });
+  it('synchronizes Telegram, Slack, and WhatsApp commands and exposes localhost routes', async () => {
+    const { base, f, sent, envFile } = await boot();
+    const tgRes = await syncTelegramCommands(TG_TOKEN, f);
+    expect(tgRes.ok).toBe(true);
+    expect(sent.some((s) => s.url.includes('setMyCommands'))).toBe(true);
+
+    const slRes = await syncSlackCommands({ SLACK_WEBHOOK_URL: SLACK_HOOK }, f);
+    expect(slRes.ok).toBe(true);
+    expect(sent.some((s) => s.url === SLACK_HOOK && s.body.includes('Mpu Gandring Slack Commands Synced'))).toBe(true);
+
+    const waRes = await syncWhatsAppCommands({
+      WHATSAPP_ACCESS_TOKEN: WA_TOKEN,
+      WHATSAPP_PHONE_NUMBER_ID: '1234567890',
+      WHATSAPP_TO: '6281200000000'
+    }, f);
+    expect(waRes.ok).toBe(true);
+
+    // Save channel values into desk envFile so routes find them
+    saveChannel(envFile, 'telegram', { TELEGRAM_BOT_TOKEN: TG_TOKEN, TELEGRAM_CHAT_ID: '1111' }, { commands: true });
+    saveChannel(envFile, 'slack', { SLACK_WEBHOOK_URL: SLACK_HOOK, SLACK_SIGNING_SECRET: SLACK_SECRET }, { commands: true });
+    saveChannel(envFile, 'whatsapp', { WHATSAPP_ACCESS_TOKEN: WA_TOKEN, WHATSAPP_PHONE_NUMBER_ID: '1234567890', WHATSAPP_TO: '6281200000000' }, { commands: true });
+
+    const tgRoute = await fetch(`${base}/api/setup/channels/telegram-sync`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(tgRoute.status).toBe(200);
+
+    const slRoute = await fetch(`${base}/api/setup/channels/slack-sync`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(slRoute.status).toBe(200);
+
+    const waRoute = await fetch(`${base}/api/setup/channels/whatsapp-sync`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(waRoute.status).toBe(200);
   });
 });

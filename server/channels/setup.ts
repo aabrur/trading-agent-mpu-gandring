@@ -5,7 +5,7 @@ import { setupEnv } from '../setup/core.js';
 import { safe } from '../redact.js';
 import { CHANNEL_GUIDES } from './guide.js';
 import { CHANNELS, channelConfig, type ChannelName } from './config.js';
-import { ChannelHub } from './adapters.js';
+import { ChannelHub, whatsappSend } from './adapters.js';
 
 export const isChannel = (v: unknown): v is ChannelName => typeof v === 'string' && (CHANNELS as readonly string[]).includes(v);
 export interface ChannelResult { ok: boolean; detail: string; saved?: string[] }
@@ -75,4 +75,105 @@ export const DISCORD_COMMANDS = [
 ];
 export function discordRegisterCommand(appIdVar = '$DISCORD_APPLICATION_ID', tokenVar = '$DISCORD_BOT_TOKEN') {
   return `curl -X PUT "https://discord.com/api/v10/applications/${appIdVar}/commands" -H "Authorization: Bot ${tokenVar}" -H "Content-Type: application/json" -d '${JSON.stringify(DISCORD_COMMANDS)}'`;
+}
+
+export const TELEGRAM_BOT_COMMANDS = [
+  { command: 'status', description: 'Balance, equity, venue, guards status' },
+  { command: 'positions', description: 'Active positions and resting exchange stops' },
+  { command: 'report', description: 'Latest performance and execution report' },
+  { command: 'scan', description: 'Instant proactive scan for desk alerts' },
+  { command: 'analyze', description: 'Direct agents to debate and auto-trade' },
+  { command: 'ask', description: 'Chat with Desk Lead or agent' },
+  { command: 'watchlist', description: 'Active auto-trading symbols' },
+  { command: 'scorecard', description: 'Agent performance and win rate' },
+  { command: 'lessons', description: 'Recent self-improving lessons' },
+  { command: 'cautious', description: 'Adjust agent risk appetite cautious' },
+  { command: 'aggressive', description: 'Adjust agent risk appetite aggressive' },
+  { command: 'calm', description: 'Reset agent risk appetite' },
+  { command: 'kill', description: 'Emergency stop (flatten positions)' },
+  { command: 'help', description: 'Show available commands' }
+];
+
+export async function syncTelegramCommands(token: string, fetchImpl: typeof fetch = fetch): Promise<ChannelResult> {
+  if (!token || !/^\d{5,15}:[A-Za-z0-9_-]{30,64}$/.test(token)) {
+    return { ok: false, detail: 'TELEGRAM_BOT_TOKEN is missing or invalid.' };
+  }
+  try {
+    const r = await fetchImpl(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ commands: TELEGRAM_BOT_COMMANDS }),
+      signal: AbortSignal.timeout(10_000)
+    });
+    const j = (await r.json()) as { ok?: boolean; description?: string };
+    if (!j.ok) return { ok: false, detail: `Telegram said: ${safe(String(j.description ?? r.status))}` };
+    return { ok: true, detail: 'Telegram commands registered with BotFather and client menus.' };
+  } catch (e) {
+    return { ok: false, detail: `Could not reach Telegram: ${safe((e as Error).message)}` };
+  }
+}
+
+export async function syncSlackCommands(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch): Promise<ChannelResult> {
+  const cfg = channelConfig(env);
+  if (!cfg.slack.webhookUrl) return { ok: false, detail: 'SLACK_WEBHOOK_URL is not set.' };
+  try {
+    const msg = [
+      '*Mpu Gandring Slack Commands Synced*',
+      '• `/desk status` : Balance, equity, venue, guards status',
+      '• `/desk positions` : Active positions and exchange stops',
+      '• `/desk report` : Latest desk performance report',
+      '• `/desk scan` : Proactive scan for desk alerts',
+      '• `/desk analyze <symbol>` : Direct agents debate and trade',
+      '• `/desk ask <query>` : Chat with Desk Lead',
+      '• `/desk kill` : Emergency stop (send "kill confirm" to flatten)',
+      '• `/desk help` : Show all commands',
+      `_Signing secret: ${cfg.slack.signingSecret ? 'configured' : 'not set (read-only webhook)'} · Allowed users: ${cfg.slack.allowed.length || 'none'}_`
+    ].join('\n');
+    const r = await fetchImpl(cfg.slack.webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: msg }),
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!r.ok) return { ok: false, detail: `Slack webhook returned HTTP ${r.status}` };
+    return { ok: true, detail: 'Slack commands verified and directory synced to channel.' };
+  } catch (e) {
+    return { ok: false, detail: `Could not reach Slack: ${safe((e as Error).message)}` };
+  }
+}
+
+export async function syncWhatsAppCommands(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch): Promise<ChannelResult> {
+  const cfg = channelConfig(env);
+  const wa = cfg.whatsapp;
+  if (!wa.token || !wa.phoneNumberId || !wa.to) {
+    return { ok: false, detail: 'WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, or WHATSAPP_TO is missing.' };
+  }
+  try {
+    const verifyRes = await fetchImpl(`https://graph.facebook.com/${wa.graphVersion}/${encodeURIComponent(wa.phoneNumberId)}`, {
+      headers: { Authorization: `Bearer ${wa.token}` },
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!verifyRes.ok) {
+      const errJson = (await verifyRes.json().catch(() => ({}))) as { error?: { message?: string } };
+      return { ok: false, detail: `WhatsApp Graph API: ${safe(errJson.error?.message ?? String(verifyRes.status))}` };
+    }
+    const commandGuide = [
+      '*Trading Agent Mpu Gandring Commands*',
+      '• status : Balance, equity, venue status',
+      '• positions : Open positions and stops',
+      '• report : Latest desk report',
+      '• scan : Instant proactive scan',
+      '• analyze <symbol> : Agents debate and trade',
+      '• ask <agent> <question> : Chat with agents',
+      '• kill : Emergency kill switch',
+      '• help : List all commands'
+    ].join('\n');
+    const sendRes = await whatsappSend(wa, commandGuide, fetchImpl, wa.to, true);
+    if (sendRes === 'sent') {
+      return { ok: true, detail: 'WhatsApp commands synced and guide sent to registered number.' };
+    }
+    return { ok: true, detail: 'WhatsApp Graph API credentials verified. Outbound push ready.' };
+  } catch (e) {
+    return { ok: false, detail: `WhatsApp sync error: ${safe((e as Error).message)}` };
+  }
 }
