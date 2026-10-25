@@ -20,18 +20,33 @@ export function telegramSend(c: ChannelConfig['telegram'], text: string, fetchIm
 }
 export async function discordSend(c: ChannelConfig['discord'], text: string, fetchImpl: typeof fetch = fetch): Promise<SendResult> {
   if (!c.enabled) return 'off';
-  let targetChannel = c.channelId;
-  if (!targetChannel && c.botToken && c.allowed.length > 0) {
+  const targets: string[] = [];
+  if (c.botToken && c.allowed.length > 0) {
     try {
-      targetChannel = await resolveDiscordDmChannel(c.botToken, c.allowed[0], fetchImpl);
+      const dm = await resolveDiscordDmChannel(c.botToken, c.allowed[0], fetchImpl);
+      if (dm) targets.push(dm);
     } catch (e) {
       log(`[channel] discord DM channel resolve failed: ${safe((e as Error).message).slice(0, 160)}`);
-      return 'failed';
     }
   }
-  const url = c.botToken && targetChannel ? `https://discord.com/api/v10/channels/${targetChannel}/messages` : c.webhookUrl;
-  const headers = c.botToken && targetChannel ? { Authorization: `Bot ${c.botToken}` } : {};
-  return attempt('discord', () => post(fetchImpl, url, { content: safe(text).slice(0, 1990), allowed_mentions: { parse: [] } }, headers));
+  // Guild/server channel is optional: send to it only when configured
+  if (c.botToken && c.channelId && !targets.includes(c.channelId)) {
+    targets.push(c.channelId);
+  }
+  if (c.botToken && targets.length > 0) {
+    const headers: Record<string, string> = { Authorization: `Bot ${c.botToken}` };
+    const body = { content: safe(text).slice(0, 1990), allowed_mentions: { parse: [] } };
+    const results = await Promise.all(
+      targets.map(targetChannel =>
+        attempt('discord', () => post(fetchImpl, `https://discord.com/api/v10/channels/${targetChannel}/messages`, body, headers))
+      )
+    );
+    return results.includes('sent') ? 'sent' : 'failed';
+  }
+  if (c.webhookUrl) {
+    return attempt('discord', () => post(fetchImpl, c.webhookUrl, { content: safe(text).slice(0, 1990), allowed_mentions: { parse: [] } }));
+  }
+  return 'off';
 }
 export function slackSend(c: ChannelConfig['slack'], text: string, fetchImpl: typeof fetch = fetch): Promise<SendResult> {
   if (!c.enabled) return Promise.resolve('off');
