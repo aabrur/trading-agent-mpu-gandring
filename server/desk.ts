@@ -356,8 +356,9 @@ export class Desk extends EventEmitter {
       ['whale_alert', 'on-chain transfers', !!process.env.WHALE_ALERT_API_KEY, true],
       ['sui_graphql', 'Sui Move event sample', !!process.env.SUI_GRAPHQL_URL, 'provider-dependent'],
       ['hyperliquid', 'public watchlist positions', true, false],
+      ['coinmarketcap', 'quotes & global metrics', !!(process.env.COINMARKETCAP_API_KEY || process.env.CMC_API_KEY), true],
       ['jev', 'optional classification', this.cfg.jev.enabled && (this.cfg.jev.openrouterKeySet || this.cfg.jev.dedicatedKeySet), true]
-    ] as const) manifest.push({ name, category, available: true, configured, requiresApiKey, status: configured ? 'CONFIGURED' : 'UNCONFIGURED', limitations: [name === 'whale_alert' ? 'Subscription-specific route must be supported; configured keys alone do not prove compatibility.' : 'Source coverage is bounded; configuration is not connectivity proof.'] });
+    ] as const) manifest.push({ name, category, available: true, configured, requiresApiKey, status: configured ? 'CONFIGURED' : 'UNCONFIGURED', limitations: [name === 'coinmarketcap' ? 'Basic plan limits: 333 credits/day, cached to preserve quota.' : name === 'whale_alert' ? 'Subscription-specific route must be supported; configured keys alone do not prove compatibility.' : 'Source coverage is bounded; configuration is not connectivity proof.'] });
     try {
       const policy = researchPolicy();
       const activity = localResearchActivity();

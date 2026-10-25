@@ -23,6 +23,19 @@ describe('agent output validation', () => {
     expect(extractJson('Sure!\n```json\n{"a":1}\n```')).toEqual({ a: 1 });
     expect(extractJson('blah {"reply":"hi {there}"} trailing')).toEqual({ reply: 'hi {there}' });
   });
+  it('strips thinking tokens and extracts structured JSON cleanly', () => {
+    const raw = '<think>\nHere is some reasoning with {nested: false} curly braces.\n</think>\n```json\n{"action":"HOLD","confidence":0.7,"reason":"market consolidation"}\n```';
+    expect(extractJson(raw, 'lead')).toEqual({ action: 'HOLD', confidence: 0.7, reason: 'market consolidation' });
+  });
+  it('accepts alternative message keys and plain text for chat task', async () => {
+    const rMessage = await runAgent(cfg, async () => '<think>thought</think>{"message":"All clear, Boss."}', 'lead', 'chat', input);
+    expect(rMessage.data.reply).toBe('All clear, Boss.');
+    expect(rMessage.fallback).toBe(false);
+
+    const rText = await runAgent(cfg, async () => 'Direct plain text answer from model without JSON wrapper', 'lead', 'chat', input);
+    expect(rText.data.reply).toBe('Direct plain text answer from model without JSON wrapper');
+    expect(rText.fallback).toBe(false);
+  });
   it('retries once, then succeeds', async () => {
     let n = 0;
     const call: ModelCaller = async () => (++n === 1 ? 'not json' : '{"action":"OPEN_LONG","confidence":0.7,"reason":"trend"}');

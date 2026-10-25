@@ -54,7 +54,19 @@ export const ReviewSchema = z.object({
   grade: z.enum(['A', 'B', 'C', 'D', 'F'])
 });
 
-export const ChatSchema = z.object({
+export const ChatSchema = z.preprocess((val) => {
+  if (typeof val === 'string') return { reply: val };
+  if (val && typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    if (obj.reply === undefined || obj.reply === null) {
+      const alias = obj.message ?? obj.text ?? obj.response ?? obj.content ?? obj.answer;
+      if (alias !== undefined && alias !== null) {
+        return { ...obj, reply: String(alias) };
+      }
+    }
+  }
+  return val;
+}, z.object({
   reply: boundedText(64000),
   commandToExecute: z.preprocess(value => value === null || typeof value === 'string' && !value.trim() ? undefined : value, z.string().trim().min(1).max(200).optional()),
   askTeammates: z.array(z.object({
@@ -66,7 +78,7 @@ export const ChatSchema = z.object({
     to: z.enum(['lead', 'market', 'research', 'strategist', 'risk', 'execution']),
     question: z.string().min(1).max(2000)
   }).nullable().optional()
-});
+}));
 
 export type Schemas = {
   opinion: typeof OpinionSchema;
@@ -92,7 +104,24 @@ export const SCHEMA_HINTS: Record<TaskKind, string> = {
 
 // Pull the first JSON object out of a model reply (handles ```json fences and chatter).
 export function extractJson(raw: string, task?: TaskKind): unknown {
-  const s = raw.trim().replace(/^```(?:json|markdown)?/i, '').replace(/```$/, '').trim();
+  let s = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced && fenced[1]) {
+    const candidate = fenced[1].trim();
+    try {
+      const parsed = JSON.parse(candidate);
+      return task === 'chat' && typeof parsed === 'string' ? { reply: parsed } : parsed;
+    } catch {
+      const subStart = candidate.indexOf('{');
+      if (subStart >= 0) {
+        try {
+          const subParsed = JSON.parse(candidate.slice(subStart));
+          return task === 'chat' && typeof subParsed === 'string' ? { reply: subParsed } : subParsed;
+        } catch { /* continue */ }
+      }
+    }
+  }
+  s = s.replace(/^```(?:json|markdown)?/i, '').replace(/```$/, '').trim();
   try {
     const parsed: unknown = JSON.parse(s);
     return task === 'chat' && typeof parsed === 'string' ? { reply: parsed } : parsed;

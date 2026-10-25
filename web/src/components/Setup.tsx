@@ -7,6 +7,7 @@ import { WalletPanel } from './Wallet';
 import { ChannelsSetup } from './Channels';
 import { ModelsSetup } from './ModelsSetup';
 import { PreferencesSetup } from './PreferencesSetup';
+import { DataSourcesSetup } from './DataSourcesSetup';
 import { LocalAgentsSetup } from './LocalAgentsSetup';
 import { TradingSetup } from './TradingSetup';
 import { JevSetup } from './JevSetup';
@@ -191,6 +192,9 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
                 {info.status.forbidden.length > 0 && <p className="wallet-msg bad">{t('setupDeskRemoveForbidden')} ({info.status.forbidden.join(', ')})</p>}
                 {state.killed && <p className="wallet-msg bad">{t('setupDeskKillSwitchAlert')} <code>{info.unkill}</code>{t('setupDeskThenRestart')}</p>}
                 <PreferencesSetup />
+                <div style={{ marginTop: '16px', borderTop: '1px solid var(--line)', paddingTop: '16px' }}>
+                  <DataSourcesSetup available={info.keyEntry.available} />
+                </div>
               </section>
 
             <section className="setup-pane" hidden={activeTab !== 'models'}>

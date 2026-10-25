@@ -167,6 +167,7 @@ export interface MarketSnapshot {
   derivatives?: DerivativesSummary | null;
   technicalSummary?: TechnicalSummary | null;
   whaleOnChain?: WhaleOnChainSummary | null;
+  coinMarketCap?: import('./market/coinmarketcap.js').CoinMarketCapSummary | null;
 }
 
 export interface NewsItem {

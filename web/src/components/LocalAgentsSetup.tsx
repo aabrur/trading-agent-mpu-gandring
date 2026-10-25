@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
 import { CodexResearchSetup } from './CodexResearchSetup';
-import { DataSourcesSetup } from './DataSourcesSetup';
 
 interface LocalAgent {
   id: string;
@@ -315,7 +314,6 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
           </div>
           {message.load && <p role="status">{message.load}</p>}
           <div className="local-agent-list">
-            <DataSourcesSetup available={available} />
             {agents.map((a) => {
               const currentSettings = editSettings[a.id] || {};
               const isOpen = !!openDrawer[a.id];

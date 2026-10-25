@@ -11,6 +11,7 @@ import { closedLiveCandles, fetchOpenInterestChanges, measuredNumber } from './o
 import { getLiveAnnouncements } from './live-news.js';
 import { noteTradeRequest, normalizeTrades, summarizeDepth, summarizeOrderflow, tradeRequestLimit, type NormalizedTradeInput } from './microstructure.js';
 import { fetchPositioning } from './positioning.js';
+import { getCoinMarketCapSummary } from './coinmarketcap.js';
 
 type Source = MarketSnapshot['source'];
 const ORDER: Source[] = ['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly'];
@@ -332,14 +333,15 @@ export async function getSnapshot(symbol: string, preferred: Source, liveOnly = 
         const snap = await FETCHERS[src](symbol);
         snap.candles = closedLiveCandles(snap.candles, 15 * 60_000);
         if (Number.isFinite(snap.last) && snap.last > 0 && snap.candles.length >= 55) {
-          const [orderbook, orderflow, derivatives, whaleOnChain, mtf5m, mtf1h, mtf4h] = await Promise.all([
+          const [orderbook, orderflow, derivatives, whaleOnChain, mtf5m, mtf1h, mtf4h, coinMarketCap] = await Promise.all([
             fetchL2Orderbook(symbol, src, preferred).catch(() => null),
             fetchRecentTrades(symbol, src, preferred).catch(() => null),
             fetchDerivatives(symbol, src, snap.last).catch(() => null),
             getWhaleOnChainSummary(symbol).catch(() => null),
             getCandles(symbol, '5m', src, 250, true).catch(() => null),
             getCandles(symbol, '1h', src, 250, true).catch(() => null),
-            getCandles(symbol, '4h', src, 250, true).catch(() => null)
+            getCandles(symbol, '4h', src, 250, true).catch(() => null),
+            getCoinMarketCapSummary(symbol).catch(() => null)
           ]);
 
           const technicalSummary = buildTechnicalSummary({
@@ -363,6 +365,7 @@ export async function getSnapshot(symbol: string, preferred: Source, liveOnly = 
             derivatives,
             technicalSummary,
             whaleOnChain,
+            coinMarketCap,
             errors
           };
         }
@@ -486,3 +489,4 @@ export async function getCandles(symbol: string, tf: Timeframe, preferred: Sourc
 export * from './news.js';
 export * from './whale.js';
 export * from './live-news.js';
+export * from './coinmarketcap.js';
