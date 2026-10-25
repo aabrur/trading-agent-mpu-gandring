@@ -22,7 +22,9 @@ import { PaperBook } from './paper.js';
 import { parseCommand, authorizedChatCommand, HELP, normSymbol, type Command } from './commands.js';
 import { sendToGrokBot } from './bridge.js';
 import { safe, log } from './redact.js';
-import type { LiveExecutor } from './live/executor.js';
+import { LiveExecutor } from './live/executor.js';
+import { networkFor } from './live/guard.js';
+import { exchangeSettings, makeAdapter, type FetchLike } from './exchange/index.js';
 import type { ClosedTrade } from './types.js';
 import { Learnings, type LessonInput } from './learnings.js';
 import { Scorecard } from './scorecard.js';
@@ -719,7 +721,8 @@ export class Desk extends EventEmitter {
 
   start() {
     if (this.timers.length) return;
-    if (this.opts.executor) { void this.syncLive().then(() => this.checkDay()); this.timers.push(setInterval(() => void this.syncLive(), 30_000)); }
+    if (this.opts.executor) void this.syncLive().then(() => this.checkDay());
+    this.timers.push(setInterval(() => { if (this.opts.executor) void this.syncLive(); }, 30_000));
     void this.refreshTickers();
     this.timers.push(setInterval(() => void this.refreshTickers(), this.cfg.tickerRefreshSeconds * 1000));
   }
@@ -1300,10 +1303,38 @@ export class Desk extends EventEmitter {
     });
   }
 
+  /** Apply verified venue balance directly when live book has no open positions yet */
+  applyVenueBalanceObservation(equityUsdt: number, availableUsdt: number) {
+    if (!Number.isFinite(equityUsdt) || !Number.isFinite(availableUsdt) || this.cfg.tradingMode === 'PAPER') return;
+    const upnl = this.venueAccount?.unrealized ?? 0;
+    this.venueAccount = {
+      equity: round2(equityUsdt),
+      available: round2(availableUsdt),
+      unrealized: upnl,
+      at: Date.now(),
+      status: 'confirmed',
+      positions: this.venueAccount?.positions ?? []
+    };
+    if (this.book.positions.length === 0) {
+      this.book.balance = round2(equityUsdt - upnl);
+    }
+    if (!this.syncedLive && !this.day.lossHit) {
+      this.day = { key: new Date().toISOString().slice(0, 10), startEquity: round2(equityUsdt), lossHit: false };
+    }
+    this.syncedLive = true;
+    this.changed();
+  }
+
   /** Reload runtime configuration in-place from .env without dropping connections */
-  reloadRuntimeConfig(env: Record<string, string | undefined>) {
+  reloadRuntimeConfig(env: Record<string, string | undefined>, fetchImpl?: FetchLike) {
+    if (env.TRADING_MODE) {
+      this.cfg.tradingMode = env.TRADING_MODE.toUpperCase() as never;
+    }
+    if (env.EXCHANGE) {
+      this.cfg.exchange.name = env.EXCHANGE as never;
+    }
     const networkProfile = this.cfg.tradingMode !== 'PAPER' && this.cfg.tradingProfile !== 'current';
-    if (!networkProfile && env.PAPER_BALANCE && Number(env.PAPER_BALANCE) > 0 && this.book.positions.length === 0) {
+    if (this.cfg.tradingMode === 'PAPER' && !networkProfile && env.PAPER_BALANCE && Number(env.PAPER_BALANCE) > 0 && this.book.positions.length === 0) {
       this.book.balance = Number(env.PAPER_BALANCE);
     }
     if (!networkProfile && env.SAFETY_NET && Number(env.SAFETY_NET) >= 0) {
@@ -1313,11 +1344,24 @@ export class Desk extends EventEmitter {
       this.book.n = Number(env.OPEN_ORDERS_N) as 1 | 2 | 3 | 4;
       this.cfg.paper.n = Number(env.OPEN_ORDERS_N) as 1 | 2 | 3 | 4;
     }
-    if (env.TRADING_MODE) {
-      this.cfg.tradingMode = env.TRADING_MODE.toUpperCase() as never;
-    }
-    if (env.EXCHANGE) {
-      this.cfg.exchange.name = env.EXCHANGE as never;
+    const net = networkFor(this.cfg.tradingMode);
+    if (!net) {
+      this.opts.executor = null;
+      this.book.autoExit = true;
+      this.venueAccount = null;
+      this.syncedLive = false;
+    } else {
+      const ex = exchangeSettings(env);
+      if (ex.name && ex.creds[net]) {
+        try {
+          const adapter = makeAdapter(ex.name, net, ex.creds[net]!, fetchImpl);
+          const journalPath = process.env.VITEST ? undefined : `data/execution-${ex.name}-${net}.json`;
+          this.opts.executor = new LiveExecutor(adapter, 1200, journalPath);
+          this.book.autoExit = false;
+          this.syncedLive = false;
+          void this.syncLive().then(() => this.checkDay());
+        } catch { /* retain existing executor if adapter fails */ }
+      }
     }
     if (env.AUTO_TRADING) {
       this.cfg.auto.on = env.AUTO_TRADING === 'on';
@@ -1605,7 +1649,21 @@ export class Desk extends EventEmitter {
           if (this.cfg.tradingMode !== 'PAPER' && !(cmd.value > 0)) { ok = false; reply = 'Outside PAPER the safety net must stay above zero.'; break; }
           await this.applyOwnerSettings((base) => ({ ...base, safetyNet: cmd.value })); reply = `Safety net set to ${cmd.value} USDT. ${this.book.split().note}.`; break;
         case 'set_balance':
-          if (this.cfg.tradingMode !== 'PAPER') { ok = false; reply = 'Exchange balance comes from the venue; set balance applies to PAPER only.'; break; }
+          if (this.cfg.tradingMode !== 'PAPER') {
+            if (this.opts.executor) {
+              await this.syncLive();
+              if (this.venueAccount) {
+                reply = `Synchronized live book with exchange balance (${this.book.balance} USDT). ${this.book.split().note}.`;
+                break;
+              }
+            }
+            if (cmd.value > 0 && this.book.positions.length === 0) {
+              this.applyVenueBalanceObservation(cmd.value, this.venueAccount?.available ?? cmd.value);
+              reply = `Synchronized live book balance to ${this.book.balance} USDT. ${this.book.split().note}.`;
+              break;
+            }
+            ok = false; reply = 'Exchange balance comes from the venue; set balance applies to PAPER only.'; break;
+          }
           if (this.book.positions.length) { ok = false; reply = 'Close open paper positions before resetting the balance.'; break; }
           this.book.balance = cmd.value; reply = `Paper balance set to ${cmd.value} USDT. ${this.book.split().note}.`; break;
         case 'close_all': {

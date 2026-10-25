@@ -68,7 +68,15 @@ export class BybitAdapter implements ExchangeAdapter {
     const r = await this.req('GET', '/v5/account/wallet-balance', { accountType: 'UNIFIED' });
     const acc = r?.list?.[0];
     if (acc?.totalEquity == null || acc?.totalAvailableBalance == null || !Number.isFinite(Number(acc.totalEquity)) || !Number.isFinite(Number(acc.totalAvailableBalance))) throw new ExchangeError('bybit: incomplete account balance response');
-    return { equityUsdt: Number(acc.totalEquity ?? 0), availableUsdt: Number(acc.totalAvailableBalance ?? 0) };
+    const equityUsdt = Number(acc.totalEquity ?? 0);
+    let availableUsdt = Number(acc.totalAvailableBalance ?? 0);
+    if (availableUsdt <= 0 && equityUsdt > 0 && !(Number(acc.totalInitialMargin ?? 0) > 0)) {
+      const usdtCoin = Array.isArray(acc.coin) ? acc.coin.find((c: Record<string, unknown>) => c?.coin === 'USDT') : null;
+      const coinFree = usdtCoin ? Math.max(0, Number(usdtCoin.walletBalance ?? 0) - Number(usdtCoin.totalPositionIM ?? 0) - Number(usdtCoin.totalOrderIM ?? 0) - Number(usdtCoin.locked ?? 0)) : 0;
+      const walletFree = Math.max(0, Number(acc.totalMarginBalance || acc.totalWalletBalance || 0) - Number(acc.totalInitialMargin || 0));
+      availableUsdt = coinFree > 0 ? coinFree : walletFree > 0 ? walletFree : equityUsdt;
+    }
+    return { equityUsdt, availableUsdt };
   }
 
   async instrument(symbol: string) {

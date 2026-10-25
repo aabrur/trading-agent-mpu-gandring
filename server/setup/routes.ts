@@ -247,7 +247,8 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
         const nextCfg = loadConfig(env);
         c.cfg.exchange = nextCfg.exchange;
         c.cfg.live = nextCfg.live;
-        c.desk.reloadRuntimeConfig?.(env);
+        c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
+        await c.desk.syncLive?.();
         c.desk.emit('state', c.desk.snapshot());
       }
       res.status(r.ok ? 200 : 400).json(r);
@@ -262,7 +263,7 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
       const nextCfg = loadConfig(env);
       c.cfg.exchange = nextCfg.exchange;
       c.cfg.live = nextCfg.live;
-      c.desk.reloadRuntimeConfig?.(env);
+      c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
       c.desk.emit('state', c.desk.snapshot());
     }
     res.status(r.ok ? 200 : 400).json(r);
@@ -272,6 +273,16 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     const p = ModeBody.safeParse(req.body);
     if (!p.success) return res.status(400).json({ ok: false, detail: 'mode must be PAPER, TESTNET or LIVE' });
     const r = await setTradingMode(c.envFile, p.data.mode, { confirm: p.data.confirm, fetchImpl: c.fetchImpl });
+    if (r.ok) {
+      const env = setupEnv(c.envFile);
+      const nextCfg = loadConfig(env);
+      c.cfg.tradingMode = nextCfg.tradingMode;
+      c.cfg.exchange = nextCfg.exchange;
+      c.cfg.live = nextCfg.live;
+      c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
+      await c.desk.syncLive?.();
+      c.desk.emit('state', c.desk.snapshot());
+    }
     res.status(r.ok ? 200 : 400).json(r);
   });
   app.post('/api/setup/doctor', async (req, res) => {
@@ -333,11 +344,16 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     }
     res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, unkillCommand: UNKILL_COMMAND });
   });
-  app.post('/api/ops/restart', (req, res) => {
+  app.post('/api/ops/restart', async (req, res) => {
     if (!gate(req, res)) return;
     try {
       const env = setupEnv(c.envFile);
-      c.desk.reloadRuntimeConfig?.(env);
+      const nextCfg = loadConfig(env);
+      c.cfg.tradingMode = nextCfg.tradingMode;
+      c.cfg.exchange = nextCfg.exchange;
+      c.cfg.live = nextCfg.live;
+      c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
+      await c.desk.syncLive?.();
       if (c.auto && typeof env.AUTO_TRADING === 'string') {
         c.auto.configure({ on: env.AUTO_TRADING === 'on' });
       }

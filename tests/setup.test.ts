@@ -229,5 +229,33 @@ describe('localhost-only setup and ops routes', () => {
       { name: 'BYBIT_API_KEY', set: true, shown: null },
       { name: 'BYBIT_API_SECRET', set: true, shown: null }
     ]);
+    const modeSwitch = await (await post(`${base}/api/setup/mode`, {
+      mode: 'LIVE',
+      confirm: 'I understand LIVE trades real money'
+    })).json();
+    expect(modeSwitch.ok).toBe(true);
+    expect(built.desk.cfg.tradingMode).toBe('LIVE');
+    const syncCmd = await built.desk.command('set balance 15.01');
+    expect(syncCmd.ok).toBe(true);
+    expect(built.desk.venueAccount?.status).toBe('confirmed');
+    expect(built.desk.book.balance).toBe(15.01);
+  });
+
+  it('BybitAdapter.balance falls back to coin/wallet balance when totalAvailableBalance is empty on UTA', async () => {
+    const { BybitAdapter } = await import('../server/exchange/bybit.js');
+    const adapter = new BybitAdapter('mainnet', 'KEYAAAAAAAAA', 'SECRETGGGGGGGGGG', async () => new Response(JSON.stringify({
+      retCode: 0,
+      result: {
+        list: [{
+          totalEquity: '15.01',
+          totalAvailableBalance: '',
+          totalWalletBalance: '15.01',
+          totalInitialMargin: '0',
+          coin: [{ coin: 'USDT', walletBalance: '15.01', totalPositionIM: '0', totalOrderIM: '0', locked: '0' }]
+        }]
+      }
+    }), { status: 200 }));
+    const bal = await adapter.balance();
+    expect(bal).toEqual({ equityUsdt: 15.01, availableUsdt: 15.01 });
   });
 });

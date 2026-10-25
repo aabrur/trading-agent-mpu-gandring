@@ -169,7 +169,11 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const venue = (EXCHANGES.includes(rawVenue as ExchangeName) ? rawVenue : cfg.exchange.name) as ExchangeName;
     const network: Network = req.query.network === 'mainnet' || (req.query.network !== 'testnet' && cfg.tradingMode === 'LIVE') ? 'mainnet' : 'testnet';
     const address = typeof req.query.address === 'string' ? req.query.address.slice(0, 120) : undefined;
-    res.json(await wallet.readVenueBalance(venue, network, address));
+    const bal = await wallet.readVenueBalance(venue, network, address);
+    if (bal.ok && bal.equityUsdt != null && cfg.tradingMode !== 'PAPER' && venue === cfg.exchange.name && network === (cfg.tradingMode === 'LIVE' ? 'mainnet' : 'testnet')) {
+      desk.applyVenueBalanceObservation(bal.equityUsdt, bal.availableUsdt ?? bal.equityUsdt);
+    }
+    res.json(bal);
   });
   app.post('/api/wallet/start', (req, res) => {
     const a = access(req); if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });
