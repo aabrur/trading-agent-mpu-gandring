@@ -13,7 +13,7 @@ import { walletAccess } from '../wallet.js';
 import { safe } from '../redact.js';
 import { sanitizeUntrusted } from '../untrusted.js';
 import { VENUE_GUIDES, guideSteps, envFields, MODES, MODE_INFO, LIVE_CONFIRM_PHRASE, LINKS_CHECKED_ON } from './guide.js';
-import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus } from './core.js';
+import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus, venueFieldStatus } from './core.js';
 import { doctor } from './doctor.js';
 import { MODEL_KEY_ENV, modelSetupInfo, modelUpdates } from './models.js';
 import { setEnv } from '../../cli/envfile.js';
@@ -77,7 +77,8 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     const v = Venue.safeParse(req.params.venue); const net = req.query.network === 'mainnet' ? 'mainnet' : 'testnet';
     if (!v.success) return res.status(404).json({ ok: false, error: 'unknown venue' });
     const g = VENUE_GUIDES[v.data];
-    res.json({ ok: true, venue: v.data, network: net, note: g.networks[net].note ?? null, steps: guideSteps(v.data, net, c.cfg.appMode === 'grokbot' ? 'grokbot' : 'local'), fields: envFields(v.data, net), permissionsOn: g.permissionsOn, permissionsOff: g.permissionsOff, ip: g.ip, docs: g.docs, connectWallet: g.connectWallet });
+    const env = setupEnv(c.envFile);
+    res.json({ ok: true, venue: v.data, network: net, note: g.networks[net].note ?? null, steps: guideSteps(v.data, net, c.cfg.appMode === 'grokbot' ? 'grokbot' : 'local'), fields: envFields(v.data, net), venues: venueFieldStatus(env, v.data), permissionsOn: g.permissionsOn, permissionsOff: g.permissionsOff, ip: g.ip, docs: g.docs, connectWallet: g.connectWallet });
   });
   app.get('/api/setup/models', (req, res) => {
     if (!gate(req, res)) return;
@@ -242,7 +243,11 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     try {
       const r = await saveVenueKeys(c.envFile, p.data.venue, p.data.network, p.data, { fetchImpl: c.fetchImpl });
       if (r.ok) {
-        c.cfg.exchange.name = p.data.venue;
+        const env = setupEnv(c.envFile);
+        const nextCfg = loadConfig(env);
+        c.cfg.exchange = nextCfg.exchange;
+        c.cfg.live = nextCfg.live;
+        c.desk.reloadRuntimeConfig?.(env);
         c.desk.emit('state', c.desk.snapshot());
       }
       res.status(r.ok ? 200 : 400).json(r);
@@ -253,7 +258,11 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     const v = String(req.body?.venue ?? '');
     const r = setVenue(c.envFile, v);
     if (r.ok && EXCHANGES.includes(v as ExchangeName)) {
-      c.cfg.exchange.name = v as ExchangeName;
+      const env = setupEnv(c.envFile);
+      const nextCfg = loadConfig(env);
+      c.cfg.exchange = nextCfg.exchange;
+      c.cfg.live = nextCfg.live;
+      c.desk.reloadRuntimeConfig?.(env);
       c.desk.emit('state', c.desk.snapshot());
     }
     res.status(r.ok ? 200 : 400).json(r);

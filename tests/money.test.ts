@@ -60,6 +60,10 @@ describe('order planning', () => {
     expect(l.ok && l.tp! > 100).toBe(true);
     expect(s.ok && s.tp! < 100).toBe(true);
   });
+  it('allows minOrderUsdt of 0 without failing minimum notional validation', () => {
+    const p = planOrder({ ...base, balance: 30, safetyNet: 20, n: 4, leverage: 1, minOrderUsdt: 0 });
+    expect(p.ok).toBe(true);
+  });
 });
 
 import { PaperBook } from '../server/paper.js';

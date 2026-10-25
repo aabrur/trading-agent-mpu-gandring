@@ -15,9 +15,27 @@ import { useI18n } from '../i18n';
 interface Link { label: string; url: string; login?: boolean; note?: string }
 interface Step { id: string; title: string; text: string; links: Link[] }
 interface Field { name: string; label: string; secret: boolean; placeholder: string }
+interface VenueFieldRow { network: string; fields: { name: string; set: boolean; shown: string | null }[] }
 interface VenueRow { venue: string; label: string; kind: string; status: string; connectWallet: boolean; login: string; extra: string | null }
-interface SetupInfo { ok: boolean; error?: string; linksCheckedOn: string; modes: { mode: DeskState['mode']; info: string }[]; liveConfirmPhrase: string; keyEntry: { available: boolean; reason: string }; running: { mode: string; appMode: string }; status: { tradingMode: DeskState['mode']; exchange: string; venues: { network: string; fields: { name: string; set: boolean; shown: string | null }[] }[]; forbidden: string[] }; unkill: string; venues: VenueRow[] }
-interface Guide { note: string | null; steps: Step[]; fields: Field[]; connectWallet: boolean; docs: Link[] }
+interface SetupInfo {
+  ok: boolean;
+  error?: string;
+  linksCheckedOn: string;
+  modes: { mode: DeskState['mode']; info: string }[];
+  liveConfirmPhrase: string;
+  keyEntry: { available: boolean; reason: string };
+  running: { mode: string; appMode: string };
+  status: {
+    tradingMode: DeskState['mode'];
+    exchange: string;
+    venues: VenueFieldRow[];
+    venuesByExchange?: Record<string, VenueFieldRow[]>;
+    forbidden: string[];
+  };
+  unkill: string;
+  venues: VenueRow[];
+}
+interface Guide { note: string | null; steps: Step[]; fields: Field[]; venues?: VenueFieldRow[]; connectWallet: boolean; docs: Link[] }
 interface DoctorLine { ok: boolean | null; label: string; detail: string }
 
 type SetupTab = 'desk' | 'trading' | 'models' | 'local' | 'exchange' | 'channels';
@@ -54,6 +72,7 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
   if (!info) return <div className="setup-overlay"><div className="panel setup setup-tabbed" role="dialog" aria-modal="true" aria-label={t('setupTitle')}><div className="panel-head"><h2>{t('setupTitle')}</h2><button onClick={onClose}>{t('setupCloseBtn')}</button></div><p role="status">{t('setupLoadingMsg')}</p></div></div>;
   if (!info.ok) return <div className="setup-overlay"><div className="panel setup setup-tabbed"><div className="panel-head"><h2>{t('setupTitle')}</h2><button onClick={onClose}>{t('setupCloseBtn')}</button></div><p className="wallet-msg bad">{info.error === 'slow down' ? (lang === 'id' ? 'Terlalu banyak permintaan. Tutup dan buka kembali Pengaturan dalam satu menit.' : 'Too many requests for a moment. Close and open Setup again in a minute.') : info.error ?? (lang === 'id' ? 'Pengaturan tidak tersedia di sini.' : 'Setup is not available here.')}</p><p>{lang === 'id' ? 'Pengaturan yang sama via terminal:' : 'Same setup in a terminal:'} <code>npm run setup</code></p></div></div>;
   const v = info.venues.find((x) => x.venue === venue);
+  const activeVenuesStatus = info.status.venuesByExchange?.[venue] ?? guide?.venues ?? info.status.venues;
   const steps = guide?.steps ?? [];
   const cur = steps[at];
   function restoreExchange() {
@@ -62,14 +81,27 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
     setVals({}); setConfirm(''); setMsg(null); setAt(0);
   }
 
+  async function selectVenue(nextVenue: string) {
+    setVenue(nextVenue);
+    setDoc(null);
+    const r = await post('/api/setup/venue', { venue: nextVenue }).catch(() => ({ ok: false }));
+    if (r?.ok) {
+      try {
+        localStorage.setItem('mg-wallet-venue', nextVenue);
+      } catch { /* ignore */ }
+      window.dispatchEvent(new Event('mg-wallet-updated'));
+      void load();
+    }
+  }
+
   async function saveKeys() {
     if (!guide) return;
     const [k, s, t] = guide.fields.map((f) => vals[f.name] ?? '');
     setBusy(true); setMsg(null);
     const r = await post('/api/setup/keys', { venue, network, key: k, secret: s, ...(guide.fields[2] ? { third: t } : {}) }).catch(() => ({ ok: false, detail: 'office not reachable' }));
-    setVals({}); // never keep secrets in the page after sending
     setBusy(false); setMsg({ ok: r.ok, text: `${r.detail ?? r.error ?? ''}${r.warning ? ` ${r.warning}` : ''}` });
     if (r.ok) {
+      setVals({}); // clear secrets from the page after a successful save
       try {
         localStorage.setItem('mg-wallet-venue', venue);
         localStorage.setItem('mg-wallet-network', network);
@@ -184,8 +216,8 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
                   <p className="wallet-note">{t('setupExchangeRunningPrefix')} <b>{info.running.mode}</b> {lang === 'id' ? 'dalam mode' : 'in'} {info.running.appMode}.</p>
                 </div>
 
-                <div className="setup-section-actions"><p className="wallet-note">{t('setupExchangeSavedPrefix')} <b>{info.status.tradingMode}</b> · {info.status.exchange}. {t('setupExchangeCredsNote')}</p>{!editingExchange && <button onClick={() => { restoreExchange(); setEditingExchange(true); }}>{t('setupExchangeEditBtn')}</button>}</div>
-                {!editingExchange && <><dl className="setup-summary">{info.status.venues.map((n) => <div key={n.network}><dt>{n.network}</dt><dd>{n.fields.map((f) => `${f.name}: ${f.set ? (lang === 'id' ? 'tersimpan' : 'saved') : (lang === 'id' ? 'belum diatur' : 'not set')}`).join(' · ')}</dd></div>)}</dl><button disabled={busy} onClick={runDoctor}>{t('setupExchangeRunDoctorBtn')}</button></>}
+                <div className="setup-section-actions"><p className="wallet-note">{t('setupExchangeSavedPrefix')} <b>{info.status.tradingMode}</b> · {venue || info.status.exchange}. {t('setupExchangeCredsNote')}</p>{!editingExchange && <button onClick={() => { restoreExchange(); setEditingExchange(true); }}>{t('setupExchangeEditBtn')}</button>}</div>
+                {!editingExchange && <><dl className="setup-summary">{activeVenuesStatus.map((n) => <div key={n.network}><dt>{n.network}</dt><dd>{n.fields.map((f) => `${f.name}: ${f.set ? (lang === 'id' ? 'tersimpan' : 'saved') : (lang === 'id' ? 'belum diatur' : 'not set')}`).join(' · ')}</dd></div>)}</dl><button disabled={busy} onClick={runDoctor}>{t('setupExchangeRunDoctorBtn')}</button></>}
                 <div hidden={!editingExchange}>
                 <details className="setup-reference"><summary>{t('setupExchangeModeGuide')}</summary>
                 <h4>1. Mode</h4>
@@ -194,7 +226,7 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
 
                 <h4>2. {t('setupExchangeVenueAndNetwork')}</h4>
                 <div className="wallet-pick">
-                  <select value={venue} onChange={(e) => setVenue(e.target.value)} aria-label="venue">
+                  <select value={venue} onChange={(e) => { void selectVenue(e.target.value); }} aria-label="venue">
                     <optgroup label={t('setupExchangeCexGroup')}>{info.venues.filter((x) => x.kind === 'CEX').map((x) => <option key={x.venue} value={x.venue}>{x.label}</option>)}</optgroup>
                     <optgroup label={t('setupExchangeDexGroup')}>{info.venues.filter((x) => x.kind === 'DEX').map((x) => <option key={x.venue} value={x.venue}>{x.label}</option>)}</optgroup>
                   </select>
@@ -209,17 +241,18 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
                 <div className="setup-nav"><button disabled={at === 0} onClick={() => setAt(at - 1)}>{lang === 'id' ? 'Kembali' : 'Back'}</button><button disabled={at >= steps.length - 1} onClick={() => setAt(at + 1)}>{lang === 'id' ? 'Langkah berikutnya' : 'Next step'}</button></div>
                 </details>
 
-                <details className="setup-reference"><summary>{lang === 'id' ? 'Ganti atau tambah kredensial khusus-trading' : 'Replace or add trade-only credentials'}</summary>
+                <details className="setup-reference" open><summary>{lang === 'id' ? 'Ganti atau tambah kredensial khusus-trading' : 'Replace or add trade-only credentials'}</summary>
                 <p className="field-help">{lang === 'id' ? 'Kredensial tersimpan tetap aman di komputer ini. Buka bagian ini hanya untuk menggantinya atau menghubungkan bursa baru. Kolom rahasia sengaja dikosongkan.' : 'Saved credentials stay in place. Open this section only to replace them or connect a new venue. Secret fields are intentionally empty.'}</p>
                 {info.keyEntry.available && guide ? (
                   <form className="setup-keys" autoComplete="off" onSubmit={(e) => { e.preventDefault(); void saveKeys(); }}>
                     {guide.fields.map((f) => <label key={f.name}><span>{f.label} <code>{f.name}</code></span><input type={f.secret ? 'password' : 'text'} autoComplete="off" spellCheck={false} placeholder={f.placeholder} value={vals[f.name] ?? ''} onChange={(e) => setVals({ ...vals, [f.name]: e.target.value })} /></label>)}
                     <button disabled={busy} type="submit">{busy ? (lang === 'id' ? 'Memeriksa di bursa...' : 'Checking on the venue...') : t('setupExchangeSaveKeysBtn')}</button>
+                    {msg && <p className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
                     <p className="wallet-note small">{lang === 'id' ? 'Ditolak: seed phrase, private key dompet utama, key dengan izin withdraw. Jangan pernah menempelkan API key ke dalam chat.' : 'Refused: seed phrases, main wallet keys, keys that can withdraw. Never paste a key into a chat.'}</p>
                   </form>
                 ) : <p className="wallet-note">{t('setupExchangeKeyEntryUnavailable')} {info.keyEntry.reason}</p>}
                 {guide?.connectWallet && <WalletPanel state={state} />}
-                {info.status.venues.map((n) => <p key={n.network} className="wallet-note small">{n.network}: {n.fields.map((f) => `${f.name} ${f.set ? (f.shown ?? (lang === 'id' ? 'tersimpan' : 'set')) : (lang === 'id' ? 'kosong' : 'empty')}`).join(', ')}</p>)}
+                {activeVenuesStatus.map((n) => <p key={n.network} className="wallet-note small">{n.network}: {n.fields.map((f) => `${f.name} ${f.set ? (f.shown ?? (lang === 'id' ? 'tersimpan' : 'set')) : (lang === 'id' ? 'kosong' : 'empty')}`).join(', ')}</p>)}
                 </details>
 
                 <h4>5. {lang === 'id' ? 'Verifikasi' : 'Verify'}</h4>
@@ -270,4 +303,3 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
     </div>
   );
 }
-

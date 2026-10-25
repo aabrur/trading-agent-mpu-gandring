@@ -93,7 +93,7 @@ export function TopBar({
       setRestartReply(lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
     } finally { setRestarting(false); }
   };
-  const ver = updateInfo?.currentVersion ?? '0.0.0.3.22';
+  const ver = updateInfo?.currentVersion ?? '0.0.0.3.28';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
   void onOpenTrakteer;
 
@@ -134,7 +134,7 @@ export function TopBar({
         savedNet = localStorage.getItem('mg-wallet-network') || '';
         savedAddr = localStorage.getItem('mg-wallet-address') || '';
       } catch { /* ignore */ }
-      const targetVenue = savedVenue || activeVenue || 'bybit';
+      const targetVenue = activeVenue || savedVenue || 'bybit';
       const net = savedNet === 'mainnet' || savedNet === 'testnet' ? savedNet : (activeMode === 'LIVE' ? 'mainnet' : 'testnet');
       const qs = new URLSearchParams({ venue: targetVenue, network: net });
       if (savedAddr) qs.set('address', savedAddr);
@@ -190,31 +190,14 @@ export function TopBar({
           </div>
           <div className="brand-meta">
             {state?.mode === 'LIVE'
-              ? (
-                <>
-                  <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}</span>
-                  {(state.venue?.name === 'bybit' || state.live?.exchange === 'bybit') && <span className="badge venue-v-badge" title="Bybit V">V</span>}
-                </>
-              )
+              ? <span className="badge live-badge" title="Real orders on the exchange, full auto">LIVE · {state.venue?.label ?? state.live?.exchange}</span>
               : state?.mode === 'TESTNET'
-                ? (
-                  <>
-                    <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
-                    {(state.venue?.name === 'bybit' || state.live?.exchange === 'bybit') && <span className="badge venue-v-badge" title="Bybit V">V</span>}
-                  </>
-                )
+                ? <span className="badge testnet-badge" title="Exchange testnet, test funds">TESTNET · {state.venue?.label ?? state.live?.exchange}</span>
                 : <span className="badge paper" title="Simulated trades only">{t('paperMode')}</span>}
             {state?.auto?.on && <span className="badge auto-badge" title="Agents trade on their own, no approval step">AUTO · {state.auto.intervalMin}m</span>}
             {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
             {state?.killed && <span className="badge warn">{t('killSwitchOn')}</span>}
             {state?.dailyLoss?.hit && <span className="badge warn">{t('dailyLossStop')}</span>}
-            {state?.venue && state.mode !== 'LIVE' && state.mode !== 'TESTNET' && (
-              <>
-                <span className="badge venue-badge" title={`Venue: ${state.venue.label}, ${state.venue.kind}. Stops rest on the exchange.`}>{state.venue.kind} · {state.venue.label}</span>
-                {state.venue.name === 'bybit' && <span className="badge venue-v-badge" title="Bybit V">V</span>}
-              </>
-            )}
-            {state && <span className="badge">{t('dataPrefix')} {state.marketSource}</span>}
             {state?.version && <span className="badge version-badge" title={'Trading Agent Mpu Gandring v' + state.version}>v{state.version}</span>}
           </div>
         </div>
@@ -409,7 +392,7 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   const [balance, setBalance] = useState(String(p.balance));
   const [selectedVenue, setSelectedVenue] = useState<string>(() => {
     try {
-      return localStorage.getItem('mg-wallet-venue') || state.venue?.name || state.live?.exchange || 'bybit';
+      return state.venue?.name || state.live?.exchange || localStorage.getItem('mg-wallet-venue') || 'bybit';
     } catch {
       return state.venue?.name ?? state.live?.exchange ?? 'bybit';
     }

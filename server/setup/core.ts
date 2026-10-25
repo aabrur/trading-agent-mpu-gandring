@@ -45,20 +45,26 @@ export async function verifyVenueKey(venue: ExchangeName, net: Network, k: KeyIn
 /** Validate, verify on the venue, then write EXCHANGE and the key fields to .env. A refused key is never written. */
 export async function saveVenueKeys(envFile: string, venue: ExchangeName, net: Network, k: KeyInput, o: { fetchImpl?: typeof fetch; verify?: boolean } = {}): Promise<SetupResult> {
   if (!isVenue(venue) || !isNetwork(net)) return { ok: false, detail: 'unknown venue or network' };
-  const bad = checkKeyInput(venue, net, k);
+  const n = envNames(venue, net);
+  const existingEnv = setupEnv(envFile);
+  const merged: KeyInput = {
+    key: (k.key ?? '').trim() || (existingEnv[n.key] ?? '').trim(),
+    secret: (k.secret ?? '').trim() || (existingEnv[n.secret] ?? '').trim(),
+    third: (k.third ?? '').trim() || (n.passphrase ? (existingEnv[n.passphrase] ?? '').trim() : undefined)
+  };
+  const bad = checkKeyInput(venue, net, merged);
   if (bad) return { ok: false, detail: `REFUSED: ${bad}` };
   let warning: string | undefined;
   if (o.verify !== false) {
-    const v = await verifyVenueKey(venue, net, k, o.fetchImpl);
+    const v = await verifyVenueKey(venue, net, merged, o.fetchImpl);
     if (!v.ok && v.definitive) return { ok: false, detail: `REFUSED by the ${VENUE_LABEL[venue]} ${net} check: ${v.detail}. Nothing was saved.` };
     if (!v.ok) warning = `saved, but not verified yet (${v.detail}). TESTNET/LIVE will check again and refuse if it can withdraw.`;
   }
-  const n = envNames(venue, net);
-  const up: Record<string, string> = { EXCHANGE: venue, [n.key]: k.key!.trim(), [n.secret]: k.secret!.trim() };
-  if (n.passphrase) up[n.passphrase] = k.third!.trim();
-  if (venue === 'aster' && k.secret && /^0x[0-9a-fA-F]{64}$/.test(k.secret.trim())) {
+  const up: Record<string, string> = { EXCHANGE: venue, [n.key]: merged.key!.trim(), [n.secret]: merged.secret!.trim() };
+  if (n.passphrase) up[n.passphrase] = merged.third!.trim();
+  if (venue === 'aster' && merged.secret && /^0x[0-9a-fA-F]{64}$/.test(merged.secret.trim())) {
     try {
-      const signerAddr = privateKeyToAccount(k.secret.trim() as Hex).address;
+      const signerAddr = privateKeyToAccount(merged.secret.trim() as Hex).address;
       const pinKey = net === 'testnet' ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED' : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
       up[pinKey] = signerAddr;
     } catch { /* ignore if invalid private key */ }
@@ -71,6 +77,7 @@ export async function saveVenueKeys(envFile: string, venue: ExchangeName, net: N
 export function setVenue(envFile: string, venue: string): SetupResult {
   if (venue !== 'none' && !isVenue(venue)) return { ok: false, detail: `unknown venue ${venue}` };
   setEnv(envFile, { EXCHANGE: venue });
+  process.env.EXCHANGE = venue;
   return { ok: true, detail: `EXCHANGE=${venue}`, saved: ['EXCHANGE'] };
 }
 
@@ -103,12 +110,25 @@ export function setupEnv(envFile: string, base: NodeJS.ProcessEnv = process.env)
 }
 
 const short = (v: string) => (v.length > 14 ? `${v.slice(0, 6)}...${v.slice(-4)}` : v);
+
+export function venueFieldStatus(env: NodeJS.ProcessEnv, venue: ExchangeName) {
+  return (['testnet', 'mainnet'] as Network[]).map((net) => ({
+    network: net,
+    fields: envFields(venue, net).map((f) => ({
+      name: f.name,
+      set: !!(env[f.name] ?? '').trim(),
+      shown: !f.secret && env[f.name] ? short(String(env[f.name])) : null
+    }))
+  }));
+}
+
 /** What is configured, with every secret reduced to "set" / "empty". Public addresses are shortened. */
 export function maskedStatus(env: NodeJS.ProcessEnv) {
   const ex = (env.EXCHANGE || 'none').trim().toLowerCase();
-  const venues = isVenue(ex) ? (['testnet', 'mainnet'] as Network[]).map((net) => ({ network: net, fields: envFields(ex, net).map((f) => ({ name: f.name, set: !!(env[f.name] ?? '').trim(), shown: !f.secret && env[f.name] ? short(String(env[f.name])) : null })) })) : [];
+  const venuesByExchange = Object.fromEntries(EXCHANGES.map((v) => [v, venueFieldStatus(env, v)])) as Record<ExchangeName, ReturnType<typeof venueFieldStatus>>;
+  const venues = isVenue(ex) ? venuesByExchange[ex] : [];
   const forbidden = Object.keys(env).filter((k) => FORBIDDEN_ENV.test(k) && (env[k] ?? '').trim());
-  return { tradingMode: (env.TRADING_MODE || 'PAPER').toUpperCase(), appMode: env.APP_MODE || 'local', exchange: ex, venues, forbidden };
+  return { tradingMode: (env.TRADING_MODE || 'PAPER').toUpperCase(), appMode: env.APP_MODE || 'local', exchange: ex, venues, venuesByExchange, forbidden };
 }
 
 /** How to open a URL in the default browser on this OS (the CLI wizard runs it; tests check the mapping). */

@@ -2,6 +2,27 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.3.28] - 2026-10-25
+
+### Added
+- Per-venue credential field status map (`venuesByExchange` in `GET /api/setup` and `venues` in `GET /api/setup/guide/:venue`) so every exchange shows its exact testnet and mainnet credential status immediately on selection.
+- Partial credential merging in `saveVenueKeys`: entering only the missing key or secret merges with existing saved credentials for that venue and network before verification and persistence.
+
+### Changed
+- Instant venue switching in **Setup > Exchange & Safety**: selecting any exchange in the dropdown immediately persists `EXCHANGE` via `POST /api/setup/venue`, reloads runtime desk configuration, opens the credential form, and updates all field labels and status lines.
+- Default minimum order size (`MIN_ORDER_USDT` / `minOrderUsdt`) set to `0` USDT across trading profiles, schema validation, and order planning (`planOrder`).
+- Cleaned up `TopBar` header by removing redundant `CEX · Bybit`, `V`, and `data: <source>` badges, and prioritized active server venue state over stale `localStorage` entries.
+- Reorganized `README.md` with step-by-step installation instructions (Quick 4-Command Install, Dev Mode, and Grok Bot Mode), updated `v0.0.0.3.28` release highlights, and clearer reference tables.
+
+## [v0.0.0.3.27] - 2026-10-25
+
+### Changed
+- Eliminated WorkspaceTools flyout layout thrashing and jitter by removing scrollbar freezing.
+- Enlarged compact HUD metric indicators and increased compact verdicts view to 3 items for enhanced readability.
+- Streamlined agent direct chat with concise responses, no redundant team handoffs on 1-on-1 chats, and duplicate message deduplication.
+- Isolated HTTP client 4xx malformed requests from supervisor exchange error escalation counters.
+- Fixed Windows quoting and batch execution for Local CLI Agents with spaces in executable paths.
+
 ## [v0.0.0.3.22] - 2026-10-24
 
 ### Added

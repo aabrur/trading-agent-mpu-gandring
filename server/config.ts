@@ -179,7 +179,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       defaultStopPct: num(env, 'DEFAULT_STOP_PCT', DEFAULT_TRADING_SETTINGS.defaultStopPct),
       minStopPct: 0,
       maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', DEFAULT_TRADING_SETTINGS.maxLossPerTradePct),
-      minOrderUsdt: num(env, 'MIN_ORDER_USDT', 5),
+      minOrderUsdt: Math.max(0, num(env, 'MIN_ORDER_USDT', DEFAULT_TRADING_SETTINGS.minOrderUsdt)),
       takerFee: num(env, 'TAKER_FEE', 0.00055),
       takeProfitPct: num(env, 'TAKE_PROFIT_PCT', 60),
       takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 3)),

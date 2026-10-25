@@ -10,7 +10,7 @@ export const TradingFields = z.object({
   minStopPct: z.number().finite().nonnegative().lt(100),
   takeProfitPct: z.number().finite().positive().optional(),
   takeProfitR: z.number().finite().nonnegative(),
-  minOrderUsdt: z.number().finite().positive(),
+  minOrderUsdt: z.number().finite().nonnegative(),
   safetyNet: z.number().finite().nonnegative(),
   maxPositions: z.number().int().min(1).max(4)
 }).strict();
@@ -35,7 +35,7 @@ export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze
   minStopPct: 0,
   takeProfitPct: 60,
   takeProfitR: 3.0,
-  minOrderUsdt: 5,
+  minOrderUsdt: 0,
   safetyNet: 8,
   maxPositions: 3
 });

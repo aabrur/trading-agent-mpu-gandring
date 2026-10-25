@@ -198,7 +198,7 @@ export function planOrder(p: PlanInput): Plan {
   const minQty = Math.max(rules.minQty || 0, step);
   const minNotional = rules.minNotional != null && rules.minNotional > 0 ? rules.minNotional : p.minOrderUsdt;
   const fee = Math.max(p.takerFee ?? 0, rules.takerFee ?? 0);
-  if (![step, minQty, minNotional].every((v) => Number.isFinite(v) && v > 0) || !Number.isFinite(fee) || fee < 0) return { ok: false, reason: 'Invalid exchange quantity, minimum or fee rule.', split };
+  if (![step, minQty].every((v) => Number.isFinite(v) && v > 0) || !Number.isFinite(minNotional) || minNotional < 0 || !Number.isFinite(fee) || fee < 0) return { ok: false, reason: 'Invalid exchange quantity, minimum or fee rule.', split };
 
   // App entry paths derive protection from profile margin percentages. Explicit prices support low-level previews.
   let rawStop: number;

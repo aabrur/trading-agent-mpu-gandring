@@ -175,4 +175,59 @@ describe('localhost-only setup and ops routes', () => {
     expect(built.desk.killed).toBe(false);
     expect(built.desk.autoState.on).toBe(false);
   });
+  it('switches venue immediately, returns per-venue field status, and merges partial key edits with saved credentials', async () => {
+    const { base, envFile, built } = await start({ EXCHANGE: 'aster' }, bybitFake([]));
+    const { setEnv } = await import('../cli/envfile.js');
+    setEnv(envFile, { EXCHANGE: 'aster', BYBIT_API_KEY: 'KEYAAAAAAAAA', OKX_API_KEY: '', OKX_API_SECRET: '', OKX_API_PASSPHRASE: '' });
+    delete process.env.BYBIT_API_SECRET;
+    delete process.env.BYBIT_TESTNET_API_KEY;
+    delete process.env.BYBIT_TESTNET_API_SECRET;
+    delete process.env.OKX_API_KEY;
+    delete process.env.OKX_API_SECRET;
+    delete process.env.OKX_API_PASSPHRASE;
+    const guideRes = await (await fetch(`${base}/api/setup/guide/bybit?network=mainnet`)).json();
+    expect(guideRes.venues).toEqual([
+      {
+        network: 'testnet',
+        fields: [
+          { name: 'BYBIT_TESTNET_API_KEY', set: false, shown: null },
+          { name: 'BYBIT_TESTNET_API_SECRET', set: false, shown: null }
+        ]
+      },
+      {
+        network: 'mainnet',
+        fields: [
+          { name: 'BYBIT_API_KEY', set: true, shown: null },
+          { name: 'BYBIT_API_SECRET', set: false, shown: null }
+        ]
+      }
+    ]);
+    const setRes = await (await post(`${base}/api/setup/venue`, { venue: 'bybit' })).json();
+    expect(setRes.ok).toBe(true);
+    expect(built.desk.cfg.exchange.name).toBe('bybit');
+    expect(built.desk.snapshot().venue.name).toBe('bybit');
+    const setupInfo = await (await fetch(`${base}/api/setup`)).json();
+    expect(setupInfo.status.exchange).toBe('bybit');
+    expect(setupInfo.status.venuesByExchange?.bybit?.[1]?.fields).toEqual([
+      { name: 'BYBIT_API_KEY', set: true, shown: null },
+      { name: 'BYBIT_API_SECRET', set: false, shown: null }
+    ]);
+    expect(setupInfo.status.venuesByExchange?.okx?.[1]?.fields).toEqual([
+      { name: 'OKX_API_KEY', set: false, shown: null },
+      { name: 'OKX_API_SECRET', set: false, shown: null },
+      { name: 'OKX_API_PASSPHRASE', set: false, shown: null }
+    ]);
+    const savePartial = await (await post(`${base}/api/setup/keys`, {
+      venue: 'bybit',
+      network: 'mainnet',
+      key: '',
+      secret: 'SECRETGGGGGGGGGG'
+    })).json();
+    expect(savePartial.ok).toBe(true);
+    const updatedInfo = await (await fetch(`${base}/api/setup`)).json();
+    expect(updatedInfo.status.venues?.[1]?.fields).toEqual([
+      { name: 'BYBIT_API_KEY', set: true, shown: null },
+      { name: 'BYBIT_API_SECRET', set: true, shown: null }
+    ]);
+  });
 });
