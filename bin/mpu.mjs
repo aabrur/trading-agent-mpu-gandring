@@ -113,6 +113,7 @@ async function getRunningHealth() {
     return null;
   }
 }
+const healthy = getRunningHealth;
 function open() {
   if (args.includes('--no-open')) return;
   const command = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', target]] : process.platform === 'darwin' ? ['open', [target]] : ['xdg-open', [target]];
@@ -157,7 +158,7 @@ do {
   child.on('message', (m) => { if (m?.type === 'mpu:restart') { restart = true; child.kill('SIGTERM'); } });
   const done = new Promise((resolve) => { child.once('error', () => { exited = true; resolve(1); }); child.once('exit', (code) => { exited = true; resolve(code ?? 1); }); });
   for (let i = 0; i < 120 && !exited; i++) {
-    if (await healthy()) { console.log(`Office ready: ${target}`); if (!opened) { open(); opened = true; } break; }
+    if (await getRunningHealth()) { console.log(`Office ready: ${target}`); if (!opened) { open(); opened = true; } break; }
     await new Promise((r) => setTimeout(r, 500));
   }
   const code = await done;
