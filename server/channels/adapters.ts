@@ -19,7 +19,7 @@ export function telegramSend(c: ChannelConfig['telegram'], text: string, fetchIm
 }
 export function discordSend(c: ChannelConfig['discord'], text: string, fetchImpl: typeof fetch = fetch): Promise<SendResult> {
   if (!c.enabled) return Promise.resolve('off');
-  return attempt('discord', () => post(fetchImpl, c.webhookUrl, { content: safe(text).slice(0, 1990), allowed_mentions: { parse: [] } }));
+  return attempt('discord', () => post(fetchImpl, c.botToken && c.channelId ? `https://discord.com/api/v10/channels/${c.channelId}/messages` : c.webhookUrl, { content: safe(text).slice(0, 1990), allowed_mentions: { parse: [] } }, c.botToken && c.channelId ? { Authorization: `Bot ${c.botToken}` } : {}));
 }
 export function slackSend(c: ChannelConfig['slack'], text: string, fetchImpl: typeof fetch = fetch): Promise<SendResult> {
   if (!c.enabled) return Promise.resolve('off');

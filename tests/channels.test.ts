@@ -137,7 +137,7 @@ describe('channel setup (shared by CLI and office)', () => {
   it('guides use https links and the env names the code reads; MiChat and email are documented, not shipped', () => {
     for (const l of allChannelLinks()) expect(l.url).toMatch(/^https:\/\//);
     const names = Object.values(CHANNEL_GUIDES).flatMap((g) => g.fields.map((f) => f.env));
-    for (const n of names) expect(Object.keys(allEnv).concat(['WHATSAPP_TEMPLATE_NAME'])).toContain(n);
+    for (const n of names) expect(Object.keys(allEnv).concat(['WHATSAPP_TEMPLATE_NAME', 'DISCORD_BOT_TOKEN', 'DISCORD_CHANNEL_ID', 'DISCORD_GUILD_ID', 'DISCORD_APPLICATION_ID', 'DISCORD_DELIVERY'])).toContain(n);
     expect(NOT_SHIPPED.michat).toMatch(/no bot or developer API/);
     expect(JSON.stringify(CHANNEL_GUIDES.whatsapp)).toMatch(/business/i);
     expect(JSON.stringify(CHANNEL_GUIDES.whatsapp)).not.toMatch(/whatsapp-web|baileys|venom/i);

@@ -36,3 +36,17 @@ export function saveTradingProfile(file: string, input: unknown) {
   setEnv(file, updates);
   return { ...data, values };
 }
+
+export const TradingLimitsBody = z.object({ network: z.enum(['testnet', 'mainnet']), minOrderUsdt: z.number().finite().nonnegative(), maxOrderUsdt: z.number().finite().nonnegative() }).strict();
+export function saveTradingLimits(file: string, input: unknown) {
+  const limits = TradingLimitsBody.parse(input), env = readEnv(file);
+  const existing = tradingSetupInfo(env).networks[limits.network];
+  const prefix = tradingPrefix(limits.network);
+  const updates: Record<string, string> = { [prefix + 'MIN_ORDER_USDT']: String(limits.minOrderUsdt), [prefix + 'MAX_ORDER_USDT']: String(limits.maxOrderUsdt) };
+  if (env[prefix + 'SAVED_PROFILE']) {
+    updates[prefix + 'SAVED_MIN_ORDER_USDT'] = String(limits.minOrderUsdt);
+    updates[prefix + 'SAVED_MAX_ORDER_USDT'] = String(limits.maxOrderUsdt);
+  }
+  setEnv(file, updates);
+  return { network: limits.network, profile: existing.profile, values: { ...existing.values, minOrderUsdt: limits.minOrderUsdt, maxOrderUsdt: limits.maxOrderUsdt } };
+}

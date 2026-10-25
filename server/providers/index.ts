@@ -1,3 +1,4 @@
+import { refreshRouterReasoning, requireReasoning } from './reasoning.js';
 import type { AppConfig, ProviderName } from '../config.js';
 import type { AgentId } from '../types.js';
 import type { TaskKind } from '../schemas.js';
@@ -29,14 +30,23 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
   } finally { clearTimeout(t); }
 }
 
+function modelContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.flatMap((chunk: unknown) => chunk && typeof chunk === 'object' && 'type' in chunk && chunk.type === 'text' && 'text' in chunk && typeof chunk.text === 'string' ? [chunk.text] : []).join('');
+  return '';
+}
+
 export function makeCaller(cfg: AppConfig): ModelCaller {
   const call: ModelCaller = async (req) => {
     const { provider, model, system, user, task } = req;
+    const requested = cfg.reasoning?.[req.agent] ?? cfg.defaultReasoning;
+    if (requested && provider === 'openrouter') await refreshRouterReasoning();
+    const effort = requested ? requireReasoning(provider, model, requested) : undefined;
     switch (provider) {
       case 'mock':
         return mockReply(req);
       case 'local':
-        return runLocalAgent(model, `${system}\n\n${user}`, req.signal);
+        return runLocalAgent(model, `${system}\n\n${user}`, req.signal, effort);
       case 'xai':
       case 'openai':
       case 'deepseek':
@@ -59,7 +69,12 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
           ...tokenField,
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
         };
-        if (params.reasoningEffort) body.reasoning_effort = params.reasoningEffort;
+        const effectiveEffort = effort ?? params.reasoningEffort;
+        if (effectiveEffort) {
+          if (provider === 'openrouter') body.reasoning = { effort: effectiveEffort };
+          else if (provider === 'openai' || provider === 'xai' || effort && ['deepseek', 'groq', 'mistral', 'together', 'fireworks'].includes(provider)) body.reasoning_effort = effectiveEffort;
+          if (provider === 'deepseek' && effort) body.thinking = {type: 'enabled'};
+        }
         if (params.temperature !== undefined) body.temperature = params.temperature;
         if (params.responseFormat) {
           body.response_format = params.responseFormat;
@@ -70,7 +85,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
 
         try {
           const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
-          return String(data?.choices?.[0]?.message?.content ?? '');
+          return modelContent(data?.choices?.[0]?.message?.content);
         } catch (err) {
           if (body.response_format && String((err as Error).message).includes('400')) {
             // First attempt graceful downgrade to json_object before stripping format entirely
@@ -95,7 +110,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       }
       case 'anthropic': {
         const data = await post('https://api.anthropic.com/v1/messages', { 'x-api-key': cfg.keys.anthropic, 'anthropic-version': '2023-06-01' }, {
-          model, max_tokens: task === 'chat' ? 8192 : 1500, system, messages: [{ role: 'user', content: user }]
+          model, ...(effort ? { output_config: { effort } } : {}), max_tokens: task === 'chat' ? 8192 : 1500, system, messages: [{ role: 'user', content: user }]
         }, 60000, req.signal);
         return String((data?.content ?? []).map((c: any) => c?.text ?? '').join(''));
       }

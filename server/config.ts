@@ -1,3 +1,4 @@
+import { normalizeReasoning, type ReasoningLevel } from './providers/reasoning.js';
 import 'dotenv/config';
 import type { AgentId } from './types.js';
 import { registerSecrets } from './redact.js';
@@ -25,6 +26,8 @@ const num = (env: NodeJS.ProcessEnv, key: string, def: number) => {
 };
 
 export interface AppConfig {
+  defaultReasoning?: ReasoningLevel;
+  reasoning?: Partial<Record<AgentId, ReasoningLevel>>;
   tradingMode: TradingMode;
   tradingProfile: TradingProfile;
   appMode: 'local' | 'grokbot';
@@ -51,7 +54,7 @@ export interface AppConfig {
   watchlist: string[];
   tickerRefreshSeconds: number;
   paper: { balance: number; safetyNet: number; n: number };
-  risk: { minEntryConfidencePct: number; maxLeverage: number; orderSizePct?: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; takerFee: number; takeProfitPct?: number; takeProfitR: number; dailyLossLimitPct: number };
+  risk: { minEntryConfidencePct: number; maxLeverage: number; orderSizePct?: number; defaultStopPct: number; minStopPct: number; maxLossPerTradePct: number; minOrderUsdt: number; maxOrderUsdt: number; takerFee: number; takeProfitPct?: number; takeProfitR: number; dailyLossLimitPct: number };
   debate: { rounds: number; paceMs: number; fightThreshold: number; mode: 'normal' | 'fast' };
   jev: JevSettings;
   bridge: { url: string; key: string; enabled: boolean };
@@ -75,6 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     try {
       const selected = resolveTradingSettings(env, base, mode === 'LIVE' ? 'mainnet' : 'testnet');
       tradingProfile = selected.profile;
+      env = { ...env, MIN_ORDER_USDT: String(selected.values.minOrderUsdt), MAX_ORDER_USDT: String(selected.values.maxOrderUsdt) };
       if (tradingProfile !== 'current') env = { ...env, ORDER_SIZE_PCT: '', ...Object.fromEntries(Object.entries(selected.values).filter(([, value]) => value != null).map(([key, value]) => [TRADING_ENV[key as keyof typeof TRADING_ENV], String(value)])) };
     } catch { throw new ConfigError('Invalid saved trading profile: check percentages, allocation and stop distances.'); }
   }
@@ -132,6 +136,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     const model = provider === 'mock' ? defaultModels.mock : env[`AGENT_${k}_MODEL`] || defaultModels[provider];
     agents[id] = { provider, model, fellBackToMock };
   }
+  if (num(env, 'MAX_ORDER_USDT', 0) < 0) throw new ConfigError('MAX_ORDER_USDT must be nonnegative');
   const n = num(env, 'OPEN_ORDERS_N', 4);
   if (![1, 2, 3, 4].includes(n)) throw new ConfigError('OPEN_ORDERS_N must be 1, 2, 3 or 4');
   const balance = num(env, 'PAPER_BALANCE', 1000);
@@ -143,6 +148,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const url = (env.GROKBOT_WEBHOOK_URL ?? '').trim();
   const key = (env.GROKBOT_WEBHOOK_KEY ?? '').trim();
   return {
+    defaultReasoning: normalizeReasoning(env.DEFAULT_REASONING_EFFORT),
+    reasoning: Object.fromEntries(AGENT_IDS.flatMap(id => { const value = normalizeReasoning(env[`AGENT_${id.toUpperCase()}_REASONING`]); return value ? [[id, value]] : []; })),
     tradingMode: mode as AppConfig['tradingMode'],
     tradingProfile,
     appMode: appMode as AppConfig['appMode'],
@@ -181,6 +188,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       defaultStopPct: num(env, 'DEFAULT_STOP_PCT', DEFAULT_TRADING_SETTINGS.defaultStopPct),
       minStopPct: 0,
       maxLossPerTradePct: num(env, 'MAX_LOSS_PER_TRADE_PCT', DEFAULT_TRADING_SETTINGS.maxLossPerTradePct),
+      maxOrderUsdt: num(env, 'MAX_ORDER_USDT', 0),
       minOrderUsdt: Math.max(0, num(env, 'MIN_ORDER_USDT', DEFAULT_TRADING_SETTINGS.minOrderUsdt)),
       takerFee: num(env, 'TAKER_FEE', 0.00055),
       takeProfitPct: num(env, 'TAKE_PROFIT_PCT', 60),

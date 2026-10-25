@@ -4,6 +4,8 @@ import { calculateSwingLevels } from '../strategy.js';
 export interface TacticalTradePlan {
   symbol: string;
   timestamp: number;
+  snapshotId?: string;
+  cmcMomentum?: MarketSnapshot['cmcMomentum'];
   marketRegime: string;
   scenarios: Array<{
     kind: 'PULLBACK_CONTINUATION' | 'BREAKDOWN_CONTINUATION' | 'FAILED_BREAKDOWN_REVERSAL' | 'BREAKOUT_CONTINUATION' | 'FAILED_BREAKOUT_REVERSAL';
@@ -195,5 +197,5 @@ export function buildTacticalTradePlan(snapshot: MarketSnapshot): TacticalTradeP
     exhaustion = { present: false, direction: 'NONE', evidence: [`15m RSI ${rsi} does not meet the stated exhaustion thresholds.`] };
   }
 
-  return { symbol: snapshot.symbol, timestamp: snapshot.fetchedAt, marketRegime, scenarios, exhaustion };
+  return { snapshotId: snapshot.snapshotId, cmcMomentum: snapshot.cmcMomentum, symbol: snapshot.symbol, timestamp: snapshot.fetchedAt, marketRegime, scenarios, exhaustion };
 }

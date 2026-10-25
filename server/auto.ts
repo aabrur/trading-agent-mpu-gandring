@@ -1,5 +1,6 @@
 import type { Desk } from './desk.js';
 import { log, safe } from './redact.js';
+import { fetchCoinMarketCapQuotes, cmcMomentum } from './market/coinmarketcap.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -141,9 +142,12 @@ export class AutoTrader {
           const evidence = d.opportunities[symbol];
           return evidence && Date.now() - evidence.at < d.cfg.tickerRefreshSeconds * 3000 ? evidence.score : 0;
         };
+        const cmcKey = (process.env.COINMARKETCAP_API_KEY || process.env.CMC_API_KEY || '').trim();
+        const quotes = cmcKey ? await fetchCoinMarketCapQuotes(d.cfg.auto.symbols, cmcKey) : {};
+        const priority = (symbol: string) => cmcMomentum(symbol, quotes[symbol.replace(/(USDT|USDC|USD|BUSD|PERP)$/i, '')] ?? null).classification === 'ROTATION_SURGE' ? 1 : 0;
         const candidates = d.cfg.auto.symbols
           .filter((s) => !d.book.positions.some((p) => p.symbol === s))
-          .sort((a, b) => ranking(b) - ranking(a));
+          .sort((a, b) => priority(b) - priority(a) || ranking(b) - ranking(a));
 
         for (const sym of candidates) {
           if (cancelled()) break;

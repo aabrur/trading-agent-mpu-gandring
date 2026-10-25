@@ -40,7 +40,7 @@ export function channelStatus(env: NodeJS.ProcessEnv) {
   const c = channelConfig(env);
   return {
     commands: c.commands, supervisor: c.supervisor,
-    channels: CHANNELS.map((ch) => ({ channel: ch, label: CHANNEL_GUIDES[ch].label, enabled: c[ch].enabled, commandsReady: ch === 'telegram' ? c.telegram.enabled && c.telegram.allowed.length > 0 : (c[ch] as { inbound: boolean }).inbound && (c[ch] as { allowed: string[] }).allowed.length > 0,
+    channels: CHANNELS.map((ch) => ({ channel: ch, label: CHANNEL_GUIDES[ch].label, enabled: c[ch].enabled, commandsReady: ch === 'telegram' ? c.telegram.enabled && c.telegram.allowed.length > 0 : ((c[ch] as { inbound: boolean }).inbound || ch === 'discord' && c.discord.delivery === 'gateway' && !!c.discord.botToken) && (c[ch] as { allowed: string[] }).allowed.length > 0,
       fields: CHANNEL_GUIDES[ch].fields.map((f) => ({ env: f.env, set: !!(env[f.env] ?? '').trim(), shown: !f.secret && env[f.env] ? String(env[f.env]).slice(0, 40) : null })) }))
   };
 }

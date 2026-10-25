@@ -1,3 +1,4 @@
+import { registerReasoning } from './reasoning.js';
 // Native agent accounts stay in their own CLIs. The desk receives text replies through its existing schema/risk gate.
 import { spawn } from 'node:child_process';
 import { publishActivity } from '../activity.js';
@@ -94,7 +95,122 @@ export const LOCAL_AGENTS = [
   }
 ] as const;
 export type LocalAgentId = (typeof LOCAL_AGENTS)[number]['id'];
-const modelIdOk = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}$/.test(value);
+export interface LocalModelDiscovery {
+  agentId: LocalAgentId;
+  installed: boolean;
+  version: string | null;
+  authentication: 'authenticated' | 'not_authenticated' | 'unknown';
+  configuredModel: string;
+  models: Array<{ id: string; provider?: string; reasoningLevels: string[]; source: 'cli' | 'metadata' | 'configured' | 'curated' }>;
+  source: string;
+  refreshedAt: number;
+  completeness: 'partial' | 'unsupported' | 'unavailable';
+  error: string | null;
+}
+const discoveryCache = new Map<LocalAgentId, LocalModelDiscovery>();
+
+/** Bounded metadata commands only. Never return stderr or credential files. */
+async function discoveryCommand(id: LocalAgentId, args: string[]): Promise<string> {
+  const executable = localExecutable(id);
+  if (!executable) throw new Error('CLI not installed');
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable.file, [...executable.prefix, ...args], { env: localEnvironment(process.env), cwd: tmpdir(), windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    let output = '', failed = false;
+    const timer = setTimeout(() => { failed = true; child.kill(); reject(new Error('Metadata command timed out')); }, 10_000);
+    child.stdout.on('data', (chunk: Buffer) => { if (output.length + chunk.length > 2_000_000) { failed = true; child.kill(); } else output += chunk.toString(); });
+    child.once('error', () => { clearTimeout(timer); reject(new Error('Metadata command failed')); });
+    child.once('close', code => { clearTimeout(timer); if (code === 0 && !failed) resolve(output); else reject(new Error('Metadata command unavailable')); });
+  });
+}
+
+export async function discoverLocalModels(id: LocalAgentId, refresh = false): Promise<LocalModelDiscovery> {
+  const agent = LOCAL_AGENTS.find(a => a.id === id);
+  if (!agent) throw new Error('Unknown local agent');
+  const cached = discoveryCache.get(id);
+  if (!refresh && cached && Date.now() - cached.refreshedAt < 300_000) return cached;
+  let configuredModel = localAgentSettings()[id]?.model || 'default';
+  if (configuredModel === 'default' && id === 'codex') {
+    try {
+      const config = readFileSync(path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml'), 'utf8');
+      const model = config.split(/^\[/m)[0].match(/^model\s*=\s*"([^"]+)"/m)?.[1];
+      if (modelIdOk(model)) configuredModel = model;
+    } catch { /* Native default remains authoritative. */ }
+  }
+  const result: LocalModelDiscovery = { agentId: id, installed: !!localExecutable(id), version: null, authentication: 'unknown', configuredModel,
+    models: [], source: agent.docs, refreshedAt: Date.now(), completeness: 'unsupported', error: 'No verified catalog enumeration for this CLI version. Curated entries are suggestions, not account access evidence.' };
+  const add = (model: LocalModelDiscovery['models'][number]) => { if (!result.models.some(m => m.id === model.id)) result.models.push(model); };
+  if (result.installed) {
+    try { result.version = (await discoveryCommand(id, ['--version'])).trim().split('\n')[0].slice(0, 200); } catch { /* Explicitly unknown. */ }
+    const auth = await localLoginStatus(id);
+    result.authentication = auth.connected ? 'authenticated' : auth.state === 'signed-out' ? 'not_authenticated' : 'unknown';
+    if (id === 'opencode') {
+      try {
+        const output = await discoveryCommand(id, ['models']);
+        for (const line of output.split(/\r?\n/)) if (modelIdOk(line.trim()) && line.includes('/')) add({ id: line.trim(), provider: line.trim().split('/')[0], reasoningLevels: [], source: 'cli' });
+        result.completeness = 'partial'; result.error = 'CLI catalog does not prove account entitlement or reasoning capability.';
+      } catch { result.error = 'Installed OpenCode could not enumerate models.'; result.completeness = 'unavailable'; }
+    }
+    if (id === 'pi') {
+      try {
+        const output = await discoveryCommand(id, ['--list-models']);
+        for (const line of output.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.toLowerCase().startsWith('provider')) continue;
+          const parts = trimmed.split(/\s+/);
+          if (parts.length >= 2) {
+            const provider = parts[0];
+            const model = parts[1];
+            if (modelIdOk(model)) {
+              add({ id: model, provider, reasoningLevels: [], source: 'cli' });
+            }
+          }
+        }
+        result.completeness = 'partial';
+        result.error = 'CLI catalog does not prove account entitlement.';
+      } catch {
+        result.error = 'Installed Pi could not enumerate models.';
+        result.completeness = 'unavailable';
+      }
+    }
+    if (id === 'grok') {
+      try {
+        const output = await discoveryCommand(id, ['models']);
+        if (/not authenticated/i.test(output)) {
+          result.authentication = 'not_authenticated';
+        } else if (/logged in/i.test(output)) {
+          result.authentication = 'authenticated';
+        }
+        for (const line of output.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          const match = trimmed.match(/^[*-]\s+([a-zA-Z0-9._:/+-]+)/);
+          if (match && modelIdOk(match[1])) {
+            add({ id: match[1], source: 'cli', reasoningLevels: [] });
+          }
+        }
+        result.completeness = 'partial';
+        result.error = 'CLI catalog does not prove account entitlement.';
+      } catch {
+        result.error = 'Installed Grok could not enumerate models.';
+        result.completeness = 'unavailable';
+      }
+    }
+    if (id === 'codex') {
+      try {
+        const raw = readFileSync(path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'models_cache.json'), 'utf8');
+        if (raw.length > 2_000_000) throw new Error('Metadata too large');
+        const cache: { models?: Array<{ slug?: string; visibility?: string; supported_reasoning_levels?: Array<{ effort?: string }> }> } = JSON.parse(raw);
+        for (const model of cache.models ?? []) if (model.visibility === 'list' && modelIdOk(model.slug)) add({ id: model.slug, source: 'metadata', reasoningLevels: (model.supported_reasoning_levels ?? []).flatMap(level => typeof level.effort === 'string' ? [level.effort] : []) });
+        result.completeness = 'partial'; result.error = 'Cached metadata does not prove current account entitlement.';
+      } catch { result.error = 'Codex model metadata unavailable.'; }
+    }
+  } else { result.completeness = 'unavailable'; result.error = 'CLI not installed.'; }
+  if (configuredModel !== 'default') add({ id: configuredModel, source: 'configured', reasoningLevels: [] });
+  for (const model of agent.models) add({ id: model, source: 'curated', reasoningLevels: [] });
+  for (const model of result.models) if (model.source === 'metadata') registerReasoning('local', `${id}:${model.id}`, model.reasoningLevels);
+  discoveryCache.set(id, result);
+  return result;
+}
+const modelIdOk = (value: unknown): value is string => typeof value === 'string' && /^[~]?[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}$/.test(value);
 
 export interface AgentExtraSettings {
   model?: string;
@@ -199,13 +315,15 @@ export function localAgentSettingsUpdate(id: string, updates: AgentExtraSettings
 }
 /** Read model metadata only. Authentication files remain owned by the CLI. */
 export function localModels(id: LocalAgentId): string[] {
+  const discovered = discoveryCache.get(id);
+  if (discovered) return discovered.models.map(m => m.id);
   const models: string[] = [...LOCAL_AGENTS.find((agent) => agent.id === id)!.models];
   if (id === 'codex') {
     try {
       const raw = readFileSync(path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'models_cache.json'), 'utf8');
       if (raw.length <= 2_000_000) {
         const cache: { models?: { slug?: unknown; visibility?: string }[] } = JSON.parse(raw);
-        if (Array.isArray(cache.models)) for (const model of cache.models.slice(0, 1000)) {
+        if (Array.isArray(cache.models)) for (const model of cache.models) {
           if (model.visibility === 'list' && modelIdOk(model.slug)) models.push(model.slug);
         }
       }
@@ -231,6 +349,8 @@ export function localExecutable(id: string, env: NodeJS.ProcessEnv = process.env
   for (const name of unique) {
     for (const dir of dirs) for (const ext of process.platform === 'win32' ? ['.exe', '.cmd', ''] : ['']) {
       const file = path.join(dir.replace(/^"|"$/g, ''), name + ext);
+      // "agent" is also shipped by Grok. Only accept Cursor's generic alias in a Cursor directory.
+      if (agent.id === 'cursor' && name === 'agent' && !/cursor/i.test(dir)) continue;
       if (!existsSync(file)) continue;
       if (ext !== '.cmd') return { file, prefix: [] };
       const content = readFileSync(file, 'utf8');
@@ -252,6 +372,8 @@ export function localExecutable(id: string, env: NodeJS.ProcessEnv = process.env
 export function localAgentStatus() {
   return LOCAL_AGENTS.map((a) => ({
     ...a,
+    models: localModels(a.id),
+    discovery: discoveryCache.get(a.id) ?? null,
     installed: !!localExecutable(a.id),
     loginCommand: [a.bin, ...a.login].join(' '),
     hint: a.id === 'pi'
@@ -372,7 +494,7 @@ export function recordResearchActivity(output: string) {
     } catch { /* Only structured CLI tool events establish tool usage. */ }
   }
 }
-export async function runLocalAgent(selection: string, prompt: string, signal?: AbortSignal): Promise<string> {
+export async function runLocalAgent(selection: string, prompt: string, signal?: AbortSignal, reasoningEffort?: string): Promise<string> {
   const { id, model } = localSelection(selection);
   const executable = localExecutable(id);
   if (!executable) throw new Error(`${id} is not installed on PATH. Open Setup to connect it.`);
@@ -387,11 +509,13 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
     const policy = id === 'codex' ? researchPolicy() : { enabled: false, mcpTools: {} };
     const inventory = policy.enabled ? await loadMcpInventory() : [];
     const transports = Object.fromEntries(inventory.map(server => [server.name, server.transport]));
-    const extra = localAgentSettings(process.env)[id] || {};
+    const extra = { ...(localAgentSettings(process.env)[id] || {}), ...(reasoningEffort ? { effort: reasoningEffort } : {}) };
     const effectiveModel = model === 'default' && extra.model && extra.model !== 'default'
       ? extra.model
       : model;
     const plan = localArgs(id, effectiveModel, folder, prompt, policy, inventory.map(server => server.name), transports, extra);
+    if (reasoningEffort && id === 'codex') plan.args.splice(1, 0, '-c', `model_reasoning_effort="${reasoningEffort}"`);
+    if (reasoningEffort && id === 'claude') plan.args.push('--effort', reasoningEffort);
     Object.assign(plan.env, researchEnvironment(policy, transports, process.env));
     const reply = await new Promise<string>((resolve, reject) => {
       const child = spawn(executable.file, [...executable.prefix, ...plan.args], { cwd: folder, env: { ...localEnvironment(process.env), ...plan.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });

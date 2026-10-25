@@ -5,7 +5,8 @@ interface Choice { id: string; label: string; tags: string[] }
 interface Preset { id: string; label: string; description: string; defaultProvider: string; defaultModel: string; agents: Record<string, Selection> }
 interface Selection { provider: string; model: string }
 interface Provider { provider: string; keyEnv: string | null; keySet: boolean; source: string; defaultModel: string; models: Choice[] }
-interface ModelsInfo { ok: boolean; checkedOn: string; usageSource: { url: string; asOf: string; period: string }; presets?: Preset[]; providers: Provider[]; defaultProvider: string; defaultModel: string; agents: (Selection & { id: string; custom: boolean })[]; runningAgents?: (Selection & { id: string })[] }
+interface ReasoningStatus { requested: string | null; effective: string | null; supported: string[]; status: string }
+interface ModelsInfo { defaultReasoning?: string | null; ok: boolean; checkedOn: string; usageSource: { url: string; asOf: string; period: string }; presets?: Preset[]; providers: Provider[]; defaultProvider: string; defaultModel: string; agents: (Selection & { id: string; custom: boolean; reasoning?: string | null; reasoningStatus?: ReasoningStatus })[]; runningAgents?: (Selection & { id: string })[] }
 
 export function ModelsSetup({ available, appMode }: { available: boolean; appMode: string }) {
   const { t, lang } = useI18n();
@@ -13,12 +14,17 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   const [selection, setSelection] = useState<Selection>({ provider: 'mock', model: 'mock-desk-v1' });
   const [agents, setAgents] = useState<Record<string, Selection>>({});
   const [custom, setCustom] = useState(false);
+  const [defaultReasoning, setDefaultReasoning] = useState('');
+  const [reasoning, setReasoning] = useState<Record<string, string | null>>({});
+  const [search, setSearch] = useState<Record<string, string>>({});
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [ok, setOk] = useState(false);
   const [editing, setEditing] = useState(false);
   function restore(d: ModelsInfo) {
+    setDefaultReasoning(d.defaultReasoning || '');
+    setReasoning(Object.fromEntries(d.agents.map(a => [a.id, a.reasoning ?? null])));
     setSelection({ provider: d.defaultProvider, model: d.defaultModel });
     setAgents(Object.fromEntries(d.agents.map((a) => [a.id, { provider: a.provider, model: a.model }])));
     setCustom(d.agents.some((a) => a.custom)); setKeys({});
@@ -34,6 +40,12 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   };
   useEffect(() => { if (appMode !== 'grokbot') void load(); }, [appMode]);
 
+  useEffect(() => {
+    const refresh = () => { if (!editing) void load(); else void fetch('/api/setup/models').then(r => r.json()).then(d => { if (d.ok) setInfo(d); }); };
+    window.addEventListener('mpu-models-updated', refresh);
+    return () => window.removeEventListener('mpu-models-updated', refresh);
+  }, [editing, appMode]);
+
   if (appMode === 'grokbot') return <p className="wallet-note">{t('setupModelsGrokbotNote')}</p>;
   if (!info) return <p className="wallet-note">{message || t('setupModelsLoading')}</p>;
   const provider = (p: string) => info.providers.find((v) => v.provider === p)!;
@@ -45,8 +57,9 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
     {value.provider === 'local' && <label>{label} {t('setupModelsAgentLabel')} <select aria-label={`${label} local agent`} disabled={!available || busy} value={value.model.split(':')[0]} onChange={(e) => change({ provider: 'local', model: `${e.target.value}:default` })}>
       {[...new Set(provider('local').models.map((m) => m.id.split(':')[0]))].map((id) => <option key={id} value={id}>{provider('local').models.find((m) => m.id.startsWith(`${id}:`))!.label.split(':')[0]}</option>)}
     </select></label>}
+    <label>{lang === 'id' ? 'Cari model' : 'Search models'}<input value={search[label] || ''} onChange={e => setSearch(old => ({...old, [label]: e.target.value}))} /></label>
     <label>{label} {t('setupModelsModelLabel')} <select aria-label={`${label} model`} disabled={!available || busy} value={value.model} onChange={(e) => change({ ...value, model: e.target.value })}>
-      {provider(value.provider).models.filter((m) => value.provider !== 'local' || m.id.split(':')[0] === value.model.split(':')[0]).map((m) => <option key={m.id} value={m.id}>{m.label} · {m.tags.join(', ')}</option>)}
+      {provider(value.provider).models.filter(m => m.id === value.model || !search[label] || `${m.id} ${m.label}`.toLowerCase().includes(search[label].toLowerCase())).filter((m) => value.provider !== 'local' || m.id.split(':')[0] === value.model.split(':')[0]).map((m) => <option key={m.id} value={m.id}>{m.label} · {m.tags.join(', ')}</option>)}
       {value.provider === 'local' && !provider('local').models.some((model) => model.id === value.model) && <option value={value.model}>{value.model} · {lang === 'id' ? 'ID model manual' : 'Manual model ID'}</option>}
     </select></label>
     {value.provider === 'local' && <label>{label} {lang === 'id' ? 'ID model CLI' : 'CLI model ID'}
@@ -58,7 +71,7 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   async function save() {
     setBusy(true); setMessage('');
     try {
-      const r = await fetch('/api/setup/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultProvider: selection.provider, defaultModel: selection.model, ...(custom ? { agents } : {}), keys: Object.fromEntries(Object.entries(keys).filter(([p]) => used.includes(p))) }) });
+      const r = await fetch('/api/setup/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultReasoning: defaultReasoning || null, reasoning, defaultProvider: selection.provider, defaultModel: selection.model, ...(custom ? { agents } : {}), keys: Object.fromEntries(Object.entries(keys).filter(([p]) => used.includes(p))) }) });
       const d: { ok: boolean; detail?: string; error?: string } = await r.json();
       setOk(r.ok && d.ok); setMessage(d.detail || d.error || (lang === 'id' ? 'Gagal menyimpan pilihan model.' : 'Unable to save model choices.'));
       if (r.ok && d.ok) { await load(); setEditing(false); }
@@ -87,6 +100,8 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
       <small className="field-help" style={{ display: 'block', marginTop: '0.5rem' }}>{lang === 'id' ? 'Kandidat berbasis benchmark, bukan jaminan profitabilitas trading. Klik Simpan untuk menerapkan.' : 'Benchmark-informed candidates, not a guarantee of trading profitability. Click Save to apply.'}</small>
     </div>}
     {controls(selection, setSelection, 'Default')}
+    <label>{lang === 'id' ? 'Reasoning default' : 'Default reasoning'}<select value={defaultReasoning} disabled={!available || busy} onChange={e => setDefaultReasoning(e.target.value)}><option value="">Native default</option>{['low', 'med', 'high', 'xhigh', 'max'].map((level, i) => <option key={level} value={level}>{['Low', 'Medium', 'High', 'XHigh', 'Max'][i]}</option>)}</select></label>
+    {info.agents.map(a => <label key={`reasoning-${a.id}`}>{a.id} reasoning<select disabled={!available || busy} value={reasoning[a.id] || ''} onChange={e => setReasoning(old => ({...old, [a.id]: e.target.value || null}))}><option value="">{lang === 'id' ? 'Ikuti default' : 'Inherit default'}</option>{['low', 'med', 'high', 'xhigh', 'max'].map((level, i) => <option key={level} value={level}>{['Low', 'Medium', 'High', 'XHigh', 'Max'][i]}</option>)}</select><small>{a.reasoningStatus?.status} · requested: {a.reasoningStatus?.requested || 'native'} · effective: {a.reasoningStatus?.effective || 'native / unverified'} · supported: {a.reasoningStatus?.supported.join(', ') || 'native default'}</small></label>)}
     <label><input type="checkbox" disabled={!available || busy} checked={custom} onChange={(e) => { setCustom(e.target.checked); if (e.target.checked) setAgents(Object.fromEntries(info.agents.map((a) => [a.id, { ...selection }]))); }} /> {lang === 'id' ? 'Kustomisasi provider dan model untuk tiap agen' : 'Customize provider and model for each agent'}</label>
     {custom && info.agents.map((a) => <div key={a.id}>{controls(agents[a.id], (s) => setAgents((prev) => ({ ...prev, [a.id]: s })), a.id)}</div>)}
     <div className="setup-keys">

@@ -150,6 +150,8 @@ export interface WhaleOnChainSummary {
 }
 
 export interface MarketSnapshot {
+  snapshotId?: string;
+  cmcMomentum?: import('./market/coinmarketcap.js').CmcMomentum;
   tacticalTradePlan?: import('./market/tactical.js').TacticalTradePlan;
   evidence?: Record<string, MeasurementEvidence>;
   symbol: string;

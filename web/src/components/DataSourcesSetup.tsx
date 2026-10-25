@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
 
-interface Status { cryptoPanicKeySet: boolean; whaleAlertKeySet: boolean; coinMarketCapKeySet: boolean }
+interface Status { coinMarketCap?: {connected: boolean; observedAt: number | null; freshness: string; quota: {creditsLeft?: number; plan?: string} | null}; cryptoPanicKeySet: boolean; whaleAlertKeySet: boolean; coinMarketCapKeySet: boolean }
 export function DataSourcesSetup({ available }: { available: boolean }) {
   const { lang } = useI18n();
   const [status, setStatus] = useState<Status | null>(null);
@@ -42,6 +42,7 @@ export function DataSourcesSetup({ available }: { available: boolean }) {
       <label style={{ display: 'block', marginTop: 8 }}>CoinMarketCap <span className="badge">{status?.coinMarketCapKeySet ? (lang === 'id' ? 'Key tersimpan' : 'Key set') : (lang === 'id' ? 'Belum dikonfigurasi' : 'Not configured')}</span>
         <input type="password" aria-label="CoinMarketCap API key" placeholder={status?.coinMarketCapKeySet ? '••••••••' : (lang === 'id' ? 'API Key CoinMarketCap (X-CMC_PRO_API_KEY)' : 'CoinMarketCap Pro API key')} autoComplete="off" spellCheck={false} value={cmcKey} disabled={!available || busy || !status} onChange={event => setCmcKey(event.target.value)} />
       </label>
+      <p role="status">CMC: {status?.coinMarketCap?.connected ? 'Connected' : (lang === 'id' ? 'Belum terverifikasi' : 'Unverified')} · {status?.coinMarketCap?.freshness || 'unverified'} · {status?.coinMarketCap?.observedAt ? new Date(status.coinMarketCap.observedAt).toLocaleString(lang) : (lang === 'id' ? 'Belum ada observasi' : 'No observations')} · {lang === 'id' ? 'Sisa kuota' : 'Quota remaining'}: {status?.coinMarketCap?.quota?.creditsLeft ?? (lang === 'id' ? 'Belum diketahui' : 'Unknown')}</p>
     </div>
     <div className="setup-nav">
       <button type="button" disabled={!available || busy || !status} onClick={() => void save()}>{lang === 'id' ? 'Simpan sumber' : 'Save sources'}</button>

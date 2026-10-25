@@ -10,6 +10,7 @@ export const TradingFields = z.object({
   minStopPct: z.number().finite().nonnegative().lt(100),
   takeProfitPct: z.number().finite().positive().optional(),
   takeProfitR: z.number().finite().nonnegative(),
+  maxOrderUsdt: z.number().finite().nonnegative().default(0),
   minOrderUsdt: z.number().finite().nonnegative(),
   safetyNet: z.number().finite().nonnegative(),
   maxPositions: z.number().int().min(1).max(4)
@@ -36,6 +37,7 @@ export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze
   takeProfitPct: 60,
   takeProfitR: 3.0,
   minOrderUsdt: 0,
+  maxOrderUsdt: 0,
   safetyNet: 8,
   maxPositions: 3
 });
@@ -43,7 +45,7 @@ export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze
 export const TRADING_PRESETS: Record<TradingPresetId, {
   name: string;
   description: string;
-  values: Omit<TradingSettings, 'minOrderUsdt' | 'safetyNet' | 'orderSizePct'>;
+  values: Omit<TradingSettings, 'minOrderUsdt' | 'maxOrderUsdt' | 'safetyNet' | 'orderSizePct'>;
 }> = {
   default: {
     name: 'Default',
@@ -111,6 +113,7 @@ export function resolveTradingPreset(preset: TradingPresetId, base: TradingSetti
   const values = preset === 'default' ? { ...DEFAULT_TRADING_SETTINGS } : { ...TRADING_PRESETS[preset].values };
   return TradingSettingsSchema.parse({
     ...values,
+    maxOrderUsdt: base.maxOrderUsdt ?? 0,
     minOrderUsdt: base.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
     safetyNet: base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet,
     ...(base.orderSizePct != null ? { orderSizePct: base.orderSizePct } : {})
@@ -133,6 +136,7 @@ export const TRADING_ENV: Record<keyof TradingSettings, string> = {
   takeProfitPct: 'TAKE_PROFIT_PCT',
   takeProfitR: 'TAKE_PROFIT_R',
   minOrderUsdt: 'MIN_ORDER_USDT',
+  maxOrderUsdt: 'MAX_ORDER_USDT',
   safetyNet: 'SAFETY_NET',
   maxPositions: 'OPEN_ORDERS_N'
 };
@@ -153,7 +157,7 @@ export function manualTradingOverrides(env: Record<string, string | undefined>, 
     if (key === 'orderSizePct' && raw === '') values[key] = undefined;
     if (raw != null && raw !== '') values[key] = Number(raw);
   }
-  return TradingFields.partial().parse(values);
+  return TradingFields.omit({maxOrderUsdt: true}).partial().extend({maxOrderUsdt: z.number().finite().nonnegative().optional()}).parse(values);
 }
 
 export function tradingSettingsFromConfig(cfg: { risk: Omit<TradingSettings, 'safetyNet' | 'maxPositions'> & { takerFee: number }; paper: { safetyNet: number; n: number } }): TradingSettings {
@@ -166,12 +170,13 @@ export function resolveTradingSettings(env: Record<string, string | undefined>, 
   const overrides = manualTradingOverrides(env, network);
   const networkBase: TradingSettings = {
     ...base,
+    maxOrderUsdt: overrides.maxOrderUsdt ?? base.maxOrderUsdt ?? 0,
     minOrderUsdt: overrides.minOrderUsdt ?? base.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
     safetyNet: overrides.safetyNet ?? base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet,
     orderSizePct: Object.hasOwn(overrides, 'orderSizePct') ? overrides.orderSizePct : base.orderSizePct
   };
   const values = profile === 'current'
-    ? { ...base }
+    ? { ...base, minOrderUsdt: networkBase.minOrderUsdt, maxOrderUsdt: networkBase.maxOrderUsdt }
     : profile in TRADING_PRESETS
       ? (env[tradingPrefix(network) + 'SAVED_PROFILE'] === profile || profile === 'aggressive' && env[tradingPrefix(network) + 'SAVED_PROFILE'] === 'high_risk')
         ? TradingSettingsSchema.parse(Object.fromEntries(Object.entries(TRADING_ENV).filter(([, name]) => env[tradingPrefix(network) + 'SAVED_' + name] != null && env[tradingPrefix(network) + 'SAVED_' + name] !== '').map(([key, name]) => [key, Number(env[tradingPrefix(network) + 'SAVED_' + name])])))

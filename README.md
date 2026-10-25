@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <b>Version: v0.0.0.3.30 (package 0.3.30)</b> · <b>Production Verified Multi-Agent Trading Desk</b> · <b>Node.js 20+</b> · <b>MIT License</b>
+  <b>Version: v0.0.0.3.31 (package 0.3.31)</b> · <b>Production Verified Multi-Agent Trading Desk</b> · <b>Node.js 20+</b> · <b>MIT License</b>
 </p>
 
 **Trading Agent Mpu Gandring** is a powerful, independently verified multi-agent autonomous trading desk. Six specialized AI trading agents share a 2.5D virtual trading floor, backed by an optional **Jev** decision-intelligence sidecar (**6 AI trading agents + Jev**; Jev operates as an analytical sidecar rather than a seventh trading agent). They analyze real-time market microstructure, challenge each other in structured rebuttals, throw cartoon punches when disagreement spikes, and execute the Desk Lead's final verdict using the Owner's active risk profile and capital split.
@@ -23,7 +23,7 @@ Independently tested and battle-proven across **Bybit**, **Aster**, **Hyperliqui
 ## Table of Contents
 
 1. [Fastest Installation (3 Steps)](#1-fastest-installation-3-steps)
-2. [What's New in v0.0.0.3.30](#2-whats-new-in-v000330)
+2. [What's New in v0.0.0.3.31](#2-whats-new-in-v000331)
 3. [Independently Verified Live Trading Proof & Profit Ledger](#3-independently-verified-live-trading-proof--profit-ledger)
 4. [Responsible Autonomy & Anti-Overreliance Advisory](#4-responsible-autonomy--anti-overreliance-advisory)
 5. [Two Ways to Run It (Local Mode vs Grok Bot Mode)](#5-two-ways-to-run-it-local-mode-vs-grok-bot-mode)
@@ -32,7 +32,7 @@ Independently tested and battle-proven across **Bybit**, **Aster**, **Hyperliqui
 8. [CLI & Web Office Quick Reference](#8-cli--web-office-quick-reference)
 9. [Supported Venues (Bybit, Aster, Hyperliquid, Binance & More)](#9-supported-venues-bybit-aster-hyperliquid-binance--more)
 10. [Environment Configuration (`.env`)](#10-environment-configuration-env)
-11. [Updated v0.0.0.3.30 Workflow & System Architecture](#11-updated-v000330-workflow--system-architecture)
+11. [Updated v0.0.0.3.31 Workflow & System Architecture](#11-updated-v000331-workflow--system-architecture)
 12. [Talking to the Agents & Owner Commands](#12-talking-to-the-agents--owner-commands)
 13. [Safety Architecture & Going Live](#13-safety-architecture--going-live)
 14. [Repository Layout](#14-repository-layout)
@@ -79,13 +79,14 @@ Typing `mpu` from any terminal builds the project if needed, starts the backend 
 
 ---
 
-## 2. What's New in v0.0.0.3.30
+## 2. What's New in v0.0.0.3.31
 
-- **Instant Chat Input Clearing on Submit**: Typing in `AgentPanel` or `OfficeDiscussion` now clears the textarea immediately upon send (`setText('')`), eliminating visual input freeze while agents deliberate, with automatic draft restoration if a request fails.
-- **CoinMarketCap API Integration (Free Tier Optimized)**: Native support for `COINMARKETCAP_API_KEY` (and `CMC_API_KEY`) with 5-minute quote caching and 10-minute global metrics caching, staying strictly within the 333 daily credits Basic Plan limit.
-- **Data Sources Setup Relocation**: Moved the "News and on-chain sources" configuration panel from Local CLI Agents to the bottom of the Desk Settings menu (`Setup > Desk Settings`) for intuitive organization.
-- **Hardened Reasoning Model Extraction**: Automatic `<think>` and `<thought>` token stripping before JSON parsing, prioritized markdown code blocks, and relaxed `ChatSchema` aliases (`message`, `text`, `response`, `content`, `answer`) to eliminate fallback answers from frontier reasoning models.
-- **Organized .env Architecture**: Cleanly categorized `.env` with dedicated sections, verified zero missing variables, and complete setting alignment.
+- **CoinMarketCap V3 Quotes & Rotation Surge**: Upgraded to Quotes V3 array parser with Zod schema validation, credential-partitioned caching, in-flight request deduplication, HTTP 429 rate limit backoff, deterministic `ROTATION_SURGE` momentum intelligence, and uniform shared `marketEvidence` across Market, Research, Strategist, and Lead.
+- **Universal Reasoning Levels**: Canonical five levels (`low`, `med`, `high`, `xhigh`, `max`) with honest native encoding (Anthropic `output_config.effort`, OpenAI and Groq normalization from `med` to `medium`, DeepSeek explicit level enforcement) and independent per-role overrides without silent downgrades.
+- **Complete Local CLI Model Discovery**: Full discovery adapters for all 15 local agents (Pi, Grok Build, Codex, OpenCode, Antigravity, etc.) with native model list parsing (`pi --list-models` supporting `~` aliases, `grok models` parsing defaults and available lists, and Cursor agent isolation) with zero arbitrary truncation.
+- **One-Click Connect & Auto-Configure**: End-to-end local agent connectivity with auth checking, sign-in terminal launcher, discovery refresh, valid JSON model probe, atomic configuration file save, and runtime `applyModelConfig` while preserving custom Owner role assignments.
+- **Discord Bot & Slash Command Sync**: Full Discord Bot integration via Gateway WebSocket with heartbeat and reconnect, automatic guild-scoped `/mpu` slash command sync with nested parameter options, and HTTP interaction fallback.
+- **Owner Trading Limits**: Network-isolated `minOrderUsdt` and `maxOrderUsdt` settings with dedicated runtime apply (`applyTradingLimits`) ensuring trade size caps without disrupting running profiles, active positions, or daily loss latches.
 
 ---
 
@@ -301,7 +302,7 @@ All settings live in your local `.env` (managed automatically via **Setup**). Co
 
 ---
 
-## 11. Updated v0.0.0.3.30 Workflow & System Architecture
+## 11. Updated v0.0.0.3.31 Workflow & System Architecture
 
 ### A. Autonomous Position-First Debate & Execution Workflow
 
@@ -327,7 +328,7 @@ flowchart TD
     Card --> Learn["Self-Improving Journal & Financial Evidence Ledger"]
 ```
 
-### B. Full-Stack System Architecture (`v0.0.0.3.30`)
+### B. Full-Stack System Architecture (`v0.0.0.3.31`)
 
 ```mermaid
 flowchart LR
@@ -415,7 +416,7 @@ server/            Express + WebSocket backend
   exchange/        Verified adapters for Bybit, Aster, Hyperliquid, Binance, OKX, dYdX, Paradex, Orderly
   live/            Automatic key guard, testnet round trip, fail-closed live executor
   wallet.ts        Connect wallet: DEX agent key + one signed approval + live venue balance
-  updater.ts       In-app version check (v0.0.0.3.30) and one-click git fast-forward updater
+  updater.ts       In-app version check (v0.0.0.3.31) and one-click git fast-forward updater
   auto.ts          Position-first full auto scheduler
   reports.ts       Periodic reports & financial evidence ledger
   learnings.ts     self-improving lessons store
@@ -423,7 +424,7 @@ server/            Express + WebSocket backend
 cli/               CLI tools: setup.ts, doctor.ts, debate.ts, gb.ts, trade.ts, autostart.ts, bench-models.ts
 grokbot/           Grok Bot cloud install: INSTALL.md, BOOTSTRAP.md, role prompts, learning skills
 web/               Vite + React 2.5D virtual office (Office.tsx, Setup.tsx, Panels.tsx, Tour.tsx, i18n.tsx)
-tests/             Vitest test suite (67 test files, 650+ tests)
+tests/             Vitest test suite (70 test files, 670+ tests)
 docs/              Setup guides, live trading docs, architecture specs, and sanitized live proofs
 ```
 
@@ -458,12 +459,13 @@ Meskipun Mpu Gandring terbukti mampu menghasilkan profit nyata secara konsisten 
    mpu
    ```
 
-### Fitur Baru `v0.0.0.3.30`
-- **Pembersihan Input Chat Instan**: Textarea di `AgentPanel` dan `OfficeDiscussion` kini langsung dikosongkan saat pesan terkirim (`setText('')`), sehingga teks tidak nyangkut saat agen sedang memproses jawaban, dengan pemulihan draft otomatis jika pengiriman gagal.
-- **Integrasi CoinMarketCap API (Free Tier Friendly)**: Dukungan key `COINMARKETCAP_API_KEY` (dan `CMC_API_KEY`) dengan caching 5 menit untuk quote dan 10 menit untuk metrik global crypto agar kuota harian 333 kredit tidak boros.
-- **Relokasi Pengaturan Data Sources**: Panel konfigurasi feed berita dan on-chain dipindahkan ke bagian bawah menu Desk Settings (`Setup > Desk Settings`).
-- **Ekstraksi Skema JSON Model Lebih Tangguh**: Pembersihan otomatis tag `<think>` / `<thought>` dan penerimaan alias respons (`message`, `text`, `response`, dll) untuk mencegah fallback saat menggunakan model reasoning frontier.
-- **Struktur .env Rapi & Terkategori**: Pengelompokan seluruh variabel lingkungan ke dalam seksi terstruktur tanpa ada variabel yang hilang.
+### Fitur Baru `v0.0.0.3.31`
+- **CoinMarketCap V3 Quotes & Intelijen Momentum**: Pembaruan parser array Quotes V3 dengan validasi skema Zod, pemisahan cache berbasis kredensial, deduplikasi request in-flight, penanganan backoff HTTP 429, klasifikasi momentum deterministik `ROTATION_SURGE`, dan pembagian `marketEvidence` yang konsisten ke seluruh agen analisis.
+- **Tingkat Reasoning Universal**: Lima level kanonikal (`low`, `med`, `high`, `xhigh`, `max`) dengan encoding native yang jujur (Anthropic `output_config.effort`, normalisasi OpenAI dan Groq dari `med` ke `medium`, serta validasi ketat DeepSeek) disertai override per-peran independen tanpa silent downgrade.
+- **Penemuan Model CLI Lokal Lengkap**: Adapter penemuan model untuk seluruh 15 agen lokal (Pi, Grok Build, Codex, OpenCode, Antigravity, dll) dengan parsing katalog native (`pi --list-models` mendukung alias `~`, `grok models` membaca model default dan daftar model) tanpa pembatasan arbitrer.
+- **One-Click Connect & Konfigurasi Otomatis**: Alur koneksi agen lokal satu klik dengan pemeriksaan status login, peluncur terminal sign-in, refresh penemuan model, probe verifikasi JSON, penyimpanan atomik `.env`, dan penerapan runtime `applyModelConfig` dengan mempertahankan penugasan peran kustom Boss.
+- **Integrasi Discord Bot & Sinkronisasi Slash Command**: Integrasi bot Discord penuh melalui Gateway WebSocket dengan heartbeat otomatis, sinkronisasi slash command `/mpu` terfilter guild dan channel, serta fallback interaksi HTTP.
+- **Batas Trading Mandiri Pemilik (Min & Max Order USDT)**: Pengaturan batas `minOrderUsdt` dan `maxOrderUsdt` terisolasi per jaringan dengan penerapan runtime khusus (`applyTradingLimits`) tanpa mengganggu profil aktif, posisi terbuka, atau pengaman daily loss.
 
 ---
 

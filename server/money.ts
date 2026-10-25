@@ -160,6 +160,7 @@ export interface PlanInput {
   maxStopPct?: number;
   /** Fallback minimum order value (qty * price) when the venue publishes none. */
   minOrderUsdt: number;
+  maxOrderUsdt?: number;
   /** @deprecated Read compatibility only. No account-equity loss cap changes order size. */
   maxLossPerTradePct?: number;
   /** Taker fee fraction (0.00055 = 0.055%). The larger of this and the venue fee is charged on entry and exit. */
@@ -196,7 +197,9 @@ export function planOrder(p: PlanInput): Plan {
   if (!p.rules && !p.qtyStep) notes.push('Lot step guessed from price, not read from an exchange.');
   const step = rules.qtyStep;
   const minQty = Math.max(rules.minQty || 0, step);
-  const minNotional = rules.minNotional != null && rules.minNotional > 0 ? rules.minNotional : p.minOrderUsdt;
+  const minNotional = Math.max(rules.minNotional ?? 0, p.minOrderUsdt);
+  const maximum = p.maxOrderUsdt ?? 0;
+  if (!Number.isFinite(maximum) || maximum < 0) return {ok: false, reason: 'Invalid Owner maximum trade limit.', split};
   const fee = Math.max(p.takerFee ?? 0, rules.takerFee ?? 0);
   if (![step, minQty].every((v) => Number.isFinite(v) && v > 0) || !Number.isFinite(minNotional) || minNotional < 0 || !Number.isFinite(fee) || fee < 0) return { ok: false, reason: 'Invalid exchange quantity, minimum or fee rule.', split };
 
@@ -224,6 +227,7 @@ export function planOrder(p: PlanInput): Plan {
 
   if (rules.maxQty && qtyMax > rules.maxQty) { qtyMax = rules.maxQty; notes.push(`Capped at the venue max quantity ${rules.maxQty}.`); }
 
+  if (maximum > 0 && qtyMax * p.price > maximum) { qtyMax = maximum / p.price; notes.push(`Capped at Owner maximum trade value ${maximum} USDT.`); }
   let qty = floorTo(qtyMax, step);
   const venueMinimum = Math.ceil(Math.max(minQty, minNotional / p.price) / step - 1e-9) * step;
   let adjusted = false;
@@ -238,6 +242,7 @@ export function planOrder(p: PlanInput): Plan {
   if (qty < minQty - 1e-12 || qty <= 0) return { ok: false, reason: `Allowed size ${round6(qtyMax)} is below the minimum quantity ${minQty} (step ${step}) at ${p.price}. Not rounding up.`, split, suggestion };
   const notional = qty * p.price;
   if (notional < minNotional - 1e-9) return { ok: false, reason: `Order value ${round2(notional)} USDT (${qty} x ${p.price}) is below the minimum notional ${minNotional} USDT. Not rounding up.`, split, suggestion };
+  if (maximum > 0 && notional > maximum + 1e-9) return {ok: false, reason: `Exchange minimum exceeds Owner maximum trade limit ${maximum} USDT.`, split};
   margin = notional / p.leverage;
   const fees = fee * qty * (p.price + stop);
   const lossAtStop = dist * qty + fees;

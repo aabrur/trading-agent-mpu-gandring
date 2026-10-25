@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { LOCAL_AGENTS, localAgentSettings, localAgentSettingsUpdate, localArgs, localEnvironment, localExecutable, localLoginStatus, localReply, localSelection, runLocalAgent } from '../server/providers/local.js';
+import { LOCAL_AGENTS, discoverLocalModels, localAgentSettings, localAgentSettingsUpdate, localArgs, localEnvironment, localExecutable, localLoginStatus, localReply, localSelection, runLocalAgent } from '../server/providers/local.js';
 import { loadConfig } from '../server/config.js';
 import { savePreferences } from '../server/setup/preferences.js';
 import { setEnv, readEnv } from '../cli/envfile.js';
@@ -162,4 +162,12 @@ describe('desk settings in the office', () => {
     expect(secret.length).toBeGreaterThanOrEqual(24);
     expect(JSON.stringify(response)).not.toContain(secret);
   });
+});
+
+it('exposes every registered discovery adapter without claiming curated access', async () => {
+  vi.stubEnv('PATH', mkdtempSync(path.join(tmpdir(), 'mpu-no-cli-')));
+  const results = await Promise.all(LOCAL_AGENTS.map(agent => discoverLocalModels(agent.id, true)));
+  expect(results).toHaveLength(LOCAL_AGENTS.length);
+  expect(results.every(result => !result.installed && result.authentication === 'unknown' && result.completeness === 'unavailable')).toBe(true);
+  expect(results.every(result => result.models.every(model => model.source === 'curated' || model.source === 'configured'))).toBe(true);
 });

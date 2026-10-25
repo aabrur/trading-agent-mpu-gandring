@@ -226,6 +226,10 @@ export class Desk extends EventEmitter {
 
   /** Apply only model settings; trading state and safety latches are untouched. */
   applyModelConfig(next: AppConfig) {
+    this.cfg.defaultProvider = next.defaultProvider;
+    this.cfg.defaultModels = next.defaultModels;
+    this.cfg.defaultReasoning = next.defaultReasoning;
+    this.cfg.reasoning = next.reasoning;
     this.cfg.agents = next.agents;
     this.cfg.keys = next.keys;
     this.cfg.baseUrls = next.baseUrls;
@@ -341,7 +345,7 @@ export class Desk extends EventEmitter {
         balance: this.book.balance, safetyNet: this.book.safetyNet, n: this.book.n, moneyTrade: split.moneyTrade, perOrder: split.perOrder, orderSizePct: split.orderSizePct,
         canOpen: split.canOpen, usedMargin: this.book.usedMargin, unrealized: this.book.unrealized,
         equity: round2(this.book.balance + this.book.unrealized), positions: this.book.positions, closed: this.book.closed.slice(0, 20),
-        minOrderUsdt: this.cfg.risk.minOrderUsdt, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, takeProfitR: this.cfg.risk.takeProfitR
+        minOrderUsdt: this.cfg.risk.minOrderUsdt, maxOrderUsdt: this.cfg.risk.maxOrderUsdt, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, takeProfitR: this.cfg.risk.takeProfitR
       },
       equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-2000), chats: this.chats, roomHistory: this.roomHistory.slice(-100),
       watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold,
@@ -358,7 +362,7 @@ export class Desk extends EventEmitter {
       ['hyperliquid', 'public watchlist positions', true, false],
       ['coinmarketcap', 'quotes & global metrics', !!(process.env.COINMARKETCAP_API_KEY || process.env.CMC_API_KEY), true],
       ['jev', 'optional classification', this.cfg.jev.enabled && (this.cfg.jev.openrouterKeySet || this.cfg.jev.dedicatedKeySet), true]
-    ] as const) manifest.push({ name, category, available: true, configured, requiresApiKey, status: configured ? 'CONFIGURED' : 'UNCONFIGURED', limitations: [name === 'coinmarketcap' ? 'Basic plan limits: 333 credits/day, cached to preserve quota.' : name === 'whale_alert' ? 'Subscription-specific route must be supported; configured keys alone do not prove compatibility.' : 'Source coverage is bounded; configuration is not connectivity proof.'] });
+    ] as const) manifest.push({ name, category, available: true, configured, requiresApiKey, status: configured ? 'CONFIGURED' : 'UNCONFIGURED', limitations: [name === 'coinmarketcap' ? 'Account quota is read from CMC key info; rolling 24h activity does not establish net inflow.' : name === 'whale_alert' ? 'Subscription-specific route must be supported; configured keys alone do not prove compatibility.' : 'Source coverage is bounded; configuration is not connectivity proof.'] });
     try {
       const policy = researchPolicy();
       const activity = localResearchActivity();
@@ -754,6 +758,10 @@ export class Desk extends EventEmitter {
       this.setStatus('market', 'reading'); this.changed();
       const collected = await timer.measure('marketData', () => this.collectResearchData(symbol));
       const snap = collected.market;
+      const marketEvidence = { snapshotId: snap.snapshotId ?? `${id}:${symbol}`, source: snap.source,
+        observedAt: snap.fetchedAt, availability: snap.example ? 'sample' : 'live', evidence: snap.evidence,
+        cmcMomentum: snap.cmcMomentum, coinMarketCap: snap.coinMarketCap,
+        orderflow: snap.orderflow, orderbook: snap.orderbook, measurementBasis: 'Exchange observations and separately timestamped CMC rolling aggregates. Missing is not absent.' };
       this.updateTicker(snap);
       const dataTag = snap.example ? 'sample data (EXAMPLE)' : `${snap.source} public feed`;
       const closes = snap.candles.map((c) => c.c);
@@ -768,7 +776,7 @@ export class Desk extends EventEmitter {
       const mk = await timer.measure('marketAnalyst', () => this.run('market', 'opinion', {
         instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, ATR volatility ${atrVal}, relative candle volume ${vol.volRatio}x, and bullish-candle volume share ${(vol.takerBuyPressure * 100).toFixed(0)}% (INFERRED candle proxy, not taker order flow). Be sharp, quantitative, and directional (LONG or SHORT) unless the tape is flat.`,
         data: {
-          broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt, evidence: snap.evidence },
+          marketEvidence, broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt, evidence: snap.evidence },
           symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h,
           fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol,
           orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain,
@@ -820,7 +828,7 @@ export class Desk extends EventEmitter {
         instruction: `Weigh the sourced catalysts and on-chain intelligence for ${symbol}. Separate VERIFIED on-chain observations, REPORTED news claims, INFERRED candle proxies, and UNAVAILABLE information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. VETO only for verified critical events: delistings, trading halts, exploits, or chain outages. Keyword matches are reported claims, not independent verification. ${newsBriefing.criticalVetoFound ? `CRITICAL VETO (verified): ${newsBriefing.vetoReason}.` : newsBriefing.criticalClaimFound ? `CRITICAL CLAIM (unverified): ${newsBriefing.vetoReason}.` : ''}`,
         data: {
           symbol,
-          tradeFlowProxy,
+          marketEvidence, tradeFlowProxy,
           whaleOnChain: snap.whaleOnChain,
           newsBriefing: { providerStatus: newsBriefing.providerStatus, summary: newsBriefing.summary, events: newsBriefing.events.slice(0, 6) },
           whaleBriefing: { providerStatus: whaleBriefing.providerStatus, summary: whaleBriefing.summary, events: whaleBriefing.events.slice(0, 4) },
@@ -839,7 +847,7 @@ export class Desk extends EventEmitter {
       const rule = strategyVote(snap.candles);
       const st = await timer.measure('strategist', () => this.run('strategist', 'opinion', {
         instruction: `The EMA rule on closed 15m bars produced the result below for ${symbol}. Your stance must match the rule side (ABSTAIN means NEUTRAL). Explain it in your voice.`,
-        data: { symbol, rule, technicalSummary: snap.technicalSummary, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap), jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'strategist') : undefined },
+        data: { marketEvidence, symbol, rule, technicalSummary: snap.technicalSummary, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap), jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'strategist') : undefined },
         context: { symbol, rule }
       }));
       const ruleStance: Stance = rule.side === 'ABSTAIN' ? 'NEUTRAL' : rule.side;
@@ -899,7 +907,7 @@ export class Desk extends EventEmitter {
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
         instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, CLOSE requires strategyInvalidated=true (opposite closed-bar direction beyond EMA21 with opposing five-bar momentum), or a verified critical event. A minor EMA9 crossing, unrealized loss, or changed agent vote alone is insufficient. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
-        data: { symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap) }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: slots.freeSlots, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
+        data: { marketEvidence, symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap) }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: slots.freeSlots, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       }));
       let action: Action = ld.data.action;
@@ -1178,7 +1186,7 @@ export class Desk extends EventEmitter {
       balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: slots.occupiedSlots, usedMargin: this.book.usedMargin,
       price, side, availableFunds: live ? this.venueAccount?.available : undefined, orderSizePct: gate.orderSizePct ?? this.cfg.risk.orderSizePct, adjustToVenueMinimum: Boolean(live), sizeFactor: 1, leverage: Math.max(1, Math.floor(Math.min(gate.leverage, this.cfg.risk.maxLeverage))),
       stopPct: this.cfg.risk.defaultStopPct,
-      minOrderUsdt: this.cfg.risk.minOrderUsdt, takerFee: this.cfg.risk.takerFee, rules, takeProfitPct: this.cfg.risk.takeProfitPct
+      minOrderUsdt: this.cfg.risk.minOrderUsdt, maxOrderUsdt: this.cfg.risk.maxOrderUsdt, takerFee: this.cfg.risk.takerFee, rules, takeProfitPct: this.cfg.risk.takeProfitPct
     });
     if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
     this.setStatus('execution', 'executing'); this.changed();
@@ -1300,6 +1308,19 @@ export class Desk extends EventEmitter {
       this.book.safetyNet = this.cfg.paper.safetyNet = safetyNet;
       this.book.n = this.cfg.paper.n = maxPositions as 1 | 2 | 3 | 4;
       this.checkDay(); this.changed();
+      return true;
+    });
+  }
+
+  async applyTradingLimits(network: TradingNetwork, minOrderUsdt: number, maxOrderUsdt: number) {
+    return this.exclusive(async () => {
+      if (this.cfg.live?.network !== network || this.cfg.tradingMode !== (network === 'mainnet' ? 'LIVE' : 'TESTNET')) return false;
+      this.cfg.risk = {
+        ...this.cfg.risk,
+        minOrderUsdt: Math.max(0, minOrderUsdt),
+        maxOrderUsdt: Math.max(0, maxOrderUsdt)
+      };
+      this.changed();
       return true;
     });
   }

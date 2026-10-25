@@ -1,12 +1,14 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.30",
-  "appVersion": "0.0.0.3.30",
+  "version": "0.3.31",
+  "appVersion": "0.0.0.3.31",
   "changelog": [
-    "Instant chat input clearing on submit with draft restoration on failure in AgentPanel and OfficeDiscussion.",
-    "Integrated CoinMarketCap API for Free/Basic Plan (333 credits/day) with in-memory TTL caching and relocated Data Sources setup to Desk Settings.",
-    "Hardened reasoning model schema extraction by stripping thinking tokens and accepting flexible chat reply aliases.",
-    "Reorganized and categorized local .env structure with full variable integrity verification."
+    "CoinMarketCap Quotes V3 array parsing, ROTATION_SURGE momentum intelligence, and uniform shared marketEvidence.",
+    "Universal Reasoning Levels (low, med, high, xhigh, max) with honest native encoding and per-role overrides.",
+    "Complete Local CLI Model Discovery for 15 agents including Pi, Grok Build, Codex, OpenCode, and Antigravity.",
+    "One-click Connect and Auto-Configure for local agents with atomic save and custom role preservation.",
+    "Discord Bot integration via Gateway WebSocket with automated /mpu slash command synchronization.",
+    "Owner trade limits (minOrderUsdt and maxOrderUsdt) with isolated network apply and exchange boundary preservation."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",

@@ -3,7 +3,7 @@ import type { AppConfig } from '../config.js';
 import { setEnv } from '../../cli/envfile.js';
 import { registerSecrets } from '../redact.js';
 import { resetWhaleCache } from '../market/whale.js';
-import { resetCoinMarketCapCache } from '../market/coinmarketcap.js';
+import { resetCoinMarketCapCache, coinMarketCapStatus } from '../market/coinmarketcap.js';
 
 const secret = z.string().max(400).refine(value => !value || /^\S+$/.test(value));
 export const DataSourcesBody = z.object({
@@ -14,6 +14,7 @@ export const DataSourcesBody = z.object({
 
 export function dataSourcesStatus(env: NodeJS.ProcessEnv) {
   return {
+    coinMarketCap: coinMarketCapStatus(env.COINMARKETCAP_API_KEY || env.CMC_API_KEY || ''),
     newsProvider: env.NEWS_PROVIDER || 'sample',
     publicNewsFallback: 'Bybit announcements in LIVE/TESTNET',
     cryptoPanicKeySet: !!env.CRYPTOPANIC_API_KEY?.trim(),

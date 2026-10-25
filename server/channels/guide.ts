@@ -26,16 +26,19 @@ export const CHANNEL_GUIDES: Record<ChannelName, ChannelGuide> = {
     docs: [{ label: 'Bot API', url: 'https://core.telegram.org/bots/api' }, { label: 'From BotFather to Hello World', url: 'https://core.telegram.org/bots/tutorial' }]
   },
   discord: {
-    label: 'Discord', official: 'Discord channel webhook (posts) and a Developer Portal app with an Interactions Endpoint (slash commands)',
-    outbound: 'channel webhook', inbound: 'slash commands to a signed Interactions Endpoint (Ed25519): needs a public HTTPS URL', publicUrl: true,
+    label: 'Discord', official: 'Discord Bot API and Gateway; signed HTTP interactions remain supported',
+    outbound: 'Bot API or existing webhook', inbound: 'Gateway locally; signed HTTP when configured on the application', publicUrl: false,
     fields: [
-      { env: 'DISCORD_WEBHOOK_URL', label: 'Channel webhook URL', secret: true, required: true, pattern: /^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\/\d+\/[\w-]+$/, hint: 'https://discord.com/api/webhooks/...' },
+      { env: 'DISCORD_BOT_TOKEN', label: 'Bot Token', secret: true, required: false, pattern: /^[A-Za-z0-9._-]{20,400}$/, hint: 'Developer Portal, Bot, Reset Token' },
+      ...['CHANNEL_ID', 'GUILD_ID', 'APPLICATION_ID'].map(key => ({ env: `DISCORD_${key}`, label: key, secret: false, required: false, pattern: /^\d{3,25}$/, hint: 'Selected during bot setup' })),
+      { env: 'DISCORD_DELIVERY', label: 'Interaction delivery', secret: false, required: false, pattern: /^(gateway|http)$/, hint: 'Determined from the application endpoint' },
+      { env: 'DISCORD_WEBHOOK_URL', label: 'Channel webhook URL', secret: true, required: false, pattern: /^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\/\d+\/[\w-]+$/, hint: 'https://discord.com/api/webhooks/...' },
       { env: 'DISCORD_PUBLIC_KEY', label: 'App public key (General Information), for commands', secret: false, required: false, pattern: /^[0-9a-fA-F]{64}$/, hint: '64 hex characters; empty = no commands' },
       { env: 'DISCORD_ALLOWED_USER_IDS', label: 'User ids allowed to send commands', secret: false, required: false, pattern: IDS, hint: 'Developer Mode on, right click your name, Copy User ID' }
     ],
     steps: [
       { title: 'Create a channel webhook', text: 'In your server: Edit Channel, Integrations, Webhooks, New Webhook, Copy Webhook URL. Anyone with this URL can post to the channel, so keep it secret.', links: [{ label: 'Webhook docs', url: 'https://docs.discord.com/developers/resources/webhook' }, { label: 'Intro to Webhooks (help center, opens in a browser)', url: 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks' }] },
-      { title: 'Optional: slash commands', text: 'Create an application in the Developer Portal, copy its Public Key, register the commands (npm run channels -- discord-commands prints the official request), and set Interactions Endpoint URL to https://<your public host>/api/channels/discord.', links: [{ label: 'Developer Portal', url: 'https://discord.com/developers/applications', login: true }, { label: 'Interactions overview', url: 'https://docs.discord.com/developers/interactions/overview' }, { label: 'Application commands', url: 'https://docs.discord.com/developers/interactions/application-commands' }] }
+      { title: 'Optional: slash commands', text: 'Create an application and bot in the Developer Portal. Enter its Bot Token in the masked input, validate it, install it in your server, then select a server and channel. Save automatically synchronizes /mpu. Gateway mode needs no public tunnel. Existing HTTP Interactions Endpoints keep their configured delivery.', links: [{ label: 'Developer Portal', url: 'https://discord.com/developers/applications', login: true }, { label: 'Interactions overview', url: 'https://docs.discord.com/developers/interactions/overview' }, { label: 'Application commands', url: 'https://docs.discord.com/developers/interactions/application-commands' }] }
     ],
     notes: ['Every interaction is checked against the Ed25519 signature; bad signatures get 401.', 'Commands are obeyed only from user ids in DISCORD_ALLOWED_USER_IDS.'],
     docs: [{ label: 'Receiving and responding', url: 'https://docs.discord.com/developers/interactions/receiving-and-responding' }]

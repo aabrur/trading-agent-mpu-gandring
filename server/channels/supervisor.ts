@@ -1,3 +1,4 @@
+import { DiscordGateway } from './discord.js';
 // Desk Lead: the one supervisor that watches the desk and talks to you on your chat channel.
 // - every SUPERVISOR_INTERVAL_MIN: health, positions without stops, daily loss cap, safety net, API errors, stale feeds, kill switch
 // - alerts (warn/alert findings) go to every enabled channel, once per ALERT_COOLDOWN_MIN per finding, louder when it escalates
@@ -18,6 +19,9 @@ const keyOf = (f: Finding) => (['no_stop', 'stale_feed', 'sample_fallback'].incl
 
 export class DeskLead {
   readonly hub: ChannelHub;
+  private discordGateway: DiscordGateway | null = null;
+  get discordStatus() { return this.discordGateway?.status ?? (this.cfg.discord.delivery === 'http' ? 'http' : 'disconnected'); }
+  reload(cfg: ChannelConfig) { this.stop(); this.cfg = cfg; this.hub.cfg = cfg; this.desk.cfg.channels = cfg; this.start(); }
   private timer: NodeJS.Timeout | null = null;
   private sent = new Map<string, { at: number; rank: number }>();
   private wasKilled: boolean;
@@ -33,6 +37,7 @@ export class DeskLead {
 
   start() {
     if (!this.cfg.supervisor.on || this.timer) return;
+    if (this.cfg.discord.botToken && this.cfg.discord.delivery === 'gateway') { this.discordGateway = new DiscordGateway(this.desk, () => this.cfg, this.fetchImpl, this.onKill); this.discordGateway.start(); }
     this.desk.on('report', this.onReport);
     this.timer = setInterval(() => void this.tick(), this.cfg.supervisor.intervalMin * 60_000);
     this.timer.unref?.();
@@ -40,6 +45,7 @@ export class DeskLead {
     if (this.cfg.commands && this.cfg.telegram.enabled && this.cfg.telegram.allowed.length) void this.pollTelegram();
   }
   stop() {
+    this.discordGateway?.stop(); this.discordGateway = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null; this.pollAbort?.abort(); this.pollAbort = null;
     if (DeskLead.telegramPollers.get(this.cfg.telegram.token) === this) DeskLead.telegramPollers.delete(this.cfg.telegram.token);

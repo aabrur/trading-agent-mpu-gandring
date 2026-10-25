@@ -5,12 +5,14 @@ import { CodexResearchSetup } from './CodexResearchSetup';
 interface LocalAgent {
   id: string;
   bin: string;
+  activeModel?: string | null;
   label: string;
   installed: boolean;
   docs: string;
   loginCommand: string;
   hint: string;
   models: string[];
+  discovery?: { version: string | null; completeness: string; error: string | null; authentication: string; models: {id: string}[] } | null;
 }
 
 interface AgentSettings {
@@ -107,6 +109,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
   const [verified, setVerified] = useState<Record<string, boolean>>({});
   const [connected, setConnected] = useState<Record<string, boolean>>({});
   const [waiting, setWaiting] = useState<Record<string, number>>({});
+  const [search, setSearch] = useState<Record<string, string>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const status = async (id: string, verify = false) => {
@@ -168,21 +171,8 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
               delete next[id];
               return next;
             });
-            if (result.connected) {
-              setConnected((old) => ({ ...old, [id]: true }));
-              setMessage((old) => ({
-                ...old,
-                [id]: lang === 'id'
-                  ? 'Connected. Akun agen siap digunakan. Test connection menguji balasan model dan memakai kuota.'
-                  : 'Connected. The agent account is ready. Test connection checks a model reply and uses quota.'
-              }));
-            } else if (result.state === 'finished') {
-              setMessage((old) => ({
-                ...old,
-                [id]: lang === 'id'
-                  ? 'Terminal login selesai. Klik Test connection untuk menguji respon model.'
-                  : 'Sign-in terminal closed. Click Test connection to verify model connection.'
-              }));
+            if (result.connected || result.state === 'finished') {
+              await connect(id, true);
             } else {
               setMessage((old) => ({
                 ...old,
@@ -212,8 +202,8 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
   }, [waiting, agents, lang]);
 
   async function action(agent: LocalAgent, type: 'login' | 'test') {
+    if (type === 'login') { await connect(agent.id); return; }
     setVerified((old) => ({ ...old, [agent.id]: false }));
-    if (type === 'login') setConnected((old) => ({ ...old, [agent.id]: false }));
     setBusy(agent.id);
     setMessage((old) => ({
       ...old,
@@ -226,7 +216,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
       const r = await fetch(`/api/setup/local-agents/${type}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(type === 'login' ? { id: agent.id } : { model: `${agent.id}:${activeModel}` })
+        body: JSON.stringify({ model: `${agent.id}:${activeModel}` })
       });
       const d = await r.json();
       setMessage((old) => ({ ...old, [agent.id]: d.detail || d.error }));
@@ -237,12 +227,38 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
           setConnected((old) => ({ ...old, [agent.id]: true }));
         }
       }
-      if (type === 'login' && r.ok && d.ok) setWaiting((old) => ({ ...old, [agent.id]: Date.now() }));
     } catch {
       setMessage((old) => ({ ...old, [agent.id]: lang === 'id' ? 'Meja trading tidak terjangkau. Coba lagi.' : 'Office not reachable. Try again.' }));
     } finally {
       setBusy(null);
     }
+  }
+
+  async function connect(id: string, continuation = false) {
+    setBusy(id);
+    setMessage(old => ({...old, [id]: lang === 'id' ? 'Memeriksa login, model, dan konfigurasi...' : 'Checking authentication, discovering models, and configuring...'}));
+    try {
+      const response = await fetch('/api/setup/local-agents/connect', { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, continue: continuation}) });
+      const result = await response.json();
+      setMessage(old => ({...old, [id]: `${result.state}: ${result.detail || ''}`}));
+      setVerified(old => ({...old, [id]: result.active === true}));
+      if (result.active) { window.dispatchEvent(new Event('mpu-models-updated')); await load(); }
+      else if (result.state === 'AUTHENTICATING') setWaiting(old => ({...old, [id]: old[id] || Date.now()}));
+    } catch { setMessage(old => ({...old, [id]: 'CONFIGURATION FAILED'})); }
+    finally { setBusy(null); }
+  }
+
+  async function refreshModels(id: string) {
+    setBusy(id);
+    try {
+      const response = await fetch('/api/setup/local-agents/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error();
+      setAgents(result.agents);
+      setMessage(old => ({ ...old, [id]: result.discovery.error || result.discovery.completeness }));
+      window.dispatchEvent(new Event('mpu-models-updated'));
+    } catch { setMessage(old => ({...old, [id]: lang === 'id' ? 'Gagal menyegarkan model.' : 'Unable to refresh models.'})); }
+    finally { setBusy(null); }
   }
 
   async function saveAgentSettings(id: string) {
@@ -325,8 +341,8 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                     <div className="local-agent-info">
                       <b>{a.label}</b>{' '}
                       <span className="badge">
-                        {verified[a.id]
-                          ? t('setupLocalVerifiedBadge')
+                        {(verified[a.id] || a.activeModel)
+                          ? 'Connected & Active'
                           : connected[a.id]
                           ? 'Connected'
                           : waiting[a.id]
@@ -335,6 +351,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                           ? t('setupLocalInstalledBadge')
                           : t('setupLocalNotOnPathBadge')}
                       </span>
+                      {a.activeModel && <span className="badge">{a.activeModel}</span>}
                       {settings[a.id]?.model && settings[a.id]?.model !== 'default' && (
                         <span className="badge" style={{ marginLeft: 4, background: 'var(--panel-2)' }}>
                           model: {settings[a.id]?.model}
@@ -343,7 +360,10 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                       <p className="wallet-note small">
                         {a.hint} <a href={a.docs} target="_blank" rel="noreferrer">Install / docs</a>
                       </p>
+                      <label>{lang === 'id' ? 'Cari model' : 'Search models'}<input value={search[a.id] || ''} onChange={e => setSearch(old => ({...old, [a.id]: e.target.value}))} /></label>
                       <code>{a.loginCommand}</code>
+                      {a.discovery && <p className="field-help">{a.discovery.version || 'Version unknown'} · {a.discovery.models.length} models · {a.discovery.completeness} · {a.discovery.authentication}</p>}
+                      <button type="button" disabled={!available || !!busy || !a.installed} onClick={() => void refreshModels(a.id)}>{lang === 'id' ? 'Segarkan Model' : 'Refresh Models'}</button>
                     </div>
                     <div className="local-agent-actions">
                       <button

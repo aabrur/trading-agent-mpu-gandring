@@ -18,7 +18,6 @@ function getTradingFields(t: (k: TranslationKey) => string) {
     { key: 'orderSizePct' as const, label: 'Order size (% of Money Trade)', min: 1.5, max: 100, help: '1.5–100%. Leave empty to divide Money Trade by N.' },
     { key: 'defaultStopPct' as const, label: t('tradingDefaultStop'), min: 0, max: 100, help: t('tradingHelpDefaultStop') },
     { key: 'takeProfitPct' as const, label: t('tradingTakeProfitPct'), min: 0, max: 1000, help: t('tradingHelpTakeProfitPct') },
-    { key: 'minOrderUsdt' as const, label: t('tradingMinOrderUsdt'), min: 0, help: t('tradingHelpMinOrderUsdt') },
     { key: 'safetyNet' as const, label: t('tradingSafetyNet'), min: 0, help: t('tradingHelpSafetyNet') },
     { key: 'maxPositions' as const, label: t('tradingMaxPositions'), min: 1, max: 4, step: 1, help: t('tradingHelpMaxPositions') }
   ];
@@ -77,6 +76,16 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     } catch { setMessage(lang === 'id' ? 'Penyimpanan tidak terkonfirmasi. Muat ulang bagian ini sebelum mencoba lagi.' : 'Saving was not confirmed. Refresh this section before trying again.'); }
     finally { setBusy(false); }
   }
+  async function saveLimits() {
+    setBusy(true); setMessage('');
+    try {
+      const response = await fetch('/api/setup/trading/limits', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({network, minOrderUsdt: values.minOrderUsdt, maxOrderUsdt: values.maxOrderUsdt})});
+      const result = await response.json();
+      setMessage(result.detail);
+      if (response.ok && result.ok) await load(true);
+    } catch { setMessage(lang === 'id' ? 'Gagal menyimpan batas trading.' : 'Unable to save trading limits.'); }
+    finally { setBusy(false); }
+  }
   const savedProfile = info.networks[network].profile;
   const savedLabel = profileName(savedProfile, lang);
   const runningLabel = profileName(info.running.profile, lang);
@@ -105,6 +114,14 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
         <option value="manual">{t('tradingProfileManual')}</option>
       </select></label>
     </div>
+    <form onSubmit={e => {e.preventDefault(); void saveLimits();}}>
+      <fieldset disabled={busy}><legend>{lang === 'id' ? 'Batas Trading' : 'Trading Limits'} · {network}</legend>
+        {(['minOrderUsdt', 'maxOrderUsdt'] as const).map(key => <label key={key}>{key === 'minOrderUsdt' ? (lang === 'id' ? 'Batas Minimum Trade (USDT)' : 'Minimum Trade Limit (USDT)') : (lang === 'id' ? 'Batas Maksimum Trade (USDT)' : 'Maximum Trade Limit (USDT)')}<input type="number" min="0" step="any" required value={values[key] ?? 0} onChange={e => setDrafts(old => old ? {...old, [network]: {...old[network], [key]: Number(e.target.value)}} : old)} /><small>{lang === 'id' ? 'Tersimpan' : 'Saved'}: {info.networks[network].values[key] ?? 0} · {lang === 'id' ? 'Berjalan' : 'Running'}: {info.running.values[key] ?? 0}</small></label>)}
+        <p className="field-help">{lang === 'id' ? '0 = tanpa batas tambahan aplikasi. Aturan kuantitas, step, dan nominal bursa tetap berlaku.' : '0 = no additional application limit. Exchange quantity, step, and notional rules still apply.'}</p>
+        <button type="submit">{lang === 'id' ? 'Simpan & Terapkan' : 'Save & Apply'}</button>
+        <button type="button" onClick={() => setDrafts(old => old ? {...old, [network]: {...old[network], minOrderUsdt: info.networks[network].values.minOrderUsdt, maxOrderUsdt: info.networks[network].values.maxOrderUsdt}} : old)}>{lang === 'id' ? 'Reset Perubahan Belum Disimpan' : 'Reset Unsaved Changes'}</button>
+      </fieldset>
+    </form>
     <p className="setup-guide-note">{t('tradingSavedProfilePrefix')} {network}: <b>{savedLabel}</b>. {isPreset ? `${lang === 'id' ? 'Tinjau preset' : 'Review the'} ${TRADING_PRESETS[profile as TradingPresetId].name} ${t('tradingPresetBanner')}` : (lang === 'id' ? 'Edit hanya nilai yang ingin kamu ubah. Nilai manual sebelumnya disimpan terpisah untuk tiap jaringan.' : 'Edit only the values you want to change. The previous manual values are retained separately for each network.')}</p>
     <p className="field-help">{isPreset ? (lang === 'id' ? 'Nilai preset ditetapkan oleh Owner. SL dan TP dihitung dari margin order. Dana aman dan nominal minimal order mengikuti konfigurasi akun kamu.' : 'Preset values are set by the Owner. SL and TP are percentages of order margin. Capital reserves and order minimums reflect your network configuration.') : (lang === 'id' ? 'Semua kolom manual wajib diisi.' : 'All manual fields are required.')}</p>
     <form onSubmit={(e) => { e.preventDefault(); void save(); }}>

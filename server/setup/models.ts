@@ -1,3 +1,4 @@
+import { normalizeReasoning, reasoningStatus, type ReasoningLevel } from '../providers/reasoning.js';
 // Curated setup choices, shared by the CLI and office.
 import { AGENT_IDS, PROVIDERS, type ProviderName, type ApiProviderName } from '../config.js';
 import type { AgentId } from '../types.js';
@@ -18,8 +19,8 @@ export const MODEL_KEY_ENV: Record<ApiProviderName, string> = {
   fireworks: 'FIREWORKS_API_KEY'
 };
 export interface ModelChoice { id: string; label: string; tags: string[] }
-export interface ModelSelection { provider: ProviderName; model: string }
-export interface ModelSetupInput { defaultProvider: ProviderName; defaultModel: string; agents?: Partial<Record<AgentId, ModelSelection>>; keys?: Partial<Record<ApiProviderName, string>> }
+export interface ModelSelection { provider: ProviderName; model: string; reasoning?: ReasoningLevel }
+export interface ModelSetupInput { defaultReasoning?: ReasoningLevel | null; reasoning?: Partial<Record<AgentId, ReasoningLevel | null>>; defaultProvider: ProviderName; defaultModel: string; agents?: Partial<Record<AgentId, ModelSelection>>; keys?: Partial<Record<ApiProviderName, string>> }
 const m = (id: string, label: string, ...tags: string[]): ModelChoice => ({ id, label, tags });
 
 // 10 API providers, each with 20 curated AI models.
@@ -321,11 +322,12 @@ export function modelSetupInfo(env: NodeJS.ProcessEnv) {
     checkedOn: MODEL_CATALOG_DATE, usageSource: USAGE_SOURCE,
     presets: MODEL_PRESETS,
     providers: PROVIDERS.map((provider) => ({ provider, keyEnv: provider === 'mock' || provider === 'local' ? null : MODEL_KEY_ENV[provider], keySet: provider === 'mock' || provider === 'local' || !!env[MODEL_KEY_ENV[provider]], source: MODEL_SOURCES[provider], models: modelChoices(env, provider), defaultModel: defaultModel(env, provider) })),
+    defaultReasoning: normalizeReasoning(env.DEFAULT_REASONING_EFFORT) ?? null,
     defaultProvider: p, defaultModel: defaultModel(env, p),
     agents: AGENT_IDS.map((id) => {
       const raw = env[`AGENT_${id.toUpperCase()}_PROVIDER`] || p;
       const provider = isProvider(raw) ? raw : p;
-      return { id, provider, model: env[`AGENT_${id.toUpperCase()}_MODEL`] || defaultModel(env, provider), custom: !!(env[`AGENT_${id.toUpperCase()}_PROVIDER`] || env[`AGENT_${id.toUpperCase()}_MODEL`]) };
+      return { reasoning: normalizeReasoning(env[`AGENT_${id.toUpperCase()}_REASONING`]) ?? null, reasoningStatus: reasoningStatus(provider, env[`AGENT_${id.toUpperCase()}_MODEL`] || defaultModel(env, provider), normalizeReasoning(env[`AGENT_${id.toUpperCase()}_REASONING`] || env.DEFAULT_REASONING_EFFORT)), id, provider, model: env[`AGENT_${id.toUpperCase()}_MODEL`] || defaultModel(env, provider), custom: !!(env[`AGENT_${id.toUpperCase()}_PROVIDER`] || env[`AGENT_${id.toUpperCase()}_MODEL`]) };
     })
   };
 }
@@ -339,6 +341,11 @@ export function modelUpdates(env: NodeJS.ProcessEnv, input: ModelSetupInput): Re
   };
   if (!valid(input.defaultProvider, input.defaultModel)) throw new Error('Choose a model from the selected provider.');
   const up: Record<string, string | null> = { DEFAULT_PROVIDER: input.defaultProvider, [providerModelEnv(input.defaultProvider)]: input.defaultModel };
+  if (input.defaultReasoning !== undefined) up.DEFAULT_REASONING_EFFORT = input.defaultReasoning === null ? null : normalizeReasoning(input.defaultReasoning)!;
+  for (const [id, value] of Object.entries(input.reasoning ?? {})) {
+    if (!AGENT_IDS.includes(id as AgentId)) throw new Error('Unknown agent');
+    up[`AGENT_${id.toUpperCase()}_REASONING`] = value === null ? null : normalizeReasoning(value)!;
+  }
   for (const a of AGENT_IDS) {
     const selection = input.agents?.[a];
     if (selection && !valid(selection.provider, selection.model)) throw new Error(`Choose a model from the selected provider for ${a}.`);

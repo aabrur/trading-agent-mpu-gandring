@@ -237,7 +237,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   // Desk Lead supervisor and chat channels. Inbound chat webhooks get their own server (see channels/routes.ts).
   const onKill = () => auto.stop();
   const lead = new DeskLead(desk, cfg.channels, opts.channelFetch ?? fetch, onKill);
-  mountChannelSetupRoutes(app, routeCtx);
+  mountChannelSetupRoutes(app, { ...routeCtx, lead });
   const inbound = createInboundApp({ ...routeCtx, fetchImpl: opts.channelFetch ?? routeCtx.fetchImpl, lead, onKill });
   // Closed 15m candles for the price chart. Cached briefly so the UI cannot hammer public APIs.
   const candleCache = new Map<string, { at: number; body: unknown }>();

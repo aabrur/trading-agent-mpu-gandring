@@ -1,13 +1,16 @@
+import { ReasoningSchema, reasoningStatus, requireReasoning, refreshRouterReasoning } from '../providers/reasoning.js';
 // Office routes for the Setup wizard and the Desk ops panel. Same shared modules as the CLI (server/setup/*, server/sizing.ts).
 // Every route here answers only to a browser on this computer (loopback client, localhost Host header, same-origin).
 // Key entry additionally needs local mode and an office bound to 127.0.0.1 (the Connect wallet rule).
 // Not possible here, on purpose: releasing the kill switch (CLI only: npm run unkill -- --yes).
 import type express from 'express';
+import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { AppConfig } from '../config.js';
 import type { Desk } from '../desk.js';
 import type { AutoTrader } from '../auto.js';
-import { AGENT_IDS, loadConfig } from '../config.js';
+import { AGENT_IDS, PROVIDERS, loadConfig } from '../config.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from '../exchange/index.js';
 import { walletAccess } from '../wallet.js';
 import { safe } from '../redact.js';
@@ -17,11 +20,11 @@ import { saveVenueKeys, setVenue, setTradingMode, setupEnv, maskedStatus, venueF
 import { doctor } from './doctor.js';
 import { MODEL_KEY_ENV, modelSetupInfo, modelUpdates } from './models.js';
 import { setEnv } from '../../cli/envfile.js';
-import { localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection, localMcpInventory, localResearchActivity, validateResearchConnections, localAgentSettings, localAgentSettingsUpdate } from '../providers/local.js';
+import { discoverLocalModels, LOCAL_AGENTS, localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection, localMcpInventory, localResearchActivity, validateResearchConnections, localAgentSettings, localAgentSettingsUpdate } from '../providers/local.js';
 import { ResearchPolicyBody, researchPolicy } from '../providers/research-policy.js';
 import { preferencesInfo, savePreferences } from './preferences.js';
 import { extractJson, SCHEMAS } from '../schemas.js';
-import { saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
+import { saveTradingLimits, TradingLimitsBody, saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
 import { tradingSettingsFromConfig } from '../trading-settings.js';
 import { JevSetupBody, jevSetupInfo, saveJevSetup } from './jev.js';
 import { DataSourcesBody, dataSourcesStatus, saveDataSources } from './data-sources.js';
@@ -43,9 +46,9 @@ export interface RouteCtx { cfg: AppConfig; desk: Desk; auto?: AutoTrader; envFi
 const Venue = z.enum(EXCHANGES as unknown as [ExchangeName, ...ExchangeName[]]);
 const KeysBody = z.object({ venue: Venue, network: z.enum(['testnet', 'mainnet']), key: z.string().max(300), secret: z.string().max(400), third: z.string().max(300).optional() }).strict();
 const ModeBody = z.object({ mode: z.enum(MODES), confirm: z.string().max(100).optional() }).strict();
-const Provider = z.enum(['mock', 'local', 'xai', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter']);
+const Provider = z.enum(PROVIDERS as [typeof PROVIDERS[number], ...typeof PROVIDERS[number][]]);
 const Selection = z.object({ provider: Provider, model: z.string().min(1).max(200) }).strict();
-const ModelsBody = z.object({ defaultProvider: Provider, defaultModel: z.string().min(1).max(200), agents: z.object({ lead: Selection.optional(), market: Selection.optional(), research: Selection.optional(), strategist: Selection.optional(), risk: Selection.optional(), execution: Selection.optional() }).strict().optional(), keys: z.object({ xai: z.string().max(400).optional(), openai: z.string().max(400).optional(), anthropic: z.string().max(400).optional(), gemini: z.string().max(400).optional(), deepseek: z.string().max(400).optional(), openrouter: z.string().max(400).optional() }).strict().optional() }).strict();
+const ModelsBody = z.object({ defaultReasoning: ReasoningSchema.nullable().optional(), reasoning: z.object(Object.fromEntries(AGENT_IDS.map(id => [id, ReasoningSchema.nullable().optional()]))).strict().optional(), defaultProvider: Provider, defaultModel: z.string().min(1).max(200), agents: z.object({ lead: Selection.optional(), market: Selection.optional(), research: Selection.optional(), strategist: Selection.optional(), risk: Selection.optional(), execution: Selection.optional() }).strict().optional(), keys: z.object({ xai: z.string().max(400).optional(), openai: z.string().max(400).optional(), anthropic: z.string().max(400).optional(), gemini: z.string().max(400).optional(), deepseek: z.string().max(400).optional(), openrouter: z.string().max(400).optional(), groq: z.string().max(400).optional(), mistral: z.string().max(400).optional(), together: z.string().max(400).optional(), fireworks: z.string().max(400).optional() }).strict().optional() }).strict();
 const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive().optional(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(), confidence: z.number().min(0).max(1).optional(), autonomous: z.boolean().optional() }).strict();
 const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
 const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(2).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
@@ -80,8 +83,9 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     const env = setupEnv(c.envFile);
     res.json({ ok: true, venue: v.data, network: net, note: g.networks[net].note ?? null, steps: guideSteps(v.data, net, c.cfg.appMode === 'grokbot' ? 'grokbot' : 'local'), fields: envFields(v.data, net), venues: venueFieldStatus(env, v.data), permissionsOn: g.permissionsOn, permissionsOff: g.permissionsOff, ip: g.ip, docs: g.docs, connectWallet: g.connectWallet });
   });
-  app.get('/api/setup/models', (req, res) => {
+  app.get('/api/setup/models', async (req, res) => {
     if (!gate(req, res)) return;
+    try { if (c.cfg.defaultProvider === 'openrouter' || Object.values(c.cfg.agents).some(a => a.provider === 'openrouter')) await refreshRouterReasoning(); } catch { /* Capability status remains unverified. */ }
     res.json({ ok: true, ...modelSetupInfo(setupEnv(c.envFile)), runningAgents: AGENT_IDS.map((id) => ({ id, ...c.cfg.agents[id] })) });
   });
   app.get('/api/setup/preferences', (req, res) => {
@@ -92,6 +96,16 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     if (!gate(req, res)) return;
     try { res.json({ ok: true, ...tradingSetupInfo(setupEnv(c.envFile)), running: { mode: c.cfg.tradingMode, network: c.cfg.live?.network ?? null, profile: c.cfg.tradingProfile, values: tradingSettingsFromConfig(c.cfg) } }); }
     catch { res.status(400).json({ ok: false, detail: 'Saved trading settings are invalid. Check the network profile values.' }); }
+  });
+  app.post('/api/setup/trading/limits', async (req, res) => {
+    if (!gate(req, res)) return;
+    const parsed = TradingLimitsBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ok: false, detail: 'Use finite, nonnegative trade values. Zero disables the corresponding application limit.'});
+    try {
+      const saved = saveTradingLimits(c.envFile, parsed.data);
+      const applied = await c.desk.applyTradingLimits(saved.network, parsed.data.minOrderUsdt, parsed.data.maxOrderUsdt);
+      res.json({ok: true, applied, detail: applied ? 'Trading limits saved and applied.' : 'Trading limits saved for the selected network.'});
+    } catch { res.status(400).json({ok: false, detail: 'Trading limits could not be saved.'}); }
   });
   app.post('/api/setup/trading', async (req, res) => {
     if (!gate(req, res)) return;
@@ -127,7 +141,14 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   });
   app.get('/api/setup/local-agents', (req, res) => {
     if (!gate(req, res)) return;
-    res.json({ ok: true, agents: localAgentStatus(), settings: localAgentSettings(setupEnv(c.envFile)) });
+    res.json({ ok: true, agents: localAgentStatus().map(agent => ({...agent, activeModel: c.cfg.defaultProvider === 'local' && c.cfg.defaultModels.local.startsWith(`${agent.id}:`) ? c.cfg.defaultModels.local : null})), settings: localAgentSettings(setupEnv(c.envFile)) });
+  });
+  app.post('/api/setup/local-agents/models', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const agent = LOCAL_AGENTS.find(a => a.id === req.body?.id);
+    if (!agent) return res.status(400).json({ ok: false, detail: 'Unknown local agent.' });
+    try { res.json({ ok: true, discovery: await discoverLocalModels(agent.id, true), agents: localAgentStatus() }); }
+    catch { res.status(503).json({ ok: false, detail: 'Model metadata could not be refreshed.' }); }
   });
   app.post('/api/setup/local-agents/settings', (req, res) => {
     if (!gate(req, res, true)) return;
@@ -170,6 +191,59 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
       Object.assign(process.env, updates);
       res.json({ ok: true, detail: 'Research access saved. It applies to subsequent Codex calls. A connection is verified only after a successful tool call.' });
     } catch { res.status(503).json({ ok: false, detail: 'Research settings were not saved. Use configured MCP servers, explicit read tools, and OAuth or environment credential references.' }); }
+  });
+  const connecting = new Map<string, Promise<Record<string, unknown>>>();
+  app.post('/api/setup/local-agents/connect', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const agent = LOCAL_AGENTS.find(a => a.id === req.body?.id);
+    if (!agent) return res.status(400).json({ ok: false, state: 'CONFIGURATION FAILED', detail: 'Unknown local agent.' });
+    let operation = connecting.get(agent.id);
+    if (!operation) {
+      operation = (async () => {
+        const auth = await localLoginStatus(agent.id);
+        if (auth.state === 'missing') return { ok: false, state: 'NOT INSTALLED', detail: 'Install the CLI first.' };
+        if (!auth.connected && req.body?.continue !== true) {
+          if (auth.state !== 'pending') await openAgentLogin(agent.id);
+          return { ok: true, active: false, state: 'AUTHENTICATING', detail: 'Complete native sign-in. Configuration continues automatically.' };
+        }
+        if (auth.state === 'pending') return { ok: true, active: false, state: 'AUTHENTICATING' };
+        const discovery = await discoverLocalModels(agent.id, true);
+        const selected = discovery.configuredModel !== 'default' ? discovery.configuredModel
+          : discovery.models.filter(m => m.source === 'cli' || m.source === 'metadata').find(m => m.reasoningLevels.includes('high'))?.id || 'default';
+        const model = `${agent.id}:${selected}`;
+        const current = setupEnv(c.envFile);
+        const selectedReasoning = (current.DEFAULT_REASONING_EFFORT ? loadConfig({...current, TRADING_MODE: 'PAPER'}).defaultReasoning : undefined) ?? (reasoningStatus('local', model, 'high').effective || undefined);
+        const effort = selectedReasoning ? requireReasoning('local', model, selectedReasoning) : undefined;
+        // This read-only probe, rather than process existence or cached auth, establishes model readiness.
+        try {
+          const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', undefined, effort);
+          const parsed = SCHEMAS.chat.safeParse(extractJson(reply));
+          if (!parsed.success || parsed.data.reply !== 'connected') throw new Error();
+        } catch { return { ok: false, active: false, state: 'VERIFICATION FAILED', detail: 'The selected CLI model did not return a valid reply. Existing configuration preserved.' }; }
+        // Read again after discovery/probe so edits made while login was pending are preserved.
+        const env = setupEnv(c.envFile);
+        const updates: Record<string, string | null> = { DEFAULT_PROVIDER: 'local', LOCAL_MODEL: model };
+        if (!env.DEFAULT_REASONING_EFFORT && reasoningStatus('local', model, 'high').effective) updates.DEFAULT_REASONING_EFFORT = 'high';
+        const next = loadConfig({ ...env, ...updates } as NodeJS.ProcessEnv);
+        const original = readFileSync(c.envFile);
+        const temporary = `${c.envFile}.models-${randomUUID()}`;
+        try {
+          writeFileSync(temporary, original, { mode: 0o600 });
+          setEnv(temporary, updates);
+          renameSync(temporary, c.envFile);
+          c.desk.applyModelConfig(next);
+          Object.assign(process.env, updates);
+        } catch {
+          writeFileSync(c.envFile, original, { mode: 0o600 });
+          return { ok: false, active: false, state: 'CONFIGURATION FAILED', detail: 'Model configuration could not be applied. Previous saved settings restored.' };
+        } finally { rmSync(temporary, { force: true }); }
+        return { ok: true, active: true, state: 'CONNECTED & ACTIVE', model, reasoning: reasoningStatus('local', model, next.defaultReasoning), discovery, detail: `Connected & Active: ${model}. Explicit role assignments preserved.` };
+      })();
+      connecting.set(agent.id, operation);
+    }
+    try { const result = await operation; res.status(result.ok ? 200 : 400).json(result); }
+    catch { res.status(400).json({ ok: false, active: false, state: 'CONFIGURATION FAILED', detail: 'Connection could not be configured. Check native CLI sign-in.' }); }
+    finally { connecting.delete(agent.id); }
   });
   app.post('/api/setup/local-agents/login', async (req, res) => {
     if (!gate(req, res, true)) return;

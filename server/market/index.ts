@@ -11,7 +11,7 @@ import { closedLiveCandles, fetchOpenInterestChanges, measuredNumber } from './o
 import { getLiveAnnouncements } from './live-news.js';
 import { noteTradeRequest, normalizeTrades, summarizeDepth, summarizeOrderflow, tradeRequestLimit, type NormalizedTradeInput } from './microstructure.js';
 import { fetchPositioning } from './positioning.js';
-import { getCoinMarketCapSummary } from './coinmarketcap.js';
+import { getCoinMarketCapSummary, cmcMomentum } from './coinmarketcap.js';
 
 type Source = MarketSnapshot['source'];
 const ORDER: Source[] = ['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly'];
@@ -353,6 +353,8 @@ export async function getSnapshot(symbol: string, preferred: Source, liveOnly = 
 
           return {
             ...snap,
+            snapshotId: `${symbol}:${snap.source}:${snap.fetchedAt}`,
+            cmcMomentum: cmcMomentum(symbol, coinMarketCap?.quote ?? null),
             evidence: Object.fromEntries([
               ['market', { source: snap.source, observedAt: snap.fetchedAt, status: 'live' as const }],
               ...([['5m', mtf5m], ['1h', mtf1h], ['4h', mtf4h]] as const).map(([tf, series]) => [

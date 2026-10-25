@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
+  cmcMomentum,
   checkCoinMarketCapKey,
   fetchCoinMarketCapQuotes,
   fetchCoinMarketCapGlobal,
@@ -61,14 +62,12 @@ describe('CoinMarketCap API client (Free / Basic Plan)', () => {
         ok: true,
         json: async () => ({
           status: { error_code: 0, error_message: null },
-          data: {
-            BTC: {
+          data: [ {
               id: 1,
               name: 'Bitcoin',
               symbol: 'BTC',
               cmc_rank: 1,
-              quote: {
-                USD: {
+              quote: [ { symbol: 'USD', last_updated: new Date().toISOString(),
                   price: 68500,
                   volume_24h: 35000000000,
                   volume_change_24h: 4.5,
@@ -77,10 +76,8 @@ describe('CoinMarketCap API client (Free / Basic Plan)', () => {
                   percent_change_7d: 5.8,
                   market_cap: 1350000000000,
                   market_cap_dominance: 57.2
-                }
-              }
-            }
-          }
+                } ]
+            } ]
         })
       };
     });
@@ -155,4 +152,17 @@ describe('CoinMarketCap API client (Free / Basic Plan)', () => {
       if (origCmc !== undefined) process.env.CMC_API_KEY = origCmc;
     }
   });
+});
+
+it('classifies fresh activity deterministically and never fabricates missing evidence', async () => {
+  const fake = vi.fn().mockResolvedValue({ ok: true, json: async () => ({status: {error_code: 0}, data: [{id: 1, symbol: 'BTC', quote: [{symbol: 'USD', price: 10, volume_24h: 20, market_cap: 100, volume_change_24h: 60, percent_change_1h: 1, percent_change_24h: 2, last_updated: new Date().toISOString()}]}]}) });
+  resetCoinMarketCapCache();
+  const [a,b] = await Promise.all([fetchCoinMarketCapQuotes(['BTC'], 'a', fake),fetchCoinMarketCapQuotes(['BTC'], 'a', fake)]);
+  expect(fake).toHaveBeenCalledTimes(1);
+  expect(a).toEqual(b);
+  expect(cmcMomentum('BTC', a.BTC).classification).toBe('ROTATION_SURGE');
+  expect(cmcMomentum('BTC', a.BTC, Date.now()+600000).classification).toBe('INSUFFICIENT_DATA');
+  expect(cmcMomentum('BTC', null).volume24h).toBeNull();
+  await fetchCoinMarketCapQuotes(['BTC'], 'b', fake);
+  expect(fake).toHaveBeenCalledTimes(2);
 });
