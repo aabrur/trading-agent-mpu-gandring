@@ -34,14 +34,19 @@ export function AgentPanel({ state, id, onClose, command, conversationId }: { st
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }, [chat.length]);
   const send = async (t: string) => {
-    if (!t.trim() || busy) return;
+    const trimmed = t.trim();
+    if (!trimmed || busy) return;
+    setText('');
     setBusy(true); setError('');
     try {
-      const result = await command(t, id) as { ok?: boolean; reply?: string };
+      const result = await command(trimmed, id) as { ok?: boolean; reply?: string };
       if (result?.ok === false) throw new Error(result.reply || 'Message could not be sent');
-      setText('');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Office not reachable'); }
-    finally { setBusy(false); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Office not reachable');
+      setText(trimmed);
+    } finally {
+      setBusy(false);
+    }
   };
   const quickList = lang === 'id' ? QUICK_ID[id] : QUICK_EN[id];
   return (

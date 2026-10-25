@@ -93,7 +93,7 @@ export function TopBar({
       setRestartReply(lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
     } finally { setRestarting(false); }
   };
-  const ver = updateInfo?.currentVersion ?? '0.0.0.3.29';
+  const ver = updateInfo?.currentVersion ?? '0.0.0.3.30';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {

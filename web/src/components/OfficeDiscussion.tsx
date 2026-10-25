@@ -37,14 +37,19 @@ export function OfficeDiscussion({
   }, [open, last?.at, last?.text, latest?.text]);
 
   const send = async () => {
-    if (!command || !text.trim() || busy) return;
+    const trimmed = text.trim();
+    if (!command || !trimmed || busy) return;
+    setText('');
     setBusy(true); setError(''); followLatest.current = true;
     try {
-      const result = await command(target === 'all' ? `@all ${text.trim()}` : text.trim(), target === 'all' ? undefined : target);
+      const result = await command(target === 'all' ? `@all ${trimmed}` : trimmed, target === 'all' ? undefined : target);
       if (!result.ok) throw new Error(result.reply || 'Message could not be sent');
-      setText('');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Office not reachable'); }
-    finally { setBusy(false); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Office not reachable');
+      setText(trimmed);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return <div className="office-discussion" onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); } }}>

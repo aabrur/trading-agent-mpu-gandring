@@ -1,13 +1,12 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.29",
-  "appVersion": "0.0.0.3.29",
+  "version": "0.3.30",
+  "appVersion": "0.0.0.3.30",
   "changelog": [
-    "In-place Cendol Menu modal (`TrakteerPopup`) with quantity presets (1, 2, 5, 10, 25), custom stepper, and embedded payment overlay without leaving the virtual office.",
-    "Real-time Trakteer WebSocket (`trws.min.js`) and `/api/trakteer/tip` celebration: Desk Lead speaks 'Terima kasih traktiran cendolnya!' and an office notification banner appears on incoming tips.",
-    "Updated virtual office layout: grounded coffee counter, refined central discussion table, illuminated night-mode lamps/sconces, and compact HUD with 2 verdicts + open positions + Close All.",
-    "Configured OpenRouter GitHub Pages referer (`OPENROUTER_HTTP_REFERER`) for proper Mpu Gandring dashboard icon attribution.",
-    "Updated README for v0.0.0.3.29 with independent multi-venue verification across Bybit, Aster, Hyperliquid, and Binance, sanitized live profit ledger, latest screenshots, and responsible autonomy advisory."
+    "Instant chat input clearing on submit with draft restoration on failure in AgentPanel and OfficeDiscussion.",
+    "Integrated CoinMarketCap API for Free/Basic Plan (333 credits/day) with in-memory TTL caching and relocated Data Sources setup to Desk Settings.",
+    "Hardened reasoning model schema extraction by stripping thinking tokens and accepting flexible chat reply aliases.",
+    "Reorganized and categorized local .env structure with full variable integrity verification."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",

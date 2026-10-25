@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <b>Version: v0.0.0.3.29 (package 0.3.29)</b> · <b>Production Verified Multi-Agent Trading Desk</b> · <b>Node.js 20+</b> · <b>MIT License</b>
+  <b>Version: v0.0.0.3.30 (package 0.3.30)</b> · <b>Production Verified Multi-Agent Trading Desk</b> · <b>Node.js 20+</b> · <b>MIT License</b>
 </p>
 
 **Trading Agent Mpu Gandring** is a powerful, independently verified multi-agent autonomous trading desk. Six specialized AI trading agents share a 2.5D virtual trading floor, backed by an optional **Jev** decision-intelligence sidecar (**6 AI trading agents + Jev**; Jev operates as an analytical sidecar rather than a seventh trading agent). They analyze real-time market microstructure, challenge each other in structured rebuttals, throw cartoon punches when disagreement spikes, and execute the Desk Lead's final verdict using the Owner's active risk profile and capital split.
@@ -23,7 +23,7 @@ Independently tested and battle-proven across **Bybit**, **Aster**, **Hyperliqui
 ## Table of Contents
 
 1. [Fastest Installation (3 Steps)](#1-fastest-installation-3-steps)
-2. [What's New in v0.0.0.3.29](#2-whats-new-in-v000329)
+2. [What's New in v0.0.0.3.30](#2-whats-new-in-v000330)
 3. [Independently Verified Live Trading Proof & Profit Ledger](#3-independently-verified-live-trading-proof--profit-ledger)
 4. [Responsible Autonomy & Anti-Overreliance Advisory](#4-responsible-autonomy--anti-overreliance-advisory)
 5. [Two Ways to Run It (Local Mode vs Grok Bot Mode)](#5-two-ways-to-run-it-local-mode-vs-grok-bot-mode)
@@ -32,7 +32,7 @@ Independently tested and battle-proven across **Bybit**, **Aster**, **Hyperliqui
 8. [CLI & Web Office Quick Reference](#8-cli--web-office-quick-reference)
 9. [Supported Venues (Bybit, Aster, Hyperliquid, Binance & More)](#9-supported-venues-bybit-aster-hyperliquid-binance--more)
 10. [Environment Configuration (`.env`)](#10-environment-configuration-env)
-11. [Updated v0.0.0.3.29 Workflow & System Architecture](#11-updated-v000329-workflow--system-architecture)
+11. [Updated v0.0.0.3.30 Workflow & System Architecture](#11-updated-v000330-workflow--system-architecture)
 12. [Talking to the Agents & Owner Commands](#12-talking-to-the-agents--owner-commands)
 13. [Safety Architecture & Going Live](#13-safety-architecture--going-live)
 14. [Repository Layout](#14-repository-layout)
@@ -79,14 +79,13 @@ Typing `mpu` from any terminal builds the project if needed, starts the backend 
 
 ---
 
-## 2. What's New in v0.0.0.3.29
+## 2. What's New in v0.0.0.3.30
 
-- **In-Place Cendol Support Menu (`TrakteerPopup`)**: Streamlined Cendol-only branding with interactive quantity presets (`1`, `2`, `5`, `10`, `25` Cendol), custom stepper, supporter name/message inputs, and an embedded in-place checkout overlay so supporters never have to leave the trading floor.
-- **Real-Time Cendol Office Celebration (`TrakteerWS` + `/api/trakteer/tip`)**: Connected to Trakteer WebSocket notifications (`trws.min.js`) and local webhook triggers. Whenever a Cendol tip arrives, the Desk Lead character at the virtual desk immediately speaks `"Terima kasih traktiran cendolnya!"`, all six agents celebrate, and a live notification banner appears at the top of the office.
-- **Refined 2.5D Virtual Office & Illuminated Night Mode**: Grounded the right-side coffee station, proportioned the central discussion table, added warm ambient lighting to night-mode wall sconces, pendant lamp, and floor lamps, and upgraded the compact right HUD (`Fight meter`, 2 `Verdicts`, `Open orders N`, `Open positions`, and one-click `Close all`).
-- **OpenRouter App Icon Attribution (`OPENROUTER_HTTP_REFERER`)**: Configured official GitHub Pages showcase attribution so OpenRouter's crawler displays the Mpu Gandring keris icon on activity dashboards and leaderboards.
-- **Instant Venue Switching & Partial Key Merging**: Selecting any venue (`Bybit`, `Aster`, `Hyperliquid`, `Binance`, `OKX`, `dYdX v4`, `Paradex`, `Orderly`) in Setup immediately updates `.env`, runtime state, credential fields, and `testnet`/`mainnet` status indicators.
-- **15 Local CLI Agents & 7 External Supervisors**: Full integration with `Codex`, `Claude Code`, `Pi`, `Kimi Code`, `Kilo`, `Cline`, `Grok Build`, `Antigravity`, `Hermes Agent`, `OpenClaw`, `GitHub Copilot CLI`, `Cursor Agent`, `Qwen Code`, `OpenCode`, and `Muse Code`.
+- **Instant Chat Input Clearing on Submit**: Typing in `AgentPanel` or `OfficeDiscussion` now clears the textarea immediately upon send (`setText('')`), eliminating visual input freeze while agents deliberate, with automatic draft restoration if a request fails.
+- **CoinMarketCap API Integration (Free Tier Optimized)**: Native support for `COINMARKETCAP_API_KEY` (and `CMC_API_KEY`) with 5-minute quote caching and 10-minute global metrics caching, staying strictly within the 333 daily credits Basic Plan limit.
+- **Data Sources Setup Relocation**: Moved the "News and on-chain sources" configuration panel from Local CLI Agents to the bottom of the Desk Settings menu (`Setup > Desk Settings`) for intuitive organization.
+- **Hardened Reasoning Model Extraction**: Automatic `<think>` and `<thought>` token stripping before JSON parsing, prioritized markdown code blocks, and relaxed `ChatSchema` aliases (`message`, `text`, `response`, `content`, `answer`) to eliminate fallback answers from frontier reasoning models.
+- **Organized .env Architecture**: Cleanly categorized `.env` with dedicated sections, verified zero missing variables, and complete setting alignment.
 
 ---
 
@@ -302,7 +301,7 @@ All settings live in your local `.env` (managed automatically via **Setup**). Co
 
 ---
 
-## 11. Updated v0.0.0.3.29 Workflow & System Architecture
+## 11. Updated v0.0.0.3.30 Workflow & System Architecture
 
 ### A. Autonomous Position-First Debate & Execution Workflow
 
@@ -328,7 +327,7 @@ flowchart TD
     Card --> Learn["Self-Improving Journal & Financial Evidence Ledger"]
 ```
 
-### B. Full-Stack System Architecture (`v0.0.0.3.29`)
+### B. Full-Stack System Architecture (`v0.0.0.3.30`)
 
 ```mermaid
 flowchart LR
@@ -416,7 +415,7 @@ server/            Express + WebSocket backend
   exchange/        Verified adapters for Bybit, Aster, Hyperliquid, Binance, OKX, dYdX, Paradex, Orderly
   live/            Automatic key guard, testnet round trip, fail-closed live executor
   wallet.ts        Connect wallet: DEX agent key + one signed approval + live venue balance
-  updater.ts       In-app version check (v0.0.0.3.29) and one-click git fast-forward updater
+  updater.ts       In-app version check (v0.0.0.3.30) and one-click git fast-forward updater
   auto.ts          Position-first full auto scheduler
   reports.ts       Periodic reports & financial evidence ledger
   learnings.ts     self-improving lessons store
@@ -459,10 +458,12 @@ Meskipun Mpu Gandring terbukti mampu menghasilkan profit nyata secara konsisten 
    mpu
    ```
 
-### Fitur Baru `v0.0.0.3.29`
-- **Menu Cendol In-Place (Tanpa Pindah Halaman)**: Klik tombol **Cendol** di kanan atas untuk memilih jumlah Cendol (`1`, `2`, `5`, `10`, `25`, atau jumlah kustom) dan langsung melakukan pembayaran di dalam modal tanpa berpindah tab dan tanpa menampilkan profil pribadi.
-- **Notifikasi Real-Time & Respons Karakter Meja**: Begitu traktiran Cendol masuk, karakter **Desk Lead** di meja virtual langsung berbicara *"Terima kasih traktiran cendolnya!"* disertai banner perayaan di bagian atas kantor dan reaksi selebrasi seluruh agen.
-- **Tampilan Kantor Virtual 2.5D & Mode Malam Baru**: Meja kopi di lantai kanan, meja diskusi bundar yang proporsional, lampu dinding dan lampu lantai yang menyala hangat saat *Night Mode*, serta panel HUD kanan yang ringkas memuat *Fight Meter*, 2 *Verdict* terbaru, daftar *Open Positions*, dan tombol **Close all**.
+### Fitur Baru `v0.0.0.3.30`
+- **Pembersihan Input Chat Instan**: Textarea di `AgentPanel` dan `OfficeDiscussion` kini langsung dikosongkan saat pesan terkirim (`setText('')`), sehingga teks tidak nyangkut saat agen sedang memproses jawaban, dengan pemulihan draft otomatis jika pengiriman gagal.
+- **Integrasi CoinMarketCap API (Free Tier Friendly)**: Dukungan key `COINMARKETCAP_API_KEY` (dan `CMC_API_KEY`) dengan caching 5 menit untuk quote dan 10 menit untuk metrik global crypto agar kuota harian 333 kredit tidak boros.
+- **Relokasi Pengaturan Data Sources**: Panel konfigurasi feed berita dan on-chain dipindahkan ke bagian bawah menu Desk Settings (`Setup > Desk Settings`).
+- **Ekstraksi Skema JSON Model Lebih Tangguh**: Pembersihan otomatis tag `<think>` / `<thought>` dan penerimaan alias respons (`message`, `text`, `response`, dll) untuk mencegah fallback saat menggunakan model reasoning frontier.
+- **Struktur .env Rapi & Terkategori**: Pengelompokan seluruh variabel lingkungan ke dalam seksi terstruktur tanpa ada variabel yang hilang.
 
 ---
 
