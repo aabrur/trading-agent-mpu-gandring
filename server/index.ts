@@ -5,8 +5,17 @@ import { exchangeSettings, makeAdapter } from './exchange/index.js';
 import { LiveExecutor } from './live/executor.js';
 import { verifyKey, networkFor } from './live/guard.js';
 import { DEFAULT_KILL_FILE, readKill } from './killswitch.js';
+import { readEnv } from '../cli/envfile.js';
 
 async function startServer() {
+  if (!process.env.DOTENV_CONFIG_PATH) {
+    const fileEnv = readEnv(process.env.DOTENV_PATH ?? '.env');
+    for (const [k, v] of Object.entries(fileEnv)) {
+      if (v && /_(API_KEY|API_SECRET|API_PASSPHRASE|PRIVATE_KEY|AGENT_PRIVATE_KEY|SUBKEY_PRIVATE_KEY|WALLET_ADDRESS|ACCOUNT_ADDRESS|SUBACCOUNT_ADDRESS|ACCOUNT_ID)$/.test(k)) {
+        process.env[k] = v;
+      }
+    }
+  }
   let cfg;
   try {
     cfg = loadConfig();
