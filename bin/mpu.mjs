@@ -116,9 +116,14 @@ async function getRunningHealth() {
 const healthy = getRunningHealth;
 function open() {
   if (args.includes('--no-open')) return;
-  const command = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', target]] : process.platform === 'darwin' ? ['open', [target]] : ['xdg-open', [target]];
+  const command = process.platform === 'win32'
+    ? ['cmd.exe', ['/c', 'start', '', target]]
+    : process.platform === 'darwin'
+    ? ['open', [target]]
+    : ['xdg-open', [target]];
   const p = spawn(command[0], command[1], { detached: true, stdio: 'ignore', windowsHide: true });
-  p.on('error', () => console.log(`Open the office at ${target}`)); p.unref();
+  p.on('error', () => console.log(`Open the office at ${target}`));
+  p.unref();
 }
 
 const runningHealth = await getRunningHealth();
