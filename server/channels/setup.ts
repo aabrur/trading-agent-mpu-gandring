@@ -29,7 +29,13 @@ export function saveChannel(envFile: string, ch: ChannelName, input: Record<stri
   const err = checkChannelInput(ch, input, cur);
   if (err) return { ok: false, detail: err };
   const up: Record<string, string> = {};
-  for (const f of CHANNEL_GUIDES[ch].fields) { const v = (input[f.env] ?? '').trim(); if (v) up[f.env] = f.env.endsWith('_NUMBERS') || f.env === 'WHATSAPP_TO' ? v.replace(/\+/g, '') : v; }
+  for (const f of CHANNEL_GUIDES[ch].fields) {
+    if (input[f.env] !== undefined) {
+      const v = input[f.env]!.trim();
+      if (v) up[f.env] = f.env.endsWith('_NUMBERS') || f.env === 'WHATSAPP_TO' ? v.replace(/\+/g, '') : v;
+      else if (!f.secret) up[f.env] = '';
+    }
+  }
   if (o.commands !== undefined) up.CHANNEL_COMMANDS = o.commands ? 'on' : 'off';
   setEnv(envFile, up);
   return { ok: true, detail: `${CHANNEL_GUIDES[ch].label} saved to .env. Restart the desk to use it.`, saved: Object.keys(up) };

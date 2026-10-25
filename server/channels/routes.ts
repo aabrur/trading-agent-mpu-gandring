@@ -172,10 +172,10 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
       if (token) {
         registerSecrets([token]);
         try {
-          const guildId = p.data.values.DISCORD_GUILD_ID || env.DISCORD_GUILD_ID;
-          const channelId = p.data.values.DISCORD_CHANNEL_ID || env.DISCORD_CHANNEL_ID;
-          const allowedUsers = (p.data.values.DISCORD_ALLOWED_USER_IDS || env.DISCORD_ALLOWED_USER_IDS || '').trim();
-          const inspected = await inspectDiscordBot(token, guildId, c.fetchImpl ?? fetch);
+          const guildId = p.data.values.DISCORD_GUILD_ID !== undefined ? p.data.values.DISCORD_GUILD_ID.trim() : (env.DISCORD_GUILD_ID || '');
+          const channelId = p.data.values.DISCORD_CHANNEL_ID !== undefined ? p.data.values.DISCORD_CHANNEL_ID.trim() : (env.DISCORD_CHANNEL_ID || '');
+          const allowedUsers = (p.data.values.DISCORD_ALLOWED_USER_IDS !== undefined ? p.data.values.DISCORD_ALLOWED_USER_IDS : (env.DISCORD_ALLOWED_USER_IDS || '')).trim();
+          const inspected = await inspectDiscordBot(token, guildId || undefined, c.fetchImpl ?? fetch);
           if (guildId && channelId) {
             if (!inspected.channels.some(channel => channel.id === channelId)) throw new Error('Select an eligible text channel from the chosen server.');
           } else if (!allowedUsers && !p.data.values.DISCORD_WEBHOOK_URL && !env.DISCORD_WEBHOOK_URL) {
@@ -195,6 +195,9 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
     if (r.ok && p.data.channel === 'discord') {
       const next = setupEnv(c.envFile);
       for (const [key, value] of Object.entries(next)) if (key.startsWith('DISCORD_') || key === 'CHANNEL_COMMANDS') process.env[key] = value;
+      for (const key of ['DISCORD_CHANNEL_ID', 'DISCORD_GUILD_ID', 'DISCORD_WEBHOOK_URL']) {
+        if (!next[key]) delete process.env[key];
+      }
       c.lead?.reload(channelConfig(next));
       r.detail = 'Discord saved and applied. /mpu registered and verified when Bot API is configured.';
     }

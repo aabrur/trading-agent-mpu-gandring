@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { createHmac, generateKeyPairSync, sign } from 'node:crypto';
 import { loadConfig } from '../server/config.js';
+import { readEnv } from '../cli/envfile.js';
 import { createApp } from '../server/app.js';
 import { channelConfig, CHANNELS } from '../server/channels/config.js';
 import { parseCommand, allowed, SAFE_COMMANDS } from '../server/channels/commands.js';
@@ -153,6 +154,14 @@ describe('channel setup (shared by CLI and office)', () => {
     expect(JSON.stringify(r)).not.toContain(TG_TOKEN);
     if (process.platform !== 'win32') expect(statSync(env).mode & 0o777).toBe(0o600);
     expect(readFileSync(env, 'utf8')).toContain('CHANNEL_COMMANDS=on');
+    // Clears non-secret fields when explicitly sent as empty string (e.g. resetting to DM only)
+    saveChannel(env, 'discord', { DISCORD_CHANNEL_ID: '123456', DISCORD_GUILD_ID: '789101' });
+    expect(readFileSync(env, 'utf8')).toContain('DISCORD_CHANNEL_ID=123456');
+    saveChannel(env, 'discord', { DISCORD_CHANNEL_ID: '', DISCORD_GUILD_ID: '' });
+    expect(readFileSync(env, 'utf8')).toContain('DISCORD_CHANNEL_ID=');
+    expect(readFileSync(env, 'utf8')).toContain('DISCORD_GUILD_ID=');
+    expect(readEnv(env).DISCORD_CHANNEL_ID).toBe('');
+    expect(readEnv(env).DISCORD_GUILD_ID).toBe('');
     const st = channelStatus({ ...allEnv });
     expect(JSON.stringify(st)).not.toContain(TG_TOKEN);
     expect(JSON.stringify(st)).not.toContain(SLACK_SECRET);

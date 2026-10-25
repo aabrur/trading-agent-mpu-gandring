@@ -34,7 +34,7 @@ export const CHANNEL_GUIDES: Record<ChannelName, ChannelGuide> = {
       { env: 'DISCORD_DELIVERY', label: 'Interaction delivery', secret: false, required: false, pattern: /^(gateway|http)$/, hint: 'Determined from the application endpoint' },
       { env: 'DISCORD_WEBHOOK_URL', label: 'Channel webhook URL', secret: true, required: false, pattern: /^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\/\d+\/[\w-]+$/, hint: 'https://discord.com/api/webhooks/...' },
       { env: 'DISCORD_PUBLIC_KEY', label: 'App public key (General Information), for commands', secret: false, required: false, pattern: /^[0-9a-fA-F]{64}$/, hint: '64 hex characters; empty = no commands' },
-      { env: 'DISCORD_ALLOWED_USER_IDS', label: 'User ids allowed to send commands', secret: false, required: false, pattern: IDS, hint: 'Developer Mode on, right click your name, Copy User ID' }
+      { env: 'DISCORD_ALLOWED_USER_IDS', label: 'User IDs for Direct Message (DM) & commands', secret: false, required: false, pattern: IDS, hint: 'Developer Mode on, right click your name, Copy User ID' }
     ],
     steps: [
       { title: 'Create a channel webhook', text: 'In your server: Edit Channel, Integrations, Webhooks, New Webhook, Copy Webhook URL. Anyone with this URL can post to the channel, so keep it secret.', links: [{ label: 'Webhook docs', url: 'https://docs.discord.com/developers/resources/webhook' }, { label: 'Intro to Webhooks (help center, opens in a browser)', url: 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks' }] },

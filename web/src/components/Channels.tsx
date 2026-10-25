@@ -132,7 +132,15 @@ export function ChannelsSetup() {
         <form className="setup-keys" autoComplete="off" onSubmit={(e) => { e.preventDefault(); void save(); }}>
           {g.fields.map((f) => <label key={f.env}><span>{f.label}{f.required ? '' : (lang === 'id' ? ' (opsional)' : ' (optional)')} <code>{f.env}</code></span><input type={f.secret ? 'password' : 'text'} autoComplete="off" spellCheck={false} placeholder={st.fields.find((x) => x.env === f.env)?.set ? (lang === 'id' ? 'sudah diatur, kosongkan bila tidak diganti' : 'already set, empty keeps it') : f.hint} value={vals[f.env] ?? ''} onChange={(e) => setVals({ ...vals, [f.env]: e.target.value })} /></label>)}
           {ch === 'discord' && <div>
-            <button type="button" disabled={busy} onClick={() => void inspectBot(vals.DISCORD_GUILD_ID || undefined)}>{lang === 'id' ? 'Validasi Bot / Segarkan Server' : 'Validate Bot / Refresh Servers'}</button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+              <button type="button" disabled={busy} onClick={() => void inspectBot(vals.DISCORD_GUILD_ID || undefined)}>{lang === 'id' ? 'Validasi Bot / Segarkan Server' : 'Validate Bot / Refresh Servers'}</button>
+              <button type="button" disabled={busy} onClick={() => {
+                setVals(old => ({ ...old, DISCORD_GUILD_ID: '', DISCORD_CHANNEL_ID: '', DISCORD_WEBHOOK_URL: '' }));
+                setMsg({ ok: true, text: lang === 'id' ? 'Server dan channel dikosongkan. Klik Simpan untuk menerapkan DM saja.' : 'Server and channel cleared. Click Save to apply DM only.' });
+              }}>
+                {lang === 'id' ? 'Reset ke DM Saja (Hapus Server & Channel)' : 'Reset to DM Only (Clear Server & Channel)'}
+              </button>
+            </div>
             {discordBot && <><p><a href={discordBot.installUrl} target="_blank" rel="noreferrer">{lang === 'id' ? 'Instal Bot di Discord' : 'Install Bot in Discord'}</a> · {discordBot.delivery}</p>
               <p className="wallet-note small">{lang === 'id' ? 'Untuk Chat Pribadi (DM), kosongkan pilihan Server/Channel dan isi User ID di DISCORD_ALLOWED_USER_IDS.' : 'For Direct Message (DM), leave Server/Channel empty and fill your User ID in DISCORD_ALLOWED_USER_IDS.'}</p>
               <label>{lang === 'id' ? 'Server (opsional untuk DM)' : 'Server (optional for DM)'}<select disabled={busy} value={vals.DISCORD_GUILD_ID || ''} onChange={e => void inspectBot(e.target.value)}><option value="">{lang === 'id' ? 'Pribadi / DM (tanpa server)' : 'Direct Message / DM (no server)'}</option>{discordBot.guilds.map(guild => <option key={guild.id} value={guild.id}>{guild.name}</option>)}</select></label>
