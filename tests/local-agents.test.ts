@@ -53,21 +53,23 @@ describe('existing agent integration', () => {
     expect(JSON.parse(localArgs('kilo', 'default', 'folder').env.KILO_CONFIG_CONTENT).permission['*']).toBe('deny');
     expect(localArgs('cline', 'default', 'folder').args).toEqual(expect.arrayContaining(['--auto-approve', 'false']));
     expect(localArgs('grok', 'default', 'folder').args).toEqual(expect.arrayContaining(['--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']));
-    expect(localArgs('antigravity', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--dangerously-skip-permissions', '--disable-slash-commands', '--output-format', 'json', '--print', 'hello']));
-    expect(localArgs('antigravity', 'gemini-3.8-flash-high', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--model', 'gemini-3.8-flash-high', '--print', 'hello']));
+    expect(localArgs('antigravity', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--dangerously-skip-permissions', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json']));
+    expect(localArgs('antigravity', 'gemini-3.8-flash-high', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--model', 'gemini-3.8-flash-high', '--input-format', 'stream-json']));
+    expect(localArgs('antigravity', 'default', 'folder', 'hello').args).not.toContain('hello');
   });
   it('runs the added agents in their non-acting modes', () => {
     const hermes = localArgs('hermes', 'default', 'folder', 'hello').args;
-    expect(hermes).toEqual(expect.arrayContaining(['-z', 'hello', '--safe-mode', '-t', 'todo']));
+    expect(hermes).toEqual(expect.arrayContaining(['chat', '--query-file', path.join('folder', 'prompt.txt'), '-Q', '--safe-mode', '-t', 'todo']));
     expect(hermes).not.toContain('--yolo');
-    expect(localArgs('openclaw', 'default', 'folder', 'hello').args).toEqual(['infer', 'model', 'run', '--local', '--prompt', 'hello']);
-    expect(localArgs('copilot', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['-p', 'hello', '-s', '--available-tools', '--disable-builtin-mcps']));
+    expect(hermes).not.toContain('hello');
+    expect(localArgs('openclaw', 'default', 'folder', 'hello').args).toEqual(['agent', '--message-file', path.join('folder', 'prompt.txt'), '--local', '--json']);
+    expect(localArgs('copilot', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['-p', '-', '-s', '--available-tools', '--disable-builtin-mcps']));
     expect(localArgs('copilot', 'default', 'folder', 'hello').args.join(' ')).not.toMatch(/allow-all|yolo/);
     const cursor = localArgs('cursor', 'auto', 'folder', 'hello').args;
-    expect(cursor).toEqual(expect.arrayContaining(['-p', '--mode', 'ask', '--output-format', 'json', '--model', 'auto']));
-    expect(cursor.at(-1)).toBe('hello');
+    expect(cursor).toEqual(expect.arrayContaining(['-p', '-', '--mode', 'ask', '--output-format', 'json', '--model', 'auto']));
+    expect(cursor).not.toContain('hello');
     expect(cursor.join(' ')).not.toMatch(/--force|--yolo/);
-    expect(localArgs('qwen', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--approval-mode', 'plan', '-p', 'hello']));
+    expect(localArgs('qwen', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--approval-mode', 'plan', '-p', '-']));
     const opencode = localArgs('opencode', 'default', 'folder', 'hello');
     expect(opencode.args).toEqual(['run', '--format', 'json']);
     expect(JSON.parse(opencode.env.OPENCODE_CONFIG_CONTENT).permission['*']).toBe('deny');
@@ -92,6 +94,15 @@ describe('existing agent integration', () => {
     expect(() => localAgentSettingsUpdate('unknown', {})).toThrow();
     expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: '{"claude":{"effort":"high"},"hermes":{"provider":"--x"}}' })).toEqual({});
     expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: 'not json' })).toEqual({});
+  });
+  it('never puts prompt in args and keeps all agent commands safely below Win32 32KB limit even with 100k char prompt', () => {
+    const hugePrompt = 'A'.repeat(100_000);
+    for (const agent of LOCAL_AGENTS) {
+      const { args } = localArgs(agent.id, 'default', 'folder', hugePrompt);
+      const totalLen = args.reduce((sum, a) => sum + a.length + 1, 0);
+      expect(totalLen).toBeLessThan(1000);
+      expect(args).not.toContain(hugePrompt);
+    }
   });
   it('finds npm shims whose entry script has no extension, like Kilo and Cline', () => {
     const folder = mkdtempSync(path.join(tmpdir(), 'mpu-npm-shim-'));

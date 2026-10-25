@@ -254,7 +254,7 @@ export class Desk extends EventEmitter {
     ].filter(Boolean).join('\n\n');
     const res = await runAgent(this.cfg, this.call, agent, task, {
       ...input, extraSystem: extra || undefined,
-      data: { ...input.data, accountState: this.accountState(), researchCapabilities: this.capabilities(), ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
+      data: { ...input.data, accountState: this.accountState(), researchCapabilities: this.capabilitiesSummary(), ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
     });
     if (task === 'chat') {
       this.chatMetrics.agentCalls++;
@@ -375,6 +375,9 @@ export class Desk extends EventEmitter {
       for (const item of manifest.filter(item => item.category === 'read-only research')) item.limitations.push(`Native Codex research policy: ${policy.enabled ? 'enabled' : 'disabled'}.`);
     } catch { manifest.push({ name: 'native_research_policy', category: 'configuration', available: false, configured: false, status: 'ERROR', requiresApiKey: false, limitations: ['Research policy is invalid.'] }); }
     return manifest;
+  }
+  capabilitiesSummary(): Array<{ name: string; status: string; category: string }> {
+    return this.capabilities().map((c) => ({ name: c.name, status: c.status, category: c.category }));
   }
   get hasExecutor(): boolean { return Boolean(this.opts.executor); }
   availableSlots(): {

@@ -414,34 +414,32 @@ export function localArgs(id: LocalAgentId, model: string, folder: string, promp
     case 'cline': args = ['--json', '--plan', '--auto-approve', 'false', '--timeout', '110']; break;
     case 'grok': args = ['--prompt-file', path.join(folder, 'prompt.txt'), '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']; break;
     case 'antigravity':
-      args = ['--dangerously-skip-permissions', '--disable-slash-commands', '--output-format', 'json'];
+      args = ['--dangerously-skip-permissions', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json'];
+      if (extra.effort) args.push('--effort', extra.effort);
       if (model !== 'default') args.push('--model', model);
-      args.push('--print', prompt);
       return { args, env };
     case 'hermes':
-      args = ['-z', prompt, '--safe-mode', '-t', 'todo'];
+      args = ['chat', '--query-file', path.join(folder, 'prompt.txt'), '-Q', '--safe-mode', '-t', 'todo'];
       if (extra.effort) args.push('--reasoning', extra.effort);
       if (extra.provider) args.push('--provider', extra.provider);
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'openclaw':
-      args = ['infer', 'model', 'run', '--local'];
+      args = ['agent', '--message-file', path.join(folder, 'prompt.txt'), '--local', '--json'];
       if (extra.effort) args.push('--thinking', extra.effort);
       if (model !== 'default') args.push('--model', model);
-      args.push('--prompt', prompt);
       return { args, env };
     case 'copilot':
-      args = ['-p', prompt, '-s', '--available-tools', '--disable-builtin-mcps'];
+      args = ['-p', '-', '-s', '--available-tools', '--disable-builtin-mcps'];
       if (extra.effort) args.push('--reasoning-effort', extra.effort);
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'cursor':
-      args = ['-p', '--mode', 'ask', '--output-format', 'json'];
+      args = ['-p', '-', '--mode', 'ask', '--output-format', 'json'];
       if (model !== 'default') args.push('--model', model);
-      args.push(prompt);
       return { args, env };
     case 'qwen':
-      args = ['--approval-mode', 'plan', '-p', prompt];
+      args = ['--approval-mode', 'plan', '-p', '-'];
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'opencode':
@@ -459,10 +457,17 @@ export function localArgs(id: LocalAgentId, model: string, folder: string, promp
 }
 export function localReply(output: string): string {
   const texts: string[] = [];
-  try { const obj = JSON.parse(output); if (typeof obj.result === 'string') return obj.result; if (typeof obj.response === 'string') return obj.response; if (!obj.type) return output.trim(); } catch { /* JSON event streams are read one line at a time. */ }
+  try {
+    const obj = JSON.parse(output);
+    if (obj.event === 'result' && typeof obj.result?.response === 'string') return obj.result.response.trim();
+    if (typeof obj.result === 'string') return obj.result;
+    if (typeof obj.response === 'string') return obj.response;
+    if (!obj.type && !obj.event) return output.trim();
+  } catch { /* JSON event streams are read one line at a time. */ }
   for (const line of output.split(/\r?\n/)) {
     try {
       const obj = JSON.parse(line);
+      if (obj.event === 'result' && typeof obj.result?.response === 'string') return obj.result.response.trim();
       if (obj.type === 'item.completed' && obj.item?.type === 'agent_message') texts.push(obj.item.text);
       else if (obj.type === 'text' && typeof obj.part?.text === 'string') texts.push(obj.part.text);
       else if (obj.type === 'say' && obj.say === 'text' && typeof obj.text === 'string') texts.push(obj.text);
@@ -516,6 +521,7 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
     const plan = localArgs(id, effectiveModel, folder, prompt, policy, inventory.map(server => server.name), transports, extra);
     if (reasoningEffort && id === 'codex') plan.args.splice(1, 0, '-c', `model_reasoning_effort="${reasoningEffort}"`);
     if (reasoningEffort && id === 'claude') plan.args.push('--effort', reasoningEffort);
+    if (reasoningEffort && id === 'antigravity' && !plan.args.includes('--effort')) plan.args.push('--effort', reasoningEffort);
     Object.assign(plan.env, researchEnvironment(policy, transports, process.env));
     const reply = await new Promise<string>((resolve, reject) => {
       const child = spawn(executable.file, [...executable.prefix, ...plan.args], { cwd: folder, env: { ...localEnvironment(process.env), ...plan.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
@@ -535,7 +541,12 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
         for (const line of lines) recordResearchActivity(line);
       } };
       child.stdout.on('data', (v: Buffer) => collect(v, true)); child.stderr.on('data', (v: Buffer) => collect(v, false));
-      child.stdin.on('error', () => {}); child.stdin.end(prompt);
+      child.stdin.on('error', () => {});
+      if (id === 'antigravity') {
+        child.stdin.end(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
+      } else {
+        child.stdin.end(prompt);
+      }
       child.on('error', () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new Error(`${id} could not start. Check its installation.`)); });
       child.on('close', (code) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
     });
