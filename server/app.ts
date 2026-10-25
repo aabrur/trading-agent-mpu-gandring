@@ -152,6 +152,41 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     res.json(applyUpdate());
   });
 
+  // Trakteer Cendol real-time celebration: local WebSocket config + tip/webhook handler so the Desk Lead speaks and the office banner fires.
+  const trakteerLimit = limiter(20, 60_000);
+  app.get('/api/trakteer/config', (req, res) => {
+    const a = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
+    if (!a.ok) return res.status(403).json({ ok: false });
+    res.json({ ok: true, channelId: cfg.trakteerChannelId });
+  });
+  const handleTrakteerTip = (req: express.Request, res: express.Response) => {
+    if (!trakteerLimit(req.socket.remoteAddress ?? '')) return res.status(429).json({ ok: false, error: 'slow down' });
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const rawSupporter = String(body.supporter_name ?? body.supporterName ?? body.supporter ?? 'Supporter').slice(0, 60);
+    const supporter = sanitizeUntrusted(rawSupporter, 60).text.trim() || 'Supporter';
+    const rawQty = Number(body.quantity ?? body.qty ?? 1);
+    const quantity = Number.isFinite(rawQty) && rawQty > 0 ? Math.min(1000, Math.round(rawQty)) : 1;
+    const rawMsg = String(body.support_message ?? body.message ?? '').slice(0, 200);
+    const message = sanitizeUntrusted(rawMsg, 200).text.trim();
+    const speechText = `Terima kasih traktiran cendolnya! (${quantity} Cendol dari ${supporter})`;
+    const at = Date.now();
+    const id = `cendol-${at}-${Math.random().toString(36).slice(2, 6)}`;
+    desk.agents.lead.lastLine = speechText;
+    desk.emit('speech', { id: `speech-${id}`, agent: 'lead', text: speechText, at, done: true });
+    desk.emit('cendol', { id, supporter, quantity, message, text: speechText, at });
+    desk.recordActivity({
+      kind: 'plugin',
+      source: 'trakteer',
+      level: 'info',
+      agent: 'lead',
+      text: `${speechText}${message ? ` · "${message}"` : ''}`,
+      status: 'received'
+    });
+    res.json({ ok: true, id, supporter, quantity, message, text: speechText, at });
+  };
+  app.post('/api/trakteer/tip', handleTrakteerTip);
+  app.post('/api/trakteer/webhook', handleTrakteerTip);
+
   // Connect wallet (EXPERIMENTAL). Local mode, office on 127.0.0.1, loopback clients only. Never accepts a private key or seed.
   const wallet = opts.wallet ?? new WalletConnector({ envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch });
   const walletLimit = limiter(20, 60_000);
@@ -350,7 +385,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   wss.on('error', () => { /* ignore */ });
   const send = (ws: WebSocket, type: string, payload: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload })); };
   const broadcast = (type: string) => (payload: unknown) => { const msg = JSON.stringify({ type, payload }); for (const c of wss.clients) if (c.readyState === WebSocket.OPEN) c.send(msg); };
-  const eventTypes = ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report', 'execution', 'room'] as const;
+  const eventTypes = ['state', 'speech', 'fight', 'meter', 'verdict', 'log', 'status', 'debate', 'report', 'execution', 'room', 'cendol'] as const;
   const listeners = eventTypes.map((ev) => {
     const fn = broadcast(ev);
     desk.on(ev, fn);

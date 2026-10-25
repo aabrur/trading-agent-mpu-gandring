@@ -93,9 +93,8 @@ export function TopBar({
       setRestartReply(lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
     } finally { setRestarting(false); }
   };
-  const ver = updateInfo?.currentVersion ?? '0.0.0.3.28';
+  const ver = updateInfo?.currentVersion ?? '0.0.0.3.29';
   const hasUpdate = Boolean(updateInfo?.updateAvailable);
-  void onOpenTrakteer;
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {
     try {
@@ -220,20 +219,20 @@ export function TopBar({
         )}
       </div>
       <div className="badges">
-        <a
-          href="https://trakteer.id/aabrur/tip"
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={() => onOpenTrakteer?.()}
           title={t('trakteerBtn')}
+          aria-label={t('trakteerBtn')}
           className="trakteer-btn"
         >
           <img
             src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
-            alt="Trakteer"
+            alt="Cendol"
             className="trbtn-mini-img"
           />
-          <span>{t('trakteerBtn')}</span>
-        </a>
+          <span>Cendol</span>
+        </button>
         {state && onVenueKeys && <WalletMenu state={state} open={walletOpen} onOpen={onVenueKeys} onClose={onCloseWallet ?? (() => {})} />}
         {(onSetup || onTour) && <details className="settings-menu">
           <summary id="setup-trigger" className="badge setup-btn" aria-label={lang === 'id' ? 'Menu Setup' : 'Setup menu'}>
@@ -259,11 +258,26 @@ export function TopBar({
   );
 }
 
-export function TrakteerPopup({ onClose }: { onClose: () => void }) {
-  const { t } = useI18n();
+const CENDOL_PRESETS = [1, 2, 5, 10, 25] as const;
+const CENDOL_UNIT_IDR = 5000;
+
+export function TrakteerPopup({
+  onClose,
+  onConfirmCendol
+}: {
+  onClose: () => void;
+  onConfirmCendol?: (opts: { supporter?: string; quantity?: number; message?: string }) => Promise<void> | void;
+}) {
+  const { t, lang } = useI18n();
+  const id = lang === 'id';
   const dialog = useRef<HTMLDialogElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const [qty, setQty] = useState<number>(1);
+  const [supporter, setSupporter] = useState<string>('');
+  const [message, setMessage] = useState<string>('');
+  const [paying, setPaying] = useState<boolean>(false);
 
   useEffect(() => {
     const popup = dialog.current;
@@ -274,6 +288,54 @@ export function TrakteerPopup({ onClose }: { onClose: () => void }) {
     return () => { popup.close(); previous?.focus(); };
   }, []);
 
+  useEffect(() => {
+    if (!paying) return;
+    const onMsg = (ev: MessageEvent) => {
+      if (!ev.data || typeof ev.data !== 'object') return;
+      const msgType = (ev.data as { type?: string }).type;
+      if (msgType === 'embed.modalClosed') {
+        setPaying(false);
+      } else if (msgType === 'embed.tipSuccess' || msgType === 'new-tip-success') {
+        void onConfirmCendol?.({ supporter: supporter.trim() || 'Supporter', quantity: qty, message: message.trim() });
+        onClose();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [paying, qty, supporter, message, onConfirmCendol, onClose]);
+
+  const totalIdr = qty * CENDOL_UNIT_IDR;
+  const refHref = typeof window !== 'undefined' ? window.location.href : 'http://127.0.0.1:5173';
+  const embedModalUrl = `https://trakteer.id/v1/aabrur/tip/embed/modal?embedId=0&quantity=${qty}&supporter_name=${encodeURIComponent(supporter.trim() || 'Supporter')}&support_message=${encodeURIComponent(message.trim())}&ref=${encodeURIComponent(refHref)}`;
+
+  const handlePayNow = () => {
+    setPaying(true);
+    try {
+      const w = window as unknown as {
+        trbtnOverlay?: {
+          init: (text: string, color: string, url: string, icon: string, size: string, pos: string) => number;
+          draw: (id: number) => void;
+        };
+      };
+      if (!w.trbtnOverlay && typeof document !== 'undefined' && !document.querySelector('script[data-trbtn-overlay="1"]')) {
+        const s = document.createElement('script');
+        s.src = 'https://edge-cdn.trakteer.id/js/trbtn-overlay.min.js?v=14-05-2025';
+        s.async = true;
+        s.dataset.trbtnOverlay = '1';
+        document.head.appendChild(s);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const handleCompleteAndCelebrate = async () => {
+    await onConfirmCendol?.({
+      supporter: supporter.trim() || 'Supporter',
+      quantity: qty,
+      message: message.trim()
+    });
+    onClose();
+  };
+
   return (
     <dialog
       ref={dialog}
@@ -283,16 +345,120 @@ export function TrakteerPopup({ onClose }: { onClose: () => void }) {
       onCancel={(e) => { e.preventDefault(); onClose(); }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="panel trakteer-popup-card">
+      <div className="panel trakteer-popup-card cendol-menu-card">
         <div className="panel-head trakteer-head">
-          <h2 id={titleId}>{t('trakteerTitle')}</h2>
+          <div className="cendol-brand-head">
+            <img
+              src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+              alt="Cendol"
+              className="cendol-logo-only"
+            />
+            <div>
+              <h2 id={titleId}>{t('trakteerTitle')}</h2>
+              <small id={descriptionId} className="cendol-sub">{t('trakteerBody')}</small>
+            </div>
+          </div>
           <button type="button" className="trakteer-close-x" onClick={onClose} aria-label={t('closeModal')} title={t('closeModal')}>✕</button>
         </div>
-        <p id={descriptionId} className="trakteer-popup-body">{t('trakteerBody')}</p>
-        <div className="trakteer-popup-actions">
-          <a className="trakteer-btn" href="https://trakteer.id/aabrur/tip" target="_blank" rel="noopener noreferrer">{t('trakteerBtn')}</a>
+
+        <div className="cendol-picker-section">
+          <label className="cendol-section-label">{id ? 'Pilih Jumlah Cendol' : 'Choose Cendol Quantity'}</label>
+          <div className="cendol-presets" role="group" aria-label="Cendol presets">
+            {CENDOL_PRESETS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`cendol-preset-pill ${qty === n ? 'is-active' : ''}`}
+                onClick={() => setQty(n)}
+              >
+                <img src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025" alt="" className="cendol-pill-icon" />
+                <b>{n}</b>
+              </button>
+            ))}
+          </div>
+
+          <div className="cendol-stepper-row">
+            <div className="cendol-stepper">
+              <button type="button" onClick={() => setQty((q) => Math.max(1, q - 1))} aria-label="Decrease Cendol">-</button>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                value={qty}
+                aria-label="Cendol quantity"
+                onChange={(e) => setQty(Math.max(1, Math.min(1000, Math.round(Number(e.target.value) || 1))))}
+              />
+              <button type="button" onClick={() => setQty((q) => Math.min(1000, q + 1))} aria-label="Increase Cendol">+</button>
+            </div>
+            <div className="cendol-total-badge">
+              <span>{qty} Cendol</span>
+              <strong>Rp {totalIdr.toLocaleString('id-ID')}</strong>
+            </div>
+          </div>
+
+          <div className="cendol-inputs-row">
+            <input
+              type="text"
+              className="cendol-text-input"
+              placeholder={id ? 'Nama / Alias (opsional)' : 'Name / Alias (optional)'}
+              maxLength={60}
+              value={supporter}
+              onChange={(e) => setSupporter(e.target.value)}
+            />
+            <input
+              type="text"
+              className="cendol-text-input"
+              placeholder={id ? 'Pesan untuk meja trading (opsional)' : 'Message for the trading desk (optional)'}
+              maxLength={160}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+          </div>
         </div>
-        <p className="trakteer-popup-note">{t('trakteerBrowserNote')}</p>
+
+        {paying && (
+          <div className="cendol-inplace-checkout" data-testid="cendol-inplace-checkout">
+            <div className="cendol-checkout-bar">
+              <span>{id ? `Pembayaran ${qty} Cendol (Rp ${totalIdr.toLocaleString('id-ID')})` : `Checkout ${qty} Cendol (Rp ${totalIdr.toLocaleString('id-ID')})`}</span>
+              <button type="button" className="cendol-back-btn" onClick={() => setPaying(false)}>{id ? 'Ubah jumlah' : 'Edit quantity'}</button>
+            </div>
+            <div className="trakteer-iframe-wrap">
+              <iframe
+                ref={iframeRef}
+                src={embedModalUrl}
+                title="Trakteer Cendol Checkout"
+                className="trakteer-iframe"
+                onLoad={(e) => {
+                  try {
+                    e.currentTarget.contentWindow?.postMessage({ type: 'embed.openModal' }, '*');
+                  } catch { /* ignore */ }
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="trakteer-popup-actions">
+          {!paying ? (
+            <button type="button" className="trakteer-btn trakteer-pay-btn" onClick={handlePayNow}>
+              <img
+                src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+                alt=""
+                className="trbtn-mini-img"
+              />
+              <span>{id ? `Bayar ${qty} Cendol · Rp ${totalIdr.toLocaleString('id-ID')}` : `Pay ${qty} Cendol · Rp ${totalIdr.toLocaleString('id-ID')}`}</span>
+            </button>
+          ) : (
+            <button type="button" className="trakteer-btn trakteer-pay-btn" onClick={() => void handleCompleteAndCelebrate()}>
+              <img
+                src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+                alt=""
+                className="trbtn-mini-img"
+              />
+              <span>{id ? 'Selesai Bayar · Kirim Cendol ke Meja' : 'Payment Done · Send Cendol to Desk'}</span>
+            </button>
+          )}
+        </div>
       </div>
     </dialog>
   );

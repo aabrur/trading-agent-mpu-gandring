@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { installDiagnostics } from './diagnostics';
 import { verdictReactions, type SceneEvent } from './sceneDirector';
-import type { AgentId, DeskState, Fight, Reaction, Speech, Verdict } from './types';
+import type { AgentId, CendolEvent, DeskState, Fight, Reaction, Speech, Verdict } from './types';
+
+declare global {
+  interface Window {
+    TrakteerWS?: {
+      register: (channelId: string) => void;
+      onNewTipSuccess: (data: Record<string, unknown>) => void;
+      onStreamTest: (data: Record<string, unknown>) => void;
+    };
+  }
+}
 
 const CONV_STORAGE_KEY = 'mpu_gandring_active_conversation_id';
 
@@ -47,8 +57,67 @@ export function useDesk() {
   const [fights, setFights] = useState<Fight[]>([]);
   const [meter, setMeter] = useState<{ weighted: number; disagreement: number } | null>(null);
   const [reactions, setReactions] = useState<Partial<Record<AgentId, Reaction>>>({});
+  const [cendolBanner, setCendolBanner] = useState<CendolEvent | null>(null);
   const fightId = useRef(0);
   const [sceneEvents, setSceneEvents] = useState<SceneEvent[]>([]);
+
+  const dismissCendolBanner = useCallback(() => setCendolBanner(null), []);
+
+  const triggerCendolTip = useCallback(async (opts?: { supporter?: string; quantity?: number; message?: string }) => {
+    try {
+      await fetch('/api/trakteer/tip', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          supporter_name: opts?.supporter || 'Supporter',
+          quantity: opts?.quantity || 1,
+          support_message: opts?.message || ''
+        })
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/trakteer/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { ok?: boolean; channelId?: string } | null) => {
+        if (cancelled || !d?.ok || !d.channelId) return;
+        const channelId = d.channelId;
+        const bind = () => {
+          if (cancelled || !window.TrakteerWS) return;
+          try {
+            window.TrakteerWS.register(channelId);
+            const onTip = (data: Record<string, unknown>) => {
+              void fetch('/api/trakteer/tip', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(data || {})
+              }).catch(() => {});
+            };
+            window.TrakteerWS.onNewTipSuccess = onTip;
+            window.TrakteerWS.onStreamTest = onTip;
+          } catch { /* ignore */ }
+        };
+        if (window.TrakteerWS) {
+          bind();
+          return;
+        }
+        const existing = document.querySelector<HTMLScriptElement>('script[data-trakteer-ws="1"]');
+        if (existing) {
+          existing.addEventListener('load', bind, { once: true });
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://assets.trakteer.id/js/trws.min.js';
+        script.async = true;
+        script.dataset.trakteerWs = '1';
+        script.onload = bind;
+        document.head.appendChild(script);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -94,6 +163,13 @@ export function useDesk() {
           setReactions(verdictReactions(v));
           if (reactionTimer) { window.clearTimeout(reactionTimer); timers.delete(reactionTimer); }
           reactionTimer = later(() => setReactions({}), 4500);
+        } else if (type === 'cendol') {
+          const evPayload = payload as CendolEvent;
+          setCendolBanner(evPayload);
+          setReactions({ lead: 'cheer', market: 'cheer', research: 'cheer', strategist: 'cheer', risk: 'cheer', execution: 'cheer' });
+          if (reactionTimer) { window.clearTimeout(reactionTimer); timers.delete(reactionTimer); }
+          reactionTimer = later(() => setReactions({}), 6500);
+          later(() => setCendolBanner((cur) => (cur?.id === evPayload.id ? null : cur)), 9000);
         } else if (type === 'debate' && payload?.phase === 'opening') { setSpeech({}); setFights([]); setReactions({}); }
         else if (type === 'status') setState((s) => (s ? { ...s, agents: { ...s.agents, [payload.agent]: { ...s.agents[payload.agent as AgentId], status: payload.status } } } : s));
       };
@@ -125,5 +201,5 @@ export function useDesk() {
     return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid' };
   }, []);
 
-  return { state, connected, speech, fights, meter, reactions, sceneEvents, command, activeConversationId, selectConversation, newConversation };
+  return { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation };
 }

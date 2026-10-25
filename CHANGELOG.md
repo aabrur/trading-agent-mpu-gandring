@@ -2,6 +2,17 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.3.29] - 2026-10-25
+
+### Added
+- **In-Place Cendol Menu (`TrakteerPopup`)**: Interactive Cendol quantity selector (`1`, `2`, `5`, `10`, `25` presets + custom stepper), Cendol-only branding without creator profile clutter, and direct in-place checkout overlay without leaving the virtual office.
+- **Real-Time Cendol Office Celebration (`TrakteerWS` + `/api/trakteer/tip`)**: When a Cendol tip or test stream arrives, the Desk Lead character at the virtual desk immediately speaks `"Terima kasih traktiran cendolnya!"`, all six agents cheer, and a floating celebration banner appears at the top of the office.
+- **OpenRouter Dashboard Attribution (`OPENROUTER_HTTP_REFERER`)**: Configured GitHub Pages showcase referer (`https://aabrur.github.io/trading-agent-mpu-gandring/`) so OpenRouter crawls and displays the official Mpu Gandring icon.
+
+### Changed
+- **Refined 2.5D Virtual Office & Night Mode Lighting**: Grounded the coffee counter on the right floor, proportioned the central discussion table, illuminated night-mode wall sconces, pendant lamp, and floor lamps with warm ambient glow, and streamlined the compact right HUD (`Fight meter`, 2 `Verdicts`, `Open orders N`, `Open positions`, and `Close all`).
+- **Updated `README.md` (`v0.0.0.3.29`)**: Added independent multi-venue verification across Bybit, Aster, Hyperliquid, and Binance, expanded sanitized live profit history ledger, updated workflow/architecture diagrams and office screenshots, and added the Responsible Autonomy & Anti-Overreliance advisory.
+
 ## [v0.0.0.3.28] - 2026-10-25
 
 ### Added

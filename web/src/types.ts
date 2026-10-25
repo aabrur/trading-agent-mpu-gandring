@@ -76,6 +76,7 @@ export interface Report {
   scorecard?: RoleScore[]; lessons?: { role: string; kind: string; status: string; count: number; symbol?: string; lesson: string; rootCause: string }[]; standingRules?: string[]; scan?: Finding[];
 }
 export interface Speech { agent: AgentId; text: string; done: boolean; example: boolean; at: number }
+export interface CendolEvent { id: string; supporter: string; quantity: number; message?: string; text: string; at: number }
 export interface Fight { id: number; from: AgentId; to: AgentId; intensity: number; punches: number; at: number }
 export const AGENT_ORDER: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'];
 export type Reaction = 'cheer' | 'worried';

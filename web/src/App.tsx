@@ -28,7 +28,7 @@ function initialTourOpen() {
 
 function AppInner() {
   const { t, lang } = useI18n();
-  const { state, connected, speech, fights, meter, reactions, sceneEvents, command, activeConversationId, selectConversation, newConversation } = useDesk();
+  const { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation } = useDesk();
   const [selected, setSelected] = useState<AgentId | null>(null);
   const [theme, setTheme] = useState<string>(initialTheme);
   const [symbol, setSymbol] = useState<string>('');
@@ -133,7 +133,7 @@ function AppInner() {
       <TickerStrip state={state} />
       <main className="layout" id="office-workspace" tabIndex={-1}>
         <section className="stage">
-          <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected} command={command} activeConversationId={activeConversationId} selectConversation={selectConversation} newConversation={newConversation}>
+          <Office sceneEvents={sceneEvents} state={state} speech={speech} fights={fights} reactions={reactions} disagreement={dis} selected={selected} spark={spark} onSelect={setSelected} command={command} activeConversationId={activeConversationId} selectConversation={selectConversation} newConversation={newConversation} cendolBanner={cendolBanner} onDismissCendol={dismissCendolBanner}>
             <FightMeter state={state} meter={meter} fighting={fights.length > 0} />
             <Verdicts state={state} compact />
             <OpenOrders state={state} command={command} />
@@ -152,7 +152,7 @@ function AppInner() {
       </main>
       {setup && <DeferredPanel label="Setup"><SetupWizard state={state} onClose={closeSetup} tradingProfile={setupEntry === '#setup-trading-default' ? 'default' : setupEntry === '#setup-trading-manual' ? 'manual' : undefined} /></DeferredPanel>}
       {updateOpen && <UpdateModal info={updateInfo} onRefresh={refreshUpdate} onClose={() => setUpdateOpen(false)} />}
-      {trakteerOpen && !tourOpen && !setup && !venueKeys && !updateOpen && <TrakteerPopup onClose={() => setTrakteerOpen(false)} />}
+      {trakteerOpen && !tourOpen && !setup && !venueKeys && !updateOpen && <TrakteerPopup onClose={() => setTrakteerOpen(false)} onConfirmCendol={triggerCendolTip} />}
       {selected && <DeferredPanel label="Agent"><AgentPanel state={state} id={selected} onClose={() => setSelected(null)} command={command} conversationId={activeConversationId} /></DeferredPanel>}
       <Tour open={tourOpen && !setup && !venueKeys && !updateOpen} onClose={closeTour} />
       <footer className="footer">{t('footerNote')} Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a>.</footer>

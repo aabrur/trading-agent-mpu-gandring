@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AgentId, AgentView, DeskState, Fight, Reaction, Speech } from '../types';
+import type { AgentId, AgentView, CendolEvent, DeskState, Fight, Reaction, Speech } from '../types';
 import { AGENT_ORDER } from '../types';
 import { Bot, type Face, type Pose } from './Bot';
 import { Sparkline } from './MiniCharts';
@@ -38,6 +38,8 @@ interface Props {
   activeConversationId?: string;
   selectConversation?: (id: string) => void;
   newConversation?: () => Promise<string>;
+  cendolBanner?: CendolEvent | null;
+  onDismissCendol?: () => void;
 }
 
 function useOfficeFight(state: DeskState, fights: Fight[]) {
@@ -193,8 +195,14 @@ function Agent({
             <i />
           </div>
         )}
+        {sp && sp.text.includes('Terima kasih traktiran cendolnya') && (
+          <div className="cendol-speech-tag" role="status">
+            <img src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025" alt="" className="cendol-speech-icon" />
+            <span>{sp.text}</span>
+          </div>
+        )}
         <div className={`bot-wrap ${flip ? 'flip' : ''}`}>
-          <Bot id={a.id} size={62} pose={pose} face={face} talking={talking} />
+          <Bot id={a.id} size={62} pose={pose} face={face} talking={talking || Boolean(sp && sp.text.includes('Terima kasih traktiran cendolnya'))} />
         </div>
         <div className="nametag">
           <strong>{a.name}</strong>
@@ -214,7 +222,7 @@ function Agent({
   );
 }
 
-export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, command, children, activeConversationId, selectConversation, newConversation }: Props) {
+export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, command, children, activeConversationId, selectConversation, newConversation, cendolBanner, onDismissCendol }: Props) {
   const { t } = useI18n();
   const officeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -262,6 +270,25 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
         {pnl.source.includes('stale') && <small>Stale data</small>}
       </output>
       <div className="office-hud">{children}</div>
+      {cendolBanner && (
+        <div className="office-cendol-banner" role="status" aria-live="polite">
+          <img
+            src="https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025"
+            alt="Cendol"
+            className="cendol-banner-icon"
+          />
+          <div className="cendol-banner-content">
+            <strong>Terima kasih traktiran cendolnya!</strong>
+            <span>
+              <b>{cendolBanner.supporter}</b> mentraktir <b>{cendolBanner.quantity} Cendol</b>
+              {cendolBanner.message ? ` · "${cendolBanner.message}"` : ''}
+            </span>
+          </div>
+          {onDismissCendol && (
+            <button type="button" className="cendol-banner-close" onClick={onDismissCendol} aria-label="Close notification">✕</button>
+          )}
+        </div>
+      )}
       <div className="office-world">
         <div className="studio-room" aria-hidden="true">
           <div className="studio-wall" />
