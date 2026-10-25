@@ -12,7 +12,8 @@ interface LocalAgent {
   loginCommand: string;
   hint: string;
   models: string[];
-  discovery?: { version: string | null; completeness: string; error: string | null; authentication: string; models: {id: string}[] } | null;
+  effortLevels?: string[];
+  discovery?: { version: string | null; completeness: string; error: string | null; authentication: string; configuredModel?: string; models: {id: string; reasoningLevels?: string[]; source?: string}[] } | null;
 }
 
 interface AgentSettings {
@@ -332,6 +333,9 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
           <div className="local-agent-list">
             {agents.map((a) => {
               const currentSettings = editSettings[a.id] || {};
+              const selectedModel = currentSettings.model && currentSettings.model !== 'default' ? currentSettings.model : a.discovery?.configuredModel;
+              const modelMetadata = a.discovery?.models.find(model => model.id === selectedModel);
+              const effortLevels = modelMetadata && ['cli', 'metadata'].includes(modelMetadata.source || '') ? modelMetadata.reasoningLevels : a.effortLevels;
               const isOpen = !!openDrawer[a.id];
               const isCustomModel = currentSettings.model && currentSettings.model !== 'default' && !a.models.includes(currentSettings.model);
 
@@ -432,22 +436,6 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                         {a.id === 'hermes' && (
                           <>
                             <label>
-                              {lang === 'id' ? 'Tingkat Penalaran (Reasoning Effort)' : 'Reasoning Effort (--reasoning)'}
-                              <select
-                                value={currentSettings.effort || 'none'}
-                                onChange={(e) => setEditSettings((old) => ({ ...old, [a.id]: { ...old[a.id], effort: e.target.value } }))}
-                              >
-                                <option value="none">none</option>
-                                <option value="minimal">minimal</option>
-                                <option value="low">low</option>
-                                <option value="medium">medium</option>
-                                <option value="high">high</option>
-                                <option value="xhigh">xhigh</option>
-                                <option value="max">max</option>
-                                <option value="ultra">ultra</option>
-                              </select>
-                            </label>
-                            <label>
                               {lang === 'id' ? 'Override Provider (--provider)' : 'Provider Override (--provider)'}
                               <input
                                 type="text"
@@ -459,39 +447,15 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                           </>
                         )}
 
-                        {a.id === 'copilot' && (
+                        {!!effortLevels?.length && (
                           <label>
-                            {lang === 'id' ? 'Tingkat Penalaran (--reasoning-effort)' : 'Reasoning Effort (--reasoning-effort)'}
+                            {lang === 'id' ? 'Penalaran native CLI' : 'Native CLI reasoning'}
                             <select
-                              value={currentSettings.effort || 'none'}
-                              onChange={(e) => setEditSettings((old) => ({ ...old, [a.id]: { ...old[a.id], effort: e.target.value } }))}
+                              value={currentSettings.effort || ''}
+                              onChange={(e) => setEditSettings(old => ({ ...old, [a.id]: { ...old[a.id], effort: e.target.value } }))}
                             >
-                              <option value="none">none</option>
-                              <option value="minimal">minimal</option>
-                              <option value="low">low</option>
-                              <option value="medium">medium</option>
-                              <option value="high">high</option>
-                              <option value="xhigh">xhigh</option>
-                              <option value="max">max</option>
-                            </select>
-                          </label>
-                        )}
-
-                        {a.id === 'openclaw' && (
-                          <label>
-                            {lang === 'id' ? 'Tingkat Thinking (--thinking)' : 'Thinking Level (--thinking)'}
-                            <select
-                              value={currentSettings.effort || 'off'}
-                              onChange={(e) => setEditSettings((old) => ({ ...old, [a.id]: { ...old[a.id], effort: e.target.value } }))}
-                            >
-                              <option value="off">off</option>
-                              <option value="minimal">minimal</option>
-                              <option value="low">low</option>
-                              <option value="medium">medium</option>
-                              <option value="high">high</option>
-                              <option value="xhigh">xhigh</option>
-                              <option value="adaptive">adaptive</option>
-                              <option value="max">max</option>
+                              <option value="">Native default</option>
+                              {effortLevels.map(level => <option key={level} value={level}>{level}</option>)}
                             </select>
                           </label>
                         )}

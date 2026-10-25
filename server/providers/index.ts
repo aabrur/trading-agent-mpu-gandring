@@ -3,7 +3,7 @@ import type { AppConfig, ProviderName } from '../config.js';
 import type { AgentId } from '../types.js';
 import type { TaskKind } from '../schemas.js';
 import { mockReply } from './mock.js';
-import { runLocalAgent } from './local.js';
+import { runLocalAgent, discoverLocalModels, localSelection } from './local.js';
 import { publishActivity } from '../activity.js';
 import { getGenerationParams } from './capabilities.js';
 
@@ -40,6 +40,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
   const call: ModelCaller = async (req) => {
     const { provider, model, system, user, task } = req;
     const requested = cfg.reasoning?.[req.agent] ?? cfg.defaultReasoning;
+    if (requested && provider === 'local') await discoverLocalModels(localSelection(model).id);
     if (requested && provider === 'openrouter') await refreshRouterReasoning();
     const effort = requested ? requireReasoning(provider, model, requested) : undefined;
     switch (provider) {

@@ -18,7 +18,7 @@ export const MODEL_KEY_ENV: Record<ApiProviderName, string> = {
   together: 'TOGETHER_API_KEY',
   fireworks: 'FIREWORKS_API_KEY'
 };
-export interface ModelChoice { id: string; label: string; tags: string[] }
+export interface ModelChoice { id: string; label: string; tags: string[]; reasoningLevels?: ReasoningLevel[] }
 export interface ModelSelection { provider: ProviderName; model: string; reasoning?: ReasoningLevel }
 export interface ModelSetupInput { defaultReasoning?: ReasoningLevel | null; reasoning?: Partial<Record<AgentId, ReasoningLevel | null>>; defaultProvider: ProviderName; defaultModel: string; agents?: Partial<Record<AgentId, ModelSelection>>; keys?: Partial<Record<ApiProviderName, string>> }
 const m = (id: string, label: string, ...tags: string[]): ModelChoice => ({ id, label, tags });
@@ -313,7 +313,7 @@ export function modelChoices(env: NodeJS.ProcessEnv, p: ProviderName): ModelChoi
   const choices = p === 'local' ? LOCAL_AGENTS.flatMap((agent) => localModels(agent.id).map((model) => m(`${agent.id}:${model}`, `${agent.label}: ${model === 'default' ? 'configured model' : model}`, 'CLI model; account access required'))) : [...MODEL_CHOICES[p]];
   const saved = [env[providerModelEnv(p)], ...AGENT_IDS.filter((a) => (env[`AGENT_${a.toUpperCase()}_PROVIDER`] || env.DEFAULT_PROVIDER || 'mock') === p).map((a) => env[`AGENT_${a.toUpperCase()}_MODEL`])];
   for (const id of saved) if (id && !choices.some((v) => v.id === id)) choices.push(m(id, id, 'Saved model'));
-  return choices;
+  return choices.map(choice => ({ ...choice, reasoningLevels: reasoningStatus(p, choice.id).supported }));
 }
 
 export function modelSetupInfo(env: NodeJS.ProcessEnv) {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
 
-interface Choice { id: string; label: string; tags: string[] }
+interface Choice { id: string; label: string; tags: string[]; reasoningLevels?: string[] }
 interface Preset { id: string; label: string; description: string; defaultProvider: string; defaultModel: string; agents: Record<string, Selection> }
 interface Selection { provider: string; model: string }
 interface Provider { provider: string; keyEnv: string | null; keySet: boolean; source: string; defaultModel: string; models: Choice[] }
@@ -85,10 +85,11 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
       <span className="field-label">{label === 'Default' ? (lang === 'id' ? 'Reasoning default' : 'Default reasoning') : `${label} reasoning`}</span>
       <select aria-label={`${label} reasoning`} disabled={!available || busy} value={reasoningVal || ''} onChange={e => onReasoningChange(e.target.value)}>
         <option value="">{label === 'Default' ? (lang === 'id' ? 'Native default' : 'Native default') : (lang === 'id' ? 'Ikuti default' : 'Inherit default')}</option>
-        {['low', 'med', 'high', 'xhigh', 'max'].map((level, i) => <option key={level} value={level}>{['Low', 'Medium', 'High', 'XHigh', 'Max'][i]}</option>)}
+        {(value.provider === 'local' ? [...new Set([...(provider('local').models.find(m => m.id === value.model)?.reasoningLevels || []), ...(reasoningVal ? [reasoningVal] : [])])] : ['low', 'med', 'high', 'xhigh', 'max']).map(level => <option key={level} value={level} disabled={value.provider === 'local' && !provider('local').models.find(m => m.id === value.model)?.reasoningLevels?.includes(level)}>{level === 'med' ? 'medium' : level}</option>)}
       </select>
+      {value.provider === 'local' && !provider('local').models.find(m => m.id === value.model)?.reasoningLevels?.length && <small className="field-help">{lang === 'id' ? 'Segarkan model di Local Agents untuk memeriksa dukungan penalaran native.' : 'Refresh models in Local Agents to verify native reasoning support.'}</small>}
       {reasoningStatus && <small className="reasoning-meta" title={`requested: ${reasoningStatus.requested || 'native'} · effective: ${reasoningStatus.effective || 'native / unverified'} · supported: ${reasoningStatus.supported.join(', ') || 'native default'}`}>
-        {reasoningStatus.effective ? `eff: ${reasoningStatus.effective}` : 'native default'}
+        {reasoningStatus.status === 'unsupported_or_unverified' ? `Unsupported or unverified: ${reasoningStatus.requested}` : reasoningStatus.effective ? `eff: ${reasoningStatus.effective}` : 'native default'}
       </small>}
     </label>}
     {value.provider === 'local' && <label className="setup-field span-full">

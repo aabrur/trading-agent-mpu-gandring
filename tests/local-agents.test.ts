@@ -48,12 +48,13 @@ describe('existing agent integration', () => {
   it('uses constrained native modes instead of bypassing agent permissions', () => {
     expect(localArgs('codex', 'default', 'folder').args).toEqual(expect.arrayContaining(['--sandbox', 'read-only', '--disable', 'shell_tool']));
     expect(localArgs('claude', 'opus', 'folder').args).toEqual(expect.arrayContaining(['--tools', '', '--strict-mcp-config', '--model', 'opus']));
+    expect(localArgs('claude', 'opus', 'folder').args).toEqual(expect.arrayContaining(['--safe-mode', '--disable-slash-commands', '--setting-sources', 'user']));
     expect(localArgs('pi', 'default', 'folder').args).toContain('--no-tools');
     expect(localArgs('kimi', 'default', 'folder').args).toContain('--agent-file');
     expect(JSON.parse(localArgs('kilo', 'default', 'folder').env.KILO_CONFIG_CONTENT).permission['*']).toBe('deny');
     expect(localArgs('cline', 'default', 'folder').args).toEqual(expect.arrayContaining(['--auto-approve', 'false']));
     expect(localArgs('grok', 'default', 'folder').args).toEqual(expect.arrayContaining(['--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']));
-    expect(localArgs('antigravity', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--dangerously-skip-permissions', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json']));
+    expect(localArgs('antigravity', 'default', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--print=', '--sandbox', '--mode', 'plan', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json']));
     expect(localArgs('antigravity', 'gemini-3.8-flash-high', 'folder', 'hello').args).toEqual(expect.arrayContaining(['--model', 'gemini-3.8-flash-high', '--input-format', 'stream-json']));
     expect(localArgs('antigravity', 'default', 'folder', 'hello').args).not.toContain('hello');
   });
@@ -79,20 +80,20 @@ describe('existing agent integration', () => {
   it('applies per-agent effort and provider only where the CLI supports them', () => {
     expect(localArgs('hermes', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'high', provider: 'openrouter' }).args).toEqual(expect.arrayContaining(['--reasoning', 'high', '--provider', 'openrouter']));
     expect(localArgs('copilot', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'low' }).args).toEqual(expect.arrayContaining(['--reasoning-effort', 'low']));
-    expect(localArgs('openclaw', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'adaptive' }).args).toEqual(expect.arrayContaining(['--thinking', 'adaptive']));
-    expect(localArgs('claude', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'high' }).args).not.toContain('high');
+    expect(localArgs('openclaw', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'high' }).args).toEqual(expect.arrayContaining(['--thinking', 'high']));
+    expect(localArgs('claude', 'default', 'folder', 'hi', undefined, [], {}, { effort: 'high' }).args).toContain('high');
   });
   it('validates and stores per-agent settings without touching other agents', () => {
     const saved = localAgentSettingsUpdate('hermes', { model: 'anthropic/claude-sonnet-5-5', effort: 'high', provider: 'openrouter' }, { LOCAL_AGENT_SETTINGS: JSON.stringify({ codex: { model: 'gpt-6-astra' } }) });
     expect(JSON.parse(saved)).toEqual({ codex: { model: 'gpt-6-astra' }, hermes: { model: 'anthropic/claude-sonnet-5-5', effort: 'high', provider: 'openrouter' } });
     expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: saved }).hermes?.effort).toBe('high');
     expect(JSON.parse(localAgentSettingsUpdate('hermes', { model: 'default' }, { LOCAL_AGENT_SETTINGS: saved })).hermes).toBeUndefined();
-    expect(() => localAgentSettingsUpdate('claude', { effort: 'high' })).toThrow();
+    expect(JSON.parse(localAgentSettingsUpdate('claude', { effort: 'high' }, {}))).toEqual({claude: {effort: 'high'}});
     expect(() => localAgentSettingsUpdate('copilot', { effort: 'ultra' })).toThrow();
     expect(() => localAgentSettingsUpdate('codex', { provider: 'openrouter' })).toThrow();
     expect(() => localAgentSettingsUpdate('codex', { model: '--yolo' })).toThrow();
     expect(() => localAgentSettingsUpdate('unknown', {})).toThrow();
-    expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: '{"claude":{"effort":"high"},"hermes":{"provider":"--x"}}' })).toEqual({});
+    expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: '{"claude":{"effort":"high"},"hermes":{"provider":"--x"}}' })).toEqual({claude: {effort: 'high'}});
     expect(localAgentSettings({ LOCAL_AGENT_SETTINGS: 'not json' })).toEqual({});
   });
   it('never puts prompt in args and keeps all agent commands safely below Win32 32KB limit even with 100k char prompt', () => {

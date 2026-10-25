@@ -2,8 +2,8 @@ import { z } from 'zod';
 import type { ProviderName } from '../config.js';
 
 export const REASONING_LEVELS = ['low', 'med', 'high', 'xhigh', 'max'] as const;
-export const ReasoningSchema = z.enum(REASONING_LEVELS);
-export type ReasoningLevel = typeof REASONING_LEVELS[number];
+export const ReasoningSchema = z.enum([...REASONING_LEVELS, 'none', 'off', 'minimal', 'ultra']);
+export type ReasoningLevel = z.infer<typeof ReasoningSchema>;
 export const normalizeReasoning = (value: string | undefined): ReasoningLevel | undefined => value ? ReasoningSchema.parse(value === 'medium' ? 'med' : value) : undefined;
 export const nativeReasoning = (value: ReasoningLevel) => value === 'med' ? 'medium' : value;
 export interface ReasoningStatus {
@@ -33,7 +33,7 @@ export function registerReasoning(provider: ProviderName, model: string, levels:
 
 /** Exact known families only. Missing metadata never implies reasoning support. */
 export function reasoningStatus(provider: ProviderName, model: string, requested?: ReasoningLevel): ReasoningStatus {
-  let supported = metadata.get(`${provider}:${model}`) ?? [];
+  let supported = metadata.get(`${provider}:${model}`) ?? (provider === 'local' ? metadata.get(`local:${model.split(':')[0]}:*`) : undefined) ?? [];
   const claude = model.replace(/^claude:/, '').replace(/^anthropic\//, '');
   if ((provider === 'anthropic' || provider === 'local' && model.startsWith('claude:')) && /claude-(opus|sonnet)-(4[.-][678]|5(?:[.-]5)?)|claude-haiku-5[.-]5/.test(claude)) {
     supported = /4[.-]6/.test(claude) ? ['low', 'med', 'high', 'max'] : [...REASONING_LEVELS];

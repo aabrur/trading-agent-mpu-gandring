@@ -108,22 +108,58 @@ export interface LocalModelDiscovery {
   error: string | null;
 }
 const discoveryCache = new Map<LocalAgentId, LocalModelDiscovery>();
+const discoveries = new Map<LocalAgentId, Promise<LocalModelDiscovery>>();
 
-/** Bounded metadata commands only. Never return stderr or credential files. */
-async function discoveryCommand(id: LocalAgentId, args: string[]): Promise<string> {
+// Native CLI values, not a universal scale. A model can support a smaller subset.
+export const LOCAL_EFFORTS: Partial<Record<LocalAgentId, readonly string[]>> = {
+  codex: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  claude: ['low', 'medium', 'high', 'xhigh', 'max'],
+  pi: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  cline: ['none', 'low', 'medium', 'high', 'xhigh'],
+  kilo: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  opencode: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  grok: ['low', 'high'],
+  antigravity: ['low', 'medium', 'high', 'xhigh', 'max'],
+  hermes: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  copilot: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  openclaw: ['off', 'minimal', 'low', 'medium', 'high']
+};
+
+function effortArgs(id: LocalAgentId, effort?: string): string[] {
+  if (!effort) return [];
+  if (!LOCAL_EFFORTS[id]?.includes(effort)) throw new Error(`Unsupported native reasoning ${effort} for ${id}.`);
+  if (id === 'codex') return ['-c', `model_reasoning_effort="${effort}"`];
+  if (id === 'kilo' || id === 'opencode') return ['--variant', effort];
+  const flag = id === 'pi' || id === 'cline' || id === 'openclaw' ? '--thinking'
+    : id === 'hermes' ? '--reasoning' : id === 'copilot' || id === 'grok' ? '--reasoning-effort' : '--effort';
+  return [flag, effort];
+}
+
+/** Bounded metadata commands only. Only help may read stderr; credential files are never returned. */
+async function discoveryCommand(id: LocalAgentId, args: string[], timeoutMs = 10_000): Promise<string> {
   const executable = localExecutable(id);
   if (!executable) throw new Error('CLI not installed');
   return new Promise((resolve, reject) => {
-    const child = spawn(executable.file, [...executable.prefix, ...args], { env: localEnvironment(process.env), cwd: tmpdir(), windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(executable.file, [...executable.prefix, ...args], { env: localEnvironment(process.env), cwd: tmpdir(), windowsHide: true, stdio: ['ignore', 'pipe', args.includes('--help') ? 'pipe' : 'ignore'] });
     let output = '', failed = false;
-    const timer = setTimeout(() => { failed = true; child.kill(); reject(new Error('Metadata command timed out')); }, 10_000);
-    child.stdout.on('data', (chunk: Buffer) => { if (output.length + chunk.length > 2_000_000) { failed = true; child.kill(); } else output += chunk.toString(); });
+    const timer = setTimeout(() => { failed = true; child.kill(); reject(new Error('Metadata command timed out')); }, timeoutMs);
+    const collect = (chunk: Buffer) => { if (output.length + chunk.length > 2_000_000) { failed = true; child.kill(); } else output += chunk.toString(); };
+    child.stdout?.on('data', collect);
+    child.stderr?.on('data', collect);
     child.once('error', () => { clearTimeout(timer); reject(new Error('Metadata command failed')); });
     child.once('close', code => { clearTimeout(timer); if (code === 0 && !failed) resolve(output); else reject(new Error('Metadata command unavailable')); });
   });
 }
 
 export async function discoverLocalModels(id: LocalAgentId, refresh = false): Promise<LocalModelDiscovery> {
+  const pending = discoveries.get(id);
+  if (pending) return pending;
+  const result = discoverModels(id, refresh);
+  discoveries.set(id, result);
+  try { return await result; } finally { discoveries.delete(id); }
+}
+
+async function discoverModels(id: LocalAgentId, refresh: boolean): Promise<LocalModelDiscovery> {
   const agent = LOCAL_AGENTS.find(a => a.id === id);
   if (!agent) throw new Error('Unknown local agent');
   const cached = discoveryCache.get(id);
@@ -141,14 +177,43 @@ export async function discoverLocalModels(id: LocalAgentId, refresh = false): Pr
   const add = (model: LocalModelDiscovery['models'][number]) => { if (!result.models.some(m => m.id === model.id)) result.models.push(model); };
   if (result.installed) {
     try { result.version = (await discoveryCommand(id, ['--version'])).trim().split('\n')[0].slice(0, 200); } catch { /* Explicitly unknown. */ }
+    if (id !== 'codex' && id !== 'kilo' && id !== 'opencode' && LOCAL_EFFORTS[id]) {
+      try {
+        const help = await discoveryCommand(id, id === 'hermes' ? ['chat', '--help'] : id === 'openclaw' ? ['agent', '--help'] : ['--help']);
+        const flag = effortArgs(id, 'high')[0];
+        const lines = help.split(/\r?\n/);
+        const start = lines.findIndex(line => line.trimStart().startsWith(`${flag} `));
+        const section = start < 0 ? '' : lines.slice(start).join('\n').split(/\n\s+-[a-z-]/i)[0];
+        const levels = help.includes(flag) ? LOCAL_EFFORTS[id]!.filter(level => new RegExp(`\\b${level}\\b`).test(section)) : [];
+        registerReasoning('local', `${id}:*`, [...levels]);
+      } catch { registerReasoning('local', `${id}:*`, []); }
+    }
     const auth = await localLoginStatus(id);
     result.authentication = auth.connected ? 'authenticated' : auth.state === 'signed-out' ? 'not_authenticated' : 'unknown';
-    if (id === 'opencode') {
+    if (id === 'opencode' || id === 'kilo' || id === 'antigravity') {
       try {
-        const output = await discoveryCommand(id, ['models']);
-        for (const line of output.split(/\r?\n/)) if (modelIdOk(line.trim()) && line.includes('/')) add({ id: line.trim(), provider: line.trim().split('/')[0], reasoningLevels: [], source: 'cli' });
+        const output = await discoveryCommand(id, id === 'antigravity' ? ['models'] : ['models', '--verbose']);
+        const lines = output.split(/\r?\n/);
+        for (let index = 0; index < lines.length; index++) {
+          const line = lines[index];
+          const model = line.trim().split(/\s+/)[0];
+          if (!modelIdOk(model) || !(model.includes('/') || id === 'antigravity' && line.includes('\t'))) continue;
+          let levels: string[] = [];
+          if (id === 'antigravity') levels = [...LOCAL_EFFORTS.antigravity!];
+          else if (lines[index + 1] === '{') {
+            const end = lines.findIndex((entry, next) => next > index && entry === '}');
+            if (end > index) {
+              try {
+                const metadata: { variants?: Record<string, unknown> } = JSON.parse(lines.slice(index + 1, end + 1).join('\n'));
+                levels = Object.keys(metadata.variants ?? {});
+              } catch { /* A model without verified variants keeps its native default. */ }
+              index = end;
+            }
+          }
+          add({ id: model, provider: model.includes('/') ? model.split('/')[0] : undefined, reasoningLevels: levels, source: 'cli' });
+        }
         result.completeness = 'partial'; result.error = 'CLI catalog does not prove account entitlement or reasoning capability.';
-      } catch { result.error = 'Installed OpenCode could not enumerate models.'; result.completeness = 'unavailable'; }
+      } catch { result.error = `Installed ${agent.label} could not enumerate models.`; result.completeness = 'unavailable'; }
     }
     if (id === 'pi') {
       try {
@@ -161,7 +226,7 @@ export async function discoverLocalModels(id: LocalAgentId, refresh = false): Pr
             const provider = parts[0];
             const model = parts[1];
             if (modelIdOk(model)) {
-              add({ id: model, provider, reasoningLevels: [], source: 'cli' });
+              add({ id: `${provider}/${model}`, provider, reasoningLevels: parts[4] === 'yes' ? [...LOCAL_EFFORTS.pi!] : [], source: 'cli' });
             }
           }
         }
@@ -171,6 +236,19 @@ export async function discoverLocalModels(id: LocalAgentId, refresh = false): Pr
         result.error = 'Installed Pi could not enumerate models.';
         result.completeness = 'unavailable';
       }
+    }
+    if (id === 'openclaw') {
+      try {
+        const output = await discoveryCommand(id, ['models', 'list', '--all', '--json'], 30_000);
+        const catalog: { models?: Array<{key?: unknown; tags?: string[]}> } = JSON.parse(output);
+        for (const model of catalog.models ?? []) if (modelIdOk(model.key)) {
+          add({id: model.key, provider: model.key.split('/')[0], reasoningLevels: [], source: 'cli'});
+          if (configuredModel === 'default' && model.tags?.includes('default')) configuredModel = model.key;
+        }
+        result.configuredModel = configuredModel;
+        result.completeness = 'partial';
+        result.error = 'CLI catalog does not prove account entitlement or per-model thinking support.';
+      } catch { result.error = 'Installed OpenClaw could not enumerate models.'; result.completeness = 'unavailable'; }
     }
     if (id === 'grok') {
       try {
@@ -205,12 +283,17 @@ export async function discoverLocalModels(id: LocalAgentId, refresh = false): Pr
     }
   } else { result.completeness = 'unavailable'; result.error = 'CLI not installed.'; }
   if (configuredModel !== 'default') add({ id: configuredModel, source: 'configured', reasoningLevels: [] });
-  for (const model of agent.models) add({ id: model, source: 'curated', reasoningLevels: [] });
-  for (const model of result.models) if (model.source === 'metadata') registerReasoning('local', `${id}:${model.id}`, model.reasoningLevels);
+  const hasCatalog = result.models.some(model => model.source === 'cli' || model.source === 'metadata');
+  for (const model of agent.models) if (model === 'default' || !hasCatalog) add({ id: model, source: 'curated', reasoningLevels: [] });
+  for (const model of result.models) {
+    if (model.source === 'metadata' || model.source === 'cli') registerReasoning('local', `${id}:${model.id}`, model.reasoningLevels);
+  }
+  const nativeDefault = result.models.find(model => model.id === configuredModel && (model.source === 'metadata' || model.source === 'cli'));
+  if (id === 'codex' || nativeDefault) registerReasoning('local', `${id}:default`, nativeDefault?.reasoningLevels ?? []);
   discoveryCache.set(id, result);
   return result;
 }
-const modelIdOk = (value: unknown): value is string => typeof value === 'string' && /^[~]?[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}$/.test(value);
+const modelIdOk = (value: unknown): value is string => typeof value === 'string' && /^[~]?[a-zA-Z0-9][a-zA-Z0-9._:/+~-]{0,159}$/.test(value);
 
 export interface AgentExtraSettings {
   model?: string;
@@ -223,7 +306,8 @@ export function localAgentSettings(env: NodeJS.ProcessEnv = process.env): LocalA
   const raw = env.LOCAL_AGENT_SETTINGS;
   if (!raw || typeof raw !== 'string') return {};
   try {
-    const parsed = JSON.parse(raw);
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { parsed = JSON.parse(JSON.parse(`"${raw}"`)); }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const result: LocalAgentSettingsMap = {};
     for (const [key, val] of Object.entries(parsed)) {
@@ -235,15 +319,7 @@ export function localAgentSettings(env: NodeJS.ProcessEnv = process.env): LocalA
         if (s.model !== 'default' && !modelIdOk(s.model)) valid = false;
       }
       if (s.effort !== undefined) {
-        if (agent.id === 'hermes') {
-          if (!['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(s.effort)) valid = false;
-        } else if (agent.id === 'copilot') {
-          if (!['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(s.effort)) valid = false;
-        } else if (agent.id === 'openclaw') {
-          if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max'].includes(s.effort)) valid = false;
-        } else {
-          valid = false;
-        }
+        if (!LOCAL_EFFORTS[agent.id]?.includes(s.effort)) valid = false;
       }
       if (s.provider !== undefined) {
         if (agent.id !== 'hermes' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(s.provider)) valid = false;
@@ -271,21 +347,7 @@ export function localAgentSettingsUpdate(id: string, updates: AgentExtraSettings
   }
 
   if (updates.effort !== undefined) {
-    if (agent.id === 'hermes') {
-      if (!['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(updates.effort)) {
-        throw new Error(`Invalid reasoning effort for Hermes: ${updates.effort}`);
-      }
-    } else if (agent.id === 'copilot') {
-      if (!['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(updates.effort)) {
-        throw new Error(`Invalid reasoning effort for Copilot: ${updates.effort}`);
-      }
-    } else if (agent.id === 'openclaw') {
-      if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max'].includes(updates.effort)) {
-        throw new Error(`Invalid thinking level for OpenClaw: ${updates.effort}`);
-      }
-    } else {
-      throw new Error(`Agent ${agent.label} does not support reasoning effort.`);
-    }
+    if (updates.effort && !LOCAL_EFFORTS[agent.id]?.includes(updates.effort)) throw new Error(`Unsupported native reasoning for ${agent.label}.`);
   }
 
   if (updates.provider !== undefined) {
@@ -302,7 +364,7 @@ export function localAgentSettingsUpdate(id: string, updates: AgentExtraSettings
 
   const merged: AgentExtraSettings = {};
   if (updates.model && updates.model !== 'default') merged.model = updates.model;
-  if (updates.effort && updates.effort !== 'none' && updates.effort !== 'off') merged.effort = updates.effort;
+  if (updates.effort) merged.effort = updates.effort;
   if (updates.provider) merged.provider = updates.provider;
 
   if (Object.keys(merged).length === 0) {
@@ -372,6 +434,7 @@ export function localExecutable(id: string, env: NodeJS.ProcessEnv = process.env
 export function localAgentStatus() {
   return LOCAL_AGENTS.map((a) => ({
     ...a,
+    effortLevels: a.id === 'codex' ? [...new Set(discoveryCache.get(a.id)?.models.flatMap(model => model.reasoningLevels) ?? [])] : LOCAL_EFFORTS[a.id] ?? [],
     models: localModels(a.id),
     discovery: discoveryCache.get(a.id) ?? null,
     installed: !!localExecutable(a.id),
@@ -405,33 +468,33 @@ export function localSelection(value: string) {
 }
 export function localArgs(id: LocalAgentId, model: string, folder: string, prompt = '', policy: ResearchPolicy = { enabled: false, mcpTools: {} }, configuredServers: string[] = [], transports: Record<string, Record<string, unknown>> = {}, extra: AgentExtraSettings = {}): { args: string[]; env: Record<string, string> } {
   let args: string[] = [], env: Record<string, string> = {};
+  const effort = effortArgs(id, extra.effort);
   switch (id) {
     case 'codex': args = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--json', '--disable', 'shell_tool', '--disable', 'unified_exec', ...researchArgs(policy, configuredServers, process.env.PORT || '8787', transports), '-']; break;
-    case 'claude': args = ['--print', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--no-session-persistence']; break;
+    case 'claude': args = ['--print', '--safe-mode', '--disable-slash-commands', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', 'user', '--settings', '{"disableAllHooks":true}', '--no-session-persistence']; break;
     case 'pi': args = ['--print', '--mode', 'text', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-session']; break;
     case 'kimi': args = ['--agent-file', path.join(folder, 'reasoner.md'), '--output-format', 'text', '-p', 'Respond to the input provided on stdin with JSON only.']; break;
     case 'kilo': args = ['--pure', 'run', '--format', 'json']; env = { KILO_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'deny' }, plugin: [] }) }; break;
     case 'cline': args = ['--json', '--plan', '--auto-approve', 'false', '--timeout', '110']; break;
     case 'grok': args = ['--prompt-file', path.join(folder, 'prompt.txt'), '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']; break;
     case 'antigravity':
-      args = ['--dangerously-skip-permissions', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json'];
-      if (extra.effort) args.push('--effort', extra.effort);
+      args = ['--print=', '--sandbox', '--mode', 'plan', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json', ...effort];
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'hermes':
       args = ['chat', '--query-file', path.join(folder, 'prompt.txt'), '-Q', '--safe-mode', '-t', 'todo'];
-      if (extra.effort) args.push('--reasoning', extra.effort);
+      args.push(...effort);
       if (extra.provider) args.push('--provider', extra.provider);
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'openclaw':
       args = ['agent', '--message-file', path.join(folder, 'prompt.txt'), '--local', '--json'];
-      if (extra.effort) args.push('--thinking', extra.effort);
+      args.push(...effort);
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'copilot':
       args = ['-p', '-', '-s', '--available-tools', '--disable-builtin-mcps'];
-      if (extra.effort) args.push('--reasoning-effort', extra.effort);
+      args.push(...effort);
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'cursor':
@@ -443,7 +506,7 @@ export function localArgs(id: LocalAgentId, model: string, folder: string, promp
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'opencode':
-      args = ['run', '--format', 'json'];
+      args = ['run', '--format', 'json', ...effort];
       env = { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'deny' } }) };
       if (model !== 'default') args.push('--model', model);
       return { args, env };
@@ -452,6 +515,7 @@ export function localArgs(id: LocalAgentId, model: string, folder: string, promp
       if (model !== 'default') args.push('--model', model);
       return { args, env };
   }
+  args.push(...effort);
   if (model !== 'default') args.push('--model', model);
   return { args, env };
 }
@@ -476,6 +540,13 @@ export function localReply(output: string): string {
     } catch { /* Plain text replies are returned unchanged below. */ }
   }
   return texts.length ? texts.join('\n') : output.trim();
+}
+
+function processFailure(id: LocalAgentId, diagnostic: string): string {
+  if (/not logged in|not authenticated|authentication required|please (?:run )?\/login|\b401\b|user not found/i.test(diagnostic)) return `${id} needs native CLI sign-in. Environment-only model tokens are not forwarded to the desk subprocess.`;
+  if (/unknown (?:option|argument)|unrecognized (?:option|argument)|unexpected argument/i.test(diagnostic)) return `${id} rejected a CLI option. Refresh its installed version and model metadata in Setup.`;
+  if (/unsupported.*(?:effort|thinking|reasoning)|invalid.*(?:effort|thinking|reasoning)/i.test(diagnostic)) return `${id} rejected the reasoning level for this model. Select a supported native level.`;
+  return `${id} did not return a reply. Sign in and test it from Setup.`;
 }
 
 const workQueue = new AgentWorkQueue(3);
@@ -519,13 +590,10 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
       ? extra.model
       : model;
     const plan = localArgs(id, effectiveModel, folder, prompt, policy, inventory.map(server => server.name), transports, extra);
-    if (reasoningEffort && id === 'codex') plan.args.splice(1, 0, '-c', `model_reasoning_effort="${reasoningEffort}"`);
-    if (reasoningEffort && id === 'claude') plan.args.push('--effort', reasoningEffort);
-    if (reasoningEffort && id === 'antigravity' && !plan.args.includes('--effort')) plan.args.push('--effort', reasoningEffort);
     Object.assign(plan.env, researchEnvironment(policy, transports, process.env));
     const reply = await new Promise<string>((resolve, reject) => {
       const child = spawn(executable.file, [...executable.prefix, ...plan.args], { cwd: folder, env: { ...localEnvironment(process.env), ...plan.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
-      let output = '', eventBuffer = '', size = 0, stopped = false, failure = '';
+      let output = '', diagnostic = '', eventBuffer = '', size = 0, stopped = false, failure = '';
       const stop = () => {
         if (stopped) return; stopped = true;
         if (process.platform === 'win32' && child.pid) { const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); killer.on('error', () => child.kill()); }
@@ -540,7 +608,7 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
         const lines = eventBuffer.split('\n'); eventBuffer = lines.pop() || '';
         for (const line of lines) recordResearchActivity(line);
       } };
-      child.stdout.on('data', (v: Buffer) => collect(v, true)); child.stderr.on('data', (v: Buffer) => collect(v, false));
+      child.stdout.on('data', (v: Buffer) => collect(v, true)); child.stderr.on('data', (v: Buffer) => { if (diagnostic.length < 4000) diagnostic += v.toString().slice(0, 4000 - diagnostic.length); collect(v, false); });
       child.stdin.on('error', () => {});
       if (id === 'antigravity') {
         child.stdin.end(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
@@ -548,7 +616,7 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
         child.stdin.end(prompt);
       }
       child.on('error', () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new Error(`${id} could not start. Check its installation.`)); });
-      child.on('close', (code) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || `${id} did not return a reply. Sign in and test it from Setup.`)); else resolve(localReply(output)); });
+      child.on('close', (code) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || processFailure(id, `${diagnostic}\n${output}`))); else resolve(localReply(output)); });
     });
     publishActivity({ kind: 'process', source: id, level: 'info', status: 'completed', text: `${id} model process completed`, durationMs: Date.now() - started });
     return reply;
