@@ -15,6 +15,7 @@ if (args.includes('--help') || args.includes('-h') || first === 'help') {
 
 Usage:
   mpu                      Start the desk and open the web office
+  mpu restart              Restart the desk server and open the web office
   mpu office               Start the desk and open the web office
   mpu doctor [args]        Run key, network, and permission health checks
   mpu setup [args]         Setup wizard, status, or guide (e.g. mpu setup paper)
@@ -80,7 +81,7 @@ if (first === 'paper') {
   process.exit(res.status ?? 0);
 } else if (first && CLI_TARGETS[first]) {
   runCli(CLI_TARGETS[first], args.slice(1));
-} else if (first && first !== 'office' && !first.startsWith('-')) {
+} else if (first && first !== 'office' && first !== 'restart' && !first.startsWith('-')) {
   console.error(`Unknown option "${first}". Use mpu --help.`);
   process.exit(1);
 }
@@ -102,8 +103,15 @@ if (!existsSync(serverFile) || !existsSync(path.join(root, 'dist/web/index.html'
   const result = spawnSync(npmCmd, ['run', 'build'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
   if (result.status !== 0) process.exit(result.status || 1);
 }
-async function healthy() {
-  try { const r = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1000) }); return r.ok && (await r.json()).app === 'trading-agent-mpu-gandring'; } catch { return false; }
+async function getRunningHealth() {
+  try {
+    const r = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1200) });
+    if (!r.ok) return null;
+    const body = await r.json();
+    return body && body.app === 'trading-agent-mpu-gandring' ? body : null;
+  } catch {
+    return null;
+  }
 }
 function open() {
   if (args.includes('--no-open')) return;
@@ -111,7 +119,35 @@ function open() {
   const p = spawn(command[0], command[1], { detached: true, stdio: 'ignore', windowsHide: true });
   p.on('error', () => console.log(`Open the office at ${target}`)); p.unref();
 }
-if (await healthy()) { console.log(`Trading Agent Mpu Gandring is already running: ${target}`); open(); process.exit(0); }
+
+const runningHealth = await getRunningHealth();
+const localPkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+const localVer = String(localPkg.appVersion || localPkg.version || '').replace(/^v/i, '');
+const runningVer = String(runningHealth?.version || '').replace(/^v/i, '');
+const isOutdated = runningHealth && runningVer && runningVer !== localVer;
+
+if (first === 'restart' || isOutdated) {
+  if (runningHealth) {
+    console.log(isOutdated
+      ? `Running desk is on v${runningVer}, restarting to load v${localVer}...`
+      : 'Restarting Trading Agent Mpu Gandring...');
+    try {
+      await fetch(`${url}/api/ops/restart`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ forceExit: true })
+      });
+    } catch { /* ignore */ }
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      if (!(await getRunningHealth())) break;
+    }
+  }
+} else if (runningHealth) {
+  console.log(`Trading Agent Mpu Gandring is already running: ${target}`);
+  open();
+  process.exit(0);
+}
 let child, stopping = false, restart = false, opened = false;
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { stopping = true; child?.kill(signal); });
 do {

@@ -47,6 +47,23 @@ function formatCurrencyValue(usdtAmount: number, cur: CurrencyOption): string {
   return cur.code === 'USDT' ? `${formatted} USDT` : `${cur.symbol} ${formatted}`;
 }
 
+function cleanVer(v: string): number[] {
+  return v.replace(/^v/i, '').trim().split('.').map((x) => Number.parseInt(x, 10) || 0);
+}
+
+function compareVer(a: string, b: string): number {
+  const pa = cleanVer(a);
+  const pb = cleanVer(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
 export function TopBar({
   state,
   connected,
@@ -93,8 +110,20 @@ export function TopBar({
       setRestartReply(lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
     } finally { setRestarting(false); }
   };
-  const ver = updateInfo?.currentVersion ?? '0.0.0.3.30';
-  const hasUpdate = Boolean(updateInfo?.updateAvailable);
+  const runningVer = state?.version;
+  const latestVer = updateInfo?.latestVersion;
+  const diskVer = updateInfo?.currentVersion;
+  const hasUpdate = Boolean(
+    updateInfo?.updateAvailable ||
+    (runningVer && latestVer && compareVer(latestVer, runningVer) > 0) ||
+    (runningVer && diskVer && compareVer(diskVer, runningVer) > 0)
+  );
+  const targetVer = (latestVer && runningVer && compareVer(latestVer, runningVer) > 0)
+    ? latestVer
+    : (diskVer && runningVer && compareVer(diskVer, runningVer) > 0)
+      ? diskVer
+      : (latestVer ?? diskVer ?? '0.0.0.3.30');
+  const ver = diskVer ?? '0.0.0.3.30';
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {
     try {
@@ -178,10 +207,10 @@ export function TopBar({
                 <button
                   className="badge setup-btn version-btn update-avail-badge new-update-badge"
                   onClick={onOpenUpdate}
-                  title={`${t('updateAvailable')}: v${updateInfo?.latestVersion}`}
+                  title={`${t('updateAvailable')}: v${targetVer}`}
                 >
                   <i className="update-notif-dot" aria-hidden="true" />
-                  {t('newUpdateBadge')}
+                  {t('newUpdateBadge')} v{targetVer}
                 </button>
               )}
             </h1>
@@ -197,7 +226,18 @@ export function TopBar({
             {state?.appMode === 'grokbot' && <span className="badge">Grok Bot team</span>}
             {state?.killed && <span className="badge warn">{t('killSwitchOn')}</span>}
             {state?.dailyLoss?.hit && <span className="badge warn">{t('dailyLossStop')}</span>}
-            {state?.version && <span className="badge version-badge" title={'Trading Agent Mpu Gandring v' + state.version}>v{state.version}</span>}
+            {state?.version && (
+              <button
+                type="button"
+                className={`badge version-badge setup-btn ${hasUpdate ? 'warn' : ''}`}
+                onClick={onOpenUpdate}
+                title={'Trading Agent Mpu Gandring v' + state.version + (hasUpdate ? ` (v${targetVer} ready)` : '')}
+                style={{ cursor: onOpenUpdate ? 'pointer' : 'default' }}
+              >
+                v{state.version}
+                {hasUpdate && <span className="update-notif-dot" style={{ marginLeft: 6, display: 'inline-block' }} aria-hidden="true" />}
+              </button>
+            )}
           </div>
         </div>
       </div>

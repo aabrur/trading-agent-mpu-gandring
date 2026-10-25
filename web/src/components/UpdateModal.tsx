@@ -51,6 +51,21 @@ export function UpdateModal({
     }
   };
 
+  const restartDesk = async () => {
+    setBusy(true);
+    setResult({ ok: true, message: 'Restarting desk process... reloading office in 2s.' });
+    try {
+      await fetch('/api/ops/restart', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ forceExit: true })
+      });
+    } catch { /* ignore */ }
+    setTimeout(() => {
+      window.location.reload();
+    }, 2000);
+  };
+
   return (
     <div className="setup-overlay" role="dialog" aria-modal="true" aria-label={t('versionModalTitle')} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
       <div className="panel setup update-modal">
@@ -88,6 +103,9 @@ export function UpdateModal({
           </button>
           <button className="primary" onClick={applyNow} disabled={busy}>
             {busy ? t('updatingBtn') : `${t('applyUpdateBtn')} v${latest}`}
+          </button>
+          <button type="button" onClick={restartDesk} disabled={busy}>
+            Restart Desk
           </button>
           <a className="badge" href={info?.releaseUrl ?? 'https://github.com/aabrur/trading-agent-mpu-gandring'} target="_blank" rel="noreferrer">
             {t('viewRepoLink')} ↗

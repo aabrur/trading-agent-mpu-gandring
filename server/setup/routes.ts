@@ -363,6 +363,11 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
       setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
       return res.json({ ok: true, detail: 'Restarting the office managed process...' });
     }
+    if (req.body?.forceExit || req.body?.restartProcess || req.query?.force === 'true') {
+      res.json({ ok: true, detail: 'Restarting server process...' });
+      setTimeout(() => process.exit(0), 150).unref();
+      return;
+    }
     return res.json({ ok: true, detail: 'Office configuration reloaded and synchronized in-place.' });
   });
   app.post('/api/ops/auto', (req, res) => {
