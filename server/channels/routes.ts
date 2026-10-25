@@ -17,7 +17,7 @@ import { verifyDiscord, verifyMeta, verifySlack, sameToken } from './verify.js';
 import { whatsappSend } from './adapters.js';
 import type { DeskLead } from './supervisor.js';
 import { CHANNEL_GUIDES, CHANNEL_LINKS_CHECKED_ON, NOT_SHIPPED, SUPERVISOR_ENV } from './guide.js';
-import { channelStatus, checkChannelInput, saveChannel, testChannel, telegramChats, isChannel, discordRegisterCommand, syncTelegramCommands, syncSlackCommands, syncWhatsAppCommands } from './setup.js';
+import { channelStatus, checkChannelInput, saveChannel, resetChannel, testChannel, telegramChats, isChannel, discordRegisterCommand, syncTelegramCommands, syncSlackCommands, syncWhatsAppCommands } from './setup.js';
 import { CHANNELS } from './config.js';
 
 type RawReq = express.Request & { rawBody?: Buffer };
@@ -202,6 +202,15 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
       r.detail = 'Discord saved and applied. /mpu registered and verified when Bot API is configured.';
     }
     res.status(r.ok ? 200 : 422).json(r);
+  });
+  app.post('/api/setup/channels/reset', async (req, res) => {
+    if (!gate(req, res, true)) return;
+    const ch = (req.body as { channel?: unknown })?.channel;
+    if (!isChannel(ch)) return res.status(400).json({ ok: false, error: 'unknown channel' });
+    const r = resetChannel(c.envFile, ch);
+    const next = setupEnv(c.envFile);
+    c.lead?.reload(channelConfig(next));
+    res.json(r);
   });
   app.post('/api/setup/channels/test', async (req, res) => {
     if (!gate(req, res)) return;

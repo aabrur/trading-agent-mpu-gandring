@@ -41,6 +41,17 @@ export function saveChannel(envFile: string, ch: ChannelName, input: Record<stri
   return { ok: true, detail: `${CHANNEL_GUIDES[ch].label} saved to .env. Restart the desk to use it.`, saved: Object.keys(up) };
 }
 
+export function resetChannel(envFile: string, ch: ChannelName): ChannelResult {
+  const g = CHANNEL_GUIDES[ch];
+  const up: Record<string, string> = {};
+  for (const f of g.fields) {
+    up[f.env] = '';
+    delete process.env[f.env];
+  }
+  setEnv(envFile, up);
+  return { ok: true, detail: `${g.label} configuration has been completely reset.` };
+}
+
 /** What is set for each channel, with secrets reduced to set/empty. */
 export function channelStatus(env: NodeJS.ProcessEnv) {
   const c = channelConfig(env);

@@ -262,7 +262,7 @@ describe('Desk Lead and inbound routes', () => {
     expect((await lead.tick()).some((t) => /KILL SWITCH IS ON/.test(t))).toBe(true);
   });
   it('office channel setup routes are localhost only and saving needs local mode', async () => {
-    const { base } = await boot();
+    const { base, envFile } = await boot();
     const info = await (await fetch(`${base}/api/setup/channels`)).json();
     expect(info.ok).toBe(true);
     expect(JSON.stringify(info)).not.toContain(TG_TOKEN);
@@ -270,6 +270,10 @@ describe('Desk Lead and inbound routes', () => {
     const g = await boot({ ...allEnv, APP_MODE: 'grokbot' });
     const r = await fetch(`${g.base}/api/setup/channels/save`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channel: 'telegram', values: { TELEGRAM_BOT_TOKEN: TG_TOKEN, TELEGRAM_CHAT_ID: '1' } }) });
     expect(r.status).toBe(403);
+
+    const resetRes = await fetch(`${base}/api/setup/channels/reset`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channel: 'telegram' }) });
+    expect((await resetRes.json()).ok).toBe(true);
+    expect(readEnv(envFile).TELEGRAM_BOT_TOKEN).toBe('');
   });
   it('synchronizes Telegram, Slack, and WhatsApp commands and exposes localhost routes', async () => {
     const { base, f, sent, envFile } = await boot();

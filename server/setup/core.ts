@@ -102,10 +102,19 @@ export async function setTradingMode(envFile: string, mode: string, o: { confirm
   return { ...r, saved: ['TRADING_MODE'], detail: `${r.detail}. Saved TRADING_MODE=${String(mode).toUpperCase()}. Restart the office to apply.` };
 }
 
-/** process.env (platform secrets, e.g. Grok Bot secret cards) plus the .env file; non-empty file values win. */
+/** process.env (platform secrets, e.g. Grok Bot secret cards) plus the .env file; non-empty file values win. Empty values in .env explicitly delete from process.env. */
 export function setupEnv(envFile: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const file = Object.fromEntries(Object.entries(readEnv(envFile)).filter(([, v]) => v !== ''));
-  Object.assign(process.env, file);
+  const fromFile = readEnv(envFile);
+  for (const [k, v] of Object.entries(fromFile)) {
+    if (v === '') {
+      delete base[k];
+      if (base === process.env) delete process.env[k];
+    } else {
+      base[k] = v;
+      if (base === process.env) process.env[k] = v;
+    }
+  }
+  const file = Object.fromEntries(Object.entries(fromFile).filter(([, v]) => v !== ''));
   return { ...base, ...file };
 }
 

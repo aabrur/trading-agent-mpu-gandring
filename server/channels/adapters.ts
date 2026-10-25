@@ -21,20 +21,28 @@ export function telegramSend(c: ChannelConfig['telegram'], text: string, fetchIm
 export async function discordSend(c: ChannelConfig['discord'], text: string, fetchImpl: typeof fetch = fetch): Promise<SendResult> {
   if (!c.enabled) return 'off';
   const targets: string[] = [];
-  if (c.botToken && c.allowed.length > 0) {
-    try {
-      const dm = await resolveDiscordDmChannel(c.botToken, c.allowed[0], fetchImpl);
-      if (dm) targets.push(dm);
-    } catch (e) {
-      log(`[channel] discord DM channel resolve failed: ${safe((e as Error).message).slice(0, 160)}`);
+  const botToken = c.botToken;
+  if (botToken && c.allowed.length > 0) {
+    const dms = await Promise.all(
+      c.allowed.map(async (uid) => {
+        try {
+          return await resolveDiscordDmChannel(botToken, uid, fetchImpl);
+        } catch (e) {
+          log(`[channel] discord DM channel resolve failed for ${uid}: ${safe((e as Error).message).slice(0, 160)}`);
+          return null;
+        }
+      })
+    );
+    for (const dm of dms) {
+      if (dm && !targets.includes(dm)) targets.push(dm);
     }
   }
   // Guild/server channel is optional: send to it only when configured
-  if (c.botToken && c.channelId && !targets.includes(c.channelId)) {
+  if (botToken && c.channelId && !targets.includes(c.channelId)) {
     targets.push(c.channelId);
   }
-  if (c.botToken && targets.length > 0) {
-    const headers: Record<string, string> = { Authorization: `Bot ${c.botToken}` };
+  if (botToken && targets.length > 0) {
+    const headers: Record<string, string> = { Authorization: `Bot ${botToken}` };
     const body = { content: safe(text).slice(0, 1990), allowed_mentions: { parse: [] } };
     const results = await Promise.all(
       targets.map(targetChannel =>

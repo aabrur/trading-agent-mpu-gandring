@@ -36,6 +36,18 @@ export function ChannelsSetup() {
   const cur = g.steps[step];
 
   async function save() { setBusy(true); const r = await post('/api/setup/channels/save', { channel: ch, values: vals, commands }).catch(() => ({ ok: false, detail: lang === 'id' ? 'Meja trading tidak terjangkau' : 'office not reachable' })); setVals({}); setBusy(false); setMsg({ ok: r.ok, text: r.detail ?? r.error }); if (r.ok) { setEditing(false); void load(); } }
+  async function resetChannelConfig(channel: string) {
+    const guide = info?.guides.find((x) => x.channel === channel);
+    const label = guide ? guide.label : channel;
+    if (!window.confirm(lang === 'id' ? `Hapus dan reset seluruh konfigurasi ${label}?` : `Delete and reset all configuration for ${label}?`)) return;
+    setBusy(true);
+    const r = await post('/api/setup/channels/reset', { channel }).catch(() => ({ ok: false, detail: lang === 'id' ? 'Meja trading tidak terjangkau' : 'office not reachable' }));
+    setBusy(false);
+    setVals({});
+    setEditing(false);
+    setMsg({ ok: r.ok, text: r.detail ?? r.error });
+    if (r.ok) void load();
+  }
   async function test() { setBusy(true); const r = await post('/api/setup/channels/test', { channel: ch }).catch(() => ({ ok: false, detail: lang === 'id' ? 'Meja trading tidak terjangkau' : 'office not reachable' })); setBusy(false); setMsg({ ok: r.ok, text: r.detail ?? r.error }); }
   async function findChats() { setBusy(true); const r = await post('/api/setup/channels/telegram-chats', {}).catch(() => ({ ok: false, detail: lang === 'id' ? 'Meja trading tidak terjangkau' : 'office not reachable', chats: [] })); setBusy(false); setChats(r.chats ?? []); setMsg({ ok: r.ok, text: r.detail ?? r.error }); }
 
@@ -81,7 +93,17 @@ export function ChannelsSetup() {
     <div className="setup-channels">
       <p className="wallet-note">{t('setupChannelsNote')}</p>
       <div className="seg" role="group" aria-label="channel">{info.guides.map((x) => <button key={x.channel} className={ch === x.channel ? 'on' : ''} onClick={() => { setAt(0); setCh(x.channel); }}>{x.label}</button>)}</div>
-      <div className="setup-section-actions"><p className="wallet-note">{st.enabled ? t('setupChannelsConnReady') : t('setupChannelsNoConn')} {t('setupChannelsSafeCommands')} {info.status.commands ? (lang === 'id' ? 'aktif' : 'on') : (lang === 'id' ? 'mati' : 'off')}.</p>{!editing && <button disabled={!info.entry.available} onClick={() => { setCommands(info.status.commands); setEditing(true); }}>{t('setupChannelsEditBtn')} ({g.label})</button>}</div>
+      <div className="setup-section-actions">
+        <p className="wallet-note">{st.enabled ? t('setupChannelsConnReady') : t('setupChannelsNoConn')} {t('setupChannelsSafeCommands')} {info.status.commands ? (lang === 'id' ? 'aktif' : 'on') : (lang === 'id' ? 'mati' : 'off')}.</p>
+        <div className="setup-channel-actions">
+          {st.enabled && (
+            <button type="button" disabled={busy || !info.entry.available} className="bad" onClick={() => void resetChannelConfig(ch)}>
+              {lang === 'id' ? `Hapus Konfigurasi (${g.label})` : `Delete Config (${g.label})`}
+            </button>
+          )}
+          {!editing && <button disabled={!info.entry.available} onClick={() => { setCommands(info.status.commands); setEditing(true); }}>{t('setupChannelsEditBtn')} ({g.label})</button>}
+        </div>
+      </div>
       {!editing && (
         <>
           <dl className="setup-summary">
@@ -132,7 +154,7 @@ export function ChannelsSetup() {
         <form className="setup-keys" autoComplete="off" onSubmit={(e) => { e.preventDefault(); void save(); }}>
           {g.fields.map((f) => <label key={f.env}><span>{f.label}{f.required ? '' : (lang === 'id' ? ' (opsional)' : ' (optional)')} <code>{f.env}</code></span><input type={f.secret ? 'password' : 'text'} autoComplete="off" spellCheck={false} placeholder={st.fields.find((x) => x.env === f.env)?.set ? (lang === 'id' ? 'sudah diatur, kosongkan bila tidak diganti' : 'already set, empty keeps it') : f.hint} value={vals[f.env] ?? ''} onChange={(e) => setVals({ ...vals, [f.env]: e.target.value })} /></label>)}
           {ch === 'discord' && <div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+            <div className="setup-channel-actions" style={{ marginBottom: '8px' }}>
               <button type="button" disabled={busy} onClick={() => void inspectBot(vals.DISCORD_GUILD_ID || undefined)}>{lang === 'id' ? 'Validasi Bot / Segarkan Server' : 'Validate Bot / Refresh Servers'}</button>
               <button type="button" disabled={busy} onClick={() => {
                 setVals(old => ({ ...old, DISCORD_GUILD_ID: '', DISCORD_CHANNEL_ID: '', DISCORD_WEBHOOK_URL: '' }));
@@ -150,6 +172,11 @@ export function ChannelsSetup() {
           <div className="setup-nav" style={{ marginTop: '8px' }}>
             <button disabled={busy} type="submit">{t('setupChannelsSaveBtn')}</button>
             <button type="button" disabled={busy || !st.enabled} onClick={test}>{t('setupChannelsSendTestBtn')}</button>
+            {st.enabled && (
+              <button type="button" disabled={busy} className="bad" onClick={() => void resetChannelConfig(ch)}>
+                {lang === 'id' ? `Hapus Konfigurasi (${g.label})` : `Delete Config (${g.label})`}
+              </button>
+            )}
             {ch === 'telegram' && (
               <button type="button" disabled={busy || (!st.enabled && !vals.TELEGRAM_BOT_TOKEN)} onClick={() => void syncTelegramCommands()}>
                 {lang === 'id' ? 'Sinkronkan Perintah Telegram' : 'Sync Telegram Commands'}

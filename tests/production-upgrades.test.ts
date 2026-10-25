@@ -100,13 +100,18 @@ describe('Discord bot integration', () => {
     expect(request.mock.calls[0][0]).toBe('https://discord.com/api/v10/channels/789/messages');
 
     const dmReq = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      if (String(url).includes('/users/@me/channels')) return new Response(JSON.stringify({id: 'dm_channel_999'}));
+      if (String(url).includes('/users/@me/channels')) {
+        const parsed = JSON.parse(String(init?.body ?? '{}'));
+        return new Response(JSON.stringify({id: `dm_${parsed.recipient_id}`}));
+      }
       return new Response('{}');
     });
-    const dmCfg = channelConfig({DISCORD_BOT_TOKEN: token, DISCORD_ALLOWED_USER_IDS: 'user_boss'});
+    const dmCfg = channelConfig({DISCORD_BOT_TOKEN: token, DISCORD_ALLOWED_USER_IDS: 'user_boss, user_copilot'});
     expect(await discordSend(dmCfg.discord, 'dm alert', dmReq)).toBe('sent');
     expect(String(dmReq.mock.calls[0][0])).toBe('https://discord.com/api/v10/users/@me/channels');
-    expect(String(dmReq.mock.calls[1][0])).toBe('https://discord.com/api/v10/channels/dm_channel_999/messages');
+    expect(String(dmReq.mock.calls[1][0])).toBe('https://discord.com/api/v10/users/@me/channels');
+    expect(String(dmReq.mock.calls[2][0])).toBe('https://discord.com/api/v10/channels/dm_user_boss/messages');
+    expect(String(dmReq.mock.calls[3][0])).toBe('https://discord.com/api/v10/channels/dm_user_copilot/messages');
   });
   it('parses named nested values in command order and preserves Owner authorization', () => {
     expect(discordCommandText({name: 'mpu', options: [{name: 'open', options: [{name: 'symbol', value: 'BTCUSDT'}, {name: 'leverage', value: 3}, {name: 'side', value: 'long'}, {name: 'size', value: 10}]}]})).toBe('open long BTCUSDT 10% 3x');
