@@ -16,10 +16,10 @@ import { strategyVote } from '../server/strategy.js';
 import { sampleCandles } from '../server/market/sample.js';
 
 describe('decision pace', () => {
-  it('skips redundant consensus rounds and keeps full NORMAL rebuttals for opposing analysis', () => {
-    expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(0);
+  it('keeps NORMAL rounds and one FAST challenge even when directional analysts agree', () => {
+    expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(2);
     expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'SHORT', strategist: 'LONG', researchVote: 'SHORT' })).toBe(2);
-    expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(0);
+    expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(1);
     expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'SHORT', strategist: 'LONG', researchVote: 'SHORT' })).toBe(1);
     expect(rebuttalRounds('fast', 2, { market: 'NEUTRAL', research: 'NEUTRAL', strategist: 'NEUTRAL', researchVote: 'ABSTAIN' })).toBe(0);
     expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'NEUTRAL', strategist: 'LONG', researchVote: 'VETO' })).toBe(0);
@@ -80,7 +80,7 @@ describe('profile draft selection', () => {
 });
 
 describe('FAST debate and SHADOW Jev', () => {
-  it('does not issue rebuttal calls in FAST when the three analysts agree', async () => {
+  it('runs one FAST challenge round and the configured NORMAL rounds for aligned analysts', async () => {
     const env = { TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', DEBATE_MODE: 'fast' };
     const c = loadConfig(env);
     expect(c.debate.mode).toBe('fast');
@@ -96,8 +96,8 @@ describe('FAST debate and SHADOW Jev', () => {
     const nDesk = new Desk(normal, nCaller, { reportsDir: null });
     await nDesk.runDebate('ETHUSDT');
     const normalRebuttals = nCaller.mock.calls.filter(([r]) => r.task === 'rebuttal').length;
-    expect(rebuttals).toBe(0);
-    expect(normalRebuttals).toBe(0);
+    expect(rebuttals).toBe(3);
+    expect(normalRebuttals).toBe(3 * normal.debate.rounds);
   });
 
   it('does not block SHADOW Jev on verdict generation', async () => {

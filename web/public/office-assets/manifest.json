@@ -421,5 +421,27 @@
     "sourceWidth": 171,
     "sourceHeight": 176,
     "bytes": 2400
+  },
+  {
+    "file": "mg_desk_diagonal_v3.webp",
+    "source": "imagegen/exec-4d7d78be-3f3b-44cc-b860-78d8044baed1.png",
+    "referenceImage": "Owner supplied 1-Photo-1.jpg",
+    "sourceWidth": 1672,
+    "sourceHeight": 941,
+    "width": 960,
+    "height": 540,
+    "bytes": 77782,
+    "usage": "Separate transparent desk. Painted diagonal perspective, vertical legs. Eastern furniture mirrors this sprite; labels remain readable."
+  },
+  {
+    "file": "mg_chair_diagonal_v3.webp",
+    "source": "imagegen/exec-aa3d2455-6976-4b15-bf24-c6655cd57781.png",
+    "referenceImage": "Owner supplied 1-Photo-1.jpg",
+    "width": 360,
+    "height": 329,
+    "bytes": 26418,
+    "usage": "Separate transparent chair, behind seated avatar and desk.",
+    "sourceWidth": 1312,
+    "sourceHeight": 1199
   }
 ]

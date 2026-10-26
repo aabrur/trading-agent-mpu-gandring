@@ -82,22 +82,25 @@
 }
 
 [data-theme='night'] {
-  --bg: #202a25;
-  --bg-2: #1b241f;
-  --panel: #29362e;
-  --panel-2: #324036;
-  --line: #495a4b;
+  color-scheme: dark;
+  --long: #76cba0;
+  --short: #f0806a;
+  --bg: #191b1e;
+  --bg-2: #141619;
+  --panel: #23262a;
+  --panel-2: #2d3035;
+  --line: #45484e;
   --shadow-color: 10, 5, 15;
   --ink: #2a1d14;
-  --text: #f2eddd;
-  --text-dim: #c5ccb9;
-  --text-faint: #adb79f;
-  --wood-dark: #d5b18b;
-  --sage-deep: #a9c8a5;
-  --teal: #92ccc0;
+  --text: #f2ede7;
+  --text-dim: #c6c1ba;
+  --text-faint: #aaa59e;
+  --wood-dark: #ed9b56;
+  --sage-deep: #ed9b56;
+  --teal: #ed9b56;
   --cream: #f3e4c8;
-  --wall: #4a3a4c;
-  --wall-dot: #574657;
+  --wall: #292b2e;
+  --wall-dot: #34363a;
   --wainscot: #6a4a3a;
   --shelf-back: #3a2618;
   --floor: #8a6040;
@@ -106,10 +109,10 @@
   --rug: #a5594a;
   --rug-edge: #874538;
   --rug-pattern: #d9b49a;
-  --sky-top: #232046;
-  --sky-bottom: #5b3f6e;
+  --sky-top: #161a21;
+  --sky-bottom: #343a45;
   --sun: #f4f0d0;
-  --hill: #2e2440;
+  --hill: #252a31;
   --lamp-glow: #ffbf5e;
   --desk-top: #8f6240;
   --desk-front: #744d30;

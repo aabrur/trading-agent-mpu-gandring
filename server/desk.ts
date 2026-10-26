@@ -84,7 +84,7 @@ export class Desk extends EventEmitter {
   private snapshotCache = new Map<string, { at: number; promise: Promise<MarketSnapshot & { errors: string[] }> }>();
   researchObservations: Record<string, ToolObservation> = {};
   chatMetrics = { agentCalls: 0, modelAttempts: 0, failures: 0, lastLatencyMs: 0, totalLatencyMs: 0, tokenUsage: null, modelCost: null };
-  debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
+  debate: null | { id: string; symbol: string; phase: string; mode: 'normal' | 'fast'; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] } = null;
   paused = false;
   killed = false;
   killedAt = 0;
@@ -543,8 +543,7 @@ export class Desk extends EventEmitter {
   private async say(agent: AgentId, text: string, example: boolean, after: AgentStatus = 'arguing', log = true) {
     const clean = safe(text);
     const at = Date.now(), id = 'speech-' + at + '-' + (++this.speechSeq);
-    // Decision work never waits for cosmetic typewriter pacing.
-    const pace = this.debate ? 0 : this.cfg.debate.paceMs;
+    const pace = this.cfg.debate.paceMs * (this.debate?.mode === 'fast' ? 0.4 : 1);
     this.setStatus(agent, 'typing');
     const words = clean.split(' ');
     const chunk = 3;
@@ -560,6 +559,13 @@ export class Desk extends EventEmitter {
     if (log) this.addLog({ kind: 'speech', agent, text: clean, example });
     this.changed();
     if (pace) await sleep(pace / 2);
+    if (this.debate) await this.debateBeat(0);
+  }
+
+  /** Leave time for visible stage changes, then recheck cancellation before continuing. */
+  private async debateBeat(ms: number, started = Date.now()) {
+    if (ms > 0) await sleep(Math.max(0, ms - (Date.now() - started)));
+    if (this.stopFlag || this.paused || this.killed) throw new Error('Debate cancelled: desk stopped or paused.');
   }
 
   // ---------- market ----------
@@ -763,7 +769,9 @@ export class Desk extends EventEmitter {
     if (this.grokbot) throw new Error('Grok Bot mode: the debate runs in your Grok Bot group chat (npm run gb -- event ...), the internal engine is off');
     this.stopFlag = false;
     const id = `deb-${Date.now().toString(36)}`;
-    this.debate = { id, symbol, phase: 'opening', round: 0, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
+    const mode = this.cfg.debate.mode;
+    const movementBeat = this.cfg.debate.paceMs * (mode === 'fast' ? 2 : 4);
+    this.debate = { id, symbol, phase: 'opening', mode, round: 0, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
     this.emit('debate', { id, symbol, phase: 'opening' });
     const transcript: string[] = [`# Debate ${id} on ${symbol}`, `Mode: ${this.cfg.tradingMode}. Started ${new Date().toISOString()}`];
     const note = (who: string, t: string) => transcript.push(`- **${who}**: ${t}`);
@@ -863,6 +871,7 @@ export class Desk extends EventEmitter {
       if (news.some((n) => n.flagged)) this.addLog({ kind: 'warn', text: `Prompt injection line removed from ${symbol} news before any agent saw it.` });
 
       // 3. Strategist (rule computed in code, agent explains)
+      this.setPhase('strategy');
       this.setStatus('strategist', 'reading'); this.changed();
       const rule = strategyVote(snap.candles);
       const st = await timer.measure('strategist', () => this.run('strategist', 'opinion', {
@@ -877,12 +886,15 @@ export class Desk extends EventEmitter {
 
       const journal = this.book.closed.slice(0, 5).map((t) => ({ symbol: t.symbol, side: t.side, pnl: t.pnlStatus === 'unknown' ? null : t.realizedPnl, pnlStatus: t.pnlStatus, exitStatus: t.exitStatus, entryStatus: t.entryStatus, remainingQty: t.remainingQty, ownership: t.ownership, reason: t.reason }));
 
-      const rounds = rebuttalRounds(this.cfg.debate.mode, this.cfg.debate.rounds, {
+      const rounds = rebuttalRounds(mode, this.cfg.debate.rounds, {
         market: this.agents.market.stance,
         research: this.agents.research.stance,
         strategist: this.agents.strategist.stance,
         researchVote
       });
+      this.setPhase('gathering');
+      this.setAll('idle');
+      await this.debateBeat(movementBeat);
       const rbStart = Date.now();
       for (let round = 1; round <= rounds; round++) {
         if (this.stopFlag) break;
@@ -903,6 +915,7 @@ export class Desk extends EventEmitter {
           const { disagreement } = this.score();
           const target = rb.data.target !== 'none' && rb.data.target !== a ? (rb.data.target as AgentId) : null;
           const fighting = disagreement >= this.cfg.debate.fightThreshold && !!target && this.agents[target].stance !== null && val(this.agents[target].stance!) * val(stance) < 0;
+          const speechStarted = Date.now();
           if (fighting && target) {
             const intensity = Math.min(1, disagreement);
             this.setStatus(a, 'fighting'); this.setStatus(target, 'fighting');
@@ -910,6 +923,7 @@ export class Desk extends EventEmitter {
             this.addLog({ kind: 'fight', agent: a, text: `${ROLES[a].name} throws a punch at ${ROLES[target].name} (disagreement ${disagreement.toFixed(2)})` });
           }
           await this.say(a, rb.data.rebuttal, rb.example, fighting ? 'fighting' : 'arguing'); note(ROLES[a].name, `[${stance}] ${rb.data.rebuttal}`);
+          await this.debateBeat(fighting ? this.cfg.debate.paceMs * 3.5 : 0, speechStarted);
           if (fighting && target) this.setStatus(target, 'arguing');
         }
       }
@@ -994,6 +1008,16 @@ export class Desk extends EventEmitter {
         await this.say('execution', execLine, false, 'idle'); note('Execution Trader', execLine);
       }
 
+      if (opening || (action === 'CLOSE' && pos)) {
+        this.setPhase('preparation');
+        this.setAll('idle');
+        const preparationStarted = Date.now();
+        await this.say('execution', opening
+          ? `Preparing ${action === 'OPEN_LONG' ? 'LONG' : 'SHORT'} ${symbol}. Checking the current quote, capacity and Owner profile SL/TP before submission.`
+          : `Preparing to close ${pos!.side} ${symbol}. Checking the position before reduce-only execution.`, false, 'thinking');
+        await this.debateBeat(movementBeat, preparationStarted);
+      }
+
       // 7. Verdict and paper execution
       const riskDecision: Verdict['riskDecision'] = opening ? gate.decision : pos && action === 'CLOSE' ? 'APPROVE' : 'N/A';
       const verdict: Verdict = { id, symbol, action, riskDecision, executed: false, reason: decisionReason, disagreement, camps, example: mk.example || ld.example || snap.example, at: Date.now() };
@@ -1012,6 +1036,8 @@ export class Desk extends EventEmitter {
           this.note('skipped', symbol, `HOLD: ${verdict.reason}`);
         } else {
           const price = roundPrice(reval.quote);
+          await this.debateBeat(0);
+          this.setPhase('execution');
           const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, evidence: { decisionId: id, action, confidence: ld.data.confidence, reason: ld.data.reason, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
           if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
           verdict.executed = res.ok;
@@ -1020,6 +1046,8 @@ export class Desk extends EventEmitter {
           note('Execution Trader', res.line);
         }
       } else if (action === 'CLOSE' && pos) {
+        await this.debateBeat(0);
+        this.setPhase('execution');
         const t = await this.executeClose(symbol, snap.last, flipNote ? 'opposite signal' : 'desk verdict CLOSE', true);
         verdict.executed = t.length > 0; verdict.executionStatus = t.some((x) => x.remainingQty) ? 'partial' : t.length ? 'closed' : undefined;
         note('Execution Trader', t.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ') || 'nothing closed');

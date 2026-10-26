@@ -7,12 +7,12 @@ export interface Activity { pose: Pose; face: Face; label: string; destination?:
 
 // Presentation geometry stays separate from venue configuration and trading decisions.
 export const WORKSTATIONS: Record<AgentId, Point> = {
-  lead: { x: 18, y: 43 },
-  market: { x: 82, y: 43 },
-  research: { x: 18, y: 66 },
-  strategist: { x: 82, y: 66 },
-  risk: { x: 18, y: 89 },
-  execution: { x: 82, y: 89 },
+  lead: { x: 20, y: 43 },
+  market: { x: 80, y: 43 },
+  research: { x: 20, y: 66 },
+  strategist: { x: 80, y: 66 },
+  risk: { x: 20, y: 89 },
+  execution: { x: 80, y: 89 },
 };
 export const FIGHT_STAGE = { from: { x: 43, y: 65 }, to: { x: 57, y: 65 } };
 export const SPECTATORS: Record<AgentId, Point> = {
@@ -69,6 +69,7 @@ const breaks: Activity[] = [
   { pose: 'drink', face: 'happy', label: 'coffee break', destination: { x: 90, y: 37 }, facing: 'right' },
   { pose: 'point', face: 'normal', label: 'studying the analysis board', destination: { x: 36, y: 38 }, facing: 'left' },
   { pose: 'observe', face: 'normal', label: 'looking out the window', destination: { x: 60, y: 47 }, facing: 'right' },
+  { pose: 'sleep', face: 'normal', label: 'taking a short nap', destination: { x: 61, y: 94 }, facing: 'left' },
   { pose: 'stretch', face: 'happy', label: 'stretching in the lounge', destination: { x: 50, y: 94 } },
 ];
 
@@ -87,11 +88,15 @@ export function ambientActivity(id: AgentId, slot: number): Activity {
 
 export function workstationPoint(id: AgentId): Point {
   const desk = WORKSTATIONS[id];
-  return { x: desk.x + (desk.x <= 50 ? 7.8 : -7.8), y: desk.y + 5.5 };
+  return { x: desk.x + (desk.x <= 50 ? -3 : 3), y: desk.y - 6 };
+}
+
+export function atDiscussionTable(phase?: string): boolean {
+  return !!phase && (phase.startsWith('round ') || ['gathering', 'verdict', 'risk gate', 'position risk review', 'execution review'].includes(phase));
 }
 
 export function officePositions(state: DeskState, activities: Record<AgentId, Activity>, fight?: Fight): Record<AgentId, Point> {
-  const atTable = state.debate && !['opening', 'reading', 'done'].includes(state.debate.phase);
+  const atTable = atDiscussionTable(state.debate?.phase);
   return Object.fromEntries(
     AGENT_ORDER.map((id) => {
       if (fight) return [id, fight.from === id ? FIGHT_STAGE.from : fight.to === id ? FIGHT_STAGE.to : SPECTATORS[id]];
@@ -127,6 +132,18 @@ export function directScene(input: { state: DeskState; events: SceneEvent[]; tic
       activityFor(state, id, slot, visitors.has(id) ? id : null, important, id === activeDeskAgent),
     ])
   ) as Record<AgentId, Activity>;
+  // Leisure is presentation only. Busy agents and position monitoring always take precedence.
+  for (const id of AGENT_ORDER) {
+    if (frame[id].pose === 'sleep' && state.paper.positions.length) frame[id] = { ...deskRoutines[id] };
+    if (!frame[id].facing && !state.debate) frame[id].facing = WORKSTATIONS[id].x < 50 ? 'left' : 'right';
+  }
+  if (resting && slot % 3 === 2 && visitors.size === 2) {
+    const [first, second] = [...visitors];
+    if ([first, second].every((id) => state.agents[id].status === 'idle')) {
+      frame[first] = { pose: 'drink', face: 'happy', label: 'chatting over coffee', destination: { x: 41, y: 93 }, facing: 'right', partner: second };
+      frame[second] = { pose: 'point', face: 'happy', label: 'chatting over coffee', destination: { x: 50, y: 94 }, facing: 'left', partner: first };
+    }
+  }
   const speech = recent.find((e) => e.kind === 'speech' && (e.agent === 'research' || e.agent === 'risk'));
   if (!hidden && !reducedMotion && !state.killed && !state.paused && !state.debate && !important && speech?.agent) {
     const from = speech.agent;
@@ -156,7 +173,9 @@ export function eventActivity(event: SceneEvent): Activity {
 
 export function activityFor(state: DeskState, id: AgentId, slot: number, visitor: AgentId | null, event?: SceneEvent, deskActive = false): Activity {
   if (state.killed || state.paused) return { pose: 'think', face: state.killed ? 'worried' : 'normal', label: state.killed ? 'desk stopped' : 'desk paused' };
-  if (event && (event.kind === 'execution' ? id === 'execution' : id === 'lead')) return eventActivity(event);
+  if (!state.debate && event && (event.kind === 'execution' ? id === 'execution' : id === 'lead')) return eventActivity(event);
+  if (state.debate?.phase === 'gathering') return { pose: 'sit', face: 'normal', label: 'joining the discussion' };
+  if (state.debate?.phase === 'preparation' && id !== 'execution') return { pose: 'sit', face: 'normal', label: 'returning to workstation' };
   const status = state.agents[id].status;
   const busy: Partial<Record<typeof status, Activity>> = {
     reading: { pose: 'read', face: 'normal', label: id === 'research' ? 'checking sources' : 'reading charts' },

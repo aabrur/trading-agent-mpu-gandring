@@ -1,6 +1,6 @@
 import { lazy, useCallback, useEffect, useState } from 'react';
 import { useDesk } from './useDesk';
-import type { AgentId, CandleData } from './types';
+import type { AgentId, CandleData, ChartTimeframe } from './types';
 import { Office } from './components/Office';
 import { DeferredPanel } from './components/DeferredPanel';
 import { CommandBar } from './components/CommandBar';
@@ -33,6 +33,9 @@ function AppInner() {
   const [theme, setTheme] = useState<string>(initialTheme);
   const [symbol, setSymbol] = useState<string>('');
   const [candles, setCandles] = useState<CandleData | null>(null);
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>('15m');
+  const [chartError, setChartError] = useState('');
+  const [chartRetry, setChartRetry] = useState(0);
   const [setup, setSetup] = useState<boolean>(() => ['#setup', '#setup-trading-default', '#setup-trading-manual'].includes(window.location.hash));
   const [setupEntry, setSetupEntry] = useState(window.location.hash);
   const [venueKeys, setVenueKeys] = useState<boolean>(() => window.location.hash === '#venue-keys');
@@ -95,12 +98,25 @@ function AppInner() {
   const sym = symbol || state?.watchlist[0] || '';
   useEffect(() => {
     if (!sym) return;
-    let alive = true;
-    const load = () => fetch(`/api/candles?symbol=${encodeURIComponent(sym)}`).then((r) => r.json()).then((d: CandleData) => { if (alive) setCandles(d); }).catch(() => {});
-    load();
-    const timer = window.setInterval(load, 30_000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, [sym]);
+    const controller = new AbortController();
+    let timer: number;
+    setCandles(null);
+    setChartError('');
+    const load = async () => {
+      try {
+        const response = await fetch(`/api/candles?symbol=${encodeURIComponent(sym)}&tf=${timeframe}`, { signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Candles unavailable. Retry.');
+        if (!controller.signal.aborted) { setCandles(data); setChartError(''); }
+      } catch (error) {
+        if (!controller.signal.aborted) setChartError(error instanceof Error ? error.message : 'Candles unavailable. Retry.');
+      } finally {
+        if (!controller.signal.aborted) timer = window.setTimeout(load, 30_000);
+      }
+    };
+    void load();
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [sym, timeframe, chartRetry]);
 
   if (!state) {
     return (
@@ -142,7 +158,7 @@ function AppInner() {
           <CommandBar state={state} command={(cmd) => command(cmd)} />
           <div className="workspace-section-title market-section-title"><h2>{id ? 'Pasar & catatan meja' : 'Markets & desk notes'}</h2><span>{id ? 'Harga, keputusan, dan laporan' : 'Prices, decisions, and reports'}</span></div>
           <div className="market-workspace" id="market-workspace">
-            <DeferredPanel label="Price chart"><PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} /></DeferredPanel>
+            <DeferredPanel label="Price chart"><PriceChart state={state} symbol={sym} onSymbol={setSymbol} data={candles} theme={theme} timeframe={timeframe} onTimeframe={setTimeframe} error={chartError} onRetry={() => setChartRetry((n) => n + 1)} /></DeferredPanel>
             <Reports state={state} />
           </div>
         </section>

@@ -14,7 +14,7 @@ import { makeCaller, type ModelCaller } from './providers/index.js';
 import { moneySplit } from './money.js';
 import { safe } from './redact.js';
 import { sendToGrokBot } from './bridge.js';
-import { getSnapshot } from './market/index.js';
+import { getSnapshot, getCandles, TIMEFRAMES, type Timeframe } from './market/index.js';
 import { normSymbol } from './commands.js';
 import type { AgentId } from './types.js';
 import { timingSafeEqual } from 'node:crypto';
@@ -243,19 +243,32 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   const lead = new DeskLead(desk, cfg.channels, opts.channelFetch ?? fetch, onKill);
   mountChannelSetupRoutes(app, { ...routeCtx, fetchImpl: opts.channelFetch ?? routeCtx.fetchImpl, lead });
   const inbound = createInboundApp({ ...routeCtx, fetchImpl: opts.channelFetch ?? routeCtx.fetchImpl, lead, onKill });
-  // Closed 15m candles for the price chart. Cached briefly so the UI cannot hammer public APIs.
+  // Public chart candles only; chart navigation must not run the desk's research pipeline.
   const candleCache = new Map<string, { at: number; body: unknown }>();
+  const candlePending = new Map<string, Promise<unknown>>();
   app.get('/api/candles', async (req, res) => {
     const symbol = normSymbol(String(req.query.symbol ?? cfg.watchlist[0] ?? 'BTCUSDT')).slice(0, 20);
-    const hit = candleCache.get(symbol);
+    const tf = String(req.query.tf ?? '15m');
+    if (!/^[A-Z0-9]{2,20}$/.test(symbol) || !(TIMEFRAMES as readonly string[]).includes(tf)) return res.status(400).json({ error: 'Invalid symbol or timeframe.' });
+    const key = `${symbol}:${tf}`;
+    const hit = candleCache.get(key);
     if (hit && Date.now() - hit.at < 20_000) return res.json(hit.body);
-    const snap = await getSnapshot(symbol, cfg.marketSource, cfg.tradingMode !== 'PAPER');
-    const body = {
-      symbol, source: snap.source, example: snap.example, last: snap.last, change24hPct: snap.change24hPct,
-      candles: snap.candles.slice(-200).map((c) => ({ time: Math.floor(c.t / 1000), open: c.o, high: c.h, low: c.l, close: c.c }))
-    };
-    candleCache.set(symbol, { at: Date.now(), body });
-    res.json(body);
+    if (!candlePending.has(key)) {
+      if (candlePending.size >= 12) return res.status(429).json({ error: 'Chart is busy. Try again shortly.' });
+      const request = getCandles(symbol, tf as Timeframe, cfg.marketSource, 200, cfg.tradingMode !== 'PAPER').then((snap) => {
+        if (snap.tf !== tf) throw new Error('Requested timeframe unavailable');
+        const body = {
+          symbol, tf: snap.tf, source: snap.source, example: snap.example, fetchedAt: Date.now(), last: snap.candles.at(-1)?.c ?? null,
+          candles: snap.candles.map((c) => ({ time: Math.floor(c.t / 1000), open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v }))
+        };
+        if (candleCache.size >= 100) candleCache.delete(candleCache.keys().next().value!);
+        candleCache.set(key, { at: Date.now(), body });
+        return body;
+      }).finally(() => candlePending.delete(key));
+      candlePending.set(key, request);
+    }
+    try { res.json(await candlePending.get(key)); }
+    catch { res.status(503).json({ error: `${tf} candles unavailable. Try another timeframe or retry.` }); }
   });
   app.get('/api/split', (req, res) => {
     try {

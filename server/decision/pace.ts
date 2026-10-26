@@ -21,16 +21,8 @@ export function rebuttalRounds(mode: DebateMode, configuredRounds: number, input
   const longs = stances.filter((s) => s === 'LONG').length;
   const shorts = stances.filter((s) => s === 'SHORT').length;
 
-  // Immediate execution path: if at least 2 seats already align on LONG or SHORT with zero opposite directional votes, skip rebuttals!
-  if ((longs >= 2 && shorts === 0) || (shorts >= 2 && longs === 0)) {
-    return 0;
-  }
-
   if (mode !== 'fast') return rounds;
   if (longs === 0 && shorts === 0) return 0;
-  if (longs > 0 && shorts === 0) return 0;
-  if (shorts > 0 && longs === 0) return 0;
-
-  // Only run 1 fast tie-breaker rebuttal when analysts are actively opposing each other (LONG vs SHORT)
+  // FAST keeps one evidence challenge, including aligned directional opinions.
   return 1;
 }

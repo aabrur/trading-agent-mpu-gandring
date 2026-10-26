@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AgentId, AgentView, CendolEvent, DeskState, Fight, Reaction, Speech } from '../types';
 import { AGENT_ORDER } from '../types';
 import { Bot, type Face, type Pose } from './Bot';
 import { Sparkline } from './MiniCharts';
-import { WORKSTATIONS, FIGHT_STAGE, officePositions, heatedDebateFight, officePnl, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
+import { WORKSTATIONS, FIGHT_STAGE, workstationPoint, atDiscussionTable, officePositions, heatedDebateFight, officePnl, route, type Activity, type Point, type SceneEvent } from '../sceneDirector';
 import { useSceneDirector } from '../useSceneDirector';
 import { DESK_SETS } from '../officeSets';
 import { useI18n } from '../i18n';
@@ -58,7 +58,7 @@ function useOfficeFight(state: DeskState, fights: Fight[]) {
       document.removeEventListener('visibilitychange', update);
     };
   }, [debating]);
-  if (!debating || ['opening', 'reading', 'verdict', 'risk gate', 'done'].includes(state.debate?.phase ?? '') || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
+  if (!debating || !/^round \d+$/.test(state.debate?.phase ?? '') || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
   const recent = fights.at(-1);
   return recent && clock.now >= recent.at && clock.now - recent.at < 2400 ? recent : heatedDebateFight(state, clock.now) ?? undefined;
 }
@@ -83,7 +83,7 @@ function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | un
   }
 }
 
-function useMovement(pos: Point, desks: Point[], staged = false) {
+function useMovement(pos: Point, desks: Point[], staged = false, fast = false) {
   const anchor = useRef<HTMLDivElement>(null);
   const previous = useRef(pos);
   const wasStaged = useRef(false);
@@ -104,7 +104,7 @@ function useMovement(pos: Point, desks: Point[], staged = false) {
     const target = path.at(-1)!;
     previous.current = target;
     const distance = path.slice(1).reduce((d, p, i) => d + Math.hypot(p.x - path[i].x, p.y - path[i].y), 0);
-    const duration = media.matches || document.hidden ? 0 : changingStage ? 400 : Math.max(600, distance * 65);
+    const duration = media.matches || document.hidden ? 0 : changingStage ? 400 : Math.min(fast ? 1000 : 2500, Math.max(600, distance * 65));
     setWalk({ on: duration > 0 && path.length > 1 && !staged, left: target.x < from.x });
     let travelled = 0;
     const frames = path.map((p, i) => {
@@ -132,7 +132,7 @@ function useMovement(pos: Point, desks: Point[], staged = false) {
       media.removeEventListener('change', reduce);
       document.removeEventListener('visibilitychange', reduce);
     };
-  }, [pos.x, pos.y, geometry, staged]);
+  }, [pos.x, pos.y, geometry, staged, fast]);
   return { anchor, walk };
 }
 
@@ -147,6 +147,7 @@ function Agent({
   inDebate,
   selected,
   activeFight,
+  fast,
   onSelect,
 }: {
   a: AgentView;
@@ -159,9 +160,10 @@ function Agent({
   inDebate: boolean;
   selected: boolean;
   activeFight?: Fight;
+  fast: boolean;
   onSelect: () => void;
 }) {
-  const { anchor, walk } = useMovement(pos, desks, Boolean(activeFight));
+  const { anchor, walk } = useMovement(pos, desks, Boolean(activeFight), fast);
   let { pose, face } = fight || reaction || activeFight ? poseFor(a, fight, reaction, inDebate, activeFight) : activity;
 
   if (walk.on && !fight) pose = 'walk';
@@ -179,10 +181,12 @@ function Agent({
   const isHit = fight?.to === a.id;
   const label = walk.on ? 'walking' : fight ? 'cartoon sparring' : activeFight ? 'watching the debate' : activity.label;
   const layerY = walk.on ? Math.max(pos.y, WORKSTATIONS[a.id].y) : pos.y;
+  const seat = workstationPoint(a.id);
+  const seated = !walk.on && pos.x === seat.x && pos.y === seat.y;
   return (
-    <div ref={anchor} className="agent-anchor" data-agent={a.id} style={{ zIndex: Math.round(layerY * 10) + 100 }}>
+    <div ref={anchor} className="agent-anchor" data-agent={a.id} style={{ zIndex: Math.round(layerY * 10) + (sp ? 400 : 0) }}>
       <button
-        className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${isPunching ? 'is-punching' : ''} ${isHit ? 'is-hit' : ''} ${isPunching || isHit ? 'in-dust-brawl' : ''} ${!inDebate && !activity.destination ? 'at-desk' : ''} ${pos.y < 48 ? 'bubble-below' : ''} ${pos.x < 25 ? 'bubble-left' : pos.x > 75 ? 'bubble-right' : ''}`}
+        className={`agent status-${a.status} ${selected ? 'is-selected' : ''} ${isPunching ? 'is-punching' : ''} ${isHit ? 'is-hit' : ''} ${isPunching || isHit ? 'in-dust-brawl' : ''} ${seated ? 'at-desk' : ''} ${pos.y < 48 ? 'bubble-below' : ''} ${pos.x < 25 ? 'bubble-left' : pos.x > 75 ? 'bubble-right' : ''}`}
         style={{ zIndex: Math.round(layerY * 10) + (sp ? 400 : 0) + (isPunching || isHit ? 250 : 0), ['--agent' as string]: a.color }}
         onClick={onSelect}
         aria-label={`${a.name}, ${label}`}
@@ -224,6 +228,7 @@ function Agent({
 
 export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, command, children, activeConversationId, selectConversation, newConversation, cendolBanner, onDismissCendol }: Props) {
   const { t } = useI18n();
+  const [motionPaused, setMotionPaused] = useState(false);
   const officeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const office = officeRef.current;
@@ -248,9 +253,9 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       window.removeEventListener('resize', fit);
     };
   }, []);
-  const activities = useSceneDirector(state, sceneEvents);
+  const activities = useSceneDirector(state, sceneEvents, motionPaused);
   const inDebate = !!state.debate;
-  const atTable = inDebate && !['reading', 'opening', 'done'].includes(state.debate!.phase);
+  const atTable = atDiscussionTable(state.debate?.phase);
   const heat = Math.min(1, disagreement);
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
   const latestSpeech = (Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at)[0];
@@ -261,7 +266,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   const positions = officePositions(state, activities, activeFight);
 
   return (
-    <div ref={officeRef} className={`office office-v2 ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''}`} style={{ ['--heat' as string]: heat }}>
+    <div ref={officeRef} className={`office office-v2 ${inDebate ? 'is-debating' : ''} ${displayFights.length ? 'is-brawling' : ''} ${motionPaused ? 'motion-paused' : ''}`} style={{ ['--heat' as string]: heat }}>
       <output className="office-pnl" aria-label={`Open PnL, ${pnl.source}`} title="Unrealized PnL of open positions in USDT. Local estimates are not confirmed exchange results.">
         <span>Open PnL</span>
         <strong className={pnl.value == null ? '' : pnl.value >= 0 ? 'up' : 'down'}>
@@ -289,10 +294,12 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
           )}
         </div>
       )}
-      <div className="office-world">
+      <div className="office-world" data-debate-phase={state.debate?.phase ?? 'idle'}>
+        <button className="office-motion" aria-pressed={motionPaused} onClick={() => setMotionPaused(!motionPaused)}>{motionPaused ? 'Resume animation' : 'Pause animation'}</button>
         <div className="studio-room" aria-hidden="true">
           <div className="studio-wall" />
           <div className="studio-floor" />
+          <div className="studio-ceiling-beam" />
           <div className="studio-library">
             <img className="studio-shelf" src={asset('mg_prop_bookshelf')} alt="" />
           </div>
@@ -358,63 +365,70 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
           const set = DESK_SETS[id];
           const sideClass = desk.x === 50 ? 'desk-center' : desk.x > 50 ? 'desk-east' : 'desk-west';
           return (
-            <div
-              key={`desk-${id}`}
-              data-desk={id}
-              className={`studio-desk ${sideClass} ${busy ? 'is-busy' : ''}`}
-              style={{
-                left: `${desk.x}%`,
-                top: `${desk.y}%`,
-                zIndex: Math.round(desk.y * 10) + 5,
-                width: `${set.width ?? 17}%`,
-                ['--desk-aspect' as string]: set.aspect,
-                ['--agent' as string]: a.color,
-              }}
-              aria-hidden="true"
-            >
-              <div className="studio-chair" />
-              <div className="studio-desk-furniture">
-                <img className="studio-desk-wood" src={asset(set.base)} alt="" />
-                {set.screen && (
-                  <div
-                    className="studio-builtin-screen"
-                    style={{
-                      left: `${set.screen.x}%`,
-                      top: `${set.screen.y}%`,
-                      width: `${set.screen.width}%`,
-                      height: `${set.screen.height}%`,
-                    }}
-                  >
-                    {spark.length > 1 && <Sparkline values={spark} up={up} />}
-                  </div>
-                )}
-                {set.monitor && (
-                  <div className="studio-monitor" style={{ left: `${set.monitor.x}%`, top: `${set.monitor.y}%`, width: `${set.monitor.width}%` }}>
-                    <img src={asset('mg_item_market_tablet')} alt="" />
-                    {spark.length > 1 && (
-                      <div className="studio-screen">
-                        <Sparkline values={spark} up={up} />
-                      </div>
-                    )}
-                  </div>
-                )}
-                {set.props.map((prop) => (
-                  <img
-                    key={prop.asset}
-                    className="studio-desk-prop"
-                    src={asset(prop.asset)}
-                    alt=""
-                    style={{
-                      left: `${prop.x}%`,
-                      top: `${prop.y}%`,
-                      width: `${prop.width}%`,
-                      transform: prop.rotate ? `rotate(${prop.rotate}deg)` : undefined,
-                    }}
-                  />
-                ))}
-                <span className="studio-desk-name">{DESK_LABEL[id]}</span>
+            <Fragment key={`desk-${id}`}>
+              <img className={`studio-seat ${sideClass}`} src={asset('mg_chair_diagonal_v3')} alt="" aria-hidden="true"
+                style={{ left: `${desk.x + (desk.x < 50 ? -3 : 3)}%`, top: `${desk.y - 1}%`, zIndex: Math.round(desk.y * 10) - 80 }} />
+              <div
+                data-desk={id}
+                className={`studio-desk ${sideClass} ${busy ? 'is-busy' : ''}`}
+                style={{
+                  left: `${desk.x}%`,
+                  top: `${desk.y}%`,
+                  zIndex: Math.round(desk.y * 10) + 5,
+                  width: `${set.width ?? 17}%`,
+                  ['--desk-aspect' as string]: set.aspect,
+                  ['--agent' as string]: a.color,
+                }}
+                aria-hidden="true"
+              >
+                <div className="studio-desk-furniture">
+                  <img className="studio-desk-wood" src={asset(set.base)} alt="" />
+                  {set.screen && (
+                    <div
+                      className="studio-builtin-screen"
+                      style={{
+                        left: `${set.screen.x}%`,
+                        top: `${set.screen.y}%`,
+                        width: `${set.screen.width}%`,
+                        height: `${set.screen.height}%`,
+                      }}
+                    >
+                      {spark.length > 1 && <Sparkline values={spark} up={up} />}
+                    </div>
+                  )}
+                  {set.monitor && (
+                    <div className="studio-monitor" style={{ left: `${set.monitor.x}%`, top: `${set.monitor.y}%`, width: `${set.monitor.width}%` }}>
+                      <svg className="studio-monitor-frame" viewBox="0 0 100 78" aria-hidden="true">
+                        <path d="M44 54h12l4 17 14 3v4H27v-4l15-3z" fill="#71523b" />
+                        <rect x="1" y="1" width="98" height="61" rx="5" fill="#4a3c31" stroke="#bb9467" strokeWidth="3" />
+                        <path d="M7 8h86v46H7z" fill="#263331" />
+                        <circle cx="89" cy="58" r="1.5" fill="#dba76b" />
+                      </svg>
+                      {spark.length > 1 && (
+                        <div className="studio-screen">
+                          <Sparkline values={spark} up={up} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {set.props.map((prop) => (
+                    <img
+                      key={prop.asset}
+                      className="studio-desk-prop"
+                      src={asset(prop.asset)}
+                      alt=""
+                      style={{
+                        left: `${prop.x}%`,
+                        top: `${prop.y}%`,
+                        width: `${prop.width}%`,
+                        transform: prop.rotate ? `rotate(${prop.rotate}deg)` : undefined,
+                      }}
+                    />
+                  ))}
+                  <span className="studio-desk-name">{DESK_LABEL[id]}</span>
+                </div>
               </div>
-            </div>
+            </Fragment>
           );
         })}
 
@@ -433,6 +447,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
               inDebate={inDebate}
               selected={selected === id}
               activeFight={activeFight}
+              fast={(state.debate?.mode ?? state.debateMode) === 'fast'}
               onSelect={() => onSelect(id)}
             />
           );

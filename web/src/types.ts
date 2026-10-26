@@ -41,7 +41,7 @@ export interface DeskState {
   tradingview: { widget: boolean; prefix: string; webhook: boolean }; agentEvents: boolean;
   signals: { source: string; symbol: string; action: string; price: number | null; note: string; at: number }[];
   agents: Record<AgentId, AgentView>; tickers: Record<string, Ticker>;
-  debate: null | { id: string; symbol: string; phase: string; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] };
+  debate: null | { id: string; symbol: string; phase: string; mode?: 'normal' | 'fast'; round: number; disagreement: number; weighted: number; camps: Verdict['camps'] };
   paper: { balance: number; safetyNet: number; n: number; moneyTrade: number; perOrder: number; orderSizePct?: number; canOpen: boolean; usedMargin: number; unrealized: number; equity: number; positions: Position[]; closed: ClosedTrade[]; minOrderUsdt: number; maxLeverage: number; defaultStopPct?: number; takeProfitR?: number };
   equityHistory: { t: number; equity: number; balance: number }[];
   verdicts: Verdict[]; logs: LogLine[]; chats: Record<AgentId, ChatLine[]>; roomHistory?: RoomMessage[]; watchlist: string[];  fightThreshold: number;
@@ -80,8 +80,9 @@ export interface CendolEvent { id: string; supporter: string; quantity: number; 
 export interface Fight { id: number; from: AgentId; to: AgentId; intensity: number; punches: number; at: number }
 export const AGENT_ORDER: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'];
 export type Reaction = 'cheer' | 'worried';
-export interface Candle { time: number; open: number; high: number; low: number; close: number }
-export interface CandleData { symbol: string; source: string; example: boolean; last: number; change24hPct: number; candles: Candle[] }
+export type ChartTimeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+export interface Candle { time: number; open: number; high: number; low: number; close: number; volume?: number }
+export interface CandleData { symbol: string; tf?: ChartTimeframe; source: string; example: boolean; fetchedAt?: number; last: number | null; change24hPct?: number; candles: Candle[] }
 
 export const VERIFIED_TOKENS = [
   // Tier 1 Mega-Cap (10)

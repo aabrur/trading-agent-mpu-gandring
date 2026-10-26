@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import type { AgentId } from '../types';
 
-export type Pose = 'idle' | 'type' | 'point' | 'think' | 'argue' | 'punch' | 'guard' | 'cheer' | 'walk' | 'read' | 'drink' | 'stretch' | 'sit' | 'observe' | 'pass';
+export type Pose = 'idle' | 'type' | 'point' | 'think' | 'argue' | 'punch' | 'guard' | 'cheer' | 'walk' | 'read' | 'drink' | 'stretch' | 'sit' | 'observe' | 'pass' | 'sleep';
 export type Face = 'normal' | 'happy' | 'angry' | 'dizzy' | 'worried';
 
 // Body tints: glossy 2.5D studio palette tuned per role.
@@ -106,6 +106,7 @@ export function Bot({ id, size = 72, pose = 'idle', face = 'normal', talking = f
           {/* Subtle collar / neck detail */}
           <path d="M44 103 Q60 110 76 103" fill="none" stroke="rgba(255,255,255,.32)" strokeWidth="2" strokeLinecap="round" />
 
+          {pose === 'sleep' && <g className="sleep-face" fill="none" stroke={t.ink} strokeWidth="3" strokeLinecap="round"><path d="M44 65 q6 5 12 -2 M67 61 q6 5 12 -2" /><text x="91" y="33" fill={t.ink} stroke="none" fontSize="14">z</text><text x="104" y="19" fill={t.ink} stroke="none" fontSize="10">z</text></g>}
           {/* Eyes */}
           <g className="eyes" fill={t.ink}>
             <g className="eyes-normal">

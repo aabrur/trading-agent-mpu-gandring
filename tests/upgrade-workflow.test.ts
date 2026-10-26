@@ -23,9 +23,9 @@ describe('scheduler and decision payload', () => {
       expect({ risk: cfg.risk, lessons: d.learnings.items, scores: d.scorecard.rows() }).toEqual(before);
     }
   });
-  it('does not make a completed decision wait for cosmetic speech pacing', async () => {
+  it('allows explicitly unpaced headless debates without speech timers', async () => {
     vi.useFakeTimers();
-    const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_PROVIDER: 'mock', DEBATE_PACE_MS: '1000' });
+    const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_PROVIDER: 'mock', DEBATE_PACE_MS: '0' });
     const caller = makeCaller(cfg);
     const desk = new Desk(cfg, (r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'HOLD', confidence: 0.7, reason: 'No setup' })) : caller(r), { jevEnv: { JEV_ENABLED: 'false' } });
     let completed = false;
@@ -33,6 +33,7 @@ describe('scheduler and decision payload', () => {
     try {
       for (let i = 0; i < 500; i++) await Promise.resolve();
       expect(completed).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
     } finally { await vi.runAllTimersAsync(); await work; vi.useRealTimers(); }
   });
   it('Auto OFF allows the current symbol to finish but stops queued work', async () => {

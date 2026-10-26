@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DeskState } from './types';
 import { directScene, type SceneEvent } from './sceneDirector';
 
-export function useSceneDirector(state: DeskState, events: SceneEvent[]) {
+export function useSceneDirector(state: DeskState, events: SceneEvent[], motionPaused = false) {
   const [clock, setClock] = useState({ tick: 0, now: 0, reduced: false, hidden: false });
   const debateId = state.debate?.id ?? null;
   useEffect(() => {
@@ -27,5 +27,5 @@ export function useSceneDirector(state: DeskState, events: SceneEvent[]) {
       media.removeEventListener('change', update);
     };
   }, []);
-  return directScene({ state, events, tick: clock.tick, now: clock.now, reducedMotion: clock.reduced, hidden: clock.hidden });
+  return directScene({ state, events, tick: clock.tick, now: clock.now, reducedMotion: clock.reduced || motionPaused, hidden: clock.hidden });
 }

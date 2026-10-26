@@ -21,7 +21,6 @@ export function DeskOps({ state }: { state: DeskState }) {
   const ticketSelection = useRef('');
   ticketSelection.current = `${symbol}:${side}:${entry}:${lev}`;
   const [out, setOut] = useState<{ ok: boolean; text: string } | null>(null);
-  const [lesson, setLesson] = useState('');
   const [kill, setKill] = useState<{ killed: boolean; release: string | null; unkillCommand: string } | null>(null);
   const [killBusy, setKillBusy] = useState(false);
   const killed = kill?.killed ?? state.killed;
@@ -203,16 +202,6 @@ export function DeskOps({ state }: { state: DeskState }) {
     }
   };
 
-  const restartOffice = async () => {
-    show(true, t('opsRestartingOffice'));
-    const r = await post('/api/setup/restart', {}).catch(() => null);
-    if (r?.ok) {
-      show(true, r.detail || (lang === 'id' ? 'Meja trading berhasil direstart.' : 'Office restarted successfully.'));
-    } else {
-      show(false, r?.detail ?? (lang === 'id' ? 'Gagal merequest restart' : 'Restart request failed'));
-    }
-  };
-
   const preview = async (useGivenStop = true) => {
     const selection = ticketSelection.current;
     const r = await post('/api/ops/size', { symbol, side, entry: num(entry), stop: useGivenStop ? num(stop) : undefined, leverage: num(lev) }).catch(() => null);
@@ -255,9 +244,6 @@ export function DeskOps({ state }: { state: DeskState }) {
     const r = await post('/api/ops/close', { symbol: 'all' }).catch(() => null);
     show(!!r?.ok, r?.reply ?? 'office not reachable');
   };
-  const scan = async () => { const r = await post('/api/ops/scan', {}).catch(() => null); show(!!r?.ok, r?.findings?.length ? r.findings.map((f: { level: string; text: string }) => `${f.level}: ${f.text}`).join(' | ') : 'scan: all clear'); };
-  const addLesson = async () => { const r = await post('/api/ops/lessons', { role: 'desk', lesson, kind: 'note' }).catch(() => null); show(!!r?.ok, r?.ok ? 'lesson saved' : r?.error ?? 'office not reachable'); if (r?.ok) setLesson(''); };
-
   const isAutoOn = !!auto?.on;
   const QuickTokens = POPULAR_SYMBOLS.slice(0, 10);
 
@@ -419,11 +405,6 @@ export function DeskOps({ state }: { state: DeskState }) {
           <button onClick={() => void size()} disabled={ticketBusy}>{t('sizeTicket')}</button>
           <button onClick={() => void open()} disabled={state.killed || ticketBusy}>{t('openWithStop')}</button>
         </div>
-      </details>
-      <details className="ops-details">
-        <summary>{t('opsMaintenanceTitle')}</summary>
-        <div className="ops-lesson-row"><label>{t('opsDeskLessonLabel')}<input aria-label="lesson" placeholder={t('opsAddLessonPlaceholder')} value={lesson} onChange={(e) => setLesson(e.target.value)} /></label><button disabled={lesson.trim().length < 2} onClick={addLesson}>{t('addLessonBtn')}</button></div>
-        <div className="ops-maintenance-actions"><button onClick={scan}>{t('proaktifScan')}</button><button onClick={restartOffice}>{t('restartOfficeBtn')}</button></div>
       </details>
       {out && <p role="status" className={`wallet-msg ${out.ok ? 'ok' : 'bad'}`}>{out.text}</p>}
     </section>

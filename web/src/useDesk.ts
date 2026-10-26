@@ -170,7 +170,7 @@ export function useDesk() {
           if (reactionTimer) { window.clearTimeout(reactionTimer); timers.delete(reactionTimer); }
           reactionTimer = later(() => setReactions({}), 6500);
           later(() => setCendolBanner((cur) => (cur?.id === evPayload.id ? null : cur)), 9000);
-        } else if (type === 'debate' && payload?.phase === 'opening') { setSpeech({}); setFights([]); setReactions({}); }
+        } else if (type === 'debate' && payload?.phase === 'opening') { setSpeech({}); setFights([]); setReactions({}); setSceneEvents([]); }
         else if (type === 'status') setState((s) => (s ? { ...s, agents: { ...s.agents, [payload.agent]: { ...s.agents[payload.agent as AgentId], status: payload.status } } } : s));
       };
     };

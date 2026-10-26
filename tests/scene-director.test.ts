@@ -13,6 +13,25 @@ function sceneFixture() {
 }
 
 describe('office director', () => {
+  it('supports naps only while flat and prioritizes work over social breaks', () => {
+    const input = sceneFixture(); input.events = [];
+    let naps = 0, conversations = 0;
+    for (let tick = 0; tick < 216; tick++) {
+      const frame = directScene({ ...input, tick });
+      naps += Object.values(frame).filter(a => a.pose === 'sleep').length;
+      conversations += Object.values(frame).filter(a => a.label === 'chatting over coffee').length;
+    }
+    expect(naps).toBeGreaterThan(0);
+    expect(conversations).toBeGreaterThan(0);
+    input.state.paper.positions = [{ id: 'position', symbol: 'BTCUSDT', side: 'LONG', qty: 1, entry: 100, stop: 95, tp: 110, margin: 50, leverage: 2, openedAt: 1, mark: 100, unrealizedPnl: 0 }];
+    input.state.agents.execution.status = 'executing';
+    for (let tick = 0; tick < 216; tick++) {
+      const frame = directScene({ ...input, tick });
+      expect(Object.values(frame).some(a => a.pose === 'sleep')).toBe(false);
+      expect(frame.execution.destination).toBeUndefined();
+      expect(frame.execution.pose).toBe('type');
+    }
+  });
   it('repeats hot opposing rounds without changing the debate or trading settings', () => {
     const { state } = sceneFixture();
     state.debate = { id: 'hot', symbol: 'ETHUSDT', phase: 'round 1', round: 1, disagreement: 0.8, weighted: 0, camps: { bull: ['market'], bear: ['research'], neutral: [] } };
@@ -107,8 +126,20 @@ describe('office director', () => {
     const activities = directScene(input);
     expect(activities.research.pose).toBe('read');
     expect(officePositions(input.state, activities).research).toEqual(workstationPoint('research'));
-    input.state.debate.phase = 'round 1';
-    expect(officePositions(input.state, activities)).toEqual(SEATS);
+    for (const phase of ['strategy', 'preparation', 'execution']) {
+      input.state.debate.phase = phase;
+      expect(officePositions(input.state, activities).research).toEqual(workstationPoint('research'));
+    }
+    for (const phase of ['gathering', 'round 1', 'verdict', 'risk gate']) {
+      input.state.debate.phase = phase;
+      expect(officePositions(input.state, activities)).toEqual(SEATS);
+    }
+  });
+  it('does not replay an earlier symbol fill during a new gathering', () => {
+    const input = sceneFixture();
+    input.state.debate = { id: 'new-symbol', symbol: 'BTCUSDT', phase: 'gathering', round: 0, disagreement: 0, weighted: 0, camps: { bull: [], bear: [], neutral: [] } };
+    const frame = directScene({ ...input, events: [{ id: 'old-fill', kind: 'execution', status: 'filled', at: 9000 }] });
+    expect(frame.execution).toMatchObject({ pose: 'sit', label: 'joining the discussion' });
   });
   it('gives every idle role reachable breaks without crowding the same destination', () => {
     const input = sceneFixture(); input.events = [];
