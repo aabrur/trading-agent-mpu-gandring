@@ -4,7 +4,7 @@
   <img src="web/public/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring" width="240" />
 </p>
 
-**App v0.0.0.4.0 · Node.js 24 recommended · MIT**
+**App v0.0.0.4.1 · Node.js 24 recommended · MIT**
 
 A local trading desk with six agent roles: Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager, and Execution Trader. The Office brings together market analysis, debates, positions, reports, and persistent diagnostic logs.
 
@@ -99,6 +99,11 @@ Existing exchange protections and startup permission checks remain in place. Con
 | Pause debate activity | `pause`; this does not close positions |
 | Close positions | **Close all** or the position controls |
 | Emergency action | **Kill**; distinct from Pause, Close all, and ordinary server shutdown |
+| Release emergency kill | **mpu unkill**; releases the kill switch in memory without restarting |
+| Check version and health | **mpu version** (--json, --short, -v) / **mpu health** |
+| Global CLI shortcut link | **mpu link** (or **npm link**); makes mpu executable from any folder |
+| Account money trade allocation | **mpu split** |
+| Market and research queries | **mpu market <sym>**, **mpu research <tool> <sym>**, **mpu backtest <sym>** |
 
 `npm run trade` starts the trading supervisor. In local mode, it **forces Auto Trading on for that run** and uses the saved trading mode. In Grok Bot mode, it starts the Office for the remote team. It is not needed for the first-run walkthrough.
 

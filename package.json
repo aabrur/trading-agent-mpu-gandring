@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.0",
-  "appVersion": "0.0.0.4.0",
+  "version": "0.4.1",
+  "appVersion": "0.0.0.4.1",
   "changelog": [
+    "Mpu Autonomous Trading Freedom, Dynamic Momentum Exits, Jev Optimization Pipeline, and Unified CLI Router.",
     "Mpu Point-in-Time Market Data and Deterministic Perpetual Backtesting Simulator.",
     "Mpu Quantitative Alpha Factors, Smart Structure Geometry, and Dynamic ROI Trailing Stop.",
     "Mpu Adversarial Bull-Bear Debate Engine, Archetype Lenses, and Jev Brier Calibration.",

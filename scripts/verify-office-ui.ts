@@ -37,7 +37,7 @@ async function verifyOffice() {
   const sessionLogRequests: URL[] = [];
   const sessionId = 'mpu-2026-10-26T040000000Z-fixture';
   const childSessionId = 'mpu-2026-10-26T040001000Z-childfix';
-  const sessionSummary = { sessionId, parentSessionId: null, startedAt: '2026-10-26T04:00:00.000Z', endedAt: null, version: '0.0.0.4.0', gitRevision: null, pid: 1234, entrypoint: 'server/index.ts', mode: 'PAPER', appMode: 'local', exchange: null, outcome: null, exitReason: null, durationMs: null, lastSequence: 2, storageErrors: 0 };
+  const sessionSummary = { sessionId, parentSessionId: null, startedAt: '2026-10-26T04:00:00.000Z', endedAt: null, version: '0.0.0.4.1', gitRevision: null, pid: 1234, entrypoint: 'server/index.ts', mode: 'PAPER', appMode: 'local', exchange: null, outcome: null, exitReason: null, durationMs: null, lastSequence: 2, storageErrors: 0 };
   const childSessionSummary = { ...sessionSummary, sessionId: childSessionId, parentSessionId: sessionId, startedAt: '2026-10-26T04:00:01.000Z', gitRevision: 'child12345678', pid: 1235, lastSequence: 1 };
   const latestSessionEvent = { timestamp: '2026-10-26T04:00:02.000Z', sessionId, sequence: 2, level: 'ERROR', category: 'execution', source: 'server', eventName: 'stop_check', status: 'failed', message: 'Exchange stop was not confirmed', correlationId: 'corr-fixture-1', durationMs: 12, details: { fixture: true, cause: 'missing stop' } };
   const olderSessionEvent = { ...latestSessionEvent, timestamp: '2026-10-26T04:00:01.000Z', sequence: 1, level: 'INFO', eventName: 'session_start', status: 'started', message: 'Session started', durationMs: undefined, details: {} };

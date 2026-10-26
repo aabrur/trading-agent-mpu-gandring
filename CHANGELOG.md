@@ -2,9 +2,14 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
-## [Unreleased]
+## [v0.0.0.4.1] - 2026-10-26
 
 ### Added
+- Autonomous trading exits: granted agents full autonomous authority for dynamic profit-taking on momentum surges (margin unrealized profit >= 15% or momentum pump exhaustion) and cut-risk exits on market anomalies and adverse divergences.
+- JEV decision engine optimization: moved JEV pre-evaluation earlier in the debate pipeline so all team agents receive rich market regime context, added deterministic algorithmic heuristic fallback when remote endpoints timeout or fail, removed live-only restrictions on collection routing, and added harmonic pattern detection.
+- Unified CLI Router expansion: added mpu version (--json, --short, -v), mpu link, mpu health, mpu context, mpu capabilities, mpu research, mpu reports, mpu split, and mpu bench.
+- Friction-free kill switch: added in-memory unkill API endpoints (POST /api/unkill and POST /api/kill with { on: false }) and mpu unkill notification support to release the emergency stop without requiring a server restart.
+- Grok Bot CLI and operations: exposed backend research tools, health checks, state context, and operating runbooks for remote Grok Bot agents.
 - Persistent local application sessions with parent/child identity, startup and shutdown outcomes, conservative unclean-session recovery, ordered JSONL events, readable console/error transcripts, bounded queues, rotation, and explicit storage-loss counters. Diagnostic failures do not authorize or reject orders.
 - Metadata observers for market snapshots, model tasks, debates, Jev, automation, order reconciliation, protection observations, journals, financial evidence, reports, and integration failures. Financial journals remain independent.
 - System Log archived-session browser with session summaries, searchable chronological events, severity/source/correlation filters, and downloads for console, errors, events, and session metadata. Live log and History views remain available separately.
