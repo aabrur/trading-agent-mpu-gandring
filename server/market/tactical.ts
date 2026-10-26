@@ -2,6 +2,7 @@ import type { MarketSnapshot } from '../types.js';
 import { calculateSwingLevels } from '../strategy.js';
 import { analyzeSMC, type SMCAnalysis } from './smc.js';
 import { calculateAlphaFactors, type Alpha158Factors } from './alpha-factors.js';
+import { detectHarmonicPatterns, type HarmonicPattern } from './harmonics.js';
 
 export interface TacticalTradePlan {
   symbol: string;
@@ -11,6 +12,7 @@ export interface TacticalTradePlan {
   marketRegime: string;
   smc?: SMCAnalysis | null;
   alphaFactors?: Alpha158Factors | null;
+  harmonics?: HarmonicPattern[] | null;
   scenarios: Array<{
     kind: 'PULLBACK_CONTINUATION' | 'BREAKDOWN_CONTINUATION' | 'FAILED_BREAKDOWN_REVERSAL' | 'BREAKOUT_CONTINUATION' | 'FAILED_BREAKOUT_REVERSAL';
     side: 'LONG' | 'SHORT';
@@ -203,6 +205,7 @@ export function buildTacticalTradePlan(snapshot: MarketSnapshot): TacticalTradeP
 
   const smc = analyzeSMC(snapshot.candles);
   const alphaFactors = calculateAlphaFactors(snapshot.candles);
+  const harmonics = detectHarmonicPatterns(snapshot.candles);
 
-  return { snapshotId: snapshot.snapshotId, cmcMomentum: snapshot.cmcMomentum, symbol: snapshot.symbol, timestamp: snapshot.fetchedAt, marketRegime, smc, alphaFactors, scenarios, exhaustion };
+  return { snapshotId: snapshot.snapshotId, cmcMomentum: snapshot.cmcMomentum, symbol: snapshot.symbol, timestamp: snapshot.fetchedAt, marketRegime, smc, alphaFactors, harmonics, scenarios, exhaustion };
 }

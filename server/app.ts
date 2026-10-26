@@ -302,8 +302,21 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.post('/api/reports/now', async (_req, res) => res.json({ ok: true, report: await reporter.generate() }));
   app.post('/api/auto/cycle', async (_req, res) => res.json({ ok: true, ...(await auto.cycle()) }));
 
-  // Kill switch: pause, cancel, flatten. Persisted: stays on across restarts until `npm run unkill -- --yes` (CLI only).
-  app.post('/api/kill', async (_req, res) => { auto.stop(); res.json({ ok: true, notes: await desk.kill() }); });
+  // Kill switch: pause, cancel, flatten, or release. Friction-free toggle.
+  app.post('/api/kill', async (req, res) => {
+    const isRelease = req.body?.on === false || req.body?.action === 'release' || req.body?.action === 'unkill' || req.body?.killed === false;
+    if (isRelease) {
+      desk.unkill();
+      return res.json({ ok: true, killed: false, released: true, notes: ['Kill switch released.'] });
+    }
+    auto.stop();
+    res.json({ ok: true, killed: true, notes: await desk.kill() });
+  });
+
+  app.post('/api/unkill', async (_req, res) => {
+    desk.unkill();
+    res.json({ ok: true, killed: false, released: true });
+  });
 
   // Grok Bot mode: agent turns from the user's own Grok Bot team. Off unless APP_MODE=grokbot and AGENT_EVENT_SECRET is set.
   const agentLimit = limiter(120, 60_000);

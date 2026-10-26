@@ -119,21 +119,24 @@ npm run gb -- event lead "Desk is set up. First cycle soon." --json
 
 ## 5. Routines
 
+Read `grokbot/OPERATIONS.md` and attach its operating instructions to all six profiles. Before each cycle use `gb capabilities --json` and `gb context --json`; use the shared research commands for specialist evidence and `gb reports --json` for recorded outcomes. Follow the cycle and simulation limits there. Update existing routines instead of creating duplicates.
+
+
 **Confirm autonomy first.** Before you create the trading loop, ask the owner one plain question: "Should the desk trade on its own (full auto) now, or only run in PAPER while you watch?" For LIVE, auto trading starts only after the owner typed "I understand LIVE trades real money" in step 4 **and** says yes here. With no clear yes, create the trading loop paused, or keep the desk in PAPER. The report routine can always be created.
 
 Create two routines owned by the Head of Trading.
 
 **Trading loop, every 15 minutes:**
 
-> You are the Head of Trading of Trading Agent Mpu Gandring. Work in /workspace/trading-agent-mpu-gandring-app. If `curl -s http://127.0.0.1:8787/api/health` fails, start the office with `nohup npm start > office.log 2>&1 &` and wait 3 seconds.
+> You are the Head of Trading of Trading Agent Mpu Gandring. Work in /workspace/trading-agent-mpu-gandring-app. If health fails, report the outage. Do not restart LIVE without Owner authorization; preserve the current mode and settings.
 > 1. Run the proaktif-agent skill first: `npm run gb -- scan --json`, `npm run gb -- account --json`, `npm run gb -- positions --json`, `npm run gb -- lessons list --json`. Post any warn or alert to the group chat "Trading Agent Mpu Gandring".
-> 2. For each market in AUTO_SYMBOLS: ask Technical Market, Macro Research and Trading Systems in the group for a stance; each posts it to the office with `npm run gb -- event <role> "<text>" --stance X --confidence Y`. Decide OPEN_LONG, OPEN_SHORT, CLOSE or HOLD and post `npm run gb -- event lead "<verdict>"`. For an open, Head of Risk sizes it with `npm run gb -- size ...` and Execution Trader places it with `npm run gb -- open ... --stop ... --tp ... --confidence <0.6 to 1>` (a ticket without `--confidence` at 0.6 or higher is refused). For a close, Execution Trader runs `npm run gb -- close <symbol>`.
+> 2. For each market in AUTO_SYMBOLS: ask Technical Market, Macro Research and Trading Systems in the group for a stance; each posts it to the office with `npm run gb -- event <role> "<text>" --stance X --confidence Y`. Decide OPEN_LONG, OPEN_SHORT, CLOSE or HOLD and post `npm run gb -- event lead "<verdict>"`. For an open, Head of Risk sizes it with `npm run gb -- size ...` and Execution Trader places it with `npm run gb -- open <symbol> <LONG|SHORT> --leverage <n> --confidence <verdict confidence> --reason "<decision>"` using the Owner profile SL/TP (a ticket without `--confidence` at 0.6 or higher is refused). For a close, Execution Trader runs `npm run gb -- close <symbol>`.
 > 3. Run the self-improving skill last: for every loss, stop hit, error, refusal or owner correction this cycle, `npm run gb -- lessons add <role> "<lesson>" --kind loss|stop|error|correction --happened "<facts>" --cause "<root cause>"`. The app promotes a lesson seen three times into a standing rule. Never write a lesson that loosens a guard; the app refuses those.
 > No approval step. Never loosen a guard, never resend a refused order, never touch withdrawals. Not financial advice.
 
 **Report, at the owner's cadence:**
 
-> You are the Head of Trading of Trading Agent Mpu Gandring. In /workspace/trading-agent-mpu-gandring-app run `npm run gb -- report`. Send the text to the owner. Only the Head of Trading reports to the owner. Add one line on which employee is doing well or badly from the scorecard, and the lessons this period. Not financial advice, no profit promises.
+> You are the Head of Trading of Trading Agent Mpu Gandring. In /workspace/trading-agent-mpu-gandring-app run `npm run gb -- report`. Send the text to the owner. Only the Head of Trading reports to the owner. Include measured per-role results only when present in recorded evidence, plus lessons this period. Mark missing scorecards unavailable. Not financial advice, no profit promises.
 
 ## 6. Start and show the office
 

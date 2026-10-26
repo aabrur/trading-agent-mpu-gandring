@@ -9,6 +9,14 @@ export function unkill(argv: string[], file = process.env.KILL_SWITCH_FILE || DE
   const when = rec.at ? new Date(rec.at).toISOString() : 'unknown time';
   if (!argv.includes('--yes')) return { ok: false, text: `kill switch is ON since ${when} (${rec.reason}). To release it run: npm run unkill -- --yes   then restart the office.` };
   clearKill(file);
+  const port = process.env.PORT || '8787';
+  try {
+    void fetch(`http://127.0.0.1:${port}/api/ops/kill`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on: false })
+    }).catch(() => {});
+  } catch {}
   return { ok: true, text: `kill switch released (was on since ${when}). Restart the office (npm run office or npm run trade) to trade again.` };
 }
 

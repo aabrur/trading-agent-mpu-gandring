@@ -799,29 +799,10 @@ export class Desk extends EventEmitter {
       const c8 = snap.candles.at(-9)?.c, cl = snap.candles.at(-1)?.c;
       const change2h = c8 && cl ? round2(((cl - c8) / c8) * 100) : 0;
       const lastCandles = snap.candles.slice(-8).map((c) => ({ t: new Date(c.t).toISOString(), c: c.c }));
-      const newsP = Promise.resolve(collected.news);
-      const whaleP = Promise.resolve(collected.whale);
-      const mk = await timer.measure('marketAnalyst', () => this.run('market', 'opinion', {
-        instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, ATR volatility ${atrVal}, relative candle volume ${vol.volRatio}x, and bullish-candle volume share ${(vol.takerBuyPressure * 100).toFixed(0)}% (INFERRED candle proxy, not taker order flow). Be sharp, quantitative, and directional (LONG or SHORT) unless the tape is flat.`,
-        data: {
-          marketEvidence, broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt, evidence: snap.evidence },
-          symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h,
-          fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol,
-          orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain,
-          recentClosedCandles: lastCandles, source: snap.source,
-          externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined
-        },
-        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol, temperament: this.agents.market.mood, liveFeed: !snap.example }
-      }));
-      this.setOpinion('market', mk.data.stance, mk.data.confidence);
-      await this.say('market', mk.data.argument, mk.example); note('Market Analyst', mk.data.argument);
-
-      // 2. Research Analyst (catalysts, verified on-chain intelligence, news normalization)
-      this.setStatus('research', 'reading'); this.changed();
-      const news = await newsP;
+      const news = collected.news;
       const normalizedEvents = news.map((n) => normalizeLegacyItem(n, symbol));
       const newsBriefing = buildNewsBriefing(symbol, normalizedEvents, liveNewsStatus(news));
-      const whaleBriefing = await whaleP;
+      const whaleBriefing = collected.whale;
       const tradeFlowProxy = {
         status: 'INFERRED', method: 'share of recent candle volume on candles closing at or above their open; not taker-side trades',
         bullishCandleVolumeShare: vol.takerBuyPressure, relativeCandleVolume: vol.volRatio,
@@ -852,6 +833,24 @@ export class Desk extends EventEmitter {
           this.changed();
         });
       }
+      const mk = await timer.measure('marketAnalyst', () => this.run('market', 'opinion', {
+        instruction: `Give your stance on ${symbol} from the numbers below (${dataTag}). Factor in RSI ${rsiVal}, ATR volatility ${atrVal}, relative candle volume ${vol.volRatio}x, and bullish-candle volume share ${(vol.takerBuyPressure * 100).toFixed(0)}% (INFERRED candle proxy, not taker order flow). Be sharp, quantitative, and directional (LONG or SHORT) unless the tape is flat.`,
+        data: {
+          marketEvidence, broaderStructure: strategyVote(snap.candles), dataQuality: { source: snap.source, example: snap.example, fetchedAt: snap.fetchedAt, evidence: snap.evidence },
+          symbol, last: snap.last, change24hPct: round2(snap.change24hPct), change2hPct: change2h,
+          fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol,
+          orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain,
+          recentClosedCandles: lastCandles, source: snap.source,
+          jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'market') : undefined,
+          externalSignal: signal ? { untrusted: true, from: 'TradingView alert', action: signal.action, price: signal.price, note: signal.note } : undefined
+        },
+        context: { symbol, last: snap.last, change24hPct: snap.change24hPct, change2hPct: change2h, fundingRate: snap.fundingRate, rsi: rsiVal, atr: atrVal, volumeDelta: vol, temperament: this.agents.market.mood, liveFeed: !snap.example }
+      }));
+      this.setOpinion('market', mk.data.stance, mk.data.confidence);
+      await this.say('market', mk.data.argument, mk.example); note('Market Analyst', mk.data.argument);
+
+      // 2. Research Analyst (catalysts, verified on-chain intelligence, news normalization)
+      this.setStatus('research', 'reading'); this.changed();
       const rs = await timer.measure('researchAnalyst', () => this.run('research', 'research', {
         instruction: `Weigh the sourced catalysts and on-chain intelligence for ${symbol}. Separate VERIFIED on-chain observations, REPORTED news claims, INFERRED candle proxies, and UNAVAILABLE information. Candle direction does not establish taker flow or wallet movement. Vote LONG, SHORT, ABSTAIN or VETO on the supplied evidence. VETO only for verified critical events: delistings, trading halts, exploits, or chain outages. Keyword matches are reported claims, not independent verification. ${newsBriefing.criticalVetoFound ? `CRITICAL VETO (verified): ${newsBriefing.vetoReason}.` : newsBriefing.criticalClaimFound ? `CRITICAL CLAIM (unverified): ${newsBriefing.vetoReason}.` : ''}`,
         data: {
@@ -940,7 +939,7 @@ export class Desk extends EventEmitter {
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
-        instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, CLOSE requires strategyInvalidated=true (opposite closed-bar direction beyond EMA21 with opposing five-bar momentum), or a verified critical event. A minor EMA9 crossing, unrealized loss, or changed agent vote alone is insufficient. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
+        instruction: `Close the ${symbol} debate. Pick one decisive action. Evaluate LONG and SHORT scenarios fairly using supplied evidence, invalidation, and open positions. Maintain an opportunity-seeking culture: when technical setup, directional evidence, and risk parameters align with an exchange-side stop, execute promptly (OPEN_LONG or OPEN_SHORT) without stalling. HOLD requires a specific, traceable reason (invalid setup, critical VETO, conflicting essential data, or configured risk limits); debate disagreement alone is not a veto. Agreement alone is not evidence. Preserve current strategy and guard parameters. For an open position, the desk has full autonomous authority to decide CLOSE when strategyInvalidated=true, when locking in profit on momentum surges or pump exhaustion, to cut risk immediately when the market reverses or exhibits anomalies, or on opposite signals. Report evidence-based confidence honestly on 0..1. The entry confidence floor never blocks CLOSE.`,
         data: { marketEvidence, symbol, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, strategy: rule, market: { last: snap.last, source: snap.source, fetchedAt: snap.fetchedAt, example: snap.example, rsi: rsiVal, atr: atrVal, candleFlow: tradeFlowProxy, fundingRate: snap.fundingRate, orderbook: snap.orderbook, orderflow: snap.orderflow, derivatives: snap.derivatives, technicalSummary: snap.technicalSummary, whaleOnChain: snap.whaleOnChain, tacticalTradePlan: snap.tacticalTradePlan ?? buildTacticalTradePlan(snap) }, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), weightedScore: weighted, disagreement, researchVote, openPosition: pos ? { side: pos.side, entry: pos.entry, stop: pos.stop, unrealizedPnl: pos.unrealizedPnl } : null, freeSlots: slots.freeSlots, journal, jevSidecar: jevMayEnrichAgents(this.jev.settings.effectiveMode) ? jevRoleContext(jevInterp, 'lead') : undefined },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, strategyInvalidated: pos ? this.invalidated(pos.side, rule) : false, liveFeed: !snap.example }
       }));
@@ -958,8 +957,13 @@ export class Desk extends EventEmitter {
       if (capacityBlock) action = 'HOLD';
       let exitBlock: string | null = null;
       const verifiedCritical = newsBriefing.criticalVetoFound && newsBriefing.providerStatus !== 'SAMPLE_FALLBACK';
-      if (action === 'CLOSE' && pos && !verifiedCritical &&
-        (!this.invalidated(pos.side, rule) || !snapshotIsFresh(snap) || (!!this.opts.executor && snap.example))) {
+      const isTakeProfit = !!(pos && pos.unrealizedPnl > 0 && (
+        (pos.margin > 0 && pos.unrealizedPnl / pos.margin >= 0.15) ||
+        /profit|take[ -]?profit|tp|surge|pump|exhaust|target|momentum/i.test(ld.data.reason)
+      ));
+      const isAnomalyDefense = /anomaly|reversal|divergen|protect|adverse|risk/i.test(ld.data.reason) && !/minor pullback/i.test(ld.data.reason);
+      const exitAuthorized = (pos ? this.invalidated(pos.side, rule) : false) || verifiedCritical || isTakeProfit || isAnomalyDefense;
+      if (action === 'CLOSE' && pos && !exitAuthorized) {
         action = 'HOLD';
         flipNote = '';
         exitBlock = 'No confirmed structural reversal on fresh closed bars; keep existing exchange stop and take profit.';

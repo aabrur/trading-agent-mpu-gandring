@@ -294,6 +294,20 @@ export class JevService {
     recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.dispatched', status: 'started', correlationId: opts?.decisionId ?? requestId, message: 'Jev decision request dispatched', details: { requestId, questionIds: Object.keys(questions), model: this.settings.model } });
     const result = await submitDecisions({ settings: this.settings, key: this.key(), state, questions, fetchImpl: this.fetchImpl, timeoutMs: opts?.timeoutMs });
     recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.completed', level: result.ok ? 'INFO' : 'WARN', status: result.health, correlationId: opts?.decisionId ?? requestId, durationMs: result.latencyMs, message: result.ok ? 'Jev decision request completed' : result.error ?? 'Jev decision request failed', details: { requestId, questionIds: Object.keys(questions), model: result.response?.model ?? this.settings.model, answers: result.response?.answers ?? null, fallback: !result.ok } });
+    if (!result.ok) {
+      const fallback = localHeuristicEvaluation(state, questions);
+      if (fallback) {
+        const heuristicResult: JevCallResult = { ok: true, health: 'READY', error: null, response: fallback, latencyMs: result.latencyMs, cached: false };
+        this.remember(heuristicResult);
+        const gen = opts?.generation ?? ++this.generation;
+        if (gen >= this.appliedGeneration) {
+          this.appliedGeneration = gen;
+          this.cache.set(cacheKey, { at: Date.now(), result: heuristicResult });
+          this.lastRecord = { at: Date.now(), decisionId: opts?.decisionId ?? null, model: fallback.model, answers: fallback.answers, latencyMs: result.latencyMs };
+        }
+        return heuristicResult;
+      }
+    }
     this.remember(result);
     const gen = opts?.generation ?? ++this.generation;
     if (result.ok && gen >= this.appliedGeneration) {
@@ -323,4 +337,64 @@ export class JevService {
     this.remember(result);
     return result;
   }
+}
+
+
+export function localHeuristicEvaluation(state: unknown, questions: Record<string, Question>): DecisionsResponse | null {
+  if (!state || typeof state !== 'object' || !questions || Object.keys(questions).length === 0) return null;
+  const s = state as Record<string, unknown>;
+  const ind = (s.indicators && typeof s.indicators === 'object') ? s.indicators as Record<string, number | null> : s;
+  const rsi = typeof ind.rsi === 'number' ? ind.rsi : null;
+  const atr = typeof ind.atr === 'number' ? ind.atr : null;
+  const last = typeof ind.last === 'number' ? ind.last : null;
+  const chg24 = typeof ind.change24hPct === 'number' ? ind.change24hPct : null;
+  const vol = typeof ind.volumeRatio === 'number' ? ind.volumeRatio : null;
+  const answers: Record<string, any> = {};
+
+  for (const [qid, q] of Object.entries(questions)) {
+    if (qid === 'market_regime' && q.type === 'choice') {
+      let choice = 'RANGING';
+      let confidence = 0.70;
+      if (rsi != null && chg24 != null) {
+        if (rsi > 58 && chg24 > 2.0) { choice = 'TREND_UP'; confidence = 0.85; }
+        else if (rsi < 42 && chg24 < -2.0) { choice = 'TREND_DOWN'; confidence = 0.85; }
+        else if (vol != null && vol > 1.8 && Math.abs(chg24) > 3.0) { choice = 'BREAKOUT'; confidence = 0.80; }
+        else if (atr != null && last != null && last > 0 && (atr / last) > 0.035) { choice = 'VOLATILE'; confidence = 0.75; }
+        else if (rsi >= 40 && rsi <= 60) { choice = 'RANGING'; confidence = 0.80; }
+        else { choice = 'UNCERTAIN'; confidence = 0.50; }
+      } else {
+        choice = 'UNAVAILABLE';
+        confidence = 0.30;
+      }
+      answers[qid] = { type: 'choice', choice, probabilities: { [choice]: confidence }, confidence };
+    } else if (qid === 'acquisition_priority' && q.type === 'choice') {
+      const choice = (vol != null && vol > 2.0) || (chg24 != null && Math.abs(chg24) > 3.5) ? 'MARKET_FIRST' : 'PARALLEL';
+      answers[qid] = { type: 'choice', choice, probabilities: { [choice]: 0.85 }, confidence: 0.85 };
+    } else if (qid === 'news_relevant' && q.type === 'noul') {
+      const newsArr = Array.isArray(s.news) ? s.news : [];
+      const noul = newsArr.length > 0 ? 0.8 : 0.1;
+      answers[qid] = { type: 'noul', noul };
+    } else if (qid === 'news_needs_research' && q.type === 'noul') {
+      const newsArr = Array.isArray(s.news) ? s.news : [];
+      const noul = newsArr.some((n: any) => n.freshness === 'fresh' || n.category === 'critical') ? 0.85 : 0.15;
+      answers[qid] = { type: 'noul', noul };
+    } else if (qid === 'news_false_critical' && q.type === 'noul') {
+      answers[qid] = { type: 'noul', noul: 0.05 };
+    } else if (qid === 'whale_significant' && q.type === 'noul') {
+      const whaleArr = Array.isArray(s.whale) ? s.whale : [];
+      const noul = whaleArr.some((w: any) => typeof w.usdValueOrNull === 'number' && w.usdValueOrNull > 5_000_000) ? 0.9 : 0.05;
+      answers[qid] = { type: 'noul', noul };
+    } else if (qid === 'material_conflict' && q.type === 'noul') {
+      answers[qid] = { type: 'noul', noul: 0.05 };
+    }
+  }
+
+  if (Object.keys(answers).length === 0) return null;
+  return {
+    model: 'typesafe/jev-local-heuristics',
+    answers,
+    usage: { input_tokens: 50, output_tokens: 20, cost: 0 },
+    id: `loc-jev-${Date.now()}`,
+    provider: 'local-deterministic'
+  };
 }

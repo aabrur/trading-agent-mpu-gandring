@@ -14,11 +14,18 @@ import { moneySplit, planOrder, round2 } from '../server/money.js';
 import { normSymbol } from '../server/commands.js';
 import { safe } from '../server/redact.js';
 import { sizeTicket, type SizeBook } from '../server/sizing.js';
+import { RESEARCH_TOOLS } from '../server/research/catalog.js';
 
 export interface GbResult { ok: boolean; data: unknown; text: string }
 interface Deps { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; baseUrl?: string }
 
 const HELP = `Trading Agent Mpu Gandring agent CLI (no model keys needed)
+  npm run gb -- health                              running office health
+  npm run gb -- context                             current desk state, agents, configuration and journal
+  npm run gb -- capabilities                        implemented research tools and observed availability
+  npm run gb -- research <tool> <symbol> [--objective "..."]   shared backend research; tools: ${RESEARCH_TOOLS.map(t => t.name).join(', ')}
+  npm run gb -- backtest <symbol> [--strategy simple_momentum|buy_and_hold] [--capital 1000 --slippage-bps 5 --leverage 3]   simulation only
+  npm run gb -- reports                             recent reports without generating a new report
   npm run gb -- market <symbol> [--source venue]     price, 24h change, funding
   npm run gb -- candles <symbol> [tf] [--limit 100] [--source venue]  closed candles, tf: ${TIMEFRAMES.join(' ')}
   npm run gb -- venues                               venues (CEX and DEX), key type, env names, status
@@ -74,6 +81,36 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
 
   switch (cmd) {
     case undefined: case 'help': case '--help': return ok({ help: HELP }, HELP);
+    case 'health': case 'context': case 'capabilities': case 'reports': {
+      const paths = { health: '/api/health', context: '/api/state', capabilities: '/api/research/capabilities', reports: '/api/reports' };
+      const r = await call('GET', paths[cmd]);
+      return r.ok === false ? fail(r.error ?? `${cmd} unavailable`, r) : ok(r, JSON.stringify(r, null, 2));
+    }
+    case 'research': {
+      const [name, rawSymbol] = args;
+      const symbol = normSymbol(rawSymbol ?? '');
+      if (!RESEARCH_TOOLS.some(t => t.name === name) || !symbol) return fail('usage: research <tool from capabilities> <symbol> [--objective "..."]');
+      if ((flags.objective?.length ?? 0) > 500) return fail('Research objective must be at most 500 characters.');
+      const query = new URLSearchParams({ name, symbol });
+      if (flags.objective) query.set('objective', flags.objective);
+      const r = await call('GET', `/api/research?${query}`);
+      return r.ok ? ok(r, JSON.stringify(r, null, 2)) : fail(r.error ?? 'Research unavailable', r);
+    }
+    case 'backtest': {
+      const symbol = normSymbol(args[0] ?? '');
+      // The backend currently implements these two strategies; do not advertise unsupported behavior.
+      const strategy = flags.strategy ?? 'simple_momentum';
+      if (!symbol || !['simple_momentum', 'buy_and_hold'].includes(strategy)) return fail('usage: backtest <symbol> [--strategy simple_momentum|buy_and_hold]');
+      const body: Record<string, unknown> = { symbol, strategy };
+      for (const [flag, key, min, max] of [['capital', 'initialCapital', 10, 1000000], ['slippage-bps', 'slippageBps', 0, 100], ['leverage', 'maxLeverage', 1, 50]] as const) {
+        if (flags[flag] === undefined) continue;
+        const value = Number(flags[flag]);
+        if (!Number.isFinite(value) || value < min || value > max) return fail(`--${flag} must be between ${min} and ${max}`);
+        body[key] = value;
+      }
+      const r = await call('POST', '/api/research/backtest', body);
+      return r.ok ? ok(r, `Simulation only; not the six-agent strategy or a live performance forecast.\n${JSON.stringify(r, null, 2)}`) : fail(r.error ?? 'Backtest unavailable', r);
+    }
     case 'venues': {
       const rows = EXCHANGES.map((v) => ({ venue: v, label: VENUE_LABEL[v], kind: VENUE_KIND[v], status: ADAPTER_STATUS[v], key: VENUE_KEY_HINT[v], env: Object.values(envNames(v, 'mainnet')), testnetEnv: Object.values(envNames(v, 'testnet')), exchangeSideStops: true, selected: (env.EXCHANGE ?? '').toLowerCase() === v }));
       const line = (r: typeof rows[number]) => `  ${r.selected ? '*' : ' '} ${r.venue.padEnd(12)} ${r.label.padEnd(12)} ${r.status.padEnd(12)} ${r.env.join(', ')}`;
@@ -102,8 +139,8 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     }
     case 'positions': {
       const st = await state();
-      const d = st.paper.positions.map((p: any) => ({ symbol: p.symbol, side: p.side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, mark: p.mark, pnl: p.unrealizedPnl, margin: p.margin, leverage: p.leverage, openedAt: p.openedAt }));
-      return ok(d, d.length ? d.map((p: any) => `${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} PnL ${p.pnl}`).join('\n') : 'no open positions');
+      const d = st.paper.positions.map((p: Record<string, unknown>) => ({ symbol: p.symbol, side: p.side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, mark: p.mark, pnl: p.unrealizedPnl, margin: p.margin, leverage: p.leverage, openedAt: p.openedAt, protectionStatus: p.protectionStatus ?? 'unknown' }));
+      return ok(d, d.length ? d.map((p: Record<string, unknown>) => `${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} PnL ${p.pnl} protection ${p.protectionStatus}`).join('\n') : 'no open positions');
     }
     case 'split': {
       let balance = num(flags.balance), safetyNet = num(flags.safety), n = num(flags.n), orderSizePct = cfg.risk.orderSizePct;

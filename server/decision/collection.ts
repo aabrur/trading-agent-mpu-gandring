@@ -27,8 +27,8 @@ export async function collectTradingData(input: {
 }) {
   const startedAt = Date.now();
   let route: CollectionRoute = 'PARALLEL', routedBy: CollectionTrace['routedBy'] = 'default';
-  let routing: CollectionTrace['routing'] = { status: 'not_requested', latencyMs: null, reason: 'Jev collection routing requires LIVE assist' };
-  if (input.live && input.jev.settings.effectiveMode === 'assist') {
+  let routing: CollectionTrace['routing'] = { status: 'not_requested', latencyMs: null, reason: 'Jev collection routing requires active Jev' };
+  if (input.jev.settings.effectiveMode === 'assist') {
     const plan = await input.jev.evaluate({ symbol: input.symbol, objective: input.objective.slice(0, 500),
       collectors: ['market: public exchange APIs and measured indicators', 'news: configured provider or public exchange announcements', 'whale: configured on-chain provider'],
       constraints: 'Read data only. Every collector runs. Missing observations stay unavailable. No order or setting changes.' }, {
