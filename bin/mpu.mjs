@@ -25,25 +25,38 @@ Usage:
   mpu restart              Restart the desk server and open the web office
   mpu office               Start the desk and open the web office
   mpu status               Check setup status, mode, and key permissions
+  mpu version [args]       Show app version, git commit, mode, and health (--json, --short, -v)
   mpu doctor [args]        Run key, network, and permission health checks
-  mpu setup [args]         Setup wizard, status, or guide (e.g. mpu setup)
+  mpu setup [args]         Setup wizard, status, guide, or link (e.g. mpu setup)
+  mpu link                 Link mpu globally to system PATH via npm link
   mpu paper                Quick shortcut to set TRADING_MODE=PAPER
   mpu testnet [args]       Quick shortcut to set TRADING_MODE=TESTNET
   mpu live [args]          Quick shortcut to set TRADING_MODE=LIVE
   mpu positions [args]     Show open positions with SL/TP and PnL
   mpu account [args]       Show balance, equity, and safety net status
+  mpu split                Show account money trade split and N allocation
   mpu scan [args]          Run proactive scan (loss cap, stops, errors)
   mpu report [args]        Generate and display latest desk report
+  mpu reports [args]       List recent reports from backend store
   mpu analyze <symbol>     Run agent debate and analysis for symbol
   mpu debate [args]        Run autonomous agent debate in terminal
   mpu open <sym> <side>    Open position using active settings
   mpu close <sym|all>      Close position for symbol or all
   mpu size [args]          Preview ticket sizing and risk check
+  mpu market <sym> [args]  Fetch price, 24h change, and funding rate
+  mpu candles <sym> [tf]   Fetch closed candle data for timeframe
+  mpu venues               List supported CEX and DEX trading venues
+  mpu health [args]        Show backend health, uptime, and kill switch state
+  mpu context [args]       Show current desk state, agents, and journal
+  mpu capabilities [args]  List implemented research tools and MCP status
+  mpu research <tool> <sym> Run shared backend research tool
+  mpu backtest <sym> [args] Run simulation backtest on historical data
   mpu lessons [list|add]   List or add self-improving lessons
   mpu kill [confirm]       Trip emergency kill switch
   mpu unkill [--yes]       Release emergency kill switch
   mpu channels [args]      Manage chat channels (Telegram, Discord, Slack, WhatsApp)
   mpu trade                Run the trade supervisor loop
+  mpu bench [args]         Benchmark local and remote models across agents
   mpu test [args]          Run test suite
   mpu typecheck            Run TypeScript typecheck
   mpu build                Build backend and frontend artifacts
@@ -65,12 +78,18 @@ const CLI_TARGETS = {
   trade: 'trade',
   autostart: 'autostart',
   backtest: 'backtest',
-  'office:status': 'office-status'
+  version: 'version',
+  bench: 'bench-models',
+  'bench-models': 'bench-models',
+  'bench:models': 'bench-models',
+  'office:status': 'office-status',
+  'office-status': 'office-status'
 };
 
 const GB_SUBCOMMANDS = new Set([
-  'positions', 'account', 'balance', 'scan', 'report', 'lessons',
-  'open', 'close', 'size', 'split', 'market', 'candles', 'venues', 'event'
+  'positions', 'account', 'balance', 'scan', 'report', 'reports', 'lessons',
+  'open', 'close', 'size', 'split', 'market', 'candles', 'venues', 'event',
+  'health', 'context', 'capabilities', 'research'
 ]);
 
 function runCli(cmdName, subArgs) {
@@ -93,7 +112,16 @@ function runCli(cmdName, subArgs) {
 
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
-if (first === 'paper') {
+if (first === 'version' || first === '--version' || first === '-v' || first === '-V') {
+  runCli('version', [first, ...args.slice(1)]);
+} else if (first === 'link') {
+  console.log('Linking mpu globally via npm link...');
+  const res = spawnSync(npmCmd, ['link'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  if (res.status === 0) {
+    console.log('mpu is now linked globally. You can run "mpu <command>" from any directory.');
+  }
+  process.exit(res.status ?? 0);
+} else if (first === 'paper') {
   runCli('setup', ['paper']);
 } else if (first === 'testnet') {
   runCli('setup', ['--trading-mode', 'testnet', ...args.slice(1)]);
@@ -120,7 +148,7 @@ if (first === 'paper') {
   runCli('gb', [subCmd, ...args.slice(1)]);
 } else if (first && CLI_TARGETS[first]) {
   runCli(CLI_TARGETS[first], args.slice(1));
-} else if (first && first !== 'office' && first !== 'restart' && !first.startsWith('-')) {
+} else if (first && first !== 'office' && first !== 'restart' && first !== '--no-open') {
   console.error(`Unknown option "${first}". Use mpu --help.`);
   process.exit(1);
 }

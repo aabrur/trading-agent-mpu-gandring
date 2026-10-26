@@ -59,7 +59,8 @@
     "autostart:install": "tsx cli/session-entry.ts autostart install",
     "autostart:remove": "tsx cli/session-entry.ts autostart remove",
     "autostart:status": "tsx cli/session-entry.ts autostart status",
-    "bench:models": "tsx cli/session-entry.ts bench-models"
+    "bench:models": "tsx cli/session-entry.ts bench-models",
+    "version": "tsx cli/session-entry.ts version"
   },
   "keywords": [
     "trading",

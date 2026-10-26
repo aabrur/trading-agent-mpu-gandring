@@ -2,7 +2,7 @@ import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { runApplicationEntry } from '../server/session-entry.js';
 
-const commands = new Set(['setup', 'doctor', 'debate', 'gb', 'channels', 'kill', 'unkill', 'trade', 'autostart', 'office-status', 'backtest', 'bench-models']);
+const commands = new Set(['setup', 'doctor', 'debate', 'gb', 'channels', 'kill', 'unkill', 'trade', 'autostart', 'office-status', 'backtest', 'bench-models', 'version']);
 const command = process.argv[2];
 if (!commands.has(command)) throw new Error('Unknown application command');
 const extension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';

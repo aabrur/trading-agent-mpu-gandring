@@ -270,6 +270,16 @@ async function main() {
     case 'guide': return guide();
     case 'channel': { const ch = argv[1]; if (!isChannel(ch)) { console.error(`usage: npm run setup -- channel <${CHANNELS.join('|')}>`); process.exitCode = 1; return; } await channelWizard(ch, ENV_FILE); return; }
     case 'paper': case 'lock': setEnv(ENV_FILE, { TRADING_MODE: 'PAPER', LIVE_CONFIRMED: null }); console.log('Back to PAPER.'); return;
+    case 'link': {
+      console.log('Linking mpu globally via npm link...');
+      const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+      const r = spawn(npmCmd, ['link'], { stdio: 'inherit', shell: process.platform === 'win32' });
+      r.on('close', (code) => {
+        if (code === 0) console.log('mpu is now linked globally. You can run "mpu <command>" anywhere.');
+        process.exit(code ?? 0);
+      });
+      return;
+    }
     case 'check-key': {
       const net = (opt('network') ?? 'mainnet') as 'mainnet' | 'testnet';
       const r = await checkKeyStep(currentEnv(), net);

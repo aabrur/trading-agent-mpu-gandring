@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { parseCommand } from '../server/channels/commands.js';
 import { discordCommandText, DIRECT_DISCORD_COMMANDS } from '../server/channels/discord.js';
 import { killCmd } from '../cli/kill.js';
 import { readKill } from '../server/killswitch.js';
 import { preferencesInfo, savePreferences } from '../server/setup/preferences.js';
 import { readEnv } from '../cli/envfile.js';
+import { getVersionInfo, runVersionCli } from '../cli/version.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -114,6 +115,44 @@ describe('maxHoldHours preferences support', () => {
       expect(resExcessive.ok).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('mpu version CLI', () => {
+  it('retrieves structured version information', async () => {
+    const info = await getVersionInfo();
+    expect(info.app).toBe('trading-agent-mpu-gandring');
+    expect(info.appVersion).toBe('0.0.0.4.0');
+    expect(info.version).toBe('0.4.0');
+    expect(info.node).toMatch(/^v\d+/);
+    expect(['win32', 'linux', 'darwin']).toContain(info.platform);
+    expect(typeof info.tradingMode).toBe('string');
+  });
+
+  it('prints short version with --short', async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((msg) => { logs.push(String(msg)); });
+    try {
+      await runVersionCli(['--short']);
+      expect(logs.some(l => l.trim() === '0.0.0.4.0')).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('prints json version with --json', async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((msg) => { logs.push(String(msg)); });
+    try {
+      await runVersionCli(['--json']);
+      const output = logs.join('\n');
+      const parsed = JSON.parse(output);
+      expect(parsed.appVersion).toBe('0.0.0.4.0');
+      expect(parsed.version).toBe('0.4.0');
+      expect(parsed.app).toBe('trading-agent-mpu-gandring');
+    } finally {
+      spy.mockRestore();
     }
   });
 });
