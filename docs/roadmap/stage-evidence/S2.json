@@ -1,0 +1,65 @@
+{
+  "stage": "S2",
+  "name": "Quant Factors, SMC Geometry & Dynamic ROI Research",
+  "sourceSha": "2dee1bc1d53aa498d9e5a5cd4b103155254e7fd4",
+  "status": "PASS",
+  "verifiedAtWIB": "2026-10-26",
+  "criteria": [
+    {
+      "id": "alpha158_formulaic_factor_library",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/alpha-factors.test.ts",
+      "sha256": "8dc7466e152ee06260c8b1dea567abe4dd037178cb6bf5d64e6af594ab6d6f76"
+    },
+    {
+      "id": "smc_structure_bos_choch_fvg",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/smc.test.ts",
+      "sha256": "403472345cca4c0b5e07abb0ef2c25ddb2b4b48c054e6813c293c459d13f2938"
+    },
+    {
+      "id": "harmonic_fibonacci_prz_geometry",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/harmonics.test.ts",
+      "sha256": "5ea25bb1322fb0b41e1b27bcf6c8d20418387068610d3d8ae877e9066bead5f4"
+    },
+    {
+      "id": "minimal_roi_time_decay_matrix",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/dynamic-roi.test.ts",
+      "sha256": "059d682947da5571c2b4498262b77639a9eed5ea204fb1415affbab80916d97f"
+    },
+    {
+      "id": "dynamic_atr_trailing_stop",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/dynamic-roi.test.ts",
+      "sha256": "059d682947da5571c2b4498262b77639a9eed5ea204fb1415affbab80916d97f"
+    },
+    {
+      "id": "ci_typecheck",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "package.json",
+      "sha256": "2b92e1c69334c532bb91ae112468fe12f987837fe7482dc12c32b891ed3d6bf0"
+    },
+    {
+      "id": "ci_test",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/dynamic-roi.test.ts",
+      "sha256": "059d682947da5571c2b4498262b77639a9eed5ea204fb1415affbab80916d97f"
+    },
+    {
+      "id": "ci_build",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "package.json",
+      "sha256": "2b92e1c69334c532bb91ae112468fe12f987837fe7482dc12c32b891ed3d6bf0"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import type express from 'express';
+import express from 'express';
 import { z } from 'zod';
 import type { Desk } from '../desk.js';
 import { getNewsFor, getWhaleBriefing, getSnapshot, getWhaleOnChainSummary, liveNewsStatus } from '../market/index.js';
@@ -8,8 +8,27 @@ import { normSymbol } from '../commands.js';
 import { buildTacticalTradePlan } from '../market/tactical.js';
 import { getSuiEventBriefing } from '../market/sui.js';
 import type { CapabilityStatus } from './catalog.js';
+import { PerpBacktestEngine, type StrategyFn } from './backtest.js';
+import type { PITCandle } from './pit.js';
 
 const Input = z.object({ name: z.enum(RESEARCH_TOOLS.map(tool => tool.name) as [string, ...string[]]), symbol: z.string().regex(/^[A-Z0-9]{3,24}$/), objective: z.string().max(500).optional() }).strict();
+
+const BacktestInput = z.object({
+  symbol: z.string().regex(/^[A-Z0-9]{3,24}$/),
+  initialCapital: z.number().min(10).max(1000000).optional(),
+  slippageBps: z.number().min(0).max(100).optional(),
+  maxLeverage: z.number().min(1).max(50).optional(),
+  strategy: z.enum(['simple_momentum', 'mean_reversion', 'buy_and_hold']).optional(),
+  candles: z.array(z.object({
+    timestamp: z.number(),
+    open: z.number(),
+    high: z.number(),
+    low: z.number(),
+    close: z.number(),
+    volume: z.number(),
+    closedAt: z.number().optional()
+  })).min(3).optional()
+}).strict();
 export function mountResearchRoutes(app: express.Express, desk: Desk) {
   app.get('/api/research/capabilities', (req, res) => {
     const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
@@ -57,5 +76,107 @@ export function mountResearchRoutes(app: express.Express, desk: Desk) {
       desk.recordActivity({ kind: 'tool', source: 'mpu_research', level: 'error', status: 'failed', text: `${name} · ${symbol}: ${error instanceof Error ? error.message : 'Research unavailable'}`, durationMs: Date.now() - started });
       return res.status(503).json({ ok: false, error: 'Research data currently unavailable. Do not substitute invented or sample values.' });
     }
+  });
+
+  app.post('/api/research/backtest', express.json({ limit: '2mb' }), async (req, res) => {
+    const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
+    if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });
+
+    const parsed = BacktestInput.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: 'Invalid backtest parameters.', details: parsed.error.issues });
+    }
+
+    const { symbol, initialCapital, slippageBps, maxLeverage, strategy, candles: customCandles } = parsed.data;
+    const normSym = normSymbol(symbol);
+
+    let candlesToUse: PITCandle[] = [];
+    if (customCandles && customCandles.length > 0) {
+      candlesToUse = customCandles.map(c => ({
+        timestamp: c.timestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+        closedAt: c.closedAt ?? c.timestamp + 60_000
+      }));
+    } else {
+      try {
+        const snapshot = await getSnapshot(normSym, desk.cfg.marketSource, true);
+        candlesToUse = snapshot.candles.map(c => ({
+          timestamp: c.t,
+          open: c.o,
+          high: c.h,
+          low: c.l,
+          close: c.c,
+          volume: c.v,
+          closedAt: c.t + 60_000
+        }));
+      } catch {
+        return res.status(503).json({ ok: false, error: 'Could not fetch market candles for backtest.' });
+      }
+    }
+
+    if (candlesToUse.length < 3) {
+      return res.status(400).json({ ok: false, error: 'Insufficient candle data for backtest (minimum 3 required).' });
+    }
+
+    const engine = new PerpBacktestEngine({
+      initialCapital: initialCapital ?? 1000,
+      slippageBps: slippageBps ?? 5,
+      maxLeverage: maxLeverage ?? 5
+    });
+
+    const strategyFn: StrategyFn = (feed, bar, openPositions) => {
+      const history = feed.asOf(bar.closedAt);
+      if (history.length < 5) return null;
+
+      if (strategy === 'buy_and_hold') {
+        if (openPositions.length === 0) {
+          return {
+            action: 'OPEN_LONG',
+            symbol: normSym,
+            stopPrice: bar.close * 0.90,
+            tpPrice: bar.close * 1.50
+          };
+        }
+        return null;
+      }
+
+      // Simple Momentum: SMA 5 vs SMA 20
+      const closes = history.map(c => c.close);
+      const sma5 = closes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+      const sma20 = closes.length >= 20
+        ? closes.slice(-20).reduce((a, b) => a + b, 0) / 20
+        : sma5;
+
+      if (openPositions.length === 0) {
+        if (sma5 > sma20) {
+          return {
+            action: 'OPEN_LONG',
+            symbol: normSym,
+            stopPrice: bar.close * 0.98,
+            tpPrice: bar.close * 1.04
+          };
+        } else if (sma5 < sma20) {
+          return {
+            action: 'OPEN_SHORT',
+            symbol: normSym,
+            stopPrice: bar.close * 1.02,
+            tpPrice: bar.close * 0.96
+          };
+        }
+      }
+      return null;
+    };
+
+    const metrics = engine.run(candlesToUse, [], strategyFn);
+    return res.json({
+      ok: true,
+      observedAt: Date.now(),
+      symbol: normSym,
+      metrics
+    });
   });
 }

@@ -1,0 +1,72 @@
+{
+  "stage": "S3",
+  "name": "Adversarial Multi-Agent Debate & Jev Calibration",
+  "sourceSha": "2dee1bc1d53aa498d9e5a5cd4b103155254e7fd4",
+  "status": "PASS",
+  "verifiedAtWIB": "2026-10-26",
+  "criteria": [
+    {
+      "id": "bull_bear_adversarial_debate_engine",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/adversarial-debate.test.ts",
+      "sha256": "417698f8abca74f00e32ae9fa049b5a1c99aaae3bb08b0c758ace53ebac6521c"
+    },
+    {
+      "id": "investor_archetype_personas",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/archetypes.test.ts",
+      "sha256": "eebe2690fb2198a42316113d0488238ca9e99e556529af402762794be39c5a31"
+    },
+    {
+      "id": "jev_typed_contracts_choice_noul_score",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/jev-contracts.test.ts",
+      "sha256": "59a40c94118c5d07e47fc6168ce83f337886c0db399fcf1b68215a8749ff97a4"
+    },
+    {
+      "id": "jev_brier_and_reliability_evaluation",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/calibration.test.ts",
+      "sha256": "5609e06a89582ce90bb8d29bdb45cf3c7b3fa597fdb34f0b5b44507a9c96c071"
+    },
+    {
+      "id": "candidate_rejection_reason_ttl",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/rejection-cache.test.ts",
+      "sha256": "0a3dbea01eadc4de31ca83f7e6ff94db87973e11a8b85b07ff104db5c3cdf69c"
+    },
+    {
+      "id": "six_agent_roster_preserved",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/six-agent-roster.test.ts",
+      "sha256": "0449c4ebe6bf20a14d389bbd9f8cfd12f8cd24da6e9c71872a546f9c32d4dc0b"
+    },
+    {
+      "id": "ci_typecheck",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "package.json",
+      "sha256": "2b92e1c69334c532bb91ae112468fe12f987837fe7482dc12c32b891ed3d6bf0"
+    },
+    {
+      "id": "ci_test",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/adversarial-debate.test.ts",
+      "sha256": "417698f8abca74f00e32ae9fa049b5a1c99aaae3bb08b0c758ace53ebac6521c"
+    },
+    {
+      "id": "ci_build",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "package.json",
+      "sha256": "2b92e1c69334c532bb91ae112468fe12f987837fe7482dc12c32b891ed3d6bf0"
+    }
+  ]
+}

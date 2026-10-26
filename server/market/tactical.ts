@@ -1,5 +1,7 @@
 import type { MarketSnapshot } from '../types.js';
 import { calculateSwingLevels } from '../strategy.js';
+import { analyzeSMC, type SMCAnalysis } from './smc.js';
+import { calculateAlphaFactors, type Alpha158Factors } from './alpha-factors.js';
 
 export interface TacticalTradePlan {
   symbol: string;
@@ -7,6 +9,8 @@ export interface TacticalTradePlan {
   snapshotId?: string;
   cmcMomentum?: MarketSnapshot['cmcMomentum'];
   marketRegime: string;
+  smc?: SMCAnalysis | null;
+  alphaFactors?: Alpha158Factors | null;
   scenarios: Array<{
     kind: 'PULLBACK_CONTINUATION' | 'BREAKDOWN_CONTINUATION' | 'FAILED_BREAKDOWN_REVERSAL' | 'BREAKOUT_CONTINUATION' | 'FAILED_BREAKOUT_REVERSAL';
     side: 'LONG' | 'SHORT';
@@ -197,5 +201,8 @@ export function buildTacticalTradePlan(snapshot: MarketSnapshot): TacticalTradeP
     exhaustion = { present: false, direction: 'NONE', evidence: [`15m RSI ${rsi} does not meet the stated exhaustion thresholds.`] };
   }
 
-  return { snapshotId: snapshot.snapshotId, cmcMomentum: snapshot.cmcMomentum, symbol: snapshot.symbol, timestamp: snapshot.fetchedAt, marketRegime, scenarios, exhaustion };
+  const smc = analyzeSMC(snapshot.candles);
+  const alphaFactors = calculateAlphaFactors(snapshot.candles);
+
+  return { snapshotId: snapshot.snapshotId, cmcMomentum: snapshot.cmcMomentum, symbol: snapshot.symbol, timestamp: snapshot.fetchedAt, marketRegime, smc, alphaFactors, scenarios, exhaustion };
 }

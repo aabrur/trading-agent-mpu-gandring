@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <b>Version: v0.0.0.3.31 (package 0.3.31)</b> · <b>Production Verified Multi-Agent Trading Desk</b> · <b>Node.js 20+</b> · <b>MIT License</b>
+  <b>Version: v0.0.0.4.0 (package 0.4.0)</b> · <b>Production Verified Multi-Agent Trading Desk</b> · <b>Node.js 20+</b> · <b>MIT License</b>
 </p>
 
 **Trading Agent Mpu Gandring** is a powerful, independently verified multi-agent autonomous trading desk. Six specialized AI trading agents share a 2.5D virtual trading floor, backed by an optional **Jev** decision-intelligence sidecar (**6 AI trading agents + Jev**; Jev operates as an analytical sidecar rather than a seventh trading agent). They analyze real-time market microstructure, challenge each other in structured rebuttals, throw cartoon punches when disagreement spikes, and execute the Desk Lead's final verdict using the Owner's active risk profile and capital split.
@@ -23,7 +23,7 @@ Independently tested and battle-proven across **Bybit**, **Aster**, **Hyperliqui
 ## Table of Contents
 
 1. [Fastest Installation (3 Steps)](#1-fastest-installation-3-steps)
-2. [What's New in v0.0.0.3.31](#2-whats-new-in-v000331)
+2. [What's New in v0.0.0.4.0](#2-whats-new-in-v00040)
 3. [Independently Verified Live Trading Proof & Profit Ledger](#3-independently-verified-live-trading-proof--profit-ledger)
 4. [Responsible Autonomy & Anti-Overreliance Advisory](#4-responsible-autonomy--anti-overreliance-advisory)
 5. [Two Ways to Run It (Local Mode vs Grok Bot Mode)](#5-two-ways-to-run-it-local-mode-vs-grok-bot-mode)
@@ -32,7 +32,7 @@ Independently tested and battle-proven across **Bybit**, **Aster**, **Hyperliqui
 8. [CLI & Web Office Quick Reference](#8-cli--web-office-quick-reference)
 9. [Supported Venues (Bybit, Aster, Hyperliquid, Binance & More)](#9-supported-venues-bybit-aster-hyperliquid-binance--more)
 10. [Environment Configuration (`.env`)](#10-environment-configuration-env)
-11. [Updated v0.0.0.3.31 Workflow & System Architecture](#11-updated-v000331-workflow--system-architecture)
+11. [Updated v0.0.0.4.0 Workflow & System Architecture](#11-updated-v00040-workflow--system-architecture)
 12. [Talking to the Agents & Owner Commands](#12-talking-to-the-agents--owner-commands)
 13. [Safety Architecture & Going Live](#13-safety-architecture--going-live)
 14. [Repository Layout](#14-repository-layout)
@@ -76,17 +76,27 @@ Typing `mpu` from any terminal builds the project if needed, starts the backend 
 | `npm run setup` | Interactive terminal setup wizard (hidden key prompts, chmod 600 `.env`) |
 | `npm run doctor` | Verifies configuration and every configured API/venue key without printing secrets |
 | `npm run trade` | Builds if needed and starts backend + office with full **Auto Trade ON** |
+| `npm run backtest` | Runs deterministic historical backtest with quantitative performance metrics |
+| `npm run stage-gate` | Verifies cryptographic integrity of the native development roadmap stages |
 
 ---
 
-## 2. What's New in v0.0.0.3.31
+## 2. What's New in v0.0.0.4.0
 
-- **CoinMarketCap V3 Quotes & Rotation Surge**: Upgraded to Quotes V3 array parser with Zod schema validation, credential-partitioned caching, in-flight request deduplication, HTTP 429 rate limit backoff, deterministic `ROTATION_SURGE` momentum intelligence, and uniform shared `marketEvidence` across Market, Research, Strategist, and Lead.
-- **Universal Reasoning Levels**: Canonical five levels (`low`, `med`, `high`, `xhigh`, `max`) with honest native encoding (Anthropic `output_config.effort`, OpenAI and Groq normalization from `med` to `medium`, DeepSeek explicit level enforcement) and independent per-role overrides without silent downgrades.
-- **Complete Local CLI Model Discovery**: Full discovery adapters for all 15 local agents (Pi, Grok Build, Codex, OpenCode, Antigravity, etc.) with native model list parsing (`pi --list-models` supporting `~` aliases, `grok models` parsing defaults and available lists, and Cursor agent isolation) with zero arbitrary truncation.
-- **One-Click Connect & Auto-Configure**: End-to-end local agent connectivity with auth checking, sign-in terminal launcher, discovery refresh, valid JSON model probe, atomic configuration file save, and runtime `applyModelConfig` while preserving custom Owner role assignments.
-- **Discord Bot & Slash Command Sync**: Full Discord Bot integration via Gateway WebSocket with heartbeat and reconnect, automatic guild-scoped `/mpu` slash command sync with nested parameter options, and HTTP interaction fallback.
-- **Owner Trading Limits**: Network-isolated `minOrderUsdt` and `maxOrderUsdt` settings with dedicated runtime apply (`applyTradingLimits`) ensuring trade size caps without disrupting running profiles, active positions, or daily loss latches.
+- **Mpu Point-in-Time Market Data & Backtesting Simulator (`npm run backtest`)**: High-fidelity backtesting engine enforcing closed-bar availability (`closedAt <= asOfMs`), gap detection, funding settlement clocks (8h/1h), isolated margin liquidation prices, taker/maker fee accounting, and Long/Short parity.
+- **Mpu Quantitative Alpha Factors & Smart Geometry**: Complete library of formulaic alpha factors (KMID, KLOW, KHIGH, KSFT, ROC5/10/20, MA ratios, rolling standard deviation, ATR14, RSV14, composite score) combined with fractal swing pivots, Break of Structure (BOS), Change of Character (ChoCH), Fair Value Gap (FVG) mitigation tracking, Order Blocks, and Harmonic PRZ geometry.
+- **Mpu Dynamic Minimal ROI & Volatility Trailing Stop**: Time-decay profit-taking matrix and ATR-based one-way ratchet trailing stop engine that locks in accumulated gains without retreating.
+- **Mpu Bull-Bear Adversarial Debate Engine**: Quantitative conviction polarization model that triggers animated sprite boxing, verbal punch events (1 to 4 punches), and heated debate clashes when convictions diverge, forcing safe HOLD verdicts during unresolved brawls.
+- **Mpu Investor Archetype Philosophical Lenses**: Distinct philosophical lenses for debaters (Buffett value and moat, Soros reflexivity, Simons statistical anomalies, Lynch growth catalysts) without modifying the 6 core canonical roles.
+- **Mpu Jev Typed Decision Contracts & Calibration Engine**: Formally typed decision contracts (NOUL, Choice, Score) evaluated against historical trade outcomes via Brier Score ($BS = \frac{1}{N}\sum(p_i - y_i)^2$), Brier Skill Score (BSS), and 5-bin reliability calibration curves.
+- **Mpu Candidate Rejection Reason TTL Cache**: High-efficiency caching of scan rejections with automatic price breakout invalidation (>2% price jump) preventing redundant model calls on dead setups.
+- **Mpu Predictive Intelligence Worker & Fail-Open Client**: Isolated worker simulating Monte Carlo forward price trajectories (P10, P50, P90 quantiles, $P(\text{TP first})$) with non-blocking circuit-breaker client and zero-downtime fail-open statistical fallback.
+- **Mpu Typed Event Bus Architecture**: Monotonically sequenced, immutable event stream (`BAR`, `DEBATE`, `SIGNAL`, `ORDER`, `POSITION`, `RISK`, `ALERT`) with replay capability for financial reconciliation and audit tracking.
+- **Mpu Microstructure Inventory Skew Quoting**: Dynamic inventory skew ($s \in [-1, 1]$) calculating optimal reservation prices, asymmetric quoting spreads, and risk-adjusted order sizing multipliers.
+- **Mpu Safe Decimal Precision Arithmetic**: Eliminates IEEE 754 floating-point rounding errors through rigorous price tick quantization, lot step sizing, and minimum notional checks.
+- **Mpu Exchange-Side Resting Stop Guarantee**: Absolute safety invariant guaranteeing that every open position in TESTNET and LIVE has a resting stop loss order verified on the exchange venue.
+- **Mpu Multichannel Supervisor Synchronization**: Unified real-time monitoring and standardized AGENTS.md report broadcasting across Telegram, Discord, Slack, and WhatsApp with instant escalation alerts.
+- **Mpu Native 5-Stage Gate Engine (`npm run stage-gate`)**: Native stage-gate verification tool enforcing SHA-256 artifact integrity and Git commit lineage with zero phantom dependencies.
 
 ---
 
@@ -302,7 +312,7 @@ All settings live in your local `.env` (managed automatically via **Setup**). Co
 
 ---
 
-## 11. Updated v0.0.0.3.31 Workflow & System Architecture
+## 11. Updated v0.0.0.4.0 Workflow & System Architecture
 
 ### A. Autonomous Position-First Debate & Execution Workflow
 
@@ -328,7 +338,7 @@ flowchart TD
     Card --> Learn["Self-Improving Journal & Financial Evidence Ledger"]
 ```
 
-### B. Full-Stack System Architecture (`v0.0.0.3.31`)
+### B. Full-Stack System Architecture (`v0.0.0.4.0`)
 
 ```mermaid
 flowchart LR
@@ -416,7 +426,7 @@ server/            Express + WebSocket backend
   exchange/        Verified adapters for Bybit, Aster, Hyperliquid, Binance, OKX, dYdX, Paradex, Orderly
   live/            Automatic key guard, testnet round trip, fail-closed live executor
   wallet.ts        Connect wallet: DEX agent key + one signed approval + live venue balance
-  updater.ts       In-app version check (v0.0.0.3.31) and one-click git fast-forward updater
+  updater.ts       In-app version check (v0.0.0.4.0) and one-click git fast-forward updater
   auto.ts          Position-first full auto scheduler
   reports.ts       Periodic reports & financial evidence ledger
   learnings.ts     self-improving lessons store
@@ -459,7 +469,7 @@ Meskipun Mpu Gandring terbukti mampu menghasilkan profit nyata secara konsisten 
    mpu
    ```
 
-### Fitur Baru `v0.0.0.3.31`
+### Fitur Baru `v0.0.0.4.0`
 - **CoinMarketCap V3 Quotes & Intelijen Momentum**: Pembaruan parser array Quotes V3 dengan validasi skema Zod, pemisahan cache berbasis kredensial, deduplikasi request in-flight, penanganan backoff HTTP 429, klasifikasi momentum deterministik `ROTATION_SURGE`, dan pembagian `marketEvidence` yang konsisten ke seluruh agen analisis.
 - **Tingkat Reasoning Universal**: Lima level kanonikal (`low`, `med`, `high`, `xhigh`, `max`) dengan encoding native yang jujur (Anthropic `output_config.effort`, normalisasi OpenAI dan Groq dari `med` ke `medium`, serta validasi ketat DeepSeek) disertai override per-peran independen tanpa silent downgrade.
 - **Penemuan Model CLI Lokal Lengkap**: Adapter penemuan model untuk seluruh 15 agen lokal (Pi, Grok Build, Codex, OpenCode, Antigravity, dll) dengan parsing katalog native (`pi --list-models` mendukung alias `~`, `grok models` membaca model default dan daftar model) tanpa pembatasan arbitrer.

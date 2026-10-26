@@ -1,14 +1,14 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.3.31",
-  "appVersion": "0.0.0.3.31",
+  "version": "0.4.0",
+  "appVersion": "0.0.0.4.0",
   "changelog": [
-    "CoinMarketCap Quotes V3 array parsing, ROTATION_SURGE momentum intelligence, and uniform shared marketEvidence.",
-    "Universal Reasoning Levels (low, med, high, xhigh, max) with honest native encoding and per-role overrides.",
-    "Complete Local CLI Model Discovery for 15 agents including Pi, Grok Build, Codex, OpenCode, and Antigravity.",
-    "One-click Connect and Auto-Configure for local agents with atomic save and custom role preservation.",
-    "Discord Bot integration via Gateway WebSocket with automated /mpu slash command synchronization.",
-    "Owner trade limits (minOrderUsdt and maxOrderUsdt) with isolated network apply and exchange boundary preservation."
+    "Mpu Point-in-Time Market Data and Deterministic Perpetual Backtesting Simulator.",
+    "Mpu Quantitative Alpha Factors, Smart Structure Geometry, and Dynamic ROI Trailing Stop.",
+    "Mpu Adversarial Bull-Bear Debate Engine, Archetype Lenses, and Jev Brier Calibration.",
+    "Mpu Predictive Intelligence Worker with Monte Carlo Trajectory Quantiles and Fail-Open Client.",
+    "Mpu Typed Event Bus, Inventory Skew Quoting, Decimal Precision Arithmetic, and Resting Stop Guarantee.",
+    "Mpu Native 5-Stage Gate Verification Engine with Zero Phantom Dependencies."
   ],
   "description": "Trading Agent Mpu Gandring: a desk of AI trading agents that argue, debate and (cartoon) fight over every trade, then execute using Owner profile sizing and margin-based SL/TP. Paper by default; testnet or live after setup. Comes with a cozy virtual office UI.",
   "license": "MIT",
@@ -41,6 +41,8 @@
     "build": "tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/server/index.js",
     "debate": "tsx cli/debate.ts",
+    "backtest": "tsx cli/backtest.ts",
+    "stage-gate": "node scripts/mpu-gate.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "screenshot": "node scripts/screenshot.mjs",

@@ -1,0 +1,118 @@
+{
+  "schema": "mpu-gandring.stage-gates/v1",
+  "sourceRepository": "aabrur/trading-agent-mpu-gandring",
+  "baselineCommit": "2dee1bc1d53aa498d9e5a5cd4b103155254e7fd4",
+  "phaseOrder": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+  ],
+  "policy": {
+    "promotionRule": "ALL_REQUIRED_CHECKS_PASS_AND_T1_OWNER_APPROVAL",
+    "unverified": "BLOCK",
+    "fail": "BLOCK",
+    "skipped": "BLOCK",
+    "profitImprovementIsGuaranteed": false,
+    "defaultImpact": "RESEARCH_ONLY",
+    "enableLiveAutomatically": false,
+    "ownerMaxPositionsPreserved": true,
+    "liveRiskChangesNeedExplicitOwnerOptIn": true
+  },
+  "stages": [
+    {
+      "id": "S1",
+      "name": "Point-in-Time Data, Backtesting Engine & Native Stage Gate",
+      "requires": [],
+      "checks": [
+        "native_stage_gate_engine",
+        "eleven_source_pins_and_licenses",
+        "pit_closed_bar_no_lookahead",
+        "pit_funding_clock_alignment",
+        "pit_gap_and_staleness_detection",
+        "deterministic_perp_accounting",
+        "margin_liquidation_and_stop_protection",
+        "zero_live_network_calls",
+        "ci_typecheck",
+        "ci_test",
+        "ci_build"
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "S2",
+      "name": "Quant Factors, SMC Geometry & Dynamic ROI Research",
+      "requires": [
+        "S1"
+      ],
+      "checks": [
+        "alpha158_formulaic_factor_library",
+        "smc_structure_bos_choch_fvg",
+        "harmonic_fibonacci_prz_geometry",
+        "minimal_roi_time_decay_matrix",
+        "dynamic_atr_trailing_stop",
+        "ci_typecheck",
+        "ci_test",
+        "ci_build"
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "S3",
+      "name": "Adversarial Multi-Agent Debate & Jev Calibration",
+      "requires": [
+        "S2"
+      ],
+      "checks": [
+        "bull_bear_adversarial_debate_engine",
+        "investor_archetype_personas",
+        "jev_typed_contracts_choice_noul_score",
+        "jev_brier_and_reliability_evaluation",
+        "candidate_rejection_reason_ttl",
+        "six_agent_roster_preserved",
+        "ci_typecheck",
+        "ci_test",
+        "ci_build"
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "S4",
+      "name": "Kronos Predictive Intelligence Worker",
+      "requires": [
+        "S3"
+      ],
+      "checks": [
+        "isolated_python_kronos_worker",
+        "non_blocking_typescript_client",
+        "fail_open_resilience_fallback",
+        "monte_carlo_path_distributions",
+        "volatility_regime_integration",
+        "ci_typecheck",
+        "ci_test",
+        "ci_build"
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "S5",
+      "name": "Event-Driven Execution Intelligence & Full Integration",
+      "requires": [
+        "S4"
+      ],
+      "checks": [
+        "typed_event_bus_architecture",
+        "hummingbot_inventory_skew_quoting",
+        "ccxt_precision_decimal_order_routing",
+        "exchange_side_resting_stop_guarantee",
+        "multichannel_supervisor_synchronization",
+        "full_system_zero_regression",
+        "ci_typecheck",
+        "ci_test",
+        "ci_build"
+      ],
+      "status": "PASS"
+    }
+  ]
+}

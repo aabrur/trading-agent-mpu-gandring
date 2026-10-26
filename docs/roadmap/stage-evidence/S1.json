@@ -1,0 +1,86 @@
+{
+  "stage": "S1",
+  "name": "Point-in-Time Data, Backtesting Engine & Native Stage Gate",
+  "sourceSha": "2dee1bc1d53aa498d9e5a5cd4b103155254e7fd4",
+  "status": "PASS",
+  "verifiedAtWIB": "2026-10-26",
+  "criteria": [
+    {
+      "id": "native_stage_gate_engine",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "scripts/mpu-gate.mjs",
+      "sha256": "4d91613285c9f5550d5793a8045492024ae3705f61daa6328c8bb3b3156346b3"
+    },
+    {
+      "id": "eleven_source_pins_and_licenses",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "docs/roadmap/11-repos-source-map.md",
+      "sha256": "bc556edf638c2081c115185f877559692cd059b47122f98a34401d59be7a03c3"
+    },
+    {
+      "id": "pit_closed_bar_no_lookahead",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/pit.test.ts",
+      "sha256": "0e9732df0cc7ccb62c02d132baeb484429f250c2f0d231a096f6d52b72fe08d2"
+    },
+    {
+      "id": "pit_funding_clock_alignment",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "server/research/pit.ts",
+      "sha256": "b423ddc86032425f52e7f082c02a54ac9909506527c49211e42a68a93d6b0646"
+    },
+    {
+      "id": "pit_gap_and_staleness_detection",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/pit.test.ts",
+      "sha256": "0e9732df0cc7ccb62c02d132baeb484429f250c2f0d231a096f6d52b72fe08d2"
+    },
+    {
+      "id": "deterministic_perp_accounting",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/backtest.test.ts",
+      "sha256": "3cc9d92681ac6900fa59ca480e07d8dec76fa70ff98f21c27ac6bb11bd67adbc"
+    },
+    {
+      "id": "margin_liquidation_and_stop_protection",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/backtest.test.ts",
+      "sha256": "3cc9d92681ac6900fa59ca480e07d8dec76fa70ff98f21c27ac6bb11bd67adbc"
+    },
+    {
+      "id": "zero_live_network_calls",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/backtest.test.ts",
+      "sha256": "3cc9d92681ac6900fa59ca480e07d8dec76fa70ff98f21c27ac6bb11bd67adbc"
+    },
+    {
+      "id": "ci_typecheck",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "package.json",
+      "sha256": "2b92e1c69334c532bb91ae112468fe12f987837fe7482dc12c32b891ed3d6bf0"
+    },
+    {
+      "id": "ci_test",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "tests/research-backtest-api.test.ts",
+      "sha256": "ad858ad7daf5e05fd439e46b63451ff17edc2cae1bac153709b4bd0c3129e3e9"
+    },
+    {
+      "id": "ci_build",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "cli/backtest.ts",
+      "sha256": "6615bb755f1a8e9f1b5208874826769746d73793f7b1ba79876f3125233e31ad"
+    }
+  ]
+}

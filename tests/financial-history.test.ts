@@ -19,6 +19,17 @@ describe('read-only financial history', () => {
     repeated = true;
     await expect(adapter.financialHistory({ since: 1000, until: 2000, cursor: first.nextCursor! })).rejects.toThrow('Repeated');
   });
+  it('handles null nextPageCursor returned by Bybit transaction-log on the final page', async () => {
+    const fetcher = (async (url: string) => {
+      const u = new URL(url);
+      if (u.pathname.includes('query-api')) return result({ retCode: 0, result: { userID: 12 } });
+      if (u.pathname.includes('execution/list')) return result({ retCode: 0, result: { list: [], nextPageCursor: '' } });
+      return result({ retCode: 0, result: { list: [], nextPageCursor: null } });
+    }) as typeof fetch;
+    const adapter = new BybitAdapter('testnet', 'key', 'secret', fetcher);
+    const res = await adapter.financialHistory({ since: 1000, until: 2000 });
+    expect(res.complete).toBe(true);
+  });
   it('Aster saturation remains incomplete and missing numeric evidence is rejected', async () => {
     let malformed = false;
     const fetcher = (async () => result(malformed ? [{ incomeType: 'FUNDING_FEE', tranId: '1', symbol: 'BTCUSDT', asset: 'USDT', time: 1500 }] : Array.from({ length: 1000 }, (_, i) => ({ incomeType: 'FUNDING_FEE', tranId: String(i), symbol: 'BTCUSDT', asset: 'USDT', time: 1500, income: '0' })))) as typeof fetch;

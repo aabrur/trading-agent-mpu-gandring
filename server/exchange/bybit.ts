@@ -21,11 +21,13 @@ export class BybitAdapter implements ExchangeAdapter {
       c.incomeDone ? Promise.resolve({ list: [], nextPageCursor: '' }) : this.req('GET', '/v5/account/transaction-log', { ...params, accountType: 'UNIFIED', cursor: c.income, limit: 50 })
     ]);
     const f = historyObject(fills), i = historyObject(income);
-    if (typeof f.nextPageCursor !== 'string' || typeof i.nextPageCursor !== 'string') throw new Error('Missing financial history cursor');
-    if (f.nextPageCursor && f.nextPageCursor === c.fills || i.nextPageCursor && i.nextPageCursor === c.income) throw new Error('Repeated financial history cursor');
+    const fCursor = f.nextPageCursor == null ? '' : f.nextPageCursor;
+    const iCursor = i.nextPageCursor == null ? '' : i.nextPageCursor;
+    if (typeof fCursor !== 'string' || typeof iCursor !== 'string') throw new Error('Missing financial history cursor');
+    if (fCursor && fCursor === c.fills || iCursor && iCursor === c.income) throw new Error('Repeated financial history cursor');
     const records = bybitIncome(historyRows(i.list));
-    const complete = !f.nextPageCursor && !i.nextPageCursor;
-    return { accountScope: this.financialScope, records: [...records, ...bybitFills(historyRows(f.list), records)], complete, supported: ['fills', 'fees', 'funding'], nextCursor: complete ? null : JSON.stringify({ fills: f.nextPageCursor, income: i.nextPageCursor, fillsDone: !f.nextPageCursor, incomeDone: !i.nextPageCursor }) };
+    const complete = !fCursor && !iCursor;
+    return { accountScope: this.financialScope, records: [...records, ...bybitFills(historyRows(f.list), records)], complete, supported: ['fills', 'fees', 'funding'], nextCursor: complete ? null : JSON.stringify({ fills: fCursor, income: iCursor, fillsDone: !fCursor, incomeDone: !iCursor }) };
   }
   constructor(public readonly network: Network, private key: string, private secret: string, private fetchImpl: FetchLike = fetch) {
     if (!key || !secret) throw new ExchangeError('Bybit key and secret are required');
