@@ -29,6 +29,7 @@ export function DeskOps({ state }: { state: DeskState }) {
   const auto = state.auto;
   const savedSymbols = (auto?.symbols ?? []).join(', ');
   const [autoMin, setAutoMin] = useState(String(auto?.intervalMin || 15));
+  const [autoHold, setAutoHold] = useState(String(auto?.maxHoldHours ?? 0));
   const [autoSyms, setAutoSyms] = useState((auto?.symbols ?? state.watchlist).join(', '));
   const [autoBusy, setAutoBusy] = useState(false);
   const [presetBusy, setPresetBusy] = useState(false);
@@ -97,6 +98,9 @@ export function DeskOps({ state }: { state: DeskState }) {
     if (auto?.intervalMin) setAutoMin(String(auto.intervalMin));
   }, [auto?.intervalMin]);
   useEffect(() => {
+    if (auto?.maxHoldHours !== undefined) setAutoHold(String(auto.maxHoldHours));
+  }, [auto?.intervalMin]);
+  useEffect(() => {
     if (useEffectAutoSync) setAutoSyms(useEffectAutoSync);
   }, [useEffectAutoSync]);
 
@@ -120,15 +124,18 @@ export function DeskOps({ state }: { state: DeskState }) {
       }
       const syms = (patch.symbolsOverride ?? parseSyms()).slice(0, 10);
       const mins = Math.max(1, Math.min(1440, Number(autoMin) || 15));
+      const holdHours = Math.max(0, Math.min(720, Math.round(Number(autoHold) || 0)));
       const schedule = patch.on !== undefined ? { on: patch.on } : patch.runNow ? { runNow: true } : {
         on: patch.on,
         runNow: patch.runNow,
         intervalMin: mins,
+        maxHoldHours: holdHours,
         symbols: syms.length ? syms : state.watchlist
       };
       const r = await post('/api/ops/auto', schedule).catch(() => null);
       if (r?.ok) {
-        const modeTxt = r.auto?.on ? `Auto Trade scheduled every ${r.auto.intervalMin}m` : 'Auto scheduler off';
+        const holdTxt = r.auto?.maxHoldHours ? ` · max hold ${r.auto.maxHoldHours}h` : ' · hold no limit';
+        const modeTxt = r.auto?.on ? `Auto Trade scheduled every ${r.auto.intervalMin}m${holdTxt}` : 'Auto scheduler off';
         show(true, patch.runNow ? `${modeTxt} · cycle started` : modeTxt);
       } else {
         show(false, r?.error ?? 'office not reachable');
@@ -327,6 +334,7 @@ export function DeskOps({ state }: { state: DeskState }) {
           <summary>{lang === 'id' ? 'Jadwal & simbol' : 'Schedule & symbols'}</summary>
           <div className="auto-setup-controls">
             <label className="auto-min-field"><span>{t('opsEveryLabel')}</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>{t('opsMinUnit')}</span></label>
+            <label className="auto-min-field auto-hold-field" title={lang === 'id' ? 'Batas umur posisi sebelum ditutup otomatis. 0 = mati (hold terus sampai SL/TP)' : 'Maximum position duration before auto-close. 0 = disabled (hold until SL/TP)'}><span>{lang === 'id' ? 'Batas Hold' : 'Max Hold'}</span><input type="number" min={0} max={720} aria-label="auto max hold hours" placeholder="0" value={autoHold} onChange={(e) => setAutoHold(e.target.value)} /><span>{lang === 'id' ? 'jam' : 'hrs'}</span></label>
             <button type="button" className="mini" disabled={autoBusy} onClick={() => void updateAuto({})}>{t('autoSaveBtn')}</button>
           </div>
           <div className="watchlist-builder">

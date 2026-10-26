@@ -1418,6 +1418,9 @@ export class Desk extends EventEmitter {
       const syms = env.AUTO_SYMBOLS.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
       if (syms.length) this.cfg.auto.symbols = syms;
     }
+    if (env.MAX_HOLD_HOURS !== undefined && Number(env.MAX_HOLD_HOURS) >= 0) {
+      this.cfg.auto.maxHoldHours = Math.max(0, Math.min(720, Math.round(Number(env.MAX_HOLD_HOURS))));
+    }
     const k = readKill(this.killFilePath);
     if (!k) {
       this.killed = false;

@@ -128,7 +128,11 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
       const env = setupEnv(c.envFile);
       c.desk.reloadRuntimeConfig?.(env);
       if (c.auto && typeof env.AUTO_TRADING === 'string') {
-        c.auto.configure({ on: env.AUTO_TRADING === 'on' });
+        c.auto.configure({
+          on: env.AUTO_TRADING === 'on',
+          intervalMin: env.DEBATE_INTERVAL_MIN ? Number(env.DEBATE_INTERVAL_MIN) : undefined,
+          maxHoldHours: env.MAX_HOLD_HOURS !== undefined ? Number(env.MAX_HOLD_HOURS) : undefined
+        });
       }
       c.desk.emit('state', c.desk.snapshot());
     } catch { /* ignore reload error */ }
@@ -429,7 +433,11 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
       c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
       await c.desk.syncLive?.();
       if (c.auto && typeof env.AUTO_TRADING === 'string') {
-        c.auto.configure({ on: env.AUTO_TRADING === 'on' });
+        c.auto.configure({
+          on: env.AUTO_TRADING === 'on',
+          intervalMin: env.DEBATE_INTERVAL_MIN ? Number(env.DEBATE_INTERVAL_MIN) : undefined,
+          maxHoldHours: env.MAX_HOLD_HOURS !== undefined ? Number(env.MAX_HOLD_HOURS) : undefined
+        });
       }
       c.desk.emit('state', c.desk.snapshot());
     } catch { /* ignore reload error */ }

@@ -3,7 +3,9 @@ import { parseCommand } from '../server/channels/commands.js';
 import { discordCommandText, DIRECT_DISCORD_COMMANDS } from '../server/channels/discord.js';
 import { killCmd } from '../cli/kill.js';
 import { readKill } from '../server/killswitch.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { preferencesInfo, savePreferences } from '../server/setup/preferences.js';
+import { readEnv } from '../cli/envfile.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -63,6 +65,53 @@ describe('mpu kill command', () => {
       expect(confRes.ok).toBe(true);
       expect(confRes.text).toContain('KILL SWITCH ENGAGED');
       expect(readKill(killFile)).not.toBeNull();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('maxHoldHours preferences support', () => {
+  it('reads maxHoldHours from preferencesInfo correctly', () => {
+    expect(preferencesInfo({ MAX_HOLD_HOURS: '4' }).maxHoldHours).toBe(4);
+    expect(preferencesInfo({ MAX_HOLD_HOURS: '0' }).maxHoldHours).toBe(0);
+    expect(preferencesInfo({ MAX_HOLD_HOURS: '24' }).maxHoldHours).toBe(24);
+    expect(preferencesInfo({}).maxHoldHours).toBe(0);
+  });
+
+  it('persists and validates maxHoldHours through savePreferences', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'mpu-pref-test-'));
+    const envFile = path.join(tmp, '.env');
+    writeFileSync(envFile, 'APP_MODE=local\n', 'utf8');
+    try {
+      const basePayload = {
+        appMode: 'local' as const,
+        balance: 1000,
+        safetyNet: 200,
+        n: 2,
+        dailyLoss: 5,
+        auto: true,
+        debateInterval: 15,
+        reportInterval: 60
+      };
+
+      const res0 = savePreferences(envFile, {}, { ...basePayload, maxHoldHours: 0 });
+      expect(res0.ok).toBe(true);
+      expect(readEnv(envFile).MAX_HOLD_HOURS).toBe('0');
+
+      const res4 = savePreferences(envFile, {}, { ...basePayload, maxHoldHours: 4 });
+      expect(res4.ok).toBe(true);
+      expect(readEnv(envFile).MAX_HOLD_HOURS).toBe('4');
+
+      const res24 = savePreferences(envFile, {}, { ...basePayload, maxHoldHours: 24 });
+      expect(res24.ok).toBe(true);
+      expect(readEnv(envFile).MAX_HOLD_HOURS).toBe('24');
+
+      const resNegative = savePreferences(envFile, {}, { ...basePayload, maxHoldHours: -1 });
+      expect(resNegative.ok).toBe(false);
+
+      const resExcessive = savePreferences(envFile, {}, { ...basePayload, maxHoldHours: 9999 });
+      expect(resExcessive.ok).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
