@@ -16,6 +16,9 @@ All notable changes to Trading Agent Mpu Gandring are documented in this file.
 - Roadmap `S*.json` evidence is reported as historical integrity only; it no longer counts as verification of the current checkout or authorizes the next stage.
 - README now distinguishes research libraries from modules wired into the live execution path and labels Monte Carlo outputs as scenarios rather than validated predictions.
 
+### Fixed
+- Resolved body-parser security advisory GHSA-27r3-jxmh-p828 (CVE-2026-111181) by upgrading to fixed 2.4.0 release via lockfile resolution, with isolated compression regression coverage.
+
 ## [v0.0.0.3.29] - 2026-10-25
 
 ### Added
