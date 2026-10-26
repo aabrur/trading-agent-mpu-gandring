@@ -5,6 +5,7 @@ dist/
 !.env.example
 outbox.jsonl
 logs/
+data/logs/
 reports/
 *.log
 .DS_Store

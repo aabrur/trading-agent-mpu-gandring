@@ -168,9 +168,12 @@ describe('Deterministic Crypto-Perpetual Historical Simulator', () => {
 
     expect(metrics.totalTrades).toBe(1);
     expect(metrics.trades[0].exitReason).toBe('LIQUIDATION');
-    // Entire initial margin is lost on liquidation
-    expect(metrics.trades[0].netPnL).toBe(-300);
+    // The trade PnL includes the margin and the entry fee already deducted from cash.
+    expect(metrics.trades[0].netPnL).toBeCloseTo(-301.65, 8);
+    expect(metrics.trades[0].feesPaid).toBeCloseTo(1.65, 8);
+    expect(metrics.trades[0].liquidationAdjustment).toBeLessThan(0);
     expect(metrics.finalEquity).toBe(698.35);
+    expect(metrics.trades.reduce((sum, trade) => sum + trade.netPnL, 0)).toBeCloseTo(metrics.finalEquity - metrics.initialCapital, 8);
   });
 
   it('correctly processes periodic funding settlement payments', () => {
@@ -218,6 +221,154 @@ describe('Deterministic Crypto-Perpetual Historical Simulator', () => {
     expect(metrics.totalTrades).toBe(1);
     // Funding payment: 1000 USDT notional * 0.001 rate = 1 USDT
     expect(metrics.trades[0].fundingPaid).toBeGreaterThan(0.99);
+  });
+
+  it('reconciles entry and exit fees once in cash and final equity', () => {
+    const candles = makeCandles([
+      { open: 100, high: 100, low: 100, close: 100 },
+      { open: 100, high: 100, low: 100, close: 100 },
+    ]);
+    const metrics = new PerpBacktestEngine({
+      initialCapital: 1000,
+      takerFeeRate: 0.001,
+      slippageBps: 0,
+      maxLeverage: 2,
+    }).run(candles, [], (_feed, bar) => bar.timestamp === baseTime
+      ? { action: 'OPEN_LONG', symbol: 'BTCUSDT', stopPrice: 90, sizeUsdt: 200, leverage: 2 }
+      : { action: 'CLOSE', symbol: 'BTCUSDT', stopPrice: 0 });
+
+    expect(metrics.finalEquity).toBeCloseTo(999.2, 8);
+    expect(metrics.trades[0].netPnL).toBeCloseTo(-0.8, 8);
+  });
+
+  it('includes entry fees in available margin and reports costs for an open position', () => {
+    const candles = makeCandles([{ open: 100, high: 100, low: 100, close: 100 }]);
+    const metrics = new PerpBacktestEngine({
+      initialCapital: 200, takerFeeRate: 0.001, slippageBps: 0, maxLeverage: 2,
+    }).run(candles, [], () => ({
+      action: 'OPEN_LONG', symbol: 'BTCUSDT', stopPrice: 90, sizeUsdt: 200, leverage: 2,
+    }));
+
+    expect(metrics.equityCurve[0].cashBalance).toBeCloseTo(0, 8);
+    expect(metrics.totalFeesPaid).toBeCloseTo(0.3992, 4);
+    expect(metrics.finalEquity).toBeCloseTo(199.6008, 4);
+  });
+
+  it('does not process ROI exits before intrabar liquidation protection', () => {
+    const candles = makeCandles([
+      { open: 100, high: 100, low: 100, close: 100 },
+      { open: 100, high: 110, low: 40, close: 110 },
+    ]);
+    const metrics = new PerpBacktestEngine({
+      initialCapital: 1000,
+      takerFeeRate: 0,
+      slippageBps: 0,
+      maxLeverage: 2,
+      enableMinimalRoi: true,
+      minimalRoiTable: [{ minutes: 0, minRoiPct: 1 }],
+    }).run(candles, [], (_feed, bar) => bar.timestamp === baseTime
+      ? { action: 'OPEN_LONG', symbol: 'BTCUSDT', stopPrice: 30, sizeUsdt: 200, leverage: 2 }
+      : null);
+
+    expect(metrics.trades[0].exitReason).toBe('LIQUIDATION');
+  });
+
+  it('limits strategy feed history to bars closed as of the current decision', () => {
+    const candles = makeCandles([
+      { open: 100, high: 101, low: 99, close: 100 },
+      { open: 200, high: 201, low: 199, close: 200 },
+    ]);
+    const observed: number[] = [];
+    const metrics = new PerpBacktestEngine({ initialCapital: 1000 }).run(candles, [], feed => {
+      observed.push(feed.asOf(Number.MAX_SAFE_INTEGER).length);
+      return null;
+    });
+
+    expect(observed).toEqual([1, 2]);
+    expect(metrics.dataQuality.status).toBe('OK');
+  });
+
+  it('resets all state when an engine instance is reused with empty input', () => {
+    const engine = new PerpBacktestEngine({ initialCapital: 1000 });
+    engine.run(makeCandles([{ open: 100, high: 100, low: 100, close: 100 }]), [], () => ({
+      action: 'OPEN_LONG', symbol: 'BTCUSDT', stopPrice: 90, sizeUsdt: 200,
+    }));
+    const empty = engine.run([], [], () => null);
+
+    expect(empty.finalEquity).toBe(1000);
+    expect(empty.totalTrades).toBe(0);
+    expect(empty.equityCurve).toEqual([]);
+    expect(empty.totalFeesPaid).toBe(0);
+    expect(empty.dataQuality.status).toBe('EMPTY');
+  });
+
+  it('charges every funding settlement crossed during a candle data gap', () => {
+    const settlement0 = Date.UTC(2026, 9, 26, 0, 0, 0);
+    const candles: PITCandle[] = [
+      { timestamp: settlement0 - 60_000, open: 100, high: 101, low: 99, close: 100, volume: 10, closedAt: settlement0 },
+      { timestamp: settlement0 + 16 * 60 * 60_000 - 60_000, open: 100, high: 101, low: 99, close: 100, volume: 10, closedAt: settlement0 + 16 * 60 * 60_000 },
+    ];
+    const rates: PITFundingRate[] = [8, 16].map(hour => ({
+      timestamp: settlement0 + hour * 60 * 60_000,
+      rate: 0.001,
+      intervalHours: 8,
+    }));
+    const metrics = new PerpBacktestEngine({
+      initialCapital: 1000, takerFeeRate: 0.001, slippageBps: 0, maxLeverage: 2,
+    }).run(candles, rates, (_feed, bar) => bar.timestamp === candles[0].timestamp
+      ? { action: 'OPEN_LONG', symbol: 'BTCUSDT', stopPrice: 90, sizeUsdt: 200, leverage: 2 }
+      : { action: 'CLOSE', symbol: 'BTCUSDT', stopPrice: 0 });
+
+    expect(metrics.trades[0].fundingPaid).toBeCloseTo(0.8, 8);
+    expect(metrics.finalEquity).toBeCloseTo(998.4, 8);
+    expect(metrics.totalFundingPaid).toBeCloseTo(0.8, 8);
+  });
+
+  it('uses only the active funding interval after a historical interval change', () => {
+    const start = Date.UTC(2026, 9, 26);
+    const hour = 3_600_000;
+    const candles: PITCandle[] = [0.5, 9].map(h => ({ timestamp: start + h * hour - 60_000, closedAt: start + h * hour, open: 100, high: 100, low: 100, close: 100, volume: 1 }));
+    const rates: PITFundingRate[] = [
+      { timestamp: start + hour, rate: 0.001, intervalHours: 1 },
+      { timestamp: start + 8 * hour, rate: 0.002, intervalHours: 8 },
+    ];
+    const result = new PerpBacktestEngine({ initialCapital: 1000, maxLeverage: 2, takerFeeRate: 0, slippageBps: 0, defaultFundingRate: 0 }).run(candles, rates, (_feed, bar) => bar.closedAt === candles[0].closedAt
+      ? { action: 'OPEN_LONG', symbol: 'BTCUSDT', stopPrice: 90, sizeUsdt: 200, leverage: 2 }
+      : { action: 'CLOSE', symbol: 'BTCUSDT', stopPrice: 0 });
+    // Seven hourly settlements at 0.4 USDT, then one eight-hour settlement at 0.8 USDT.
+    expect(result.totalFundingPaid).toBeCloseTo(3.6, 8);
+    expect(result.finalEquity).toBeCloseTo(996.4, 8);
+    expect(result.trades[0].netPnL).toBeCloseTo(-3.6, 8);
+  });
+
+  it('does not let a future interval record change the configured funding clock in the past', () => {
+    const start = Date.UTC(2026, 9, 26), hour = 3_600_000;
+    const candles: PITCandle[] = [7.5, 11].map(h => ({ timestamp: start + h * hour - 60_000, closedAt: start + h * hour, open: 100, high: 100, low: 100, close: 100, volume: 1 }));
+    const result = new PerpBacktestEngine({ initialCapital: 1000, maxLeverage: 2, takerFeeRate: 0, slippageBps: 0, defaultFundingRate: 0.001, fundingIntervalHours: 8 }).run(candles,
+      [{ timestamp: start + 10 * hour, rate: 0.002, intervalHours: 1 }],
+      (_feed, bar) => bar.closedAt === candles[0].closedAt
+        ? { action: 'OPEN_LONG', symbol: 'BTCUSDT', stopPrice: 90, sizeUsdt: 200, leverage: 2 }
+        : { action: 'CLOSE', symbol: 'BTCUSDT', stopPrice: 0 });
+    // Configured eight-hour clock at 08:00 costs 0.4; the observed hourly clock costs 0.8 at 10:00 and 11:00.
+    expect(result.totalFundingPaid).toBeCloseTo(2, 8);
+    expect(result.finalEquity).toBeCloseTo(998, 8);
+  });
+
+  it('reconciles funding cash debits for both sides without charging them again at close', () => {
+    const settlement = Date.UTC(2026, 9, 26, 8, 0, 0);
+    const candles: PITCandle[] = [
+      { timestamp: settlement - 120_000, open: 100, high: 100, low: 100, close: 100, volume: 10, closedAt: settlement - 60_000 },
+      { timestamp: settlement - 60_000, open: 100, high: 100, low: 100, close: 100, volume: 10, closedAt: settlement },
+    ];
+    const rates: PITFundingRate[] = [{ timestamp: settlement, rate: 0.01, intervalHours: 8 }];
+    const runSide = (side: 'LONG' | 'SHORT') => new PerpBacktestEngine({
+      initialCapital: 1000, takerFeeRate: 0.001, slippageBps: 0, maxLeverage: 2,
+    }).run(candles, rates, (_feed, bar) => bar.timestamp === candles[0].timestamp
+      ? { action: side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', symbol: 'BTCUSDT', stopPrice: side === 'LONG' ? 90 : 110, sizeUsdt: 200, leverage: 2 }
+      : { action: 'CLOSE', symbol: 'BTCUSDT', stopPrice: 0 });
+
+    expect(runSide('LONG').finalEquity).toBeCloseTo(995.2, 8);
+    expect(runSide('SHORT').finalEquity).toBeCloseTo(1003.2, 8);
   });
 
   it('is completely deterministic: 2 identical runs yield exact identical outputs', () => {

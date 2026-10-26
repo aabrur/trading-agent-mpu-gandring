@@ -21,10 +21,10 @@ describe('Full System Zero-Regression End-to-End Pipeline (Stages 1 through 5)',
       low: 99 + i * 0.5,
       close: 101 + i * 0.5,
       volume: 1000 + i * 50,
-      closedAt: (i + 1) * 1000,
+      closedAt: (i + 1) * 1000 + 1,
     }));
     const pitFeed = new PointInTimeFeed(rawCandles, []);
-    const pitCandles = pitFeed.asOf(20000);
+    const pitCandles = pitFeed.asOf(20001);
     expect(pitCandles.length).toBe(20);
 
     // 2. Stage 2: Quant Alpha158 Factors & SMC Geometry
@@ -65,7 +65,8 @@ describe('Full System Zero-Regression End-to-End Pipeline (Stages 1 through 5)',
     });
     expect(forecast.p10.length).toBe(7);
     expect(forecast.p90.length).toBe(7);
-    expect(forecast.probTpFirst).toBeGreaterThanOrEqual(0);
+    expect(forecast.probTpFirst).not.toBeNull();
+    expect(forecast.probTpFirst ?? -1).toBeGreaterThanOrEqual(0);
 
     // 5. Stage 5: Typed Event Bus, Inventory Skew, Decimal Precision & Resting Stop Guarantee
     const bus = new TypedEventBus();
@@ -74,7 +75,7 @@ describe('Full System Zero-Regression End-to-End Pipeline (Stages 1 through 5)',
 
     // Inventory skew adjustment
     const skewEngine = new InventorySkewEngine();
-    const quote = skewEngine.generateQuote(107, forecast.volatility, [], 1000);
+    const quote = skewEngine.generateQuote(107, forecast.volatility ?? 0, [], 1000);
     expect(quote.longSizeMultiplier).toBe(1.0);
 
     // Order execution parameters

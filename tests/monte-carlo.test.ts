@@ -18,6 +18,7 @@ describe('Monte Carlo Path Distributions & Volatility Regimes', () => {
       candles,
       horizon: 8,
       numPaths: 150,
+      seed: 17,
       tpPrice: 115,
       slPrice: 102,
     });
@@ -38,6 +39,7 @@ describe('Monte Carlo Path Distributions & Volatility Regimes', () => {
     expect(forecast.p50[8]).toBeLessThanOrEqual(forecast.p90[8]);
     expect(forecast.probTpFirst).toBeGreaterThanOrEqual(0);
     expect(forecast.probTpFirst).toBeLessThanOrEqual(1);
+    expect((forecast.probTpFirst ?? 0) + (forecast.probSlFirst ?? 0) + (forecast.probNoHit ?? 0)).toBe(1);
     expect(['EXPANDING_VOLATILITY', 'CONTRACTING_VOLATILITY', 'STABLE_DRIFT']).toContain(forecast.regime);
   });
 
@@ -45,10 +47,27 @@ describe('Monte Carlo Path Distributions & Volatility Regimes', () => {
     const emptyForecast = simulateMonteCarlo({ candles: [] });
     expect(emptyForecast.regime).toBe('UNCERTAIN');
     expect(emptyForecast.p10).toEqual([]);
-    expect(emptyForecast.probTpFirst).toBe(0.5);
+    expect(emptyForecast.currentPrice).toBeNull();
+    expect(emptyForecast.probTpFirst).toBeNull();
 
     const singleBar = simulateMonteCarlo({ candles: [{ c: 50 }] });
     expect(singleBar.currentPrice).toBe(50);
     expect(singleBar.regime).toBe('UNCERTAIN');
+    expect(singleBar.p50).toEqual([]);
+  });
+
+  it('is reproducible with a seed and leaves barrier probabilities unavailable without both barriers', () => {
+    const first = simulateMonteCarlo({ candles, horizon: 4, numPaths: 80, seed: 12 });
+    const second = simulateMonteCarlo({ candles, horizon: 4, numPaths: 80, seed: 12 });
+    expect(first).toEqual(second);
+    expect(first.probTpFirst).toBeNull();
+    expect(first.probSlFirst).toBeNull();
+    expect(first.probNoHit).toBeNull();
+  });
+
+  it('rejects invalid simulation budgets', () => {
+    expect(() => simulateMonteCarlo({ candles, horizon: 1.5 })).toThrow(RangeError);
+    expect(() => simulateMonteCarlo({ candles, numPaths: 5001 })).toThrow(RangeError);
+    expect(() => simulateMonteCarlo({ candles, side: 'SHORT', tpPrice: 110, slPrice: 98 })).toThrow(RangeError);
   });
 });

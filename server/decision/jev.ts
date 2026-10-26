@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { recordDiagnostic } from '../session-log.js';
 import { safe, registerSecrets } from '../redact.js';
 import {
   DecisionsRequestSchema,
@@ -285,8 +286,14 @@ export class JevService {
     }
     const cacheKey = createHash('sha256').update(JSON.stringify({ m: this.settings.model, s: sanitizeJevState(state), q: questions })).digest('hex');
     const hit = this.cache.get(cacheKey);
-    if (hit && Date.now() - hit.at < cacheTtlMs && hit.result.ok) return { ...hit.result, cached: true };
+    if (hit && Date.now() - hit.at < cacheTtlMs && hit.result.ok) {
+      recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.cache_hit', status: 'cached', correlationId: opts?.decisionId, message: 'Jev cached result reused', details: { questionIds: Object.keys(questions), model: this.settings.model } });
+      return { ...hit.result, cached: true };
+    }
+    const requestId = `jev-${cacheKey.slice(0, 12)}-${Date.now()}`;
+    recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.dispatched', status: 'started', correlationId: opts?.decisionId ?? requestId, message: 'Jev decision request dispatched', details: { requestId, questionIds: Object.keys(questions), model: this.settings.model } });
     const result = await submitDecisions({ settings: this.settings, key: this.key(), state, questions, fetchImpl: this.fetchImpl, timeoutMs: opts?.timeoutMs });
+    recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.completed', level: result.ok ? 'INFO' : 'WARN', status: result.health, correlationId: opts?.decisionId ?? requestId, durationMs: result.latencyMs, message: result.ok ? 'Jev decision request completed' : result.error ?? 'Jev decision request failed', details: { requestId, questionIds: Object.keys(questions), model: result.response?.model ?? this.settings.model, answers: result.response?.answers ?? null, fallback: !result.ok } });
     this.remember(result);
     const gen = opts?.generation ?? ++this.generation;
     if (result.ok && gen >= this.appliedGeneration) {

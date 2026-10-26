@@ -1,6 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import type { AppConfig } from './config.js';
 import { log, safe } from './redact.js';
+import { recordDiagnostic } from './session-log.js';
 
 // Optional Grok Bot bridge. Server side only. One POST, 8 second timeout, no retry.
 // On failure the JSON goes to outbox.jsonl so a routine can drain it later.
@@ -19,8 +20,10 @@ export async function sendToGrokBot(cfg: AppConfig, kind: BridgeEvent['kind'], d
       body, signal: ctrl.signal
     });
     if (!res.ok) throw new Error(`webhook HTTP ${res.status}`);
+    recordDiagnostic({ source: 'grokbot', category: 'INTEGRATION', eventName: 'bridge.delivered', status: 'delivered', message: 'Grok Bot bridge event delivered', details: { kind, httpStatus: res.status } });
     return 'sent';
   } catch (e) {
+    recordDiagnostic({ source: 'grokbot', category: 'INTEGRATION', eventName: 'bridge.failed', level: 'WARN', status: 'failed', message: 'Grok Bot bridge delivery failed', details: { kind, error: e } });
     appendFileSync(outboxPath, body + '\n');
     log(`[bridge] ${kind} not delivered (${safe((e as Error).message)}), queued to ${outboxPath}`);
     return 'queued';

@@ -1,5 +1,7 @@
 import express from 'express';
 import { onActivity } from './activity.js';
+import { mountSessionLogRoutes } from './session-log-routes.js';
+import { getSessionLogger, type SessionLogger } from './session-log.js';
 import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { existsSync } from 'node:fs';
@@ -76,12 +78,14 @@ const GbLessonSchema = z.object({
   symbol: z.string().max(20).optional(), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default(''), lesson: z.string().min(8).max(300)
 }).strict();
 
-export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null; setupFetch?: typeof fetch; channelFetch?: typeof fetch; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv } = {}) {
+export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null; setupFetch?: typeof fetch; channelFetch?: typeof fetch; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv; sessionLog?: SessionLogger | null; sessionLogRoot?: string } = {}) {
   const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
-  const desk = new Desk(cfg, caller, { settingsFile: opts.envFile ?? (process.env.VITEST ? undefined : process.env.DOTENV_PATH ?? '.env'), opportunityReviewsPath: opts.reportsDir === null ? null : undefined, reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, conversationsPath: opts.conversationsPath, killFile: opts.killFile ?? null, jevFetch: opts.jevFetch, jevEnv: opts.jevEnv });
+  const sessionLog = opts.sessionLog === undefined ? getSessionLogger() : opts.sessionLog;
+  const desk = new Desk(cfg, caller, { settingsFile: opts.envFile ?? (process.env.VITEST ? undefined : process.env.DOTENV_PATH ?? '.env'), opportunityReviewsPath: opts.reportsDir === null ? null : undefined, reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, conversationsPath: opts.conversationsPath, killFile: opts.killFile ?? null, jevFetch: opts.jevFetch, jevEnv: opts.jevEnv, ...(sessionLog ? { diagnostics: input => { sessionLog.write(input); } } : {}) });
   const auto = new AutoTrader(desk);
   const reporter = new Reporter(desk, opts.reportsDir === undefined ? 'reports' : opts.reportsDir, opts.outboxPath);
   const app = express();
+  mountSessionLogRoutes(app, { logger: sessionLog, root: opts.sessionLogRoot });
   const unsubscribeActivity = onActivity(entry => desk.recordActivity(entry));
   const frontendLogLimit = limiter(30, 60_000);
   app.use((req, res, next) => {
@@ -382,6 +386,11 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
 
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 128 * 1024 });
+  wss.on('connection', ws => {
+    desk.diagnostic({ source: 'websocket', eventName: 'websocket.connected', message: 'Office WebSocket connected' });
+    ws.on('close', (code) => desk.diagnostic({ source: 'websocket', eventName: 'websocket.disconnected', message: 'Office WebSocket disconnected', details: { code } }));
+    ws.on('error', error => desk.diagnostic({ source: 'websocket', level: 'ERROR', eventName: 'websocket.error', message: 'Office WebSocket failed', details: { error } }));
+  });
   wss.on('error', () => { /* ignore */ });
   const send = (ws: WebSocket, type: string, payload: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload })); };
   const broadcast = (type: string) => (payload: unknown) => { const msg = JSON.stringify({ type, payload }); for (const c of wss.clients) if (c.readyState === WebSocket.OPEN) c.send(msg); };

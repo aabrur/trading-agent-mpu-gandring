@@ -25,3 +25,15 @@ it('reports API failures without query, body or headers, avoids report loops and
   target.dispatchEvent(Object.assign(new Event('error'), { message: 'After cleanup' }));
   expect(requests).toHaveBeenCalledTimes(4);
 });
+
+it('does not report intentional archive request cancellation as a network failure', async () => {
+  const requests = vi.fn(async () => { throw new DOMException('Request cancelled', 'AbortError'); });
+  const target = Object.assign(new EventTarget(), { fetch: requests });
+  vi.stubGlobal('window', target);
+  vi.stubGlobal('location', { href: 'http://localhost:5173/', origin: 'http://localhost:5173' });
+  const uninstall = installDiagnostics();
+  try {
+    await expect(target.fetch('/api/logs/sessions/example/events')).rejects.toThrow('Request cancelled');
+    expect(requests).toHaveBeenCalledTimes(1);
+  } finally { uninstall(); }
+});

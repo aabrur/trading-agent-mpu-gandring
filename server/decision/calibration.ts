@@ -8,6 +8,8 @@
  * - Expected Calibration Error (ECE) & Maximum Calibration Error (MCE).
  */
 
+import { recordDiagnostic } from '../session-log.js';
+
 export interface CalibrationRecord {
   id: string;
   symbol: string;
@@ -166,6 +168,7 @@ export class CalibrationTracker {
 
   public recordForecast(record: CalibrationRecord): void {
     this.records.push(record);
+    recordDiagnostic({ source: 'calibration', category: 'PREDICTION', eventName: 'calibration.recorded', status: 'recorded', correlationId: record.id, message: 'Observed calibration outcome recorded', details: { symbol: record.symbol, forecastProbability: record.forecastProbability, realizedOutcome: record.realizedOutcome } });
   }
 
   public getRecords(): CalibrationRecord[] {

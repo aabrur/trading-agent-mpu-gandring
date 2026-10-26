@@ -2,6 +2,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from '
 import path from 'node:path';
 import type { Position, ClosedTrade } from '../types.js';
 import type { OrderRecord, Side } from '../exchange/types.js';
+import { recordDiagnostic } from '../session-log.js';
 
 export interface ExecutionIntent {
   clientId: string; symbol: string; side: Side; kind: 'open' | 'close'; requestedQty: number;
@@ -26,10 +27,16 @@ export class ExecutionJournal {
   }
   save() {
     if (!this.file) return;
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ venue: this.venue, intents: this.intents, positions: this.positions, closed: this.closed, protectionClients: this.protectionClients }));
-    renameSync(tmp, this.file);
+    try {
+      mkdirSync(path.dirname(this.file), { recursive: true });
+      const tmp = `${this.file}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ venue: this.venue, intents: this.intents, positions: this.positions, closed: this.closed, protectionClients: this.protectionClients }));
+      renameSync(tmp, this.file);
+      recordDiagnostic({ source: 'journal', category: 'JOURNAL', eventName: 'journal.persisted', status: 'persisted', message: 'Execution journal persisted', correlationId: this.intents.at(-1)?.clientId, details: { venue: this.venue, intents: this.intents.length, positions: this.positions.length, closed: this.closed.length } });
+    } catch (error) {
+      recordDiagnostic({ source: 'journal', category: 'JOURNAL', eventName: 'journal.failed', level: 'ERROR', status: 'failed', message: 'Execution journal persistence failed', details: { error } });
+      throw error;
+    }
   }
   checkpoint(positions: Position[], closed: ClosedTrade[]) {
     this.positions = structuredClone(positions.filter((p) => p.ownership !== 'external'));

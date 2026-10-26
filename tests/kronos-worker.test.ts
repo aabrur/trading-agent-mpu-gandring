@@ -15,7 +15,7 @@ describe('Isolated Python Kronos Worker (workers/kronos/worker.py)', () => {
       encoding: 'utf8',
       timeout: 10_000,
     });
-    expect(out).toContain('PASS: Kronos worker self-test passed.');
+    expect(out).toContain('PASS: local GBM worker self-test passed.');
   });
 
   it('accepts stdio JSON input and returns structured prediction payload', () => {
@@ -29,8 +29,10 @@ describe('Isolated Python Kronos Worker (workers/kronos/worker.py)', () => {
       ],
       horizon: 5,
       num_paths: 100,
-      tp_price: 110,
-      sl_price: 98,
+      seed: 41,
+      side: 'SHORT',
+      tp_price: 98,
+      sl_price: 110,
     });
 
     const out = execFileSync('python', [workerScript], {
@@ -40,6 +42,12 @@ describe('Isolated Python Kronos Worker (workers/kronos/worker.py)', () => {
     });
 
     const parsed = JSON.parse(out);
+    const repeated = execFileSync('python', [workerScript], {
+      input: inputPayload,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(JSON.parse(repeated)).toEqual(parsed);
     expect(parsed).toHaveProperty('current_price', 105);
     expect(parsed).toHaveProperty('p10');
     expect(parsed).toHaveProperty('p50');
@@ -51,5 +59,6 @@ describe('Isolated Python Kronos Worker (workers/kronos/worker.py)', () => {
     expect(parsed.p50[5]).toBeLessThanOrEqual(parsed.p90[5]);
     expect(parsed.prob_tp_first).toBeGreaterThanOrEqual(0);
     expect(parsed.prob_tp_first).toBeLessThanOrEqual(1);
+    expect(parsed.prob_tp_first + parsed.prob_sl_first + parsed.prob_no_hit).toBeCloseTo(1, 3);
   });
 });

@@ -1,165 +1,168 @@
 /**
- * Monte Carlo Path Distribution & Volatility Cone Engine for Mpu Gandring.
- *
- * Clean-room TypeScript implementation inspired by shiyu-coder/Kronos:
- * - Deterministic geometric Brownian motion simulation with momentum drift.
- * - Extracts P10 (bearish tail), P50 (median expected path), and P90 (bullish tail).
- * - Computes probability of hitting Take Profit before Stop Loss: P(TP first).
- * - Classifies forward volatility regime: EXPANDING, CONTRACTING, or STABLE.
+ * Local geometric Brownian motion path simulation. This is not pretrained Kronos inference.
  */
 
 export type VolatilityRegime = 'EXPANDING_VOLATILITY' | 'CONTRACTING_VOLATILITY' | 'STABLE_DRIFT' | 'UNCERTAIN';
 
 export interface MonteCarloForecast {
-  currentPrice: number;
+  currentPrice: number | null;
   horizon: number;
   numPaths: number;
-  drift: number;
-  volatility: number;
+  drift: number | null;
+  volatility: number | null;
   regime: VolatilityRegime;
-  probTpFirst: number; // 0.0 to 1.0
-  expectedReturnPct: number;
-  p10: number[]; // Lower quantile path
-  p50: number[]; // Median expected path
-  p90: number[]; // Upper quantile path
+  probTpFirst: number | null;
+  probSlFirst: number | null;
+  probNoHit: number | null;
+  expectedReturnPct: number | null;
+  /** Pointwise simulated quantiles, not calibrated confidence intervals. */
+  p10: number[];
+  p50: number[];
+  p90: number[];
 }
 
 export interface MonteCarloInput {
-  candles: Array<{ close?: number; c?: number; [key: string]: any }>;
-  horizon?: number; // Forward bar steps (default 10)
-  numPaths?: number; // Number of simulated trajectories (default 200)
+  candles: Array<{ close?: number; c?: number; [key: string]: unknown }>;
+  horizon?: number;
+  numPaths?: number;
+  seed?: number;
+  side?: 'LONG' | 'SHORT';
   tpPrice?: number;
   slPrice?: number;
 }
 
-/**
- * Standard Normal Box-Muller random number generator with deterministic seed support.
- */
-function boxMuller(randFn: () => number = Math.random): number {
+const MAX_HORIZON = 500;
+const MAX_PATHS = 5000;
+
+export function validateForecastOptions(horizon: number, numPaths: number, seed?: number): void {
+  if (!Number.isInteger(horizon) || horizon < 1 || horizon > MAX_HORIZON) {
+    throw new RangeError(`horizon must be an integer from 1 to ${MAX_HORIZON}`);
+  }
+  if (!Number.isInteger(numPaths) || numPaths < 1 || numPaths > MAX_PATHS) {
+    throw new RangeError(`numPaths must be an integer from 1 to ${MAX_PATHS}`);
+  }
+  if (seed !== undefined && (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffffffff)) {
+    throw new RangeError('seed must be an integer from 0 to 4294967295');
+  }
+}
+
+function createRandom(seed?: number): () => number {
+  if (seed === undefined) return Math.random;
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function boxMuller(randFn: () => number): number {
   let u = 0;
   let v = 0;
   while (u === 0) u = randFn();
   while (v === 0) v = randFn();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-/**
- * Runs forward Monte Carlo simulation over historical candles.
- */
 export function simulateMonteCarlo(input: MonteCarloInput): MonteCarloForecast {
-  const { candles, horizon = 10, numPaths = 200, tpPrice, slPrice } = input;
+  const horizon = input.horizon ?? 10;
+  const numPaths = input.numPaths ?? 200;
+  validateForecastOptions(horizon, numPaths, input.seed);
+  const side = input.side ?? 'LONG';
+  if (side !== 'LONG' && side !== 'SHORT') throw new RangeError('side must be LONG or SHORT');
 
-  const closes = (candles ?? [])
-    .map(c => typeof c.close === 'number' ? c.close : typeof c.c === 'number' ? c.c : 0)
-    .filter(c => c > 0);
+  const closes = (input.candles ?? [])
+    .map(c => typeof c.close === 'number' ? c.close : c.c)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
+  const currentPrice = closes.length > 0 ? closes[closes.length - 1] : null;
+  const insufficient = (current: number | null): MonteCarloForecast => ({
+    currentPrice: current,
+    horizon,
+    numPaths,
+    drift: null,
+    volatility: null,
+    regime: 'UNCERTAIN',
+    probTpFirst: null,
+    probSlFirst: null,
+    probNoHit: null,
+    expectedReturnPct: null,
+    p10: [],
+    p50: [],
+    p90: [],
+  });
+  if (closes.length < 2 || currentPrice === null) return insufficient(currentPrice);
 
-  if (closes.length < 2) {
-    return {
-      currentPrice: closes[0] ?? 0,
-      horizon,
-      numPaths,
-      drift: 0,
-      volatility: 0,
-      regime: 'UNCERTAIN',
-      probTpFirst: 0.5,
-      expectedReturnPct: 0,
-      p10: [],
-      p50: [],
-      p90: [],
-    };
-  }
-
-  const currentPrice = closes[closes.length - 1];
-
-  // Calculate log returns
   const returns: number[] = [];
-  for (let i = 1; i < closes.length; i++) {
-    returns.push(Math.log(closes[i] / closes[i - 1]));
-  }
+  for (let i = 1; i < closes.length; i++) returns.push(Math.log(closes[i] / closes[i - 1]));
+  if (returns.some(value => !Number.isFinite(value))) return insufficient(currentPrice);
 
-  const n = returns.length;
-  const meanReturn = returns.reduce((a, b) => a + b, 0) / n;
-  const variance = returns.reduce((acc, r) => acc + Math.pow(r - meanReturn, 2), 0) / Math.max(1, n - 1);
+  const meanReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance = returns.reduce((acc, value) => acc + (value - meanReturn) ** 2, 0) / Math.max(1, returns.length - 1);
   const volatility = Math.sqrt(variance);
-
-  // Momentum drift with slight mean-reverting dampener
   const drift = meanReturn * 0.8;
-
-  // Simulate M paths
+  const rand = createRandom(input.seed);
   const paths: number[][] = [];
   let tpHits = 0;
   let slHits = 0;
+  let noHits = 0;
+  const hasBarriers = Number.isFinite(input.tpPrice) && (input.tpPrice as number) > 0
+    && Number.isFinite(input.slPrice) && (input.slPrice as number) > 0;
+  if (hasBarriers && (side === 'LONG' ? input.tpPrice! <= input.slPrice! : input.tpPrice! >= input.slPrice!)) {
+    throw new RangeError(`tpPrice and slPrice are not ordered for a ${side} position`);
+  }
 
   for (let i = 0; i < numPaths; i++) {
-    const path: number[] = [currentPrice];
-    let p = currentPrice;
-    let hitTp = false;
-    let hitSl = false;
-
+    const path = [currentPrice];
+    let price = currentPrice;
+    let firstHit: 'TP' | 'SL' | null = null;
     for (let step = 1; step <= horizon; step++) {
-      const z = boxMuller();
-      p = p * Math.exp((drift - 0.5 * Math.pow(volatility, 2)) + volatility * z);
-      path.push(p);
-
-      // Barrier checks
-      if (!hitTp && !hitSl) {
-        if (typeof tpPrice === 'number' && p >= tpPrice) {
-          hitTp = true;
-        } else if (typeof slPrice === 'number' && p <= slPrice) {
-          hitSl = true;
-        }
+      price *= Math.exp(drift - 0.5 * volatility ** 2 + volatility * boxMuller(rand));
+      if (!Number.isFinite(price) || price <= 0) return insufficient(currentPrice);
+      path.push(price);
+      if (firstHit === null && hasBarriers) {
+        const tpHit = side === 'LONG' ? price >= input.tpPrice! : price <= input.tpPrice!;
+        const slHit = side === 'LONG' ? price <= input.slPrice! : price >= input.slPrice!;
+        if (tpHit) firstHit = 'TP';
+        else if (slHit) firstHit = 'SL';
       }
     }
-
-    if (hitTp && !hitSl) tpHits++;
-    else if (hitSl && !hitTp) slHits++;
-
+    if (firstHit === 'TP') tpHits++;
+    else if (firstHit === 'SL') slHits++;
+    else noHits++;
     paths.push(path);
   }
 
-  // Extract quantiles per step
+  const quantile = (values: number[], p: number): number => values.sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(p * values.length))];
   const p10: number[] = [];
   const p50: number[] = [];
   const p90: number[] = [];
-
   for (let step = 0; step <= horizon; step++) {
-    const sortedPrices = paths.map(pth => pth[step]).sort((a, b) => a - b);
-    const idx10 = Math.floor(0.10 * numPaths);
-    const idx50 = Math.floor(0.50 * numPaths);
-    const idx90 = Math.min(numPaths - 1, Math.floor(0.90 * numPaths));
-
-    p10.push(Number(sortedPrices[idx10].toFixed(4)));
-    p50.push(Number(sortedPrices[idx50].toFixed(4)));
-    p90.push(Number(sortedPrices[idx90].toFixed(4)));
+    const prices = paths.map(path => path[step]);
+    p10.push(quantile(prices, 0.1));
+    p50.push(quantile(prices, 0.5));
+    p90.push(quantile(prices, 0.9));
   }
 
-  const totalTerminal = tpHits + slHits;
-  const probTpFirst = totalTerminal > 0
-    ? Number((tpHits / totalTerminal).toFixed(4))
-    : 0.5;
-
-  const expectedReturnPct = Number((((p50[p50.length - 1] - currentPrice) / currentPrice) * 100).toFixed(2));
-
-  // Volatility regime evaluation
   const recentReturns = returns.slice(-5);
-  const recentVariance = recentReturns.reduce((acc, r) => acc + Math.pow(r - meanReturn, 2), 0) / Math.max(1, recentReturns.length - 1);
-  const recentVol = Math.sqrt(recentVariance);
-
-  let regime: VolatilityRegime = 'STABLE_DRIFT';
-  if (recentVol > volatility * 1.3) {
-    regime = 'EXPANDING_VOLATILITY';
-  } else if (recentVol < volatility * 0.7) {
-    regime = 'CONTRACTING_VOLATILITY';
-  }
-
+  const recentVariance = recentReturns.reduce((acc, value) => acc + (value - meanReturn) ** 2, 0) / Math.max(1, recentReturns.length - 1);
+  const recentVolatility = Math.sqrt(recentVariance);
+  const regime: VolatilityRegime = recentVolatility > volatility * 1.3
+    ? 'EXPANDING_VOLATILITY'
+    : recentVolatility < volatility * 0.7 ? 'CONTRACTING_VOLATILITY' : 'STABLE_DRIFT';
+  const expectedReturnPct = ((p50[p50.length - 1] - currentPrice) / currentPrice) * 100;
+  if (!Number.isFinite(expectedReturnPct)) return insufficient(currentPrice);
   return {
-    currentPrice: Number(currentPrice.toFixed(4)),
+    currentPrice,
     horizon,
     numPaths,
     drift: Number(drift.toFixed(6)),
     volatility: Number(volatility.toFixed(6)),
     regime,
-    probTpFirst,
+    probTpFirst: hasBarriers ? Number((tpHits / numPaths).toFixed(4)) : null,
+    probSlFirst: hasBarriers ? Number((slHits / numPaths).toFixed(4)) : null,
+    probNoHit: hasBarriers ? Number((noHits / numPaths).toFixed(4)) : null,
     expectedReturnPct,
     p10,
     p50,

@@ -21,6 +21,12 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+      - run: npm run stage-gate -- --stage S5 --evidence-dir "${RUNNER_TEMP}/mpu-stage-evidence"
+      - name: Upload independent verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpu-stage-gate-evidence
+          path: ${{ runner.temp }}/mpu-stage-evidence
+          if-no-files-found: warn
+          retention-days: 30

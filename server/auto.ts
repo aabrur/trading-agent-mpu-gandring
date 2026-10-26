@@ -22,11 +22,13 @@ export class AutoTrader {
     if (!this.desk.cfg.auto.on || this.timer) return;
     if (this.desk.grokbot) { log('[auto] Grok Bot mode: the trading loop runs as a Grok Bot routine (see grokbot/BOOTSTRAP.md), not here'); return; }
     this.desk.autoState = { ...this.desk.autoState, on: true, intervalMin: this.desk.cfg.auto.intervalMin };
+    this.desk.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.started', status: 'started', message: 'Auto trader started', details: { intervalMin: this.desk.cfg.auto.intervalMin } });
     log(`[auto] full auto on: ${this.desk.cfg.auto.symbols.join(', ')} every ${this.desk.cfg.auto.intervalMin} min`);
     if (!this.desk.autoState.running) this.schedule(this.firstDelayMs);
     this.desk.emit('state', this.desk.snapshot());
   }
   stop() {
+    this.desk.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.stopped', status: 'stopped', message: 'Auto trader stopped' });
     this.generation++;
     this.desk.autoState.stopping = this.desk.autoState.running;
     if (this.timer) clearTimeout(this.timer);
@@ -71,6 +73,7 @@ export class AutoTrader {
 
   private schedule(ms: number) {
     this.desk.autoState.nextAt = Date.now() + ms;
+    this.desk.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.scheduled', status: 'scheduled', message: 'Next auto cycle scheduled', details: { nextAt: this.desk.autoState.nextAt, delayMs: ms } });
     this.timer = setTimeout(() => {
       this.timer = null;
       this.desk.autoState.nextAt = 0;
@@ -95,6 +98,8 @@ export class AutoTrader {
     d.emit('state', d.snapshot());
     const ran: string[] = [];
     const started = Date.now();
+    const correlationId = `cycle-${started}-${generation}`;
+    d.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.cycle_started', status: 'started', correlationId, message: 'Auto cycle started', details: { trigger } });
     try {
       if (d.cfg.learning.scan) d.scan();
       await d.closeStale(() => !cancelled());
@@ -148,6 +153,7 @@ export class AutoTrader {
         const candidates = d.cfg.auto.symbols
           .filter((s) => !d.book.positions.some((p) => p.symbol === s))
           .sort((a, b) => priority(b) - priority(a) || ranking(b) - ranking(a));
+        d.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.candidates', correlationId, message: 'Candidate scan completed', details: { candidates } });
 
         for (const sym of candidates) {
           if (cancelled()) break;
@@ -170,6 +176,7 @@ export class AutoTrader {
       if (d.autoState.cycles % d.cfg.learning.reflectEveryCycles === 0) d.reflect(started - 1);
       return { ran, skipped: '' };
     } finally {
+      d.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.cycle_finished', status: cancelled() ? 'cancelled' : 'finished', correlationId, durationMs: Date.now() - started, message: 'Auto cycle finished', details: { ran } });
       d.autoState.running = false; d.autoState.stopping = false; d.autoState.completedAt = Date.now();
       if (d.autoState.on && !d.killed && !this.timer) this.schedule(this.intervalMs);
       d.emit('state', d.snapshot());

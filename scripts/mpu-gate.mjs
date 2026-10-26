@@ -1,148 +1,155 @@
 #!/usr/bin/env node
 /**
- * Native Stage Gate Engine for Mpu Gandring.
- *
- * Enforces strict serial roadmap progression:
- * - Stage N cannot begin until all predecessors (Stage 1..N-1) are 100% verified (PASS).
- * - Stage verification requires immutable SHA-256 artifact fingerprints and Git commit ancestor binding.
- * - Zero phantom dependencies: 100% native Node.js and local workspace verification.
- *
- * Usage:
- *   node scripts/mpu-gate.mjs --verify S1
- *   node scripts/mpu-gate.mjs --next S2
+ * Verifies the current checkout with typecheck, tests, and build, or checks the
+ * byte integrity of historical roadmap evidence without treating it as current proof.
  */
-
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const options = process.argv.slice(2);
-const pick = (flag, fallback) => {
-  const i = options.indexOf(flag);
-  return i >= 0 ? options[i + 1] : fallback;
-};
+const args = process.argv.slice(2);
+const option = name => { const index = args.indexOf(name); return index < 0 ? null : args[index + 1] ?? null; };
+const root = path.resolve(option('--repo-root') ?? process.cwd());
+const manifestPath = path.resolve(option('--manifest') ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'roadmap', 'stage-gates.json'));
+const config = JSON.parse(readFileSync(manifestPath, 'utf8'));
+const target = option('--stage') ?? option('--verify') ?? option('--next') ?? 'S5';
+const stage = config.stages.find(item => item.id === target);
+const independent = args.includes('--independent') || args.length === 0;
+const evidenceDir = path.resolve(option('--evidence-dir') ?? path.join(os.tmpdir(), 'mpu-stage-evidence', `${Date.now()}-${randomUUID()}`));
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
-const mode = options.includes('--next') ? 'next' : options.includes('--verify') ? 'verify' : null;
-const target = pick(mode === 'next' ? '--next' : '--verify');
-const workspace = path.resolve(pick('--repo-root', process.cwd()));
-const manifestPath = path.resolve(pick('--manifest', path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'roadmap', 'stage-gates.json')));
-const evidenceDir = path.resolve(pick('--evidence-dir', path.join(workspace, 'docs', 'roadmap', 'stage-evidence')));
-
-function stop(message) {
-  console.error(`BLOCK ${target ?? ''}: ${message}`);
+function fail(message) {
+  console.error(`FAIL ${target}: ${message}`);
   process.exit(1);
 }
 
-if (!mode || !target) {
-  stop('Usage: node scripts/mpu-gate.mjs --verify <StageId> OR node scripts/mpu-gate.mjs --next <StageId>');
+function git(args, encoding = 'utf8') {
+  return execFileSync('git', args, { cwd: root, encoding, maxBuffer: 20 * 1024 * 1024 });
 }
 
-if (!existsSync(manifestPath)) {
-  stop(`Missing stage manifest: ${manifestPath}`);
-}
-
-const config = JSON.parse(readFileSync(manifestPath, 'utf8'));
-const stages = config.stages;
-const ix = stages.findIndex(s => s.id === target);
-if (ix < 0) {
-  stop(`Unknown stage ID: ${target}`);
-}
-
-let commit;
-try {
-  commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim();
-} catch {
-  stop(`Workspace ${workspace} must be a valid Git repository checkout.`);
-}
-
-const sha256 = buf => createHash('sha256').update(buf).digest('hex');
-
-function validRelative(ref) {
-  if (typeof ref !== 'string' || !ref.length || path.isAbsolute(ref)) return null;
-  const resolved = path.resolve(workspace, ref);
-  if (resolved !== workspace && !resolved.startsWith(workspace + path.sep)) return null;
-  return resolved;
-}
-
-function verifyStage(stage) {
-  const evidenceFile = path.join(evidenceDir, `${stage.id}.json`);
-  if (!existsSync(evidenceFile)) {
-    return `Missing evidence record: ${evidenceFile}`;
+function sourceTreeDigest(excludedDir) {
+  const paths = git(['ls-files', '--cached', '--others', '--exclude-standard', '-z'], 'buffer')
+    .toString('utf8').split('\0').filter(Boolean).sort();
+  const hash = createHash('sha256');
+  for (const file of paths) {
+    const absolute = path.resolve(root, file);
+    if (absolute === excludedDir || absolute.startsWith(excludedDir + path.sep)) continue;
+    if (['node_modules', 'dist', 'coverage', 'test-results'].some(part => file.split('/').includes(part))) continue;
+    if (!existsSync(absolute)) continue;
+    hash.update(file).update('\0').update(readFileSync(absolute)).update('\0');
   }
+  return hash.digest('hex');
+}
 
-  let record;
-  try {
-    record = JSON.parse(readFileSync(evidenceFile, 'utf8'));
-  } catch {
-    return `Invalid JSON in evidence file: ${evidenceFile}`;
+function runIndependent() {
+  if (!stage) fail(`Unknown stage ${target}`);
+  const historicalDir = path.resolve(root, 'docs/roadmap/stage-evidence');
+  if (evidenceDir === historicalDir || evidenceDir.startsWith(historicalDir + path.sep)) {
+    fail('Independent evidence must be written outside docs/roadmap/stage-evidence; historical S*.json files are immutable.');
   }
-
-  if (record.stage !== stage.id || !/^[0-9a-f]{40}$/.test(record.sourceSha)) {
-    return `${stage.id}: Missing or malformed stage ID or 40-hex sourceSha`;
+  mkdirSync(evidenceDir, { recursive: true });
+  const commit = git(['rev-parse', 'HEAD']).trim();
+  const sourceTreeSha256 = sourceTreeDigest(evidenceDir);
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const emptyUserNpmConfig = path.join(evidenceDir, 'empty-user.npmrc');
+  const emptyGlobalNpmConfig = path.join(evidenceDir, 'empty-global.npmrc');
+  writeFileSync(emptyUserNpmConfig, '');
+  writeFileSync(emptyGlobalNpmConfig, '');
+  const sanitizedEnv = {
+    CI: 'true',
+    DOTENV_CONFIG_PATH: '__isolated_no_env__',
+    NPM_CONFIG_USERCONFIG: emptyUserNpmConfig,
+    NPM_CONFIG_GLOBALCONFIG: emptyGlobalNpmConfig,
+  };
+  for (const key of ['SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA']) {
+    if (process.env[key]) sanitizedEnv[key] = process.env[key];
   }
+  const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path');
+  if (pathKey) sanitizedEnv[pathKey] = process.env[pathKey];
+  const commands = [
+    { id: 'typecheck', args: ['run', 'typecheck'] },
+    { id: 'test', args: ['test'] },
+    { id: 'build', args: ['run', 'build'] },
+  ];
+  const results = [];
+  for (const command of commands) {
+    const startedAt = new Date().toISOString();
+    const result = spawnSync(npm, command.args, {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+      shell: process.platform === 'win32',
+      env: sanitizedEnv,
+    });
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    const logName = `${command.id}.log`;
+    const logPath = path.join(evidenceDir, logName);
+    writeFileSync(logPath, output);
+    results.push({
+      id: command.id,
+      command: `npm ${command.args.join(' ')}`,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      status: result.status === 0 ? 'PASS' : 'FAIL',
+      exitCode: result.status ?? 1,
+    artifact: logName,
+      sha256: digest(readFileSync(logPath)),
+      error: result.error?.message ?? null,
+    });
+    console.log(`${result.status === 0 ? 'PASS' : 'FAIL'} ${command.id}${result.status === 0 ? '' : ` (exit ${result.status ?? 1})`}`);
+    if (result.status !== 0) break;
+  }
+  const sourceTreeSha256After = sourceTreeDigest(evidenceDir);
+  const sourceStable = sourceTreeSha256After === sourceTreeSha256;
+  const record = {
+    schema: 'mpu-gandring.independent-evidence/v1',
+    stage: target,
+    status: results.length === commands.length && results.every(result => result.status === 'PASS') && sourceStable ? 'PASS' : 'FAIL',
+    sourceSha: commit,
+    sourceTreeSha256,
+    sourceTreeSha256After,
+    sourceStable,
+    generatedAt: new Date().toISOString(),
+    environment: { CI: 'true', DOTENV_CONFIG_PATH: '__isolated_no_env__', npmUserConfig: 'empty-user.npmrc', npmGlobalConfig: 'empty-global.npmrc' },
+    criteria: results,
+  };
+  const recordPath = path.join(evidenceDir, `${target}-independent.json`);
+  writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+  if (record.status !== 'PASS') fail(`Independent verification failed. Evidence: ${recordPath}`);
+  console.log(`PASS: Independent ${target} verification completed on ${commit.slice(0, 10)}; source tree ${sourceTreeSha256}.`);
+  console.log(`Evidence: ${recordPath}`);
+}
 
-  // Verify that record.sourceSha is an ancestor of or matches current commit
-  if (record.sourceSha !== commit) {
-    let isShallow = false;
-    try {
-      isShallow = execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: workspace, encoding: 'utf8' }).trim() === 'true';
-    } catch {
-      // ignore
+function runLegacy() {
+  if (!stage) fail(`Unknown stage ${target}`);
+  const evidenceDir = path.resolve(root, 'docs/roadmap/stage-evidence');
+  const commit = git(['rev-parse', 'HEAD']).trim();
+  for (const itemStage of config.stages.slice(0, config.stages.indexOf(stage) + 1)) {
+    const recordPath = path.join(evidenceDir, `${itemStage.id}.json`);
+    if (!existsSync(recordPath)) fail(`Missing legacy evidence record ${recordPath}`);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    if (record.stage !== itemStage.id || !/^[0-9a-f]{40}$/.test(record.sourceSha ?? '')) fail(`${itemStage.id}: malformed historical record`);
+    if (record.status !== 'PASS' || !Array.isArray(record.criteria)) fail(`${itemStage.id}: historical status is not PASS`);
+    try { git(['merge-base', '--is-ancestor', record.sourceSha, commit]); }
+    catch { if (record.sourceSha !== commit) fail(`${itemStage.id}: sourceSha is not an ancestor of current HEAD`); }
+    for (const checkId of itemStage.checks) {
+      const matches = record.criteria.filter(criterion => criterion.id === checkId);
+      if (matches.length !== 1) fail(`${itemStage.id}/${checkId}: expected one historical criterion, got ${matches.length}`);
+      const criterion = matches[0];
+      if (criterion.status !== 'PASS' || criterion.exitCode !== 0 || typeof criterion.artifact !== 'string' || path.isAbsolute(criterion.artifact) || criterion.artifact.split(/[\\/]/).includes('..')) fail(`${itemStage.id}/${checkId}: malformed historical criterion`);
+      let bytes;
+      try { bytes = git(['show', `${record.sourceSha}:${criterion.artifact}`], 'buffer'); }
+      catch { fail(`${itemStage.id}/${checkId}: source artifact did not exist at recorded sourceSha`); }
+      if (criterion.sha256 !== digest(bytes)) fail(`${itemStage.id}/${checkId}: historical Git blob SHA256 mismatch`);
     }
-
-    try {
-      execFileSync('git', ['merge-base', '--is-ancestor', record.sourceSha, commit], { cwd: workspace, stdio: 'ignore' });
-    } catch {
-      if (!isShallow) {
-        return `${stage.id}: sourceSha (${record.sourceSha.slice(0, 7)}) is not an ancestor of current HEAD (${commit.slice(0, 7)})`;
-      }
-    }
   }
-
-  if (record.status !== 'PASS') {
-    return `${stage.id}: Status is ${record.status}, expected PASS`;
-  }
-
-  if (!Array.isArray(record.criteria)) {
-    return `${stage.id}: Missing criteria array in evidence record`;
-  }
-
-  // Validate all expected checks from the manifest
-  for (const checkId of stage.checks) {
-    const matching = record.criteria.filter(c => c.id === checkId);
-    if (matching.length !== 1) {
-      return `${stage.id}/${checkId}: Expected exactly 1 criterion record, found ${matching.length}`;
-    }
-    const item = matching[0];
-    if (item.status !== 'PASS' || item.exitCode !== 0) {
-      return `${stage.id}/${checkId}: Check failed (status=${item.status}, exitCode=${item.exitCode})`;
-    }
-    const artifactPath = validRelative(item.artifact);
-    if (!artifactPath || !existsSync(artifactPath)) {
-      return `${stage.id}/${checkId}: Missing artifact file at ${item.artifact}`;
-    }
-    const computedHash = sha256(readFileSync(artifactPath));
-    if (item.sha256 !== computedHash) {
-      return `${stage.id}/${checkId}: Artifact SHA256 mismatch (expected ${item.sha256}, got ${computedHash})`;
-    }
-  }
-
-  return null;
+  console.log(`LEGACY INTEGRITY PASS: Historical ${target} records and source Git blobs match. This does not verify the current checkout, current tests, or current build.`);
 }
 
-// In --verify mode, verify all stages up to and including target.
-// In --next mode, verify all stages before target to ensure prerequisites are satisfied.
-const stagesToCheck = stages.slice(0, mode === 'next' ? ix : ix + 1);
-
-for (const stage of stagesToCheck) {
-  const err = verifyStage(stage);
-  if (err) stop(err);
-}
-
-if (mode === 'next') {
-  console.log(`PASS: All prerequisite stages before ${target} passed 100%. Authorized to START ${target} on commit ${commit.slice(0, 10)}.`);
-} else {
-  console.log(`PASS: Stage ${target} evidence is complete, verified, and 100% compliant on commit ${commit.slice(0, 10)}.`);
-}
+if (!existsSync(manifestPath)) fail(`Missing manifest ${manifestPath}`);
+if (args.includes('--next')) fail('--next cannot authorize roadmap progress from historical PASS records. Run --independent for current checkout evidence.');
+if (independent) runIndependent();
+else runLegacy();

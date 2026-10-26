@@ -45,6 +45,7 @@ export interface BacktestPosition {
   entryTime: number;
   liquidationPrice: number;
   accumulatedFunding: number;
+  entrySlippagePaid: number;
   trailingState?: TrailingPositionState;
 }
 
@@ -64,6 +65,7 @@ export interface BacktestTrade {
   feesPaid: number;
   fundingPaid: number;
   slippagePaid: number;
+  liquidationAdjustment: number;
   netPnL: number;
   roiPct: number;
   exitReason: ExitReason;
@@ -98,6 +100,7 @@ export interface BacktestMetrics {
   totalFeesPaid: number;
   totalFundingPaid: number;
   totalSlippagePaid: number;
+  dataQuality: ReturnType<PointInTimeFeed['checkQuality']>;
   trades: BacktestTrade[];
   equityCurve: EquityPoint[];
 }
@@ -124,7 +127,12 @@ export class PerpBacktestEngine {
   private closedTrades: BacktestTrade[] = [];
   private equityCurve: EquityPoint[] = [];
   private tradeCounter = 0;
-  private lastFundingSettlementTime = 0;
+  private processedFundingSettlements = new Set<string>();
+  private lastFundingCheckTime: number | null = null;
+  private totalFeesPaid = 0;
+  private totalFundingPaid = 0;
+  private totalSlippagePaid = 0;
+  private dataQuality: ReturnType<PointInTimeFeed['checkQuality']> | null = null;
   private roiEngine: MinimalRoiEngine | null = null;
   private trailingEngine: DynamicTrailingStopEngine | null = null;
 
@@ -179,17 +187,22 @@ export class PerpBacktestEngine {
     const feed = new PointInTimeFeed(candles, fundingRates);
     const sortedCandles = feed.asOf(Number.MAX_SAFE_INTEGER);
 
-    if (sortedCandles.length === 0) {
-      return this.generateMetrics();
-    }
-
     // Initialize state
     this.cashBalance = this.config.initialCapital;
     this.openPositions = [];
     this.closedTrades = [];
     this.equityCurve = [];
     this.tradeCounter = 0;
-    this.lastFundingSettlementTime = 0;
+    this.processedFundingSettlements = new Set();
+    this.lastFundingCheckTime = null;
+    this.totalFeesPaid = 0;
+    this.totalFundingPaid = 0;
+    this.totalSlippagePaid = 0;
+    this.dataQuality = sortedCandles.length > 0
+      ? feed.checkQuality(sortedCandles[sortedCandles.length - 1].closedAt)
+      : feed.checkQuality(0);
+
+    if (sortedCandles.length === 0) return this.generateMetrics();
 
     for (const bar of sortedCandles) {
       // 1. Process Funding Settlement if applicable
@@ -199,7 +212,8 @@ export class PerpBacktestEngine {
       this.processPositionExits(bar);
 
       // 3. Query Strategy for Decisions
-      const signal = strategy(feed, bar, [...this.openPositions]);
+      const strategyFeed = feed.pointInTimeView(bar.closedAt);
+      const signal = strategy(strategyFeed, bar, [...this.openPositions]);
 
       // 4. Execute Strategy Signal if triggered
       if (signal) {
@@ -214,22 +228,39 @@ export class PerpBacktestEngine {
   }
 
   private processFunding(currentTimestamp: number, feed: PointInTimeFeed): void {
-    if (PointInTimeFeed.isFundingSettlementWindow(currentTimestamp, this.config.fundingIntervalHours)) {
-      if (this.lastFundingSettlementTime !== currentTimestamp) {
-        this.lastFundingSettlementTime = currentTimestamp;
-        const rateRecord = feed.getFundingRateAt(currentTimestamp);
-        const fundingRate = rateRecord ? rateRecord.rate : this.config.defaultFundingRate;
+    const previousTimestamp = this.lastFundingCheckTime;
+    this.lastFundingCheckTime = currentTimestamp;
+    if (previousTimestamp === null) return;
 
-        for (const pos of this.openPositions) {
-          const positionNotional = pos.qty * pos.entryPrice;
-          // Longs pay shorts when fundingRate > 0; Shorts pay longs when fundingRate < 0
-          const fundingPayment = pos.side === 'LONG'
-            ? positionNotional * fundingRate
-            : -positionNotional * fundingRate;
-
-          pos.accumulatedFunding += fundingPayment;
-          this.cashBalance -= fundingPayment;
+    const intervals = new Set([...feed.fundingIntervals(this.config.fundingIntervalHours), this.config.fundingIntervalHours]);
+    for (const intervalHours of intervals) {
+      const intervalMs = intervalHours * 60 * 60 * 1000;
+      let settlement = Math.floor(previousTimestamp / intervalMs) * intervalMs + intervalMs;
+      while (settlement <= currentTimestamp) {
+        const settlementKey = `${intervalHours}:${settlement}`;
+        if (PointInTimeFeed.isFundingSettlementWindow(settlement, intervalHours)
+          && !this.processedFundingSettlements.has(settlementKey)) {
+          const rateRecord = feed.getFundingRateAt(settlement);
+          // A historical interval change replaces the prior clock; it does not add a second funding stream.
+          if ((rateRecord?.intervalHours ?? this.config.fundingIntervalHours) !== intervalHours) {
+            settlement += intervalMs;
+            continue;
+          }
+          this.processedFundingSettlements.add(settlementKey);
+          const fundingRate = rateRecord
+            ? rateRecord.rate
+            : this.config.defaultFundingRate;
+          for (const pos of this.openPositions) {
+            const positionNotional = pos.qty * pos.entryPrice;
+            const fundingPayment = pos.side === 'LONG'
+              ? positionNotional * fundingRate
+              : -positionNotional * fundingRate;
+            pos.accumulatedFunding += fundingPayment;
+            this.cashBalance -= fundingPayment;
+            this.totalFundingPaid += fundingPayment;
+          }
         }
+        settlement += intervalMs;
       }
     }
   }
@@ -241,21 +272,8 @@ export class PerpBacktestEngine {
       let exitReason: ExitReason | null = null;
       let exitPrice = 0;
 
-      // Minimal ROI time-decay take profit check
-      if (this.roiEngine) {
-        const durationMin = Math.max(0, (bar.closedAt - pos.entryTime) / 60_000);
-        const grossPnL = pos.side === 'LONG'
-          ? (bar.close - pos.entryPrice) * pos.qty
-          : (pos.entryPrice - bar.close) * pos.qty;
-        const currentRoiPct = (grossPnL / pos.initialMargin) * 100;
-        if (this.roiEngine.shouldTakeProfit(durationMin, currentRoiPct)) {
-          exitReason = 'MINIMAL_ROI';
-          exitPrice = bar.close;
-        }
-      }
-
-      if (!exitReason) {
-        if (pos.side === 'LONG') {
+      // OHLC bars do not reveal intrabar ordering. Protective exits take precedence over close-based ROI.
+      if (pos.side === 'LONG') {
           // Liquidation check
           if (bar.low <= pos.liquidationPrice) {
             exitReason = 'LIQUIDATION';
@@ -273,7 +291,7 @@ export class PerpBacktestEngine {
             exitReason = 'TAKE_PROFIT';
             exitPrice = pos.tpPrice;
           }
-        } else {
+      } else {
           // Short position
           // Liquidation check
           if (bar.high >= pos.liquidationPrice) {
@@ -292,6 +310,16 @@ export class PerpBacktestEngine {
             exitReason = 'TAKE_PROFIT';
             exitPrice = pos.tpPrice;
           }
+      }
+
+      if (!exitReason && this.roiEngine) {
+        const durationMin = Math.max(0, (bar.closedAt - pos.entryTime) / 60_000);
+        const grossPnL = pos.side === 'LONG'
+          ? (bar.close - pos.entryPrice) * pos.qty
+          : (pos.entryPrice - bar.close) * pos.qty;
+        if (this.roiEngine.shouldTakeProfit(durationMin, (grossPnL / pos.initialMargin) * 100)) {
+          exitReason = 'MINIMAL_ROI';
+          exitPrice = bar.close;
         }
       }
 
@@ -332,7 +360,9 @@ export class PerpBacktestEngine {
 
       const side: 'LONG' | 'SHORT' = signal.action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
       const leverage = Math.min(signal.leverage ?? this.config.maxLeverage, this.config.maxLeverage);
-      const allocatedMargin = Math.min(signal.sizeUsdt ?? 200, this.cashBalance);
+      const requestedMargin = Math.max(0, signal.sizeUsdt ?? 200);
+      const feeRate = leverage * this.config.takerFeeRate;
+      const allocatedMargin = Math.min(requestedMargin, this.cashBalance / (1 + feeRate));
 
       if (allocatedMargin < 10) return; // Below minimum trade size
 
@@ -344,7 +374,10 @@ export class PerpBacktestEngine {
 
       // Deduct taker fee
       const fee = notional * this.config.takerFeeRate;
+      const entrySlippagePaid = notional * (this.config.slippageBps / 10_000);
       this.cashBalance -= (allocatedMargin + fee);
+      this.totalFeesPaid += fee;
+      this.totalSlippagePaid += entrySlippagePaid;
 
       const liqPrice = this.calculateLiquidationPrice(
         side,
@@ -372,6 +405,7 @@ export class PerpBacktestEngine {
         entryTime: bar.closedAt,
         liquidationPrice: liqPrice,
         accumulatedFunding: 0,
+        entrySlippagePaid,
         trailingState,
       };
 
@@ -396,20 +430,25 @@ export class PerpBacktestEngine {
     // Taker fee on exit
     const exitFee = notional * this.config.takerFeeRate;
     const entryFee = entryNotional * this.config.takerFeeRate;
-    const totalFees = entryFee + exitFee;
+    const feesPaid = entryFee + (reason === 'LIQUIDATION' ? 0 : exitFee);
 
     // Slippage impact estimate
-    const slippagePaid = (entryNotional + notional) * (this.config.slippageBps / 10_000);
-
-    let netPnL = grossPnL - totalFees - pos.accumulatedFunding;
+    const exitSlippagePaid = notional * (this.config.slippageBps / 10_000);
+    const slippagePaid = pos.entrySlippagePaid + exitSlippagePaid;
+    let liquidationAdjustment = 0;
 
     // For liquidation, maximum loss is initial margin
     if (reason === 'LIQUIDATION') {
-      netPnL = -pos.initialMargin;
-      this.cashBalance += 0;
+      // The unrecovered residual margin reconciles mark-to-liquidation gross PnL with the isolated-margin loss.
+      liquidationAdjustment = -pos.initialMargin - grossPnL;
+      // Initial margin and entry costs have already left cash; liquidation returns no margin.
     } else {
-      this.cashBalance += Math.max(0, pos.initialMargin + netPnL);
+      // Entry fee and funding were already debited from cash. Only return margin plus gross PnL less exit fee.
+      this.cashBalance += Math.max(0, pos.initialMargin + grossPnL - exitFee);
     }
+    const netPnL = grossPnL - feesPaid - pos.accumulatedFunding + liquidationAdjustment;
+    if (reason !== 'LIQUIDATION') this.totalFeesPaid += exitFee;
+    this.totalSlippagePaid += exitSlippagePaid;
 
     const trade: BacktestTrade = {
       id: pos.id,
@@ -424,9 +463,10 @@ export class PerpBacktestEngine {
       exitTime,
       durationMs: exitTime - pos.entryTime,
       grossPnL,
-      feesPaid: totalFees,
+      feesPaid,
       fundingPaid: pos.accumulatedFunding,
       slippagePaid,
+      liquidationAdjustment,
       netPnL,
       roiPct: (netPnL / pos.initialMargin) * 100,
       exitReason: reason,
@@ -469,9 +509,9 @@ export class PerpBacktestEngine {
     let winningTrades = 0;
     let losingTrades = 0;
     let breakEvenTrades = 0;
-    let totalFeesPaid = 0;
-    let totalFundingPaid = 0;
-    let totalSlippagePaid = 0;
+    let totalFeesPaid = this.totalFeesPaid;
+    let totalFundingPaid = this.totalFundingPaid;
+    let totalSlippagePaid = this.totalSlippagePaid;
 
     for (const t of this.closedTrades) {
       if (t.netPnL > 0) {
@@ -483,9 +523,6 @@ export class PerpBacktestEngine {
       } else {
         breakEvenTrades++;
       }
-      totalFeesPaid += t.feesPaid;
-      totalFundingPaid += t.fundingPaid;
-      totalSlippagePaid += t.slippagePaid;
     }
 
     const totalTrades = this.closedTrades.length;
@@ -564,9 +601,12 @@ export class PerpBacktestEngine {
       maxDrawdownPct: Number(maxDrawdownPct.toFixed(2)),
       sharpeRatio: Number(sharpeRatio.toFixed(2)),
       sortinoRatio: Number(sortinoRatio.toFixed(2)),
-      totalFeesPaid: Number(totalFeesPaid.toFixed(2)),
-      totalFundingPaid: Number(totalFundingPaid.toFixed(2)),
-      totalSlippagePaid: Number(totalSlippagePaid.toFixed(2)),
+      totalFeesPaid: Number(totalFeesPaid.toFixed(8)),
+      totalFundingPaid: Number(totalFundingPaid.toFixed(8)),
+      totalSlippagePaid: Number(totalSlippagePaid.toFixed(8)),
+      dataQuality: this.dataQuality ?? {
+        status: 'EMPTY', lastClosedBarTime: null, gapCount: 0, stalenessMs: 0, totalBars: 0, invalidRecordCount: 0,
+      },
       trades: this.closedTrades,
       equityCurve: this.equityCurve,
     };

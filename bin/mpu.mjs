@@ -9,6 +9,12 @@ import { parse } from 'dotenv';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const first = args[0];
+const sessionEntry = path.join(root, 'dist/server/server/session-entry.js');
+if (!['test', 'build'].includes(first) && existsSync(sessionEntry)) {
+  const { beginApplicationSession } = await import(new URL('../dist/server/server/session-entry.js', import.meta.url));
+  const session = await beginApplicationSession('launcher:mpu', root);
+  process.env.MPU_PARENT_SESSION_ID = session.session.sessionId;
+}
 
 if (args.includes('--help') || args.includes('-h') || first === 'help') {
   console.log(`Trading Agent Mpu Gandring (mpu)
@@ -52,11 +58,12 @@ function runCli(cmdName, subArgs) {
   const tsFile = path.join(root, 'cli', `${cmdName}.ts`);
 
   if (existsSync(jsFile)) {
-    const res = spawnSync(process.execPath, [jsFile, ...subArgs], { cwd: root, stdio: 'inherit' });
+    const wrapper = path.join(root, 'dist/server/cli/session-entry.js');
+    const res = spawnSync(process.execPath, existsSync(wrapper) ? [wrapper, cmdName, ...subArgs] : [jsFile, ...subArgs], { cwd: root, stdio: 'inherit' });
     process.exit(res.status ?? 0);
   } else if (existsSync(tsFile)) {
     const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    const res = spawnSync(npxCmd, ['tsx', tsFile, ...subArgs], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+    const res = spawnSync(npxCmd, ['tsx', path.join(root, 'cli/session-entry.ts'), cmdName, ...subArgs], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
     process.exit(res.status ?? 0);
   } else {
     console.error(`CLI target ${cmdName} not found.`);

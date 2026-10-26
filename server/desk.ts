@@ -48,6 +48,7 @@ import { buildTacticalTradePlan } from './market/tactical.js';
 import { researchPolicy } from './providers/research-policy.js';
 import { localResearchActivity } from './providers/local.js';
 import { getSuiEventBriefing } from './market/sui.js';
+import { recordDiagnostic, withDiagnosticContext, type DiagnosticInput } from './session-log.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
@@ -61,7 +62,7 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { id?: string; at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'chat' | 'warn' | ActivityEntry['kind']; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: ActivityEntry['level']; status?: string; durationMs?: number }
 
-export interface DeskOptions { settingsFile?: string; opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv }
+export interface DeskOptions { settingsFile?: string; opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv; diagnostics?: (input: DiagnosticInput) => void }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action; stop?: number; tp?: number }
@@ -122,6 +123,7 @@ export class Desk extends EventEmitter {
   }
   private checkpoint() { this.opts.executor?.journal.checkpoint(this.book.positions, this.book.closed); }
   private executionEvent(status: string, symbol: string, extra: Record<string, unknown> = {}) {
+    this.diagnostic({ source: 'execution', category: 'ORDER', eventName: `execution.${status}`, status, correlationId: String(extra.clientId ?? extra.positionId ?? this.debate?.id ?? ''), message: `Execution ${status}`, details: { symbol, ...extra } });
     this.emit('execution', { id: `${Date.now()}-${++this.executionSeq}`, status, symbol, at: Date.now(), ...extra });
   }
   private executionSeq = 0;
@@ -240,6 +242,8 @@ export class Desk extends EventEmitter {
   /** Every model call goes through here: lessons, standing rules and scan alerts are fed into the prompt. */
   private async run<K extends Parameters<typeof runAgent>[3]>(agent: AgentId, task: K, input: Parameters<typeof runAgent<K>>[4]) {
     const started = Date.now();
+    const correlationId = this.debate?.id;
+    this.diagnostic({ source: `agent:${agent}`, category: 'AGENT', eventName: 'agent.dispatched', status: 'started', correlationId, message: `${agent} ${task} dispatched`, details: { agent, task, provider: this.cfg.agents[agent].provider, model: this.cfg.agents[agent].model } });
     const currentScope = `${this.cfg.tradingMode}:${this.cfg.exchange.name || 'paper'}:${this.cfg.live?.network || 'mainnet'}`;
     const detectedSym = (input.data as any)?.symbol || (input.data as any)?.detectedSymbol || (input.context as any)?.symbol || (input.context as any)?.detectedSymbol;
     const rules = this.cfg.learning.on ? this.learnings.standingRules(agent).slice(-8).map((l) => l.lesson) : [];
@@ -252,10 +256,12 @@ export class Desk extends EventEmitter {
       rules.length ? `Standing rules (advice only, never execution authorization; Boss changes settings through explicit commands):\n${fenceData('learned-advice', { rules })}` : '',
       formattedExperience ? `Evidence-based lessons and past verified trades:\n${formattedExperience}` : ''
     ].filter(Boolean).join('\n\n');
-    const res = await runAgent(this.cfg, this.call, agent, task, {
+    const res = await withDiagnosticContext(correlationId ?? `agent-${agent}-${started}`, () => runAgent(this.cfg, this.call, agent, task, {
       ...input, extraSystem: extra || undefined,
       data: { ...input.data, accountState: this.accountState(), researchCapabilities: this.capabilitiesSummary(), ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
-    });
+    })).catch(error => { this.diagnostic({ source: `agent:${agent}`, category: 'AGENT', eventName: 'agent.error', level: 'ERROR', status: 'failed', correlationId, durationMs: Date.now() - started, message: `${agent} ${task} failed`, details: { error } }); throw error; });
+    const result = res.data as Record<string, unknown>;
+    this.diagnostic({ source: `agent:${agent}`, category: 'AGENT', eventName: res.fallback ? 'agent.fallback' : 'agent.completed', level: res.fallback ? 'WARN' : 'INFO', status: res.fallback ? 'fallback' : 'completed', correlationId, durationMs: Date.now() - started, message: `${agent} ${task} ${res.fallback ? 'fallback' : 'completed'}`, details: { agent, task, provider: res.provider, model: res.model, attempts: res.attempts, failureKind: res.failureKind, action: result.action, stance: result.stance, confidence: result.confidence } });
     if (task === 'chat') {
       this.chatMetrics.agentCalls++;
       this.chatMetrics.modelAttempts += res.attempts;
@@ -275,7 +281,12 @@ export class Desk extends EventEmitter {
   }
 
   recordActivity(entry: ActivityEntry) {
+    this.diagnostic({ source: entry.source, category: entry.kind.toUpperCase(), level: entry.level === 'error' ? 'ERROR' : entry.level === 'warn' ? 'WARN' : 'INFO', eventName: entry.eventName ?? `activity.${entry.kind}`, status: entry.status, message: entry.text, correlationId: entry.correlationId ?? this.debate?.id, durationMs: entry.durationMs, details: { agent: entry.agent } });
     this.addLog(entry);
+  }
+
+  diagnostic(input: DiagnosticInput) {
+    try { (this.opts.diagnostics ?? recordDiagnostic)(input); } catch { /* Diagnostic observers cannot affect the desk. */ }
   }
 
   /** self-improving: store or reinforce a lesson and show it in the office. Refused if it would loosen a guard. */
@@ -470,6 +481,7 @@ export class Desk extends EventEmitter {
     return this.day.lossHit;
   }
   note(kind: Activity['kind'], symbol: string, detail: string) {
+    this.diagnostic({ source: 'desk', category: kind === 'skipped' ? 'DEBATE' : 'POSITION', eventName: `position.${kind}`, status: kind, message: safe(detail), correlationId: this.debate?.id, details: { symbol } });
     this.activity.push({ at: Date.now(), kind, symbol, detail: safe(detail) });
     if (this.activity.length > 500) this.activity.splice(0, this.activity.length - 500);
   }
@@ -480,6 +492,7 @@ export class Desk extends EventEmitter {
   }
   private changed() { this.emit('state', this.snapshot()); }
   addLog(l: Omit<LogLine, 'at'>) {
+    if (l.kind === 'info' || l.kind === 'warn') this.diagnostic({ source: l.source ?? 'desk', eventName: `desk.${l.kind}`, level: l.kind === 'warn' ? 'WARN' : 'INFO', message: l.text, status: l.status, durationMs: l.durationMs, correlationId: this.debate?.id });
     const line = { ...l, ...(l.source ? { source: safe(l.source).slice(0, 100) } : {}), text: safe(l.text), at: Date.now() };
     this.logs.push(line); if (this.logs.length > 2000) this.logs.splice(0, this.logs.length - 2000);
     this.emit('log', line);
@@ -561,7 +574,11 @@ export class Desk extends EventEmitter {
     const key = `${source}:${symbol}:${this.cfg.tradingMode}`;
     const hit = this.snapshotCache.get(key);
     if (hit && Date.now() - hit.at < 5000) return hit.promise;
-    const promise = getSnapshot(symbol, source, this.cfg.tradingMode !== 'PAPER').then(snapshot => ({ ...snapshot, tacticalTradePlan: buildTacticalTradePlan(snapshot) }));
+    const started = Date.now();
+    const promise = getSnapshot(symbol, source, this.cfg.tradingMode !== 'PAPER').then(snapshot => {
+      this.diagnostic({ source: `market:${snapshot.source}`, category: 'MARKET', eventName: 'market.snapshot', status: snapshot.example ? 'sample' : 'available', message: 'Market snapshot received', correlationId: this.debate?.id, durationMs: Date.now() - started, details: { symbol, provider: snapshot.source, fetchedAt: snapshot.fetchedAt, ageMs: Date.now() - snapshot.fetchedAt, sample: snapshot.example, errors: snapshot.errors } });
+      return { ...snapshot, tacticalTradePlan: buildTacticalTradePlan(snapshot) };
+    }).catch(error => { this.diagnostic({ source: `market:${source}`, category: 'MARKET', eventName: 'market.error', status: 'failed', level: 'ERROR', message: 'Market snapshot failed', durationMs: Date.now() - started, details: { symbol, error } }); throw error; });
     this.snapshotCache.set(key, { at: Date.now(), promise });
     if (this.snapshotCache.size > 40) this.snapshotCache.delete(this.snapshotCache.keys().next().value!);
     void promise.catch(() => { if (this.snapshotCache.get(key)?.promise === promise) this.snapshotCache.delete(key); });
@@ -1041,6 +1058,7 @@ export class Desk extends EventEmitter {
       this.addLog({ kind: 'info', text: `Debate ${symbol} completed (${participatingChairs.join(', ')}). Action: ${action}.` });
       this.addLog({ kind: 'verdict', text: `VERDICT ${symbol}: ${action} (risk ${verdict.riskDecision}, disagreement ${disagreement.toFixed(2)})${verdict.executed ? `, ${this.opts.executor ? 'exchange' : 'paper'} ${verdict.executionStatus ?? 'execution recorded'}` : ''}`, example: verdict.example });
       this.emit('verdict', verdict);
+      this.diagnostic({ source: 'debate', category: 'VERDICT', eventName: 'debate.verdict', status: verdict.executed ? 'executed' : 'not_executed', correlationId: verdict.id, durationMs: timing.total, message: verdict.reason, details: { symbol, action: verdict.action, riskDecision: verdict.riskDecision, executionStatus: verdict.executionStatus, outcome: verdict.outcome, reasonCode: verdict.reasonCode, disagreement, positionId: verdict.order?.positionId } });
       transcript.push('', `**Verdict:** ${action}, risk ${verdict.riskDecision}, executed ${verdict.executed}. ${verdict.reason}`);
       this.writeReport(id, transcript.join('\n'));
       void sendToGrokBot(this.cfg, 'verdict', { ...verdict }, this.opts.outboxPath);
@@ -1211,7 +1229,7 @@ export class Desk extends EventEmitter {
     p.ownership = 'managed'; p.entryStatus = confirmedPrice ? 'confirmed' : 'estimated';
     if (clientId && live) { p.id = clientId; const intent = live.journal.intents.find((i) => i.clientId === clientId); if (intent) intent.positionId = p.id; }
     this.checkpoint();
-    this.executionEvent(qty < plan.qty ? 'partial' : 'filled', symbol, { side, filledQty: qty, requestedQty: plan.qty });
+    this.executionEvent(qty < plan.qty ? 'partial' : 'filled', symbol, { side, filledQty: qty, requestedQty: plan.qty, clientId, positionId: p.id, decisionId: (gate.evidence as Record<string, unknown> | undefined)?.decisionId });
     this.recordEquity();
     const line = `${tag}: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
     this.addLog({ kind: 'trade', agent: 'execution', text: line });
@@ -1235,7 +1253,7 @@ export class Desk extends EventEmitter {
     for (const p of this.book.positions.filter((x) => x.symbol === symbol && (!ownedOnly || x.ownership !== 'external'))) {
       let px = price;
       let details: Parameters<PaperBook['close']>[3] = {};
-      this.executionEvent('closing', symbol, { side: p.side, requestedQty: p.qty });
+      this.executionEvent('closing', symbol, { side: p.side, requestedQty: p.qty, positionId: p.id });
       if (live) {
         if (live.hasPending(symbol, p.side, 'open') || live.hasPending(symbol, p.side, 'close')) { this.addLog({ kind: 'warn', text: `${symbol}: entry or close still being reconciled; no overlapping order sent.` }); continue; }
         const f = await live.close(symbol, p.side, p.qty, p.id);
@@ -1246,7 +1264,7 @@ export class Desk extends EventEmitter {
         live.account(f.clientId, f.qty, f.avgPrice, Math.max(0, p.qty - f.qty));
       }
       const t = this.book.close(p.id, px, reason, details);
-      if (t) this.executionEvent(t.remainingQty ? 'partial' : 'closed', symbol, { side: p.side, filledQty: t.qty, remainingQty: t.remainingQty });
+      if (t) this.executionEvent(t.remainingQty ? 'partial' : 'closed', symbol, { side: p.side, filledQty: t.qty, remainingQty: t.remainingQty, positionId: p.id, executionId: t.executionId, realizedPnl: t.realizedPnl, pnlStatus: t.pnlStatus });
       if (t) { out.push(t); this.note('closed', t.symbol, `${t.qty} ${t.side} at ${t.exit}; remaining ${t.remainingQty ?? 0}. PnL ${t.pnlStatus === 'unknown' ? 'unknown' : `${t.realizedPnl} USDT (${t.pnlStatus ?? 'paper'})`} (${reason})`); }
     }
     this.checkpoint();
@@ -1501,6 +1519,7 @@ export class Desk extends EventEmitter {
       : rule.side === 'LONG' && rule.close > rule.ema21 && rule.change5Pct > 0;
   }
   private setPhase(phase: string, round = this.debate?.round ?? 0) {
+    this.diagnostic({ source: 'debate', category: 'DEBATE', eventName: 'debate.phase', status: phase, message: `Debate ${phase}`, correlationId: this.debate?.id, details: { symbol: this.debate?.symbol, round, disagreement: this.debate?.disagreement } });
     if (this.debate) { this.debate.phase = phase; this.debate.round = round; }
     this.emit('debate', { ...this.debate });
     this.changed();
@@ -1599,7 +1618,7 @@ export class Desk extends EventEmitter {
   }
   private journal(entry: Record<string, unknown>) {
     if (!this.opts.reportsDir) return;
-    try { mkdirSync(this.opts.reportsDir, { recursive: true }); appendFileSync(path.join(this.opts.reportsDir, 'journal.jsonl'), safe(entry) + '\n'); } catch (e) { log('[journal]', e); }
+    try { mkdirSync(this.opts.reportsDir, { recursive: true }); appendFileSync(path.join(this.opts.reportsDir, 'journal.jsonl'), safe(entry) + '\n'); this.diagnostic({ source: 'journal:review', category: 'JOURNAL', eventName: 'review.persisted', status: 'persisted', message: 'Trade review persisted' }); } catch (e) { this.diagnostic({ source: 'journal:review', category: 'JOURNAL', eventName: 'review.failed', level: 'ERROR', status: 'failed', message: 'Trade review persistence failed', details: { error: e } }); log('[journal]', e); }
   }
 
   // ---------- commands & chat ----------
@@ -1627,6 +1646,7 @@ export class Desk extends EventEmitter {
     const addressed = text.match(/^(lead|market|research|strategist|risk|execution)[\s,:]+(.+)$/is);
     if (addressed) { agent = addressed[1].toLowerCase() as AgentId; text = addressed[2]; }
     const cmd = parseCommand(text);
+    this.diagnostic({ source: 'commands', category: 'COMMAND', eventName: 'command.received', status: 'received', message: 'Owner command received', details: { type: cmd.type, agent } });
     let who: AgentId = agent ?? 'lead';
 
     const userLine: ChatLine = { id: `chat-${Date.now()}-${++this.speechSeq}`, seq: ++this.messageSeq, from: 'user', text: safe(text), at: Date.now(), conversationId };

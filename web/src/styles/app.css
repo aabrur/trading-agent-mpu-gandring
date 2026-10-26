@@ -1243,6 +1243,34 @@ button:disabled { cursor: default; }
 .activity-log-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .activity-log-controls :is(input, select, button) { min-width: 0; max-width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 12px; padding: 5px 8px; }
 .activity-log-controls input { flex: 1 1 130px; }
+.session-log-tabs { display: inline-flex; gap: 4px; margin-left: auto; }
+.session-log-tabs button, .session-archive-actions button { min-height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 11px; cursor: pointer; }
+.session-log-tabs button[aria-pressed="true"] { border-color: var(--teal); color: var(--text); }
+.session-archive { display: grid; gap: 8px; min-height: 0; }
+.session-archive-top { display: flex; align-items: end; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.session-archive-top label, .session-filters label { display: grid; gap: 3px; min-width: 0; color: var(--text-dim); font-size: 10px; }
+.session-archive-top select, .session-filters :is(input, select) { min-width: 0; max-width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); padding: 5px 8px; font: inherit; font-size: 11px; }
+.session-archive-top select { min-width: min(360px, 76vw); }
+.session-downloads { display: flex; flex-wrap: wrap; gap: 5px; }
+.session-downloads a { border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; color: var(--text); text-decoration: none; font: 10px var(--font-mono); }
+.session-downloads a[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+.session-summary { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--text-dim); font-size: 10px; }
+.session-summary strong { color: var(--warn); }
+.session-filters { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 6px; }
+.session-event-list { min-height: 80px; max-height: min(55vh, 520px); overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 5px; }
+.session-event { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; align-items: start; gap: 4px 8px; padding: 7px; border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 7px; font-size: 10px; overflow-wrap: anywhere; }
+.session-event.level-warn { border-left-color: var(--warn); }
+.session-event.level-error { border-left-color: var(--short); background: color-mix(in srgb, var(--short) 7%, transparent); }
+.session-event time, .session-event small { color: var(--text-dim); font-family: var(--font-mono); font-size: 9px; }
+.session-event p { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; }
+.session-correlation { grid-column: 1 / -1; justify-self: start; max-width: 100%; border: 0; padding: 0; background: none; color: var(--teal); font: 9px var(--font-mono); overflow-wrap: anywhere; cursor: pointer; }
+.session-event-details { grid-column: 1 / -1; min-width: 0; }
+.session-event-details summary { color: var(--text-dim); cursor: pointer; }
+.session-event-details pre { max-height: 240px; overflow: auto; margin: 4px 0 0; padding: 6px; border-radius: 6px; background: var(--panel-2); font: 9px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.session-archive-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.session-error { margin: 0; color: var(--short); font-size: 11px; }
+.tool-flyout.is-log .session-event-list { max-height: calc(var(--tool-height) - 270px); }
+@media (max-width: 640px) { .session-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .session-event { grid-template-columns: auto auto minmax(0, 1fr); } .session-event > span { grid-column: 1 / -1; } .session-log-tabs button, .session-archive-actions button { min-height: 40px; } }
 .tool-flyout.is-log { overflow: hidden; }
 .tool-flyout.is-log .log { display: flex; flex-direction: column; max-height: calc(var(--tool-height) - 2px); }
 .tool-flyout.is-log .log > :is(.panel-head, .activity-log-controls) { flex-shrink: 0; }

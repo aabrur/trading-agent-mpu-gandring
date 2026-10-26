@@ -10,6 +10,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'dotenv';
+import { getSessionLogger, recordDiagnostic } from '../server/session-log.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -61,9 +62,10 @@ async function main() {
   for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopping = true; child?.kill(sig); });
   for (;;) {
     const startedAt = Date.now();
-    child = spawn(process.execPath, [path.join(root, 'dist/server/server/index.js')], { cwd: root, env: tradeEnv(process.env, fileEnv), stdio: 'inherit' });
+    child = spawn(process.execPath, [path.join(root, 'dist/server/server/index.js')], { cwd: root, env: { ...tradeEnv(process.env, fileEnv), ...(getSessionLogger() ? { MPU_PARENT_SESSION_ID: getSessionLogger()!.session.sessionId } : {}) }, stdio: 'inherit' });
     const ready = setTimeout(() => log(`office: ${url}`), 2500);
     const code: number = await new Promise((r) => child!.on('exit', (c) => r(c ?? 1)));
+    recordDiagnostic({ source: 'launcher:trade', category: 'SESSION', eventName: 'child.exited', status: String(code), message: 'Backend process exited', durationMs: Date.now() - startedAt, details: { pid: child.pid, code } });
     clearTimeout(ready);
     if (stopping || code === 0) process.exit(0);
     if (code === 2) { log('the backend refused to start (a safety guard said no; see the message above). Not restarting.'); process.exit(service ? 0 : 2); }

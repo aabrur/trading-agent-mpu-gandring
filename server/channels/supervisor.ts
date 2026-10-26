@@ -54,6 +54,7 @@ export class DeskLead {
 
   /** One supervision pass. Returns the alert texts it sent (for tests and the office). */
   async tick(now = Date.now()): Promise<string[]> {
+    this.desk.diagnostic({ source: 'supervisor', category: 'SUPERVISOR', eventName: 'supervisor.check', status: 'started', message: 'Supervisor check started' });
     const out: string[] = [];
     if (this.desk.killed && !this.wasKilled) out.push('KILL SWITCH IS ON. The desk flattened and stopped. Release only on the desk computer: npm run unkill -- --yes, then restart.');
     this.wasKilled = this.desk.killed;
@@ -66,6 +67,7 @@ export class DeskLead {
       out.push(`${f.level === 'alert' ? 'ALERT' : 'Warning'}: ${f.text}`);
     }
     if (out.length) await this.hub.broadcast(safe(`Desk Lead (${this.desk.cfg.tradingMode})\n${out.join('\n')}`));
+    this.desk.diagnostic({ source: 'supervisor', category: 'SUPERVISOR', eventName: 'supervisor.checked', status: 'completed', level: out.length ? 'WARN' : 'INFO', message: 'Supervisor check completed', details: { findings: out.length } });
     return out;
   }
 

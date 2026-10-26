@@ -28,15 +28,38 @@ if (!executablePath) throw new Error('Set CHROME_PATH to a Chromium browser.');
 const output = process.env.OFFICE_CHECK_OUTPUT ?? path.join(process.env.TEMP ?? '.', 'mpu-office-ui');
 mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({ executablePath, headless: true });
-try {
+async function verifyOffice() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   let socket: WebSocketRoute;
   let restartFails = false;
-  await page.route('**/api/**', (route) => {
+  const sessionLogRequests: URL[] = [];
+  const sessionId = 'mpu-2026-10-26T040000000Z-fixture';
+  const childSessionId = 'mpu-2026-10-26T040001000Z-childfix';
+  const sessionSummary = { sessionId, parentSessionId: null, startedAt: '2026-10-26T04:00:00.000Z', endedAt: null, version: '0.0.0.4.0', gitRevision: null, pid: 1234, entrypoint: 'server/index.ts', mode: 'PAPER', appMode: 'local', exchange: null, outcome: null, exitReason: null, durationMs: null, lastSequence: 2, storageErrors: 0 };
+  const childSessionSummary = { ...sessionSummary, sessionId: childSessionId, parentSessionId: sessionId, startedAt: '2026-10-26T04:00:01.000Z', gitRevision: 'child12345678', pid: 1235, lastSequence: 1 };
+  const latestSessionEvent = { timestamp: '2026-10-26T04:00:02.000Z', sessionId, sequence: 2, level: 'ERROR', category: 'execution', source: 'server', eventName: 'stop_check', status: 'failed', message: 'Exchange stop was not confirmed', correlationId: 'corr-fixture-1', durationMs: 12, details: { fixture: true, cause: 'missing stop' } };
+  const olderSessionEvent = { ...latestSessionEvent, timestamp: '2026-10-26T04:00:01.000Z', sequence: 1, level: 'INFO', eventName: 'session_start', status: 'started', message: 'Session started', durationMs: undefined, details: {} };
+  const childSessionEvent = { ...latestSessionEvent, sessionId: childSessionId, sequence: 1, level: 'INFO', message: 'Child session event', details: {} };
+  const staleChildEvent = { ...childSessionEvent, sequence: 0, message: 'Child older event' };
+  await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/setup/restart' && restartFails) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, detail: 'Restart unavailable' }) });
+    if (url.pathname === '/api/logs/sessions') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, activeSessionId: sessionId, sessions: [childSessionSummary], nextCursor: null }) });
+    if (url.pathname === `/api/logs/sessions/${sessionId}`) return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, session: sessionSummary }) });
+    if (url.pathname.endsWith('/events') && url.pathname.includes('/api/logs/sessions/')) {
+      sessionLogRequests.push(url);
+      const selectedSession = decodeURIComponent(url.pathname.split('/').at(-2) ?? '');
+      const pageCursor = url.searchParams.get('cursor');
+      if (pageCursor) await new Promise((resolve) => setTimeout(resolve, 250));
+      const events = pageCursor === 'older-fixture-page' ? [olderSessionEvent]
+        : pageCursor === 'older-child-page' ? [staleChildEvent]
+          : selectedSession === childSessionId ? [childSessionEvent] : [latestSessionEvent];
+      const nextCursor = pageCursor ? null : selectedSession === childSessionId ? 'older-child-page' : 'older-fixture-page';
+      try { return await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, events, nextCursor }) }); }
+      catch { return; }
+    }
     const data = url.pathname === '/api/wallet' ? { available: true, current: 'hyperliquid', venues: [{ venue: 'hyperliquid', label: 'Hyperliquid', kind: 'DEX', support: 'signature', steps: [], depositUrl: 'https://app.hyperliquid.xyz', revokeUrl: 'https://app.hyperliquid.xyz/API', docsUrl: 'https://hyperliquid.gitbook.io' }] }
       : url.pathname === '/api/wallet/balance' ? { ok: true, equityUsdt: null }
       : url.pathname === '/api/setup/trading' ? { ok: true, networks: { testnet: { profile: 'default' } } }
@@ -69,6 +92,46 @@ try {
   await page.locator('.tour-skip-btn').click();
   await page.locator('.trakteer-close-x').click();
   await page.waitForFunction(() => document.querySelector('#venue-keys-trigger')?.textContent?.includes('Connected'));
+  await page.locator('#tool-log').click();
+  await page.getByRole('button', { name: 'Archived sessions', exact: true }).click();
+  await page.getByLabel('Choose archived session').selectOption(sessionId);
+  await page.getByText('Exchange stop was not confirmed', { exact: true }).waitFor();
+  assert((await page.getByLabel('Choose archived session').locator('option:checked').innerText()).includes('ACTIVE'));
+  assert((await page.locator('.session-summary').innerText()).includes('revision unavailable'), 'null Git revision displays a fallback instead of throwing');
+  assert.equal(await page.locator('.session-downloads a').count(), 4);
+  await page.locator('.session-event-details summary').click();
+  assert((await page.locator('.session-event-details pre').innerText()).includes('missing stop'));
+  await page.locator('.session-filters select').selectOption('ERROR');
+  await page.locator('.session-filters input').nth(0).fill('server');
+  const correlationResponse = page.waitForResponse((response) => response.url().includes('correlationId=corr-fixture-1'));
+  await page.getByRole('button', { name: 'corr-fixture-1', exact: true }).click();
+  await correlationResponse;
+  await page.waitForFunction(() => document.querySelector<HTMLInputElement>('.session-filters label:last-child input')?.value === 'corr-fixture-1');
+  assert(sessionLogRequests.some((request) => request.searchParams.get('level') === 'ERROR' && request.searchParams.get('source') === 'server' && request.searchParams.get('correlationId') === 'corr-fixture-1'));
+  await page.getByRole('button', { name: 'Older events', exact: true }).click();
+  await page.getByText('Session started', { exact: true }).waitFor();
+  const eventTimes = await page.locator('.session-event').evaluateAll((events) => events.map((event) => Date.parse(event.querySelector('time')?.getAttribute('datetime') ?? '')));
+  assert.equal(eventTimes.length, 2, 'older events append without losing the newer page');
+  assert(eventTimes[0] < eventTimes[1], 'older chronological page is prepended');
+  await page.getByLabel('Choose archived session').selectOption(childSessionId);
+  await page.getByText('Child session event', { exact: true }).waitFor();
+  const stalePageRequest = page.waitForRequest((request) => request.url().includes('cursor=older-child-page'));
+  await page.getByRole('button', { name: 'Older events', exact: true }).click();
+  await stalePageRequest;
+  await page.getByLabel('Choose archived session').selectOption(sessionId);
+  await page.getByText('Exchange stop was not confirmed', { exact: true }).waitFor();
+  await page.waitForTimeout(300);
+  assert.equal(await page.getByText('Child older event', { exact: true }).count(), 0, 'late page from the previous session cannot enter the selected session');
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
+  assert.equal(await page.locator('#pane-log .activity-log-controls').count(), 1, 'live System Log remains available');
+  await page.locator('#tool-history').click();
+  assert.equal(await page.locator('.activity-log-controls select[aria-label="History filter"]').count(), 1, 'History remains a separate view');
+  if (process.env.OFFICE_ARCHIVE_ONLY) {
+    assert.deepEqual(errors, []);
+    console.log('Session archive fixture checks passed, including delayed-response isolation and live/history separation.');
+    return;
+  }
+  await page.locator('.tool-close').click();
   assert.equal(await page.locator('.desk-ops .ops-setup-link').count(), 0);
   assert.equal(await page.locator('.side .verdicts').count(), 0);
   assert.equal(await page.locator('.office-hud .verdicts').count(), 1);
@@ -323,4 +386,5 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(`Office, chat, profile and wallet session checks passed. Screenshots: ${output}`);
-} finally { await browser.close(); }
+}
+try { await verifyOffice(); } finally { await browser.close(); }

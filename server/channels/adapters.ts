@@ -3,6 +3,7 @@
 import { safe, log } from '../redact.js';
 import { CHANNELS, type ChannelConfig, type ChannelName } from './config.js';
 import { resolveDiscordDmChannel } from './discord.js';
+import { recordDiagnostic } from '../session-log.js';
 
 export type SendResult = 'sent' | 'failed' | 'off';
 const T = 8000;
@@ -10,8 +11,9 @@ const post = (fetchImpl: typeof fetch, url: string, body: unknown, headers: Reco
   fetchImpl(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(T) });
 
 async function attempt(name: ChannelName, fn: () => Promise<Response>): Promise<SendResult> {
-  try { const r = await fn(); if (!r.ok) throw new Error(`HTTP ${r.status}`); return 'sent'; }
-  catch (e) { log(`[channel] ${name} not delivered: ${safe((e as Error).message).slice(0, 160)}`); return 'failed'; }
+  const started = Date.now();
+  try { const r = await fn(); if (!r.ok) throw new Error(`HTTP ${r.status}`); recordDiagnostic({ source: `channel:${name}`, category: 'INTEGRATION', eventName: 'channel.delivered', status: 'delivered', durationMs: Date.now() - started, message: 'Channel message delivered', details: { httpStatus: r.status } }); return 'sent'; }
+  catch (e) { recordDiagnostic({ source: `channel:${name}`, category: 'INTEGRATION', eventName: 'channel.failed', status: 'failed', level: 'WARN', durationMs: Date.now() - started, message: 'Channel delivery failed', details: { error: e } }); log(`[channel] ${name} not delivered: ${safe((e as Error).message).slice(0, 160)}`); return 'failed'; }
 }
 
 export function telegramSend(c: ChannelConfig['telegram'], text: string, fetchImpl: typeof fetch = fetch, chatId = c.chatId): Promise<SendResult> {

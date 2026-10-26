@@ -10,6 +10,8 @@ export interface ActivityEntry {
   status?: string;
   durationMs?: number;
   agent?: AgentId;
+  correlationId?: string;
+  eventName?: string;
 }
 const events = new EventEmitter();
 export function publishActivity(entry: ActivityEntry) {

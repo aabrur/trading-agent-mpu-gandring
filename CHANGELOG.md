@@ -2,6 +2,20 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [Unreleased]
+
+### Added
+- Persistent local application sessions with parent/child identity, startup and shutdown outcomes, conservative unclean-session recovery, ordered JSONL events, readable console/error transcripts, bounded queues, rotation, and explicit storage-loss counters. Diagnostic failures do not authorize or reject orders.
+- Metadata observers for market snapshots, model tasks, debates, Jev, automation, order reconciliation, protection observations, journals, financial evidence, reports, and integration failures. Financial journals remain independent.
+- System Log archived-session browser with session summaries, searchable chronological events, severity/source/correlation filters, and downloads for console, errors, events, and session metadata. Live log and History views remain available separately.
+- Independent roadmap verification mode that runs typecheck, tests, and build with isolated dotenv configuration and stores hashed outputs plus a source-tree digest in a temporary evidence directory.
+
+### Changed
+- Historical simulator cash and trade PnL now reconcile entry/exit fees and funding once, including liquidation adjustments and open-position costs. Entry affordability includes fees; protective intrabar exits take precedence over close-based ROI exits; strategy feeds are bounded to the current close, invalid history is rejected, and settlement clocks traverse data gaps.
+- Statistical forecasts expose seeded simulations, side-aware TP/SL/no-hit probabilities, validated worker outputs and input bounds, and explicit GBM source labels. They remain outside production trading decisions.
+- Roadmap `S*.json` evidence is reported as historical integrity only; it no longer counts as verification of the current checkout or authorizes the next stage.
+- README now distinguishes research libraries from modules wired into the live execution path and labels Monte Carlo outputs as scenarios rather than validated predictions.
+
 ## [v0.0.0.3.29] - 2026-10-25
 
 ### Added

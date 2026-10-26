@@ -6,6 +6,7 @@ import { mockReply } from './mock.js';
 import { runLocalAgent, discoverLocalModels, localSelection } from './local.js';
 import { publishActivity } from '../activity.js';
 import { getGenerationParams } from './capabilities.js';
+import { recordDiagnostic } from '../session-log.js';
 
 export interface ModelRequest {
   signal?: AbortSignal;
@@ -137,6 +138,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       publishActivity({ ...entry, level: 'info', status: 'completed', text: `${req.task} model request completed`, durationMs: Date.now() - started });
       return reply;
     } catch (error) {
+      recordDiagnostic({ source: `${req.provider}:${req.model}`, category: 'PROVIDER', eventName: 'provider.error', level: 'ERROR', status: 'failed', durationMs: Date.now() - started, message: 'Model provider request failed', details: { agent: req.agent, task: req.task, attempt: req.attempt, error } });
       publishActivity({ ...entry, level: 'error', status: 'failed', text: `${req.task} model request failed: ${(error as Error).message}`, durationMs: Date.now() - started });
       throw error;
     }

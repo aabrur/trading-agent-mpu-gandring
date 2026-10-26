@@ -14,7 +14,7 @@ export function installDiagnostics() {
       if (path && path !== '/api/logs/client' && !response.ok) report('request', `${path}: HTTP ${response.status}`);
       return response;
     } catch (error) {
-      if (path && path !== '/api/logs/client') report('request', `${path}: network request failed`);
+      if (path && path !== '/api/logs/client' && !init?.signal?.aborted && !(error instanceof Error && error.name === 'AbortError')) report('request', `${path}: network request failed`);
       throw error;
     }
   };

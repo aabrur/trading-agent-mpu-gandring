@@ -166,7 +166,8 @@ export class Reporter {
         const stamp = new Date(rep.at).toISOString().slice(11, 19).replace(/:/g, '');
         writeFileSync(path.join(day, `report-${stamp}.md`), rep.text + '\n');
         writeFileSync(path.join(day, `report-${stamp}.json`), safe(rep) + '\n');
-      } catch (e) { log('[report]', e); }
+        this.desk.diagnostic({ source: 'reports', category: 'JOURNAL', eventName: 'report.persisted', status: 'persisted', message: 'Periodic report persisted', correlationId: `report-${rep.at}` });
+      } catch (e) { this.desk.diagnostic({ source: 'reports', category: 'JOURNAL', eventName: 'report.failed', level: 'ERROR', status: 'failed', message: 'Periodic report persistence failed', details: { error: e } }); log('[report]', e); }
     }
     this.desk.emit('report', rep);
     this.desk.emit('state', this.desk.snapshot());

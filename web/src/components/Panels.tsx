@@ -9,6 +9,7 @@ import { useI18n } from '../i18n';
 import type { UpdateInfo } from './UpdateModal';
 import { WalletMenu } from './WalletMenu';
 import { activityEntries, activityForView, activityParticipants, filterActivity, type ActivityFilter, type ActivityView } from '../activityLog';
+import { SessionLogs } from './SessionLogs';
 export { fmt, fmtPx };
 
 const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec' };
@@ -122,8 +123,8 @@ export function TopBar({
     ? latestVer
     : (diskVer && runningVer && compareVer(diskVer, runningVer) > 0)
       ? diskVer
-      : (latestVer ?? diskVer ?? '0.0.0.3.31');
-  const ver = diskVer ?? '0.0.0.3.31';
+      : (latestVer ?? diskVer ?? '0.0.0.4.0');
+  const ver = diskVer ?? '0.0.0.4.0';
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {
     try {
@@ -907,6 +908,7 @@ export function TradeLog({ state, active = true, view = 'log' }: { state: DeskSt
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(200);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const lines = filterActivity(activityForView(activityEntries(state), view), filter, query, state.agents);
   const isHistory = view === 'history';
   const searchLabel = isHistory ? 'Search history' : 'Search activity log';
@@ -927,8 +929,13 @@ export function TradeLog({ state, active = true, view = 'log' }: { state: DeskSt
   return (
     <section className="panel log">
       <div className="panel-head"><h2>{isHistory ? 'History' : lang === 'id' ? 'Log sistem' : 'System log'}</h2>
-        <span>{lines.length} {lang === 'id' ? 'catatan' : 'entries'}</span>
+        {!isHistory && <div className="session-log-tabs" role="group" aria-label={lang === 'id' ? 'Tampilan log' : 'Log view'}>
+          <button type="button" aria-pressed={!archiveOpen} onClick={() => setArchiveOpen(false)}>{lang === 'id' ? 'Langsung' : 'Live'}</button>
+          <button type="button" aria-pressed={archiveOpen} onClick={() => setArchiveOpen(true)}>{lang === 'id' ? 'Sesi arsip' : 'Archived sessions'}</button>
+        </div>}
+        {!archiveOpen && <span>{lines.length} {lang === 'id' ? 'catatan' : 'entries'}</span>}
       </div>
+      {archiveOpen && !isHistory ? <SessionLogs lang={lang} /> : <>
       <div className="activity-log-controls">
         <select aria-label={isHistory ? 'History filter' : 'Log filter'} value={filter} onChange={event => { follow.current = true; setFilter(event.target.value as ActivityFilter); }}>
           <option value="all">{t('allFilter')}</option>
@@ -960,6 +967,7 @@ export function TradeLog({ state, active = true, view = 'log' }: { state: DeskSt
         ))}
         </div>
       </div>
+      </>}
     </section>
   );
 }

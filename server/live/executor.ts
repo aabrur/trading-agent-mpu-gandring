@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { ExchangeAdapter, OrderRecord, Side } from '../exchange/index.js';
 import { ExecutionJournal, type ExecutionIntent } from './journal.js';
+import { recordDiagnostic } from '../session-log.js';
 import { FinancialEvidence } from './financial-evidence.js';
 import type { FinancialPage, FinancialRecord } from '../exchange/types.js';
 import { log, safe } from '../redact.js';
@@ -42,7 +43,10 @@ export class LiveExecutor {
           if (seen.has(page.nextCursor)) throw new Error('Repeated history cursor');
           seen.add(page.nextCursor); cursor = page.nextCursor;
         }
-        if (combined) this.financialEvidence.ingest(combined, { since: start, until });
+        if (combined) {
+          this.financialEvidence.ingest(combined, { since: start, until });
+          recordDiagnostic({ source: 'financial-evidence', category: 'JOURNAL', eventName: 'financial_evidence.coverage', status: combined.complete && !combined.nextCursor ? 'complete' : 'partial', message: 'Financial history coverage observed', details: { supported: combined.supported, records: combined.records.length, complete: combined.complete, hasNextPage: !!combined.nextCursor } });
+        }
       } catch (e) {
         if (combined) try { this.financialEvidence.ingest({ ...combined, complete: false }, { since: start, until }); } catch { /* Preserve evidence but never let an account mismatch interrupt reporting or orders. */ }
         log('[financial evidence] read incomplete: ' + safe((e as Error).message));
@@ -54,6 +58,7 @@ export class LiveExecutor {
     const intent: ExecutionIntent = { ...o, kind, requestedQty: o.qty, clientId: newClientId(kind === 'open' ? 'e' : 'c'), accountedQty: 0, accountedValue: 0, record: null, at: Date.now() };
     this.journal.intents.push(intent);
     this.journal.save(); // Persist before sending so a restart cannot lose ownership evidence.
+    recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.intent', status: 'created', message: `${kind} intent persisted`, correlationId: intent.clientId, details: { clientId: intent.clientId, positionId: o.positionId, symbol: o.symbol, side: o.side, requestedQty: o.qty } });
     return intent;
   }
   async refreshPending() {
@@ -62,6 +67,7 @@ export class LiveExecutor {
         const record = await this.adapter.getOrder(intent.symbol, intent.clientId);
         const terminal = (status: OrderRecord['status']) => ['filled', 'cancelled', 'rejected'].includes(status);
         if (record.status !== 'unknown' && Number.isFinite(record.filledQty) && record.filledQty >= (intent.record?.filledQty ?? 0) && !(intent.record && terminal(intent.record.status) && !terminal(record.status))) intent.record = record;
+        recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.pending_reconciled', status: record.status, correlationId: intent.clientId, message: 'Pending order record observed', details: { clientId: intent.clientId, orderId: record.orderId, symbol: intent.symbol, filledQty: record.filledQty, requestedQty: intent.requestedQty } });
       }
       catch (e) { log(`[live] pending order read failed: ${safe((e as Error).message)}`); }
     }
@@ -85,6 +91,7 @@ export class LiveExecutor {
     const note = filled
       ? `exchange record: ${rec!.status} ${rec!.filledQty} @ ${rec!.avgPrice ?? '?'}${sendError ? ` (send reported: ${sendError})` : ''}`
       : `not filled per exchange record (${rec?.status ?? 'no record'})${sendError ? `; send error: ${sendError}` : ''}. Not retried.`;
+    recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.reconciled', level: sendError || rec?.status === 'rejected' ? 'WARN' : 'INFO', status: rec?.status ?? 'unknown', correlationId: clientId, message: note, details: { clientId, orderId: rec?.orderId, symbol, filledQty: rec?.filledQty ?? null, requestedQty, sendError } });
     return { ok: filled, clientId, record: rec, qty: filled ? rec!.filledQty : 0, requestedQty, remainingQty: Math.max(0, requestedQty - (filled ? rec!.filledQty : 0)), avgPrice: filled ? rec!.avgPrice : null, note: safe(note) };
   }
 
@@ -95,11 +102,13 @@ export class LiveExecutor {
     const { clientId } = this.intent('open', o);
     this.journal.protectionClients.push({ symbol: o.symbol, clientId }); this.journal.save();
     let sendError: string | null = null;
+    recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.submission', status: 'submitting', correlationId: clientId, message: 'Submitting entry order', details: { clientId, symbol: o.symbol, side: o.side, requestedQty: o.qty } });
     try { await this.adapter.placeOrder({ ...o, clientId }); }
     catch (e) { sendError = safe((e as Error).message); log(`[live] send for ${clientId} failed: ${sendError}. Reconciling, not retrying.`); }
     const fill = await this.reconcile(o.symbol, clientId, sendError, o.qty);
     if (!fill.ok) return fill;
     const guard = await this.ensureOnExchange(o.symbol, o.side, fill.qty, o.stop, o.tp);
+    recordDiagnostic({ source: 'exchange', category: 'PROTECTION', eventName: 'protection.observed', level: guard.stop ? 'INFO' : 'WARN', status: guard.stop ? 'confirmed' : guard.ok ? 'unknown' : 'missing', correlationId: clientId, message: guard.note || 'Exchange protection confirmed', details: { clientId, symbol: o.symbol, stop: guard.stop, tp: guard.tp, ok: guard.ok } });
     if (!guard.ok) return { ...fill, ok: false, qty: 0, note: safe(`${fill.note}. ${guard.note}`) };
     return guard.note ? { ...fill, note: safe(`${fill.note}. ${guard.note}`) } : fill;
   }
@@ -158,6 +167,7 @@ export class LiveExecutor {
 
   async close(symbol: string, side: Side, qty: number, positionId?: string): Promise<Fill> {
     const { clientId } = this.intent('close', { symbol, side, qty, positionId });
+    recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.submission', status: 'submitting', correlationId: clientId, message: 'Submitting reduce-only close', details: { clientId, positionId, symbol, side, requestedQty: qty } });
     let sendError: string | null = null;
     try { await this.adapter.closePosition(symbol, side, qty, clientId); }
     catch (e) { sendError = safe((e as Error).message); }

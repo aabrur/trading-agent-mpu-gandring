@@ -4,6 +4,7 @@ import type { FinancialPage, FinancialRecord, FinancialFill, FinancialCost } fro
 import type { ExecutionIntent } from './journal.js';
 import type { ClosedTrade } from '../types.js';
 import { log } from '../redact.js';
+import { recordDiagnostic } from '../session-log.js';
 export interface FinancialSummary { accountScope: string | null; coverage: 'complete' | 'partial' | 'unsupported'; actualFees: number | null; funding: number | null; confirmedNetRealized: number | null; unattributedRecords: number; observedAt: number | null }
 type Window = { since: number; until: number; supported: FinancialPage['supported']; fillSymbols?: string[] };
 const key = (r: FinancialRecord) => r.kind + ':' + r.symbol + ':' + r.id;
@@ -103,7 +104,7 @@ export class FinancialEvidence {
   }
   private save() {
     if (!this.file) return;
-    try { mkdirSync(path.dirname(this.file), { recursive: true }); writeFileSync(this.file + '.tmp', JSON.stringify({ scope: this.scope, records: [...this.records.values()], windows: this.windows, observedAt: this.observedAt, mismatch: this.mismatch })); renameSync(this.file + '.tmp', this.file); }
-    catch { log('[financial evidence] local evidence could not be saved'); }
+    try { mkdirSync(path.dirname(this.file), { recursive: true }); writeFileSync(this.file + '.tmp', JSON.stringify({ scope: this.scope, records: [...this.records.values()], windows: this.windows, observedAt: this.observedAt, mismatch: this.mismatch })); renameSync(this.file + '.tmp', this.file); recordDiagnostic({ source: 'financial-evidence', category: 'JOURNAL', eventName: 'financial_evidence.persisted', status: 'persisted', message: 'Financial evidence persisted', details: { records: this.records.size, windows: this.windows.length, accountMismatch: this.mismatch, observedAt: this.observedAt } }); }
+    catch (error) { recordDiagnostic({ source: 'financial-evidence', category: 'JOURNAL', eventName: 'financial_evidence.failed', status: 'failed', level: 'ERROR', message: 'Financial evidence persistence failed', details: { error } }); log('[financial evidence] local evidence could not be saved'); }
   }
 }

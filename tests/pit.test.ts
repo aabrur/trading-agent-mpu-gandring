@@ -45,7 +45,7 @@ describe('Point-In-Time (PIT) Market Data Engine', () => {
     const quality = feed.checkQuality(baseTime + 240_000, 60_000);
 
     expect(quality.status).toBe('GAP_DETECTED');
-    expect(quality.gapCount).toBe(1);
+    expect(quality.gapCount).toBe(2);
   });
 
   it('detects stale market data', () => {
@@ -82,9 +82,45 @@ describe('Point-In-Time (PIT) Market Data Engine', () => {
     // 08:00:00 UTC
     const utcEightAm = Date.UTC(2026, 9, 26, 8, 0, 0);
     expect(PointInTimeFeed.isFundingSettlementWindow(utcEightAm, 8)).toBe(true);
+    expect(PointInTimeFeed.isFundingSettlementWindow(utcEightAm + 500, 8)).toBe(false);
 
     // 04:30:00 UTC (not settlement)
     const utcFourThirty = Date.UTC(2026, 9, 26, 4, 30, 0);
     expect(PointInTimeFeed.isFundingSettlementWindow(utcFourThirty, 8)).toBe(false);
+  });
+
+  it('rejects malformed bars and surfaces the rejected records in quality status', () => {
+    const feed = new PointInTimeFeed([
+      ...sampleCandles,
+      { ...sampleCandles[0], timestamp: baseTime + 240_000, closedAt: baseTime + 300_000, high: Number.NaN },
+      { ...sampleCandles[0], timestamp: baseTime, closedAt: baseTime + 60_000 },
+    ]);
+
+    const quality = feed.checkQuality(baseTime + 240_000);
+    expect(feed.asOf(baseTime + 300_000)).toHaveLength(4);
+    expect(quality.status).toBe('INVALID_DATA');
+    expect(quality.invalidRecordCount).toBe(2);
+  });
+
+  it('keeps funding intervals distinct when rates overlap in time', () => {
+    const feed = new PointInTimeFeed([], [
+      { timestamp: 1700000000000, rate: 0.0001, intervalHours: 1 },
+      { timestamp: 1700000000000, rate: 0.0002, intervalHours: 8 },
+    ]);
+
+    expect(feed.fundingIntervals(8)).toEqual([1, 8]);
+    expect(feed.getFundingRateAt(1700000000000, 1)?.rate).toBe(0.0001);
+    expect(feed.getFundingRateAt(1700000000000, 8)?.rate).toBe(0.0002);
+  });
+
+  it('bounds candle and funding access through a point-in-time view', () => {
+    const feed = new PointInTimeFeed(sampleCandles, [
+      { timestamp: baseTime + 60_000, rate: 0.001, intervalHours: 1 },
+      { timestamp: baseTime + 180_000, rate: 0.002, intervalHours: 1 },
+    ]);
+    const view = feed.pointInTimeView(baseTime + 120_000);
+
+    expect(view.asOf(Number.MAX_SAFE_INTEGER)).toHaveLength(2);
+    expect(view.getFundingRateAt(Number.MAX_SAFE_INTEGER)?.rate).toBe(0.001);
   });
 });

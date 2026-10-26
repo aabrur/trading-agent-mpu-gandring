@@ -9,7 +9,9 @@
  *   when worker is unavailable, ensuring trading and risk gates never halt.
  */
 
-import { simulateMonteCarlo, type MonteCarloForecast, type MonteCarloInput } from './monte-carlo.js';
+import { simulateMonteCarlo, validateForecastOptions, type MonteCarloForecast, type MonteCarloInput } from './monte-carlo.js';
+import { randomUUID } from 'node:crypto';
+import { recordDiagnostic } from '../session-log.js';
 
 export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
@@ -23,7 +25,7 @@ export interface KronosClientConfig {
 
 export interface KronosPredictionResult extends MonteCarloForecast {
   workerAvailable: boolean;
-  source: 'KRONOS_PYTHON_WORKER' | 'NATIVE_STATISTICAL_FALLBACK';
+  source: 'PYTHON_GBM_SIMULATION' | 'LOCAL_GBM_SIMULATION';
   latencyMs: number;
   circuitState: CircuitState;
 }
@@ -75,16 +77,22 @@ export class KronosClient {
    * Predicts forward trajectory non-blockingly with fail-open fallback.
    */
   public async predict(input: MonteCarloInput, now: number = Date.now()): Promise<KronosPredictionResult> {
+    const horizon = input.horizon ?? 10;
+    const numPaths = input.numPaths ?? 200;
+    validateForecastOptions(horizon, numPaths, input.seed);
     const start = Date.now();
+    const requestId = `gbm-${randomUUID()}`;
+    recordDiagnostic({ source: 'forecast', category: 'PREDICTION', eventName: 'forecast.requested', status: 'started', correlationId: requestId, message: 'Statistical forecast requested', details: { horizon, numPaths, side: input.side, seeded: input.seed !== undefined } });
     const { state } = this.getCircuitStatus(now);
 
     // If circuit is OPEN, fail-open immediately to native statistical fallback without network delay
     if (state === 'OPEN') {
       const fallback = simulateMonteCarlo(input);
+      recordDiagnostic({ source: 'forecast', category: 'PREDICTION', eventName: 'forecast.fallback', status: 'circuit_open', correlationId: requestId, message: 'Local statistical fallback used', durationMs: Date.now() - start });
       return {
         ...fallback,
         workerAvailable: false,
-        source: 'NATIVE_STATISTICAL_FALLBACK',
+        source: 'LOCAL_GBM_SIMULATION',
         latencyMs: Date.now() - start,
         circuitState: 'OPEN',
       };
@@ -103,47 +111,48 @@ export class KronosClient {
           candles: input.candles,
           horizon: input.horizon ?? 10,
           num_paths: input.numPaths ?? 200,
+          seed: input.seed,
+          side: input.side ?? 'LONG',
           tp_price: input.tpPrice,
           sl_price: input.slPrice,
         }),
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       if (!res.ok) {
         throw new Error(`Worker returned HTTP ${res.status}`);
       }
 
-      const data = await res.json() as any;
-      if (!Array.isArray(data.p50) || data.p50.length === 0) {
-        throw new Error('Malformed prediction payload from worker');
-      }
+      const data: unknown = await res.json();
+      if (!isValidWorkerPrediction(data, horizon, numPaths)) throw new Error('Malformed prediction payload from worker');
+      const payload = data as WorkerPrediction;
 
       // Success: reset failures and close circuit
       this.circuitState = 'CLOSED';
       this.failureCount = 0;
+      recordDiagnostic({ source: 'forecast', category: 'PREDICTION', eventName: 'forecast.completed', status: 'completed', correlationId: requestId, durationMs: Date.now() - start, message: 'Python statistical forecast completed', details: { model: 'GBM', horizon: payload.horizon, probTpFirst: payload.prob_tp_first, probSlFirst: payload.prob_sl_first, probNoHit: payload.prob_no_hit } });
 
       return {
-        currentPrice: data.current_price ?? (data.p50[0] || 0),
-        horizon: data.horizon ?? input.horizon ?? 10,
-        numPaths: data.num_paths ?? input.numPaths ?? 200,
-        drift: data.drift ?? 0,
-        volatility: data.volatility ?? 0,
-        regime: data.regime ?? 'STABLE_DRIFT',
-        probTpFirst: data.prob_tp_first ?? 0.5,
-        expectedReturnPct: Number((((data.p50[data.p50.length - 1] - data.p50[0]) / (data.p50[0] || 1)) * 100).toFixed(2)),
-        p10: data.p10,
-        p50: data.p50,
-        p90: data.p90,
+        currentPrice: payload.current_price,
+        horizon: payload.horizon,
+        numPaths: payload.num_paths,
+        drift: payload.drift,
+        volatility: payload.volatility,
+        regime: payload.regime,
+        probTpFirst: payload.prob_tp_first,
+        probSlFirst: payload.prob_sl_first,
+        probNoHit: payload.prob_no_hit,
+        expectedReturnPct: Number((((payload.p50[payload.p50.length - 1] - payload.p50[0]) / payload.p50[0]) * 100).toFixed(2)),
+        p10: payload.p10,
+        p50: payload.p50,
+        p90: payload.p90,
         workerAvailable: true,
-        source: 'KRONOS_PYTHON_WORKER',
+        source: 'PYTHON_GBM_SIMULATION',
         latencyMs: Date.now() - start,
         circuitState: 'CLOSED',
       };
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-
+    } catch (err: unknown) {
+      recordDiagnostic({ source: 'forecast', category: 'PREDICTION', eventName: 'forecast.fallback', level: 'WARN', status: 'fallback', correlationId: requestId, durationMs: Date.now() - start, message: 'Forecast worker failed; local statistical fallback selected', details: { error: err } });
       // Record failure for circuit breaker
       this.failureCount++;
       this.lastFailureTime = now;
@@ -156,10 +165,50 @@ export class KronosClient {
       return {
         ...fallback,
         workerAvailable: false,
-        source: 'NATIVE_STATISTICAL_FALLBACK',
+        source: 'LOCAL_GBM_SIMULATION',
         latencyMs: Date.now() - start,
         circuitState: this.circuitState,
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
+}
+
+interface WorkerPrediction {
+  current_price: number;
+  horizon: number;
+  num_paths: number;
+  drift: number;
+  volatility: number;
+  regime: MonteCarloForecast['regime'];
+  prob_tp_first: number | null;
+  prob_sl_first: number | null;
+  prob_no_hit: number | null;
+  p10: number[];
+  p50: number[];
+  p90: number[];
+}
+
+function isProbability(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1);
+}
+
+function isValidWorkerPrediction(value: unknown, horizon: number, numPaths: number): value is WorkerPrediction {
+  if (typeof value !== 'object' || value === null) return false;
+  const result = value as Partial<WorkerPrediction>;
+  const arrays = [result.p10, result.p50, result.p90];
+  if (arrays.some(values => !Array.isArray(values) || values.length !== horizon + 1
+    || values.some(price => typeof price !== 'number' || !Number.isFinite(price) || price <= 0))) return false;
+  if (!Number.isFinite(result.current_price) || (result.current_price ?? 0) <= 0
+    || result.horizon !== horizon || result.num_paths !== numPaths
+    || !Number.isFinite(result.drift) || !Number.isFinite(result.volatility) || (result.volatility ?? -1) < 0
+    || !['EXPANDING_VOLATILITY', 'CONTRACTING_VOLATILITY', 'STABLE_DRIFT', 'UNCERTAIN'].includes(String(result.regime))
+    || !isProbability(result.prob_tp_first) || !isProbability(result.prob_sl_first) || !isProbability(result.prob_no_hit)) return false;
+  if (result.p10?.[0] !== result.current_price || result.p50?.[0] !== result.current_price || result.p90?.[0] !== result.current_price) return false;
+  for (let i = 0; i <= horizon; i++) {
+    if ((result.p10?.[i] ?? Infinity) > (result.p50?.[i] ?? -Infinity)
+      || (result.p50?.[i] ?? Infinity) > (result.p90?.[i] ?? -Infinity)) return false;
+  }
+  return true;
 }
