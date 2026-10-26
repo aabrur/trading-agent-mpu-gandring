@@ -16,7 +16,7 @@ vi.mock('../server/providers/local.js', async original => ({
   discoverLocalModels: vi.fn(async () => ({agentId: 'claude', installed: true, configuredModel: 'claude-opus-4-6', models: [], completeness: 'partial', authentication: 'authenticated'}))
 }));
 const apps: ReturnType<typeof createApp>[] = [];
-afterEach(() => { for (const app of apps.splice(0)) { app.desk.stop(); app.lead.stop(); app.server.close(); } vi.clearAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => { for (const app of apps.splice(0)) { app.desk.stop(); app.lead.stop(); app.server.close(); } vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 async function start() {
   for (const id of ['LEAD', 'MARKET', 'RESEARCH', 'STRATEGIST', 'RISK', 'EXECUTION']) { vi.stubEnv(`AGENT_${id}_PROVIDER`, ''); vi.stubEnv(`AGENT_${id}_MODEL`, ''); vi.stubEnv(`AGENT_${id}_REASONING`, ''); }
   vi.stubEnv('DEFAULT_REASONING_EFFORT', '');
@@ -29,6 +29,30 @@ async function start() {
 }
 const post = (url: string, body: unknown) => fetch(url, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
 describe('Connect, configure, activate', () => {
+  it('does not activate a connection after its overall deadline expires', async () => {
+    const { app, envFile, url } = await start();
+    const before = readEnv(envFile), active = structuredClone(app.desk.cfg.agents);
+    const timeout = AbortSignal.timeout;
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => ms === 40_000 ? AbortSignal.abort() : timeout(ms));
+    expect(await (await post(url, { id: 'claude', assignAll: true })).json()).toMatchObject({ ok: false, active: false, state: 'VERIFICATION FAILED' });
+    expect(readEnv(envFile)).toEqual(before);
+    expect(app.desk.cfg.agents).toEqual(active);
+    expect(runLocalAgent).not.toHaveBeenCalled();
+  });
+  it('uses the selected CLI for all six roles when Connect explicitly requests it', async () => {
+    const { app, envFile, url } = await start();
+    const response = await post(url, { id: 'claude', assignAll: true });
+    expect(await response.json()).toMatchObject({ ok: true, active: true });
+    expect(Object.values(app.desk.cfg.agents).every(agent => agent.provider === 'local' && agent.model === 'claude:claude-opus-4-6')).toBe(true);
+    expect(readEnv(envFile).AGENT_RISK_MODEL).toBeUndefined();
+    expect(app.desk.cfg.reasoning?.risk).toBeUndefined();
+  });
+  it('checks an unknown native session in the backend before opening a sign-in terminal', async () => {
+    const { url } = await start();
+    vi.mocked(localLoginStatus).mockResolvedValueOnce({ connected: false, state: 'unknown' });
+    expect(await (await post(url, { id: 'claude' })).json()).toMatchObject({ active: true });
+    expect(openAgentLogin).not.toHaveBeenCalled();
+  });
   it('probes and applies inherited roles immediately while retaining explicit Owner assignments', async () => {
     const {app, envFile, url} = await start();
     const before = app.desk.snapshot();

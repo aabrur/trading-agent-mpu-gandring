@@ -17,7 +17,7 @@ import { sendToGrokBot } from './bridge.js';
 import { getSnapshot, getCandles, TIMEFRAMES, type Timeframe } from './market/index.js';
 import { normSymbol } from './commands.js';
 import type { AgentId } from './types.js';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { sanitizeUntrusted } from './untrusted.js';
 import type { LiveExecutor } from './live/executor.js';
@@ -79,6 +79,7 @@ const GbLessonSchema = z.object({
 }).strict();
 
 export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; envFile?: string; wallet?: WalletConnector; killFile?: string | null; setupFetch?: typeof fetch; channelFetch?: typeof fetch; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv; sessionLog?: SessionLogger | null; sessionLogRoot?: string } = {}) {
+  const instanceId = randomUUID();
   const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
   const sessionLog = opts.sessionLog === undefined ? getSessionLogger() : opts.sessionLog;
   const desk = new Desk(cfg, caller, { settingsFile: opts.envFile ?? (process.env.VITEST ? undefined : process.env.DOTENV_PATH ?? '.env'), opportunityReviewsPath: opts.reportsDir === null ? null : undefined, reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, conversationsPath: opts.conversationsPath, killFile: opts.killFile ?? null, jevFetch: opts.jevFetch, jevEnv: opts.jevEnv, ...(sessionLog ? { diagnostics: input => { sessionLog.write(input); } } : {}) });
@@ -114,7 +115,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.get('/api/health', (_req, res) => {
     const fellBackAgents = cfg.appMode !== 'grokbot' ? AGENT_IDS.filter((id) => cfg.agents[id].fellBackToMock) : [];
     res.json({
-      ok: true, app: 'trading-agent-mpu-gandring', version: APP_VERSION, mode: cfg.tradingMode, appMode: cfg.appMode,
+      ok: true, app: 'trading-agent-mpu-gandring', version: APP_VERSION, instanceId, mode: cfg.tradingMode, appMode: cfg.appMode,
       exchange: cfg.live?.exchange ?? cfg.exchange.name,
       killed: desk.killed,
       tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off',
@@ -235,7 +236,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     } catch (e) { res.status(400).json({ ok: false, error: safe((e as Error).message) }); }
   });
   // Setup wizard and Desk ops panel (same shared modules as npm run setup / npm run gb). Localhost only.
-  const routeCtx = { cfg, desk, auto, envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch, limiter };
+  const routeCtx = { cfg, desk, auto, reporter, envFile: opts.envFile ?? process.env.DOTENV_PATH ?? '.env', fetchImpl: opts.setupFetch, limiter };
   mountSetupRoutes(app, routeCtx);
   mountResearchRoutes(app, desk);
   mountOpsRoutes(app, routeCtx);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { officeFetch } from './officeApi';
 import { installDiagnostics } from './diagnostics';
 import { verdictReactions, type SceneEvent } from './sceneDirector';
 import type { AgentId, CendolEvent, DeskState, Fight, Reaction, Speech, Verdict } from './types';
@@ -196,7 +197,7 @@ export function useDesk() {
   }, []);
 
   const command = useCallback(async (text: string, agent?: AgentId) => {
-    const res = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent, conversationId: conversationId.current }) });
+    const res = await officeFetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent, conversationId: conversationId.current }) }, 150_000);
     const result = await res.json() as { ok: boolean; reply?: string; error?: string; command?: string };
     return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid' };
   }, []);

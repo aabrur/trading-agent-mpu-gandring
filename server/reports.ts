@@ -147,6 +147,7 @@ export class Reporter {
     this.timer = setInterval(() => void this.generate(), this.desk.cfg.reports.intervalMin * 60_000);
   }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
+  reschedule() { if (this.timer) { this.stop(); this.start(); } }
 
   async generate(): Promise<Report> {
     const at = Date.now();

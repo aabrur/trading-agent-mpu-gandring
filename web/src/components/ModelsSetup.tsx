@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { officeFetch as fetch } from '../officeApi';
 import { useI18n } from '../i18n';
 
 interface Choice { id: string; label: string; tags: string[]; reasoningLevels?: string[] }

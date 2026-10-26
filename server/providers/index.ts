@@ -18,6 +18,7 @@ export interface ModelRequest {
   user: string;
   context: Record<string, unknown>; // structured facts, used by the mock provider
   attempt: number;
+  retryReason?: 'output_limit';
 }
 export type ModelCaller = (req: ModelRequest) => Promise<string>;
 
@@ -28,6 +29,10 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal });
     if (!res.ok) throw new Error(`provider HTTP ${res.status}`); // never echo the body, it can contain the key
     return await res.json();
+  } catch (error) {
+    if (signal?.aborted) throw new Error('Model request cancelled');
+    if (ctrl.signal.aborted) throw new Error(`Model provider timed out after ${timeoutMs / 1000}s`);
+    throw error;
   } finally { clearTimeout(t); }
 }
 
@@ -35,6 +40,15 @@ function modelContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) return content.flatMap((chunk: unknown) => chunk && typeof chunk === 'object' && 'type' in chunk && chunk.type === 'text' && 'text' in chunk && typeof chunk.text === 'string' ? [chunk.text] : []).join('');
   return '';
+}
+
+function completionText(data: { error?: unknown; choices?: Array<{ finish_reason?: string; message?: { content?: unknown } }> }): string {
+  if (data.error) throw new Error('Model provider returned an error response');
+  const choice = data.choices?.[0];
+  if (choice?.finish_reason === 'length') throw new Error('Model provider output token limit reached before a complete answer');
+  const text = modelContent(choice?.message?.content);
+  if (!text.trim()) throw new Error('Model provider returned no answer text');
+  return text;
 }
 
 export function makeCaller(cfg: AppConfig): ModelCaller {
@@ -65,7 +79,8 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
         } : {};
         const params = getGenerationParams(req.agent, req.task, provider, model);
         const isOpenAiReasoning = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model);
-        const tokenField = isOpenAiReasoning ? { max_completion_tokens: params.maxTokens } : { max_tokens: params.maxTokens };
+        const maxTokens = provider === 'openrouter' && req.attempt > 1 && req.retryReason === 'output_limit' ? Math.min(32768, params.maxTokens * 4) : params.maxTokens;
+        const tokenField = isOpenAiReasoning ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
         const body: Record<string, unknown> = {
           model,
           ...tokenField,
@@ -87,7 +102,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
 
         try {
           const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
-          return modelContent(data?.choices?.[0]?.message?.content);
+          return completionText(data);
         } catch (err) {
           if (body.response_format && String((err as Error).message).includes('400')) {
             // First attempt graceful downgrade to json_object before stripping format entirely
@@ -95,8 +110,9 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
               body.response_format = { type: 'json_object' };
               try {
                 const retryJson = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
-                return String(retryJson?.choices?.[0]?.message?.content ?? '');
-              } catch {
+                return completionText(retryJson);
+              } catch (fallbackError) {
+                if ((fallbackError as Error).message !== 'provider HTTP 400') throw fallbackError;
                 // If json_object also rejects with 400, proceed to prompt-only fallback
               }
             }
@@ -105,7 +121,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
               delete (body.provider as Record<string, unknown>).require_parameters;
             }
             const retry = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
-            return String(retry?.choices?.[0]?.message?.content ?? '');
+            return completionText(retry);
           }
           throw err;
         }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { applyAndRestartOffice } from '../officeApi';
 import { useI18n } from '../i18n';
 
 export interface UpdateInfo {
@@ -27,7 +28,7 @@ export function UpdateModal({
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string; output?: string } | null>(null);
 
-  const cur = info?.currentVersion ?? '0.0.0.4.1';
+  const cur = info?.currentVersion ?? '0.0.0.4.2';
   const latest = info?.latestVersion ?? cur;
 
   const checkNow = async () => {
@@ -53,17 +54,13 @@ export function UpdateModal({
 
   const restartDesk = async () => {
     setBusy(true);
-    setResult({ ok: true, message: 'Restarting desk process... reloading office in 2s.' });
+    setResult({ ok: true, message: 'Restarting the desk. Waiting for the replacement server…' });
     try {
-      await fetch('/api/ops/restart', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ forceExit: true })
-      });
-    } catch { /* ignore */ }
-    setTimeout(() => {
+      await applyAndRestartOffice();
       window.location.reload();
-    }, 2000);
+    } catch (error) {
+      setResult({ ok: false, message: error instanceof Error ? error.message : 'Restart could not be confirmed.' });
+    } finally { setBusy(false); }
   };
 
   return (

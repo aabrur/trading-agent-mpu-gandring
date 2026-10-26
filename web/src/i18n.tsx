@@ -276,7 +276,7 @@ export const en = {
   setupDeskRunningPrefix: 'Running:',
   setupDeskSavedModePrefix: 'Saved mode:',
   setupDeskVenuePrefix: 'venue:',
-  setupDeskSavingNotice: 'Saving a section does not apply it to the running desk.',
+  setupDeskSavingNotice: 'Saved desk and model changes apply immediately.',
   setupDeskRemoveForbidden: 'Remove from your environment: Main wallet keys and seed phrases are never used.',
   setupDeskKillSwitchAlert: 'Kill switch is ON. Release it only in a terminal on this computer:',
   setupDeskThenRestart: ', then restart.',
@@ -296,7 +296,7 @@ export const en = {
   setupDeskAutoScheduleHelp: 'Once a supported decision passes existing checks, the desk executes without another approval. Saving does not switch trading mode. Connect trade-only credentials and verify the venue in Exchange & Safety; apply saved changes only when you intend to restart.',
   setupDeskSaveBtn: 'Save desk settings',
   setupDeskApplyRestartBtn: 'Apply saved settings and restart',
-  setupDeskApplyRestartNotice: 'Save each section before applying.',
+  setupDeskApplyRestartNotice: 'Saved changes apply immediately. Restart reloads the office.',
   setupDeskApplyRestartNoticeMpu: 'Start with mpu to apply saved changes here.',
 
   // Setup - Models & Providers
@@ -349,7 +349,7 @@ export const en = {
   // Setup - Local CLI Agents
   setupLocalTitle: 'Local CLI Agents',
   setupLocalNote: 'Local coding CLI agents detected on your computer.',
-  setupLocalSignInNote: 'Sign in through the agent login. The desk reuses that account without copying its tokens. After testing, choose "Agent on this computer" in the provider selector above.',
+  setupLocalSignInNote: 'Connect verifies the CLI and activates it for all six agents. Native sign-in opens only when required. Test connection checks a model reply using that account.',
   setupLocalRefreshBtn: 'Refresh installed agents',
   setupLocalVerifiedBadge: 'Connection verified this session',
   setupLocalInstalledBadge: 'Installed · not yet tested',
@@ -494,7 +494,7 @@ export const en = {
   cbKillReleasedMsg: 'Kill switch released. Trading resumed.',
   cbKillOnMsg: 'Kill switch on.',
   cbKillFailedMsg: 'Kill switch request failed',
-  cbRestartTitle: 'Reload settings and synchronize office in-place',
+  cbRestartTitle: 'Restart the office with saved settings',
   cbRestartSuccess: 'Office synchronized.',
 
   // UI Extras
@@ -792,7 +792,7 @@ export const id: Record<TranslationKey, string> = {
   setupDeskRunningPrefix: 'Berjalan:',
   setupDeskSavedModePrefix: 'Mode tersimpan:',
   setupDeskVenuePrefix: 'bursa:',
-  setupDeskSavingNotice: 'Menyimpan bagian ini belum langsung diterapkan ke meja yang sedang berjalan.',
+  setupDeskSavingNotice: 'Perubahan pengaturan meja dan model langsung diterapkan setelah disimpan.',
   setupDeskRemoveForbidden: 'Hapus dari environment kamu: Private key dan seed phrase dompet utama tidak pernah digunakan.',
   setupDeskKillSwitchAlert: 'Kill switch sedang AKTIF. Buka kunci hanya melalui terminal di laptop ini:',
   setupDeskThenRestart: ', lalu restart.',
@@ -812,7 +812,7 @@ export const id: Record<TranslationKey, string> = {
   setupDeskAutoScheduleHelp: 'Setelah keputusan yang valid lolos uji risiko, meja akan mengeksekusi otomatis tanpa meminta konfirmasi lagi. Menyimpan tidak langsung mengganti mode trading. Hubungkan kredensial khusus-trading dan verifikasi bursa di Bursa & Pengamanan; terapkan perubahan saat siap restart.',
   setupDeskSaveBtn: 'Simpan pengaturan meja',
   setupDeskApplyRestartBtn: 'Terapkan pengaturan & restart meja',
-  setupDeskApplyRestartNotice: 'Simpan setiap bagian sebelum menerapkan.',
+  setupDeskApplyRestartNotice: 'Perubahan tersimpan langsung diterapkan. Restart memuat ulang kantor.',
   setupDeskApplyRestartNoticeMpu: 'Jalankan dengan perintah mpu untuk menerapkan perubahan di sini.',
 
   // Setup - Model & Provider
@@ -864,7 +864,7 @@ export const id: Record<TranslationKey, string> = {
   // Setup - Agen CLI Lokal
   setupLocalTitle: 'Agen CLI Lokal',
   setupLocalNote: 'Agen coding CLI lokal yang terdeteksi di komputer kamu.',
-  setupLocalSignInNote: 'Masuk lewat login bawaan agen. Meja ini menggunakan akun tersebut tanpa menyalin tokennya. Setelah pengujian, pilih "Agen di komputer ini" pada pemilih provider di atas.',
+  setupLocalSignInNote: 'Connect memverifikasi CLI dan mengaktifkannya untuk keenam agen. Login bawaan dibuka hanya jika diperlukan. Test connection memeriksa jawaban model memakai akun tersebut.',
   setupLocalRefreshBtn: 'Segarkan daftar agen',
   setupLocalVerifiedBadge: 'Koneksi terverifikasi sesi ini',
   setupLocalInstalledBadge: 'Terpasang · belum diuji',
@@ -1009,7 +1009,7 @@ export const id: Record<TranslationKey, string> = {
   cbKillReleasedMsg: 'Kill switch dilepas. Trading dilanjutkan.',
   cbKillOnMsg: 'Kill switch aktif.',
   cbKillFailedMsg: 'Permintaan kill switch gagal',
-  cbRestartTitle: 'Muat ulang pengaturan dan sinkronkan meja di tempat',
+  cbRestartTitle: 'Restart kantor dengan pengaturan tersimpan',
   cbRestartSuccess: 'Meja trading berhasil disinkronkan.',
 
   // UI Extras

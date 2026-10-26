@@ -4,6 +4,7 @@
 // /api/ops/auto N path, persisted to OPEN_ORDERS_N); Desk Ops keeps a read-only slot summary + Close All.
 // Verdicts / Trade Log / Reports keep their own surfaces; Desk Ops shows only the last cycle summary.
 import { useEffect, useRef, useState } from 'react';
+import { officeFetch as fetch } from '../officeApi';
 import type { DeskState } from '../types';
 import { POPULAR_SYMBOLS, VERIFIED_TOKENS } from '../types';
 import { useI18n } from '../i18n';
@@ -98,7 +99,7 @@ export function DeskOps({ state }: { state: DeskState }) {
   }, [auto?.intervalMin]);
   useEffect(() => {
     if (auto?.maxHoldHours !== undefined) setAutoHold(String(auto.maxHoldHours));
-  }, [auto?.intervalMin]);
+  }, [auto?.maxHoldHours]);
   useEffect(() => {
     if (useEffectAutoSync) setAutoSyms(useEffectAutoSync);
   }, [useEffectAutoSync]);

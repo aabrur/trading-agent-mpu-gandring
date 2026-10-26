@@ -1065,6 +1065,7 @@ button:disabled { cursor: default; }
 .auto-preset-select:hover:not(:disabled) { color: var(--text); }
 .auto-preset-select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: var(--radius-sm); }
 .auto-preset-select:disabled { opacity: 0.6; cursor: default; }
+.auto-preset-select option { background-color: var(--panel); color: var(--text); }
 .auto-preset-chevron { position: absolute; right: 0; pointer-events: none; font-size: 10px; color: var(--text-dim); line-height: 1; }
 .desk-ops .auto-setup-controls { gap: 6px; flex-wrap: nowrap; }
 .desk-ops .auto-min-field, .desk-ops .auto-n-field { padding: 0 4px; gap: 3px; }

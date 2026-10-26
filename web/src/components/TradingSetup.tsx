@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { officeFetch as fetch } from '../officeApi';
 import type { DeskState } from '../types';
 import type { TradingNetwork, TradingPresetId, TradingProfile, TradingSettings } from '../../../server/trading-settings';
 import { TRADING_PRESETS, draftProfile, resolveTradingPreset } from '../../../server/trading-settings';

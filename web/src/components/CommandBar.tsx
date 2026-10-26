@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { applyAndRestartOffice } from '../officeApi';
 import type { DeskState } from '../types';
 import { POPULAR_SYMBOLS } from '../types';
 import { useI18n } from '../i18n';
@@ -8,6 +9,7 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
   const [text, setText] = useState('');
   const [symbol, setSymbol] = useState(state.watchlist[0] ?? 'BTCUSDT');
   const [reply, setReply] = useState<{ ok: boolean; reply: string } | null>(null);
+  const [restarting, setRestarting] = useState(false);
   const run = async (cmd: string) => { if (!cmd.trim()) return; setReply(await command(cmd)); };
   return (
     <div className="commandbar">
@@ -59,9 +61,13 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
             type="button"
             className="restart-btn"
             title={t('cbRestartTitle')}
+            disabled={restarting}
+            aria-busy={restarting}
             onClick={async () => {
-              const r = await fetch('/api/setup/restart', { method: 'POST' }).then((x) => x.json()).catch(() => null);
-              setReply({ ok: !!r?.ok, reply: r?.detail || t('cbRestartSuccess') });
+              setRestarting(true);
+              try { await applyAndRestartOffice(); window.location.reload(); }
+              catch (error) { setReply({ ok: false, reply: error instanceof Error ? error.message : 'Restart could not be confirmed.' }); }
+              finally { setRestarting(false); }
             }}
           >
             {t('restartOfficeBtn')}

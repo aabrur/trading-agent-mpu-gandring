@@ -2,6 +2,16 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.2] - 2026-10-27
+
+### Fixed
+- Preserve successful local CLI replies when Windows locks the temporary working directory during cleanup. Cleanup retries asynchronously, and model deadlines now include time spent waiting for a process slot.
+- Decode OpenRouter content blocks consistently after structured-output fallback, preserve authentication errors, and distinguish provider timeouts, empty replies, and exhausted output budgets. Only output-limit failures receive a larger budget on the existing second attempt.
+- Apply saved desk preferences immediately without recreating the exchange executor or resetting positions, realized paper equity, the daily loss baseline, or safety latches. Reschedule periodic reports when their interval changes.
+- Validate saved configuration before restart, request managed restarts before touching exchange state, and wait for a replacement server identity before reporting completion or reloading the browser.
+- Activate the selected local CLI for all six agents directly from Connect. Verify unknown sessions in the backend before opening native sign-in, bound verification requests, and preserve existing configuration when verification fails or expires.
+- Bound Office requests so stalled operations release their loading state, synchronize max-hold fields correctly, and give native preset options explicit text and background colors in night mode.
+
 ## [v0.0.0.4.1] - 2026-10-26
 
 ### Added

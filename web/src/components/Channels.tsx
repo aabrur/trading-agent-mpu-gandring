@@ -1,6 +1,7 @@
 // Chat channels for the Desk Lead, inside the Setup wizard. Mirrors `npm run channels -- setup <channel>` (server/channels/*).
 // Secrets are typed into masked inputs, sent once to the localhost-only route, written to .env (chmod 600) and cleared from the page.
 import { useEffect, useRef, useState } from 'react';
+import { officeFetch as fetch } from '../officeApi';
 import { useI18n } from '../i18n';
 
 interface Link { label: string; url: string; login?: boolean }

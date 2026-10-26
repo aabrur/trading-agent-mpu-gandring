@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { applyAndRestartOffice } from '../officeApi';
 import type { AgentId, DeskState, Verdict } from '../types';
 import { AGENT_ORDER } from '../types';
 import { PamorPattern } from './Keris';
@@ -104,11 +105,10 @@ export function TopBar({
     setRestarting(true);
     setRestartReply(null);
     try {
-      const response = await fetch('/api/setup/restart', { method: 'POST' });
-      const result = await response.json();
-      setRestartReply(response.ok && result.ok ? (result.detail || t('cbRestartSuccess')) : (result.detail || (lang === 'id' ? 'Restart gagal.' : 'Restart failed.')));
-    } catch {
-      setRestartReply(lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
+      await applyAndRestartOffice();
+      window.location.reload();
+    } catch (error) {
+      setRestartReply(error instanceof Error ? error.message : lang === 'id' ? 'Restart gagal. Periksa koneksi ke server.' : 'Restart failed. Check the server connection.');
     } finally { setRestarting(false); }
   };
   const runningVer = state?.version;
@@ -123,8 +123,8 @@ export function TopBar({
     ? latestVer
     : (diskVer && runningVer && compareVer(diskVer, runningVer) > 0)
       ? diskVer
-      : (latestVer ?? diskVer ?? '0.0.0.4.1');
-  const ver = diskVer ?? '0.0.0.4.1';
+      : (latestVer ?? diskVer ?? '0.0.0.4.2');
+  const ver = diskVer ?? '0.0.0.4.2';
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {
     try {

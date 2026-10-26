@@ -35,7 +35,7 @@ export async function runAgent<K extends TaskKind>(
     if (input.signal?.aborted) throw new Error('Model request cancelled');
     const user = attempt === 1 ? baseUser : `${baseUser}\n\nYour previous reply was invalid (${lastErr}). Send only the JSON object.`;
     try {
-      const raw = await call({ agent, task, provider, model, system, user, context: input.context, attempt, signal: input.signal });
+      const raw = await call({ agent, task, provider, model, system, user, context: input.context, attempt, signal: input.signal, ...(/output token limit/i.test(lastErr) ? { retryReason: 'output_limit' as const } : {}) });
       const parsed = schema.safeParse(extractJson(raw, task));
       if (parsed.success) return { data: parsed.data as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: attempt, failureKind: null };
       lastFailureKind = 'schema';

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { AppConfig } from '../config.js';
 import type { Desk } from '../desk.js';
 import type { AutoTrader } from '../auto.js';
+import type { Reporter } from '../reports.js';
 import { AGENT_IDS, PROVIDERS, loadConfig } from '../config.js';
 import { EXCHANGES, ADAPTER_STATUS, type ExchangeName } from '../exchange/index.js';
 import { walletAccess } from '../wallet.js';
@@ -41,7 +42,37 @@ export function localClient(o: { remoteAddress?: string | null; hostHeader?: str
 
 export const UNKILL_COMMAND = 'npm run unkill -- --yes';
 type Limiter = (k: string) => boolean;
-export interface RouteCtx { cfg: AppConfig; desk: Desk; auto?: AutoTrader; envFile: string; fetchImpl?: typeof fetch; limiter: (n: number, ms: number) => Limiter }
+export interface RouteCtx { cfg: AppConfig; desk: Desk; auto?: AutoTrader; reporter?: Reporter; envFile: string; fetchImpl?: typeof fetch; limiter: (n: number, ms: number) => Limiter }
+
+function applyDeskPreferences(c: RouteCtx, next: AppConfig) {
+  c.desk.applyDeskPreferences(next);
+  c.auto?.configure({ on: next.auto.on, intervalMin: next.auto.intervalMin, symbols: next.auto.symbols, maxHoldHours: next.auto.maxHoldHours });
+  c.reporter?.reschedule();
+}
+
+function restartOffice(req: express.Request, res: express.Response, c: RouteCtx) {
+  try {
+    const next = loadConfig(setupEnv(c.envFile));
+    if (process.env.MPU_MANAGED === '1' && process.send) {
+      res.json({ ok: true, restart: 'process', detail: 'Restarting the office managed process...' });
+      setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
+      return;
+    }
+    if (req.body?.forceExit || req.body?.restartProcess || req.query?.force === 'true') {
+      res.json({ ok: true, restart: 'exit', detail: 'Stopping the server for the launcher to restart it...' });
+      setTimeout(() => process.exit(0), 150).unref();
+      return;
+    }
+    if (next.tradingMode !== c.cfg.tradingMode || next.exchange.name !== c.cfg.exchange.name) {
+      return res.status(409).json({ ok: false, detail: 'Use the Exchange & Safety flow to change the active trading mode or venue.' });
+    }
+    c.desk.applyModelConfig(next);
+    applyDeskPreferences(c, next);
+    res.json({ ok: true, restart: 'in-place', detail: 'Saved model and desk settings applied to the running office.' });
+  } catch {
+    res.status(400).json({ ok: false, detail: 'Saved settings could not be applied. Check the saved configuration; the office was not restarted.' });
+  }
+}
 
 const Venue = z.enum(EXCHANGES as unknown as [ExchangeName, ...ExchangeName[]]);
 const KeysBody = z.object({ venue: Venue, network: z.enum(['testnet', 'mainnet']), key: z.string().max(300), secret: z.string().max(400), third: z.string().max(300).optional() }).strict();
@@ -119,29 +150,17 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
   });
   app.post('/api/setup/preferences', (req, res) => {
     if (!gate(req, res)) return;
-    try { const result = savePreferences(c.envFile, setupEnv(c.envFile), req.body); res.status(result.ok ? 200 : 400).json(result); }
-    catch { res.status(500).json({ ok: false, detail: 'Settings could not be saved. Check local file permissions.' }); }
+    try {
+      const result = savePreferences(c.envFile, setupEnv(c.envFile), req.body);
+      if (!result.ok) return res.status(400).json(result);
+      applyDeskPreferences(c, loadConfig(setupEnv(c.envFile)));
+      res.json({ ...result, applied: true, detail: 'Desk settings saved and applied to the running office.' });
+    }
+    catch { res.status(500).json({ ok: false, applied: false, detail: 'Settings could not be saved or applied. Check the saved configuration and local file permissions.' }); }
   });
   app.post('/api/setup/restart', (req, res) => {
     if (!gate(req, res)) return;
-    try {
-      const env = setupEnv(c.envFile);
-      c.desk.reloadRuntimeConfig?.(env);
-      if (c.auto && typeof env.AUTO_TRADING === 'string') {
-        c.auto.configure({
-          on: env.AUTO_TRADING === 'on',
-          intervalMin: env.DEBATE_INTERVAL_MIN ? Number(env.DEBATE_INTERVAL_MIN) : undefined,
-          maxHoldHours: env.MAX_HOLD_HOURS !== undefined ? Number(env.MAX_HOLD_HOURS) : undefined
-        });
-      }
-      c.desk.emit('state', c.desk.snapshot());
-    } catch { /* ignore reload error */ }
-    if (process.env.MPU_MANAGED === '1' && process.send) {
-      res.json({ ok: true, detail: 'Restarting the office managed process...' });
-      setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
-      return;
-    }
-    res.json({ ok: true, detail: 'Office configuration reloaded and synchronized in-place.' });
+    return restartOffice(req, res, c);
   });
   app.get('/api/setup/local-agents', (req, res) => {
     if (!gate(req, res)) return;
@@ -204,31 +223,42 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     let operation = connecting.get(agent.id);
     if (!operation) {
       operation = (async () => {
+        const connectionSignal = AbortSignal.timeout(40_000);
         const auth = await localLoginStatus(agent.id);
         if (auth.state === 'missing') return { ok: false, state: 'NOT INSTALLED', detail: 'Install the CLI first.' };
-        if (!auth.connected && req.body?.continue !== true) {
+        if (!auth.connected && auth.state !== 'unknown' && req.body?.continue !== true) {
           if (auth.state !== 'pending') await openAgentLogin(agent.id);
           return { ok: true, active: false, state: 'AUTHENTICATING', detail: 'Complete native sign-in. Configuration continues automatically.' };
         }
         if (auth.state === 'pending') return { ok: true, active: false, state: 'AUTHENTICATING' };
-        const discovery = await discoverLocalModels(agent.id, true);
+        const discovery = await discoverLocalModels(agent.id);
+        if (connectionSignal.aborted) return { ok: false, active: false, state: 'VERIFICATION FAILED', detail: 'Connection check timed out. Existing configuration preserved.' };
         const selected = discovery.configuredModel !== 'default' ? discovery.configuredModel
           : discovery.models.filter(m => m.source === 'cli' || m.source === 'metadata').find(m => m.reasoningLevels.includes('high'))?.id || 'default';
         const model = `${agent.id}:${selected}`;
         const current = setupEnv(c.envFile);
-        const selectedReasoning = (current.DEFAULT_REASONING_EFFORT ? loadConfig({...current, TRADING_MODE: 'PAPER'}).defaultReasoning : undefined) ?? (reasoningStatus('local', model, 'high').effective || undefined);
-        const effort = selectedReasoning ? requireReasoning('local', model, selectedReasoning) : undefined;
+        const requestedReasoning = current.DEFAULT_REASONING_EFFORT ? loadConfig({...current, TRADING_MODE: 'PAPER'}).defaultReasoning : undefined;
+        const selectedReasoning = reasoningStatus('local', model, requestedReasoning).effective || undefined;
         // This read-only probe, rather than process existence or cached auth, establishes model readiness.
         try {
-          const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', undefined, effort);
+          const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', connectionSignal, undefined, { timeoutMs: 30_000 });
           const parsed = SCHEMAS.chat.safeParse(extractJson(reply));
           if (!parsed.success || parsed.data.reply !== 'connected') throw new Error();
-        } catch { return { ok: false, active: false, state: 'VERIFICATION FAILED', detail: 'The selected CLI model did not return a valid reply. Existing configuration preserved.' }; }
+        } catch (error) {
+          if (/needs native CLI sign-in/i.test((error as Error).message) && req.body?.continue !== true) {
+            await openAgentLogin(agent.id);
+            return { ok: true, active: false, state: 'AUTHENTICATING', detail: 'Complete native sign-in. Configuration continues automatically.' };
+          }
+          return { ok: false, active: false, state: 'VERIFICATION FAILED', detail: safe((error as Error).message) || 'The selected CLI model did not return a valid reply. Existing configuration preserved.' };
+        }
         // Read again after discovery/probe so edits made while login was pending are preserved.
+        if (connectionSignal.aborted) return { ok: false, active: false, state: 'VERIFICATION FAILED', detail: 'Connection check timed out. Existing configuration preserved.' };
         const env = setupEnv(c.envFile);
-        const updates: Record<string, string | null> = { DEFAULT_PROVIDER: 'local', LOCAL_MODEL: model };
-        if (!env.DEFAULT_REASONING_EFFORT && reasoningStatus('local', model, 'high').effective) updates.DEFAULT_REASONING_EFFORT = 'high';
-        const next = loadConfig({ ...env, ...updates } as NodeJS.ProcessEnv);
+        const updates: Record<string, string | null> = { DEFAULT_PROVIDER: 'local', LOCAL_MODEL: model, DEFAULT_REASONING_EFFORT: selectedReasoning ?? null };
+        if (req.body?.assignAll === true) for (const id of AGENT_IDS) {
+          for (const suffix of ['PROVIDER', 'MODEL', 'REASONING']) updates[`AGENT_${id.toUpperCase()}_${suffix}`] = null;
+        }
+        const next = loadConfig(Object.fromEntries(Object.entries({ ...env, ...updates }).filter(([, value]) => value !== null)) as NodeJS.ProcessEnv);
         const original = readFileSync(c.envFile);
         const temporary = `${c.envFile}.models-${randomUUID()}`;
         try {
@@ -236,12 +266,14 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
           setEnv(temporary, updates);
           renameSync(temporary, c.envFile);
           c.desk.applyModelConfig(next);
-          Object.assign(process.env, updates);
+          for (const [key, value] of Object.entries(updates)) {
+            if (value === null) delete process.env[key]; else process.env[key] = value;
+          }
         } catch {
           writeFileSync(c.envFile, original, { mode: 0o600 });
           return { ok: false, active: false, state: 'CONFIGURATION FAILED', detail: 'Model configuration could not be applied. Previous saved settings restored.' };
         } finally { rmSync(temporary, { force: true }); }
-        return { ok: true, active: true, state: 'CONNECTED & ACTIVE', model, reasoning: reasoningStatus('local', model, next.defaultReasoning), discovery, detail: `Connected & Active: ${model}. Explicit role assignments preserved.` };
+        return { ok: true, active: true, state: 'CONNECTED & ACTIVE', model, reasoning: reasoningStatus('local', model, next.defaultReasoning), discovery, detail: `Connected & Active: ${model}. ${req.body?.assignAll === true ? 'Applied to all six agents.' : 'Explicit role assignments preserved.'}` };
       })();
       connecting.set(agent.id, operation);
     }
@@ -267,7 +299,7 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     const model = String(req.body?.model ?? '');
     try { localSelection(model); } catch { return res.status(400).json({ ok: false, detail: 'Choose a local agent first.' }); }
     try {
-      const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.');
+      const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', undefined, undefined, { timeoutMs: 30_000 });
       const result = SCHEMAS.chat.safeParse(extractJson(reply));
       const ok = result.success && result.data.reply === 'connected';
       res.json({ ok, detail: ok ? 'Connection verified: the agent returned a valid model reply.' : 'The agent ran, but its reply did not match the expected JSON. Check its model settings.' });
@@ -424,33 +456,7 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
   });
   app.post('/api/ops/restart', async (req, res) => {
     if (!gate(req, res)) return;
-    try {
-      const env = setupEnv(c.envFile);
-      const nextCfg = loadConfig(env);
-      c.cfg.tradingMode = nextCfg.tradingMode;
-      c.cfg.exchange = nextCfg.exchange;
-      c.cfg.live = nextCfg.live;
-      c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
-      await c.desk.syncLive?.();
-      if (c.auto && typeof env.AUTO_TRADING === 'string') {
-        c.auto.configure({
-          on: env.AUTO_TRADING === 'on',
-          intervalMin: env.DEBATE_INTERVAL_MIN ? Number(env.DEBATE_INTERVAL_MIN) : undefined,
-          maxHoldHours: env.MAX_HOLD_HOURS !== undefined ? Number(env.MAX_HOLD_HOURS) : undefined
-        });
-      }
-      c.desk.emit('state', c.desk.snapshot());
-    } catch { /* ignore reload error */ }
-    if (process.env.MPU_MANAGED === '1' && process.send) {
-      setTimeout(() => process.send?.({ type: 'mpu:restart' }), 250).unref();
-      return res.json({ ok: true, detail: 'Restarting the office managed process...' });
-    }
-    if (req.body?.forceExit || req.body?.restartProcess || req.query?.force === 'true') {
-      res.json({ ok: true, detail: 'Restarting server process...' });
-      setTimeout(() => process.exit(0), 150).unref();
-      return;
-    }
-    return res.json({ ok: true, detail: 'Office configuration reloaded and synchronized in-place.' });
+    return restartOffice(req, res, c);
   });
   app.post('/api/ops/auto', (req, res) => {
     if (!gate(req, res)) return;

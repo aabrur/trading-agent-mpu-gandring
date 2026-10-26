@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { officeFetch as fetch } from '../officeApi';
 import { useI18n } from '../i18n';
 import { CodexResearchSetup } from './CodexResearchSetup';
 
@@ -218,7 +219,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model: `${agent.id}:${activeModel}` })
-      });
+      }, 35_000);
       const d = await r.json();
       setMessage((old) => ({ ...old, [agent.id]: d.detail || d.error }));
       if (type === 'test') {
@@ -239,7 +240,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
     setBusy(id);
     setMessage(old => ({...old, [id]: lang === 'id' ? 'Memeriksa login, model, dan konfigurasi...' : 'Checking authentication, discovering models, and configuring...'}));
     try {
-      const response = await fetch('/api/setup/local-agents/connect', { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, continue: continuation}) });
+      const response = await fetch('/api/setup/local-agents/connect', { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, continue: continuation, assignAll: true}) }, 45_000);
       const result = await response.json();
       setMessage(old => ({...old, [id]: `${result.state}: ${result.detail || ''}`}));
       setVerified(old => ({...old, [id]: result.active === true}));
@@ -252,7 +253,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
   async function refreshModels(id: string) {
     setBusy(id);
     try {
-      const response = await fetch('/api/setup/local-agents/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) });
+      const response = await fetch('/api/setup/local-agents/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) }, 45_000);
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error();
       setAgents(result.agents);
@@ -372,10 +373,10 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                     <div className="local-agent-actions">
                       <button
                         type="button"
-                        disabled={!available || !a.installed || !!busy || !!waiting[a.id] || !!connected[a.id]}
+                        disabled={!available || !a.installed || !!busy || !!waiting[a.id] || !!verified[a.id]}
                         onClick={() => void action(a, 'login')}
                       >
-                        {connected[a.id] ? 'Connected' : waiting[a.id] ? (lang === 'id' ? 'Menunggu login...' : 'Waiting for sign-in...') : t('setupLocalOpenSignInBtn')}
+                        {verified[a.id] ? 'Connected & Active' : waiting[a.id] ? (lang === 'id' ? 'Menunggu login...' : 'Waiting for sign-in...') : t('setupLocalOpenSignInBtn')}
                       </button>
                       <button
                         type="button"

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { officeFetch as fetch, applyAndRestartOffice } from '../officeApi';
 import { useI18n } from '../i18n';
 
 interface Preferences {
@@ -63,20 +64,10 @@ export function PreferencesSetup() {
     setBusy(true);
     setMessage(lang === 'id' ? 'Menerapkan pengaturan tersimpan...' : 'Applying saved settings...');
     try {
-      const r = await fetch('/api/setup/restart', { method: 'POST' });
-      const d = await r.json();
-      if (!r.ok) { setMessage(d.detail); setBusy(false); return; }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      for (let i = 0; i < 30; i++) {
-        try {
-          const health = await fetch('/api/health', { signal: AbortSignal.timeout(1500) });
-          if (health.ok) { window.location.reload(); return; }
-        } catch { /* Wait for the managed server. */ }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-      setMessage(lang === 'id' ? 'Restart memakan waktu lebih lama. Cek terminal mpu, lalu muat ulang halaman.' : 'Restart is taking longer than expected. Check the mpu terminal, then refresh.');
-    } catch {
-      setMessage(lang === 'id' ? 'Restart tidak dapat dikonfirmasi. Cek terminal mpu.' : 'Restart could not be confirmed. Check the mpu terminal.');
+      await applyAndRestartOffice();
+      window.location.reload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Restart could not be confirmed. Check the mpu terminal.');
     }
     setBusy(false);
   }
@@ -155,8 +146,8 @@ export function PreferencesSetup() {
         </div>
       </form>
       <div className="setup-nav">
-        <button disabled={busy || !canRestart} onClick={restart}>{t('setupDeskApplyRestartBtn')}</button>
-        <small className="wallet-note">{canRestart ? t('setupDeskApplyRestartNotice') : t('setupDeskApplyRestartNoticeMpu')}</small>
+        <button disabled={busy} onClick={restart}>{canRestart ? t('setupDeskApplyRestartBtn') : lang === 'id' ? 'Terapkan pengaturan tersimpan' : 'Apply saved settings'}</button>
+        <small className="wallet-note">{canRestart ? t('setupDeskApplyRestartNotice') : lang === 'id' ? 'Pengaturan diterapkan tanpa menutup terminal.' : 'Settings apply without closing the terminal.'}</small>
       </div>
       {message && <p className="wallet-note" role="status">{message}</p>}
     </section>

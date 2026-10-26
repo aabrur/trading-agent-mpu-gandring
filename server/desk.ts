@@ -12,7 +12,7 @@ import { AGENT_IDS } from './config.js';
 import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, Action, RoomMessage } from './types.js';
 import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
-import type { ModelCaller } from './providers/index.js';
+import { makeCaller, type ModelCaller } from './providers/index.js';
 import { getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem, liveNewsStatus } from './market/index.js';
 import { strategyVote, rsi, volumeDelta, atr } from './strategy.js';
 import { applyRiskGate } from './risk.js';
@@ -236,6 +236,27 @@ export class Desk extends EventEmitter {
     this.cfg.keys = next.keys;
     this.cfg.baseUrls = next.baseUrls;
     for (const id of AGENT_IDS) Object.assign(this.agents[id], next.agents[id]);
+    this.changed();
+  }
+
+  /** Apply saved desk preferences without recreating the executor or resetting safety state. */
+  applyDeskPreferences(next: AppConfig) {
+    const appModeChanged = this.cfg.appMode !== next.appMode;
+    const balanceChanged = this.cfg.paper.balance !== next.paper.balance;
+    this.cfg.appMode = next.appMode;
+    this.cfg.agentEvents = next.agentEvents;
+    this.cfg.paper = next.paper;
+    this.cfg.risk.dailyLossLimitPct = next.risk.dailyLossLimitPct;
+    this.cfg.reports.intervalMin = next.reports.intervalMin;
+    if (balanceChanged && this.cfg.tradingMode === 'PAPER' && this.book.positions.length === 0) {
+      this.book.balance = this.cfg.paper.balance;
+    }
+    this.book.safetyNet = next.paper.safetyNet;
+    this.book.n = next.paper.n;
+    if (appModeChanged) {
+      this.call = next.appMode === 'grokbot' ? async () => { throw new Error('Grok Bot mode receives replies through agent events.'); } : makeCaller(this.cfg);
+      for (const id of AGENT_IDS) Object.assign(this.agents[id], this.grokbot ? { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false } : this.cfg.agents[id]);
+    }
     this.changed();
   }
 

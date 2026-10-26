@@ -2,7 +2,8 @@ import { registerReasoning } from './reasoning.js';
 // Native agent accounts stay in their own CLIs. The desk receives text replies through its existing schema/risk gate.
 import { spawn } from 'node:child_process';
 import { publishActivity } from '../activity.js';
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentWorkQueue } from './work-queue.js';
@@ -570,11 +571,19 @@ export function recordResearchActivity(output: string) {
     } catch { /* Only structured CLI tool events establish tool usage. */ }
   }
 }
-export async function runLocalAgent(selection: string, prompt: string, signal?: AbortSignal, reasoningEffort?: string): Promise<string> {
+export async function runLocalAgent(selection: string, prompt: string, signal?: AbortSignal, reasoningEffort?: string, options: { timeoutMs?: number } = {}): Promise<string> {
   const { id, model } = localSelection(selection);
   const executable = localExecutable(id);
   if (!executable) throw new Error(`${id} is not installed on PATH. Open Setup to connect it.`);
-  const release = await workQueue.acquire(signal);
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let release: () => void;
+  try { release = await workQueue.acquire(requestSignal); }
+  catch (error) {
+    if (deadline.aborted && !signal?.aborted) throw new Error(`${id} timed out waiting for a model process slot.`);
+    throw error;
+  }
   let folder = '';
   const started = Date.now();
   publishActivity({ kind: 'process', source: id, level: 'info', text: `${id} model process started`, status: 'started' });
@@ -599,10 +608,10 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
         if (process.platform === 'win32' && child.pid) { const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); killer.on('error', () => child.kill()); }
         else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
       };
-      const timer = setTimeout(() => { failure = `${id} timed out. Check its sign-in and permission settings in Setup.`; stop(); }, 120_000);
-      const abort = () => { failure = 'Model request cancelled'; stop(); };
-      signal?.addEventListener('abort', abort, { once: true });
-      if (signal?.aborted) abort();
+      const timer = setTimeout(() => { failure = `${id} timed out. Check its sign-in and permission settings in Setup.`; stop(); }, timeoutMs);
+      const abort = () => { failure = signal?.aborted ? 'Model request cancelled' : `${id} timed out after ${timeoutMs / 1000}s. Check its sign-in and model settings in Setup.`; stop(); };
+      requestSignal.addEventListener('abort', abort, { once: true });
+      if (requestSignal.aborted) abort();
       const collect = (chunk: Buffer, keep: boolean) => { size += chunk.length; if (size > 1_000_000) { failure = `${id} returned too much output.`; stop(); } else if (keep) {
         const text = chunk.toString(); output += text; eventBuffer += text;
         const lines = eventBuffer.split('\n'); eventBuffer = lines.pop() || '';
@@ -615,15 +624,21 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
       } else {
         child.stdin.end(prompt);
       }
-      child.on('error', () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new Error(`${id} could not start. Check its installation.`)); });
-      child.on('close', (code) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || processFailure(id, `${diagnostic}\n${output}`))); else resolve(localReply(output)); });
+      child.on('error', () => { clearTimeout(timer); requestSignal.removeEventListener('abort', abort); reject(new Error(`${id} could not start. Check its installation.`)); });
+      child.on('close', (code) => { clearTimeout(timer); requestSignal.removeEventListener('abort', abort); recordResearchActivity(eventBuffer); if (stopped || code !== 0) reject(new Error(failure || processFailure(id, `${diagnostic}\n${output}`))); else resolve(localReply(output)); });
     });
     publishActivity({ kind: 'process', source: id, level: 'info', status: 'completed', text: `${id} model process completed`, durationMs: Date.now() - started });
     return reply;
   } catch (error) {
     publishActivity({ kind: 'process', source: id, level: 'error', status: 'failed', text: `${id} process failed: ${(error as Error).message}`, durationMs: Date.now() - started });
     throw error;
-  } finally { try { if (folder) rmSync(folder, { recursive: true, force: true }); } finally { release(); } }
+  } finally {
+    release();
+    // Native CLIs can retain the working directory briefly after returning a reply on Windows.
+    if (folder) void rm(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {
+      publishActivity({ kind: 'process', source: id, level: 'warn', status: 'cleanup_pending', text: `${id} temporary directory is still in use; model result preserved.` });
+    });
+  }
 }
 
 /** Return metadata only; server headers and transport environments remain inside the CLI. */

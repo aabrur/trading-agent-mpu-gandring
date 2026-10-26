@@ -2,6 +2,7 @@
 // Keys are typed into masked inputs and go straight to the local .env (chmod 600) through a localhost-only route.
 // Nothing is echoed back. The kill switch is released only in a terminal (the command is shown, not run).
 import { useEffect, useRef, useState } from 'react';
+import { officeFetch as fetch } from '../officeApi';
 import type { DeskState } from '../types';
 import { WalletPanel } from './Wallet';
 import { ChannelsSetup } from './Channels';
