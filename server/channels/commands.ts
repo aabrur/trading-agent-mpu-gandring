@@ -47,7 +47,7 @@ const AGENTS: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', '
 /** Parse one chat message. Accepts "/status", "status", "/status@MyBot", "desk status", "/analyze BTC", "/ask ...". */
 export function parseCommand(text: string): Parsed {
   if (text.length > 2500) return { ok: false, reply: 'Message exceeds 2500 characters.' };
-  const t = String(text ?? '').trim().replace(/^\/?desk\s+/i, '').replace(/^\//, '').replace(/^([a-z-]+)@\S+/i, '$1');
+  const t = String(text ?? '').trim().replace(/^\/?(desk|mpu)\s+/i, '').replace(/^\//, '').replace(/^([a-z-]+)@\S+/i, '$1');
   const owner = parseOwnerCommand(t);
   if (owner.type === 'invalid') return { ok: false, reply: owner.reason };
   if (['set_profile', 'set_size', 'set_leverage', 'set_n', 'set_safety', 'open', 'close', 'close_all'].includes(owner.type)) return { ok: true, cmd: 'owner', text: t };

@@ -51,6 +51,7 @@
     "docs:setup": "tsx scripts/gen-setup-docs.ts",
     "gb": "tsx cli/session-entry.ts gb",
     "unkill": "tsx cli/session-entry.ts unkill",
+    "kill": "tsx cli/session-entry.ts kill",
     "channels": "tsx cli/session-entry.ts channels",
     "office": "concurrently -k --raw -n server,web \"npm:dev:server\" \"npm:dev:web\"",
     "office:status": "tsx cli/session-entry.ts office-status",

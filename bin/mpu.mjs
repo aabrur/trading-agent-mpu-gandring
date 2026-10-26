@@ -21,21 +21,34 @@ if (args.includes('--help') || args.includes('-h') || first === 'help') {
 
 Usage:
   mpu                      Start the desk and open the web office
+  mpu dev                  Run local dev server and web UI concurrently
   mpu restart              Restart the desk server and open the web office
   mpu office               Start the desk and open the web office
+  mpu status               Check setup status, mode, and key permissions
   mpu doctor [args]        Run key, network, and permission health checks
-  mpu setup [args]         Setup wizard, status, or guide (e.g. mpu setup paper)
+  mpu setup [args]         Setup wizard, status, or guide (e.g. mpu setup)
   mpu paper                Quick shortcut to set TRADING_MODE=PAPER
-  mpu status               Quick shortcut to check setup status
+  mpu testnet [args]       Quick shortcut to set TRADING_MODE=TESTNET
+  mpu live [args]          Quick shortcut to set TRADING_MODE=LIVE
+  mpu positions [args]     Show open positions with SL/TP and PnL
+  mpu account [args]       Show balance, equity, and safety net status
+  mpu scan [args]          Run proactive scan (loss cap, stops, errors)
+  mpu report [args]        Generate and display latest desk report
+  mpu analyze <symbol>     Run agent debate and analysis for symbol
   mpu debate [args]        Run autonomous agent debate in terminal
-  mpu gb [args]            Agent CLI (account, positions, scan, lessons, etc.)
-  mpu channels [args]      Manage chat channels (Telegram, Discord, Slack)
-  mpu unkill               Release the emergency kill switch
+  mpu open <sym> <side>    Open position using active settings
+  mpu close <sym|all>      Close position for symbol or all
+  mpu size [args]          Preview ticket sizing and risk check
+  mpu lessons [list|add]   List or add self-improving lessons
+  mpu kill [confirm]       Trip emergency kill switch
+  mpu unkill [--yes]       Release emergency kill switch
+  mpu channels [args]      Manage chat channels (Telegram, Discord, Slack, WhatsApp)
   mpu trade                Run the trade supervisor loop
-  mpu autostart            Manage background autostart service
-  mpu dev                  Run local dev server and web UI concurrently
   mpu test [args]          Run test suite
+  mpu typecheck            Run TypeScript typecheck
   mpu build                Build backend and frontend artifacts
+  mpu autostart            Manage background autostart service
+  mpu gb [cmd] [args]      Direct Grok Bot agent CLI interface
   mpu --no-open            Start the desk without opening a browser
 `);
   process.exit(0);
@@ -47,11 +60,18 @@ const CLI_TARGETS = {
   debate: 'debate',
   gb: 'gb',
   channels: 'channels',
+  kill: 'kill',
   unkill: 'unkill',
   trade: 'trade',
   autostart: 'autostart',
+  backtest: 'backtest',
   'office:status': 'office-status'
 };
+
+const GB_SUBCOMMANDS = new Set([
+  'positions', 'account', 'balance', 'scan', 'report', 'lessons',
+  'open', 'close', 'size', 'split', 'market', 'candles', 'venues', 'event'
+]);
 
 function runCli(cmdName, subArgs) {
   const jsFile = path.join(root, 'dist/server/cli', `${cmdName}.js`);
@@ -75,17 +95,29 @@ const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 if (first === 'paper') {
   runCli('setup', ['paper']);
+} else if (first === 'testnet') {
+  runCli('setup', ['--trading-mode', 'testnet', ...args.slice(1)]);
+} else if (first === 'live') {
+  runCli('setup', ['--trading-mode', 'live', ...args.slice(1)]);
 } else if (first === 'status') {
   runCli('setup', ['status']);
+} else if (first === 'analyze') {
+  runCli('debate', ['--symbol', args[1] || 'BTCUSDT', ...args.slice(2)]);
 } else if (first === 'dev') {
   const res = spawnSync(npmCmd, ['run', 'dev'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
   process.exit(res.status ?? 0);
 } else if (first === 'test') {
   const res = spawnSync(npmCmd, ['test', ...args.slice(1)], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
   process.exit(res.status ?? 0);
+} else if (first === 'typecheck') {
+  const res = spawnSync(npmCmd, ['run', 'typecheck', ...args.slice(1)], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  process.exit(res.status ?? 0);
 } else if (first === 'build') {
   const res = spawnSync(npmCmd, ['run', 'build'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
   process.exit(res.status ?? 0);
+} else if (first && GB_SUBCOMMANDS.has(first)) {
+  const subCmd = first === 'balance' ? 'account' : first;
+  runCli('gb', [subCmd, ...args.slice(1)]);
 } else if (first && CLI_TARGETS[first]) {
   runCli(CLI_TARGETS[first], args.slice(1));
 } else if (first && first !== 'office' && first !== 'restart' && !first.startsWith('-')) {

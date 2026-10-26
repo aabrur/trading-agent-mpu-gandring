@@ -45,7 +45,7 @@ export class AutoTrader {
       this.desk.autoState.intervalMin = c.intervalMin;
     }
     if (Array.isArray(opts.symbols) && opts.symbols.length > 0) {
-      c.symbols = opts.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 12);
+      c.symbols = opts.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 10);
       for (const s of c.symbols) {
         if (!this.desk.cfg.watchlist.includes(s)) this.desk.cfg.watchlist.push(s);
       }

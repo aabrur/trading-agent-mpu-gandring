@@ -141,7 +141,7 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
   app.post('/api/setup/channels/discord-sync', async (req, res) => {
     if (!gate(req, res, true)) return;
     const env = setupEnv(c.envFile);
-    try { res.json({ok: true, ...await syncDiscordCommands(env.DISCORD_BOT_TOKEN || '', env.DISCORD_APPLICATION_ID || '', env.DISCORD_GUILD_ID || undefined, c.fetchImpl ?? fetch), detail: '/mpu commands registered and verified.'}); }
+    try { res.json({ok: true, ...await syncDiscordCommands(env.DISCORD_BOT_TOKEN || '', env.DISCORD_APPLICATION_ID || '', env.DISCORD_GUILD_ID || undefined, c.fetchImpl ?? fetch), detail: 'Channel commands registered and verified.'}); }
     catch (error) { res.status(422).json({ok: false, detail: safe((error as Error).message)}); }
   });
   app.post('/api/setup/channels/telegram-sync', async (req, res) => {
@@ -199,7 +199,7 @@ export function mountChannelSetupRoutes(app: express.Express, c: RouteCtx & { le
         if (!next[key]) delete process.env[key];
       }
       c.lead?.reload(channelConfig(next));
-      r.detail = 'Discord saved and applied. /mpu registered and verified when Bot API is configured.';
+      r.detail = 'Discord saved and applied. Channel commands registered and verified when Bot API is configured.';
     }
     res.status(r.ok ? 200 : 422).json(r);
   });

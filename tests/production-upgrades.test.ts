@@ -83,13 +83,14 @@ describe('Discord bot integration', () => {
     expect(info.installUrl).toContain('applications.commands');
     await expect(inspectDiscordBot(token, '999', request)).rejects.toThrow('Install');
   });
-  it('upserts only /mpu and confirms the command using read-back', async () => {
-    const request = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {id: '123', ...MPU_DISCORD_COMMAND} : [{id: '123', ...MPU_DISCORD_COMMAND}, {id: '999', name: 'unrelated'}])));
+  it('synchronizes direct channel commands and verifies registration', async () => {
+    const directRes = [{ id: '101', name: 'status' }, { id: '102', name: 'positions' }];
+    const request = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify(directRes)));
     expect((await syncDiscordCommands(token, '123', '456', request)).registered).toBe(true);
-    expect(request.mock.calls.map(([, init]) => init?.method)).toEqual(['POST', 'GET']);
+    expect(request.mock.calls.map(([, init]) => init?.method)).toEqual(['PUT']);
     expect(String(request.mock.calls[0][0])).toContain('/guilds/456/commands');
 
-    const globalReq = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {id: '123', ...MPU_DISCORD_COMMAND} : [{id: '123', ...MPU_DISCORD_COMMAND}])));
+    const globalReq = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify(directRes)));
     expect((await syncDiscordCommands(token, '123', undefined, globalReq)).registered).toBe(true);
     expect(String(globalReq.mock.calls[0][0])).toBe('https://discord.com/api/v10/applications/123/commands');
   });

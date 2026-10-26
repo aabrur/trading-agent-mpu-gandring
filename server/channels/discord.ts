@@ -36,25 +36,23 @@ export async function inspectDiscordBot(token: string, guildId?: string, fetchIm
 }
 
 const option = (name: string, description: string, required = false, type = 3) => ({ name, description, type, required });
-export const MPU_DISCORD_COMMAND = { name: 'mpu', description: 'Trading Agent Mpu Gandring', type: 1, options: [
+export const DIRECT_DISCORD_COMMANDS = [
   ...['status', 'report', 'positions', 'scan', 'watchlist', 'scorecard', 'lessons', 'help'].map(name => ({ name, description: `${name} from the desk`, type: 1 })),
   { name: 'analyze', description: 'Analyze a configured symbol', type: 1, options: [option('symbol', 'Symbol', true)] },
-  { name: 'ask', description: 'Ask an agent', type: 1, options: [option('text', 'Question', true), option('agent', 'lead, market, research, strategist, risk, execution')] },
+  { name: 'ask', description: 'Ask an agent or Desk Lead', type: 1, options: [option('text', 'Question', true), option('agent', 'lead, market, research, strategist, risk, execution', false)] },
   { name: 'open', description: 'Existing Owner open command', type: 1, options: [option('side', 'long or short', true), option('symbol', 'Symbol', true), option('size', 'Order size percentage', false, 10), option('leverage', 'Leverage', false, 10)] },
   { name: 'close', description: 'Existing Owner close command', type: 1, options: [option('symbol', 'Symbol or all', true)] },
   { name: 'set', description: 'Existing Owner settings command', type: 1, options: [option('setting', 'profile, size, leverage, n, safety', true), option('value', 'Setting value', true)] },
-  { name: 'kill', description: 'Existing kill confirmation flow', type: 1, options: [option('confirm', 'Type confirm to execute')] }
-] };
+  { name: 'kill', description: 'Existing kill confirmation flow', type: 1, options: [option('confirm', 'Type confirm to execute', false)] }
+];
+export const MPU_DISCORD_COMMAND = { name: 'mpu', description: 'Trading Agent Mpu Gandring (legacy)', type: 1, options: DIRECT_DISCORD_COMMANDS };
 export async function syncDiscordCommands(token: string, appId: string, guildId?: string, fetchImpl: typeof fetch = fetch) {
   snowflake.parse(appId);
   if (guildId) snowflake.parse(guildId);
   const route = guildId ? `/applications/${appId}/guilds/${guildId}/commands` : `/applications/${appId}/commands`;
-  // POST upserts this name only. Never bulk-overwrite unrelated application commands.
-  await discordApi(token, route, fetchImpl, 'POST', MPU_DISCORD_COMMAND);
-  const registered = z.array(z.object({ id: snowflake, name: z.string(), options: z.array(z.object({ name: z.string() })).optional() })).parse(await discordApi(token, route, fetchImpl));
-  const command = registered.find(c => c.name === 'mpu');
-  if (!command || !MPU_DISCORD_COMMAND.options.every(option => command.options?.some(o => o.name === option.name))) throw new Error('Discord command read-back did not confirm all /mpu subcommands.');
-  return { registered: true, count: 1, commandId: command.id };
+  // PUT bulk-overwrites application commands, completely replacing /mpu with direct slash commands.
+  const registered = z.array(z.object({ id: snowflake, name: z.string(), options: z.array(z.object({ name: z.string() })).optional() })).parse(await discordApi(token, route, fetchImpl, 'PUT', DIRECT_DISCORD_COMMANDS));
+  return { registered: true, count: registered.length, commands: registered.map(c => c.name) };
 }
 
 const dmChannelCache = new Map<string, string>();
@@ -75,14 +73,36 @@ export interface DiscordOption { name?: string; type?: number; value?: unknown; 
 export interface DiscordInteraction { id?: string; token?: string; application_id?: string; type?: number; guild_id?: string; channel_id?: string;
   member?: { user?: { id?: string } }; user?: { id?: string }; data?: { name?: string; options?: DiscordOption[] } }
 export function discordCommandText(data: DiscordInteraction['data']): string {
-  if (data?.name !== 'mpu') return [data?.name || '', ...(data?.options ?? []).flatMap(o => o.options ? [discordCommandText({name: o.name, options: o.options})] : [String(o.value ?? '')])].join(' ');
-  const group = data.options?.[0];
-  if (!group?.name) return 'help';
-  const values = Object.fromEntries((group.options ?? []).map(o => [o.name, o.value]));
-  if (group.name === 'open') return ['open', values.side, values.symbol, ...(values.size === undefined ? [] : [`${values.size}%`]), ...(values.leverage === undefined ? [] : [`${values.leverage}x`])].filter(value => value !== undefined).join(' ');
-  if (group.name === 'set' && values.setting === 'size' && values.value !== undefined && !String(values.value).endsWith('%')) values.value = `${values.value}%`;
-  const names: Record<string, string[]> = { analyze: ['symbol'], ask: ['agent', 'text'], open: ['side', 'symbol', 'size', 'leverage'], close: ['symbol'], set: ['setting', 'value'], kill: ['confirm'] };
-  return [group.name, ...(names[group.name] ?? []).flatMap(name => values[name] === undefined ? [] : [String(values[name])])].join(' ');
+  if (!data?.name) return 'help';
+  if (data.name === 'mpu') {
+    const group = data.options?.[0];
+    if (!group?.name) return 'help';
+    return discordCommandText({ name: group.name, options: group.options });
+  }
+  const cmd = data.name.toLowerCase();
+  const values = Object.fromEntries((data.options ?? []).map(o => [o.name, o.value]));
+  if (cmd === 'open') {
+    return ['open', values.side, values.symbol, ...(values.size === undefined ? [] : [`${values.size}%`]), ...(values.leverage === undefined ? [] : [`${values.leverage}x`])].filter(Boolean).join(' ');
+  }
+  if (cmd === 'set') {
+    let val = values.value !== undefined ? String(values.value) : '';
+    if (values.setting === 'size' && val && !val.endsWith('%')) val = `${val}%`;
+    return ['set', values.setting, val].filter(Boolean).join(' ');
+  }
+  if (cmd === 'ask') {
+    if (values.agent) return `ask ${values.agent} ${values.text ?? ''}`.trim();
+    return `ask ${values.text ?? ''}`.trim();
+  }
+  if (cmd === 'analyze') {
+    return `analyze ${values.symbol ?? ''}`.trim();
+  }
+  if (cmd === 'close') {
+    return `close ${values.symbol ?? ''}`.trim();
+  }
+  if (cmd === 'kill') {
+    return values.confirm ? `kill ${values.confirm}` : 'kill';
+  }
+  return [cmd, ...(data.options ?? []).flatMap(o => o.options ? [discordCommandText({ name: o.name, options: o.options })] : (o.value !== undefined ? [String(o.value)] : []))].join(' ').trim();
 }
 export function discordRefusal(c: ChannelConfig, interaction: DiscordInteraction): string | null {
   if (!c.commands) return 'Chat commands are off on this desk (CHANNEL_COMMANDS=off).';

@@ -5,7 +5,7 @@
 // Verdicts / Trade Log / Reports keep their own surfaces; Desk Ops shows only the last cycle summary.
 import { useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
-import { POPULAR_SYMBOLS } from '../types';
+import { POPULAR_SYMBOLS, VERIFIED_TOKENS } from '../types';
 import { useI18n } from '../i18n';
 import { TRADING_PRESETS, TRADING_PRESET_IDS, type TradingPresetId, type TradingNetwork } from '../../../server/trading-settings';
 
@@ -118,7 +118,7 @@ export function DeskOps({ state }: { state: DeskState }) {
           : 'Kill switch is ON. Release it first (Kill control / npm run unkill -- --yes), then enable Auto Trade.');
         return;
       }
-      const syms = patch.symbolsOverride ?? parseSyms();
+      const syms = (patch.symbolsOverride ?? parseSyms()).slice(0, 10);
       const mins = Math.max(1, Math.min(1440, Number(autoMin) || 15));
       const schedule = patch.on !== undefined ? { on: patch.on } : patch.runNow ? { runNow: true } : {
         on: patch.on,
@@ -150,6 +150,23 @@ export function DeskOps({ state }: { state: DeskState }) {
     } finally {
       setModeBusy(false);
     }
+  };
+
+  const addToken = (sym: string) => {
+    const clean = sym.trim().toUpperCase();
+    if (!clean) return;
+    const current = parseSyms();
+    if (current.includes(clean)) return;
+    if (current.length >= 10) return;
+    const next = [...current, clean];
+    setAutoSyms(next.join(', '));
+  };
+
+  const removeToken = (sym: string) => {
+    const current = parseSyms();
+    if (current.length <= 1) return;
+    const next = current.filter((x) => x !== sym);
+    setAutoSyms(next.join(', '));
   };
 
   const toggleTokenChip = (sym: string) => {
@@ -312,13 +329,64 @@ export function DeskOps({ state }: { state: DeskState }) {
             <label className="auto-min-field"><span>{t('opsEveryLabel')}</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>{t('opsMinUnit')}</span></label>
             <button type="button" className="mini" disabled={autoBusy} onClick={() => void updateAuto({})}>{t('autoSaveBtn')}</button>
           </div>
-          <label className="ops-symbols-field">{t('opsSymbolsLabel')}<input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} /></label>
-          <div className="auto-token-bar" role="group" aria-label="Quick symbol selection">{QuickTokens.map((sym) => {
-            const active = selectedSyms.includes(sym), hasPos = state.paper.positions.find((p) => p.symbol === sym);
-            return <button key={sym} type="button" className={`token-chip ${active ? 'on' : ''} ${hasPos ? `pos-${hasPos.side.toLowerCase()}` : ''}`} aria-pressed={active} disabled={autoBusy} onClick={() => toggleTokenChip(sym)} title={`${sym}${hasPos ? ` (${hasPos.side} open)` : ''} - edit selection, then Save`}>
-              {sym.replace('USDT', '')}{hasPos && <b className="chip-pos-tag">{hasPos.side === 'LONG' ? 'L' : 'S'}</b>}
-            </button>;
-          })}</div>
+          <div className="watchlist-builder">
+            <div className="watchlist-header">
+              <span className="watchlist-count">{lang === 'id' ? 'Watchlist aktif' : 'Active watchlist'}: <strong>{selectedSyms.length}/10</strong></span>
+              {selectedSyms.length >= 10 ? (
+                <span className="watchlist-max-badge">{lang === 'id' ? 'Maksimal 10 token' : 'Max 10 reached'}</span>
+              ) : (
+                <span className="watchlist-hint">{lang === 'id' ? 'Pilih hingga 10 token' : 'Select up to 10 tokens'}</span>
+              )}
+            </div>
+            <div className="watchlist-chips" role="group" aria-label="Active watchlist tokens">
+              {selectedSyms.map((sym) => {
+                const hasPos = state.paper.positions.find((p) => p.symbol === sym);
+                return (
+                  <span key={sym} className={`watchlist-chip ${hasPos ? `pos-${hasPos.side.toLowerCase()}` : ''}`} title={`${sym}${hasPos ? ` (${hasPos.side} open)` : ''}`}>
+                    <span className="chip-name">{sym.replace(/(USDT|1000)/g, '') || sym}</span>
+                    {hasPos && <b className="chip-pos-tag">{hasPos.side === 'LONG' ? 'L' : 'S'}</b>}
+                    <button
+                      type="button"
+                      className="chip-remove-btn"
+                      aria-label={`Remove ${sym}`}
+                      disabled={autoBusy || selectedSyms.length <= 1}
+                      onClick={() => removeToken(sym)}
+                      title={selectedSyms.length <= 1 ? (lang === 'id' ? 'Minimal 1 simbol' : 'Keep at least 1 symbol') : `Hapus ${sym}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+              {selectedSyms.length < 10 && (
+                <div className="watchlist-add-wrapper">
+                  <select
+                    className="watchlist-add-select"
+                    aria-label="Add token from verified list"
+                    disabled={autoBusy}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        addToken(e.target.value);
+                        e.target.value = '';
+                      }
+                    }}
+                  >
+                    <option value="" disabled>+ {lang === 'id' ? 'Tambah Token...' : 'Add Token...'}</option>
+                    {VERIFIED_TOKENS.filter((s) => !selectedSyms.includes(s)).map((sym) => (
+                      <option key={sym} value={sym}>
+                        {sym}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          </div>
+          <label className="ops-symbols-field ops-symbols-field-raw">
+            <span>{t('opsSymbolsLabel')}</span>
+            <input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} />
+          </label>
           <p className="ops-help">{t('opsAutoHelpText')}</p>
         </details>
       </section>

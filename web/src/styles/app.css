@@ -1314,3 +1314,23 @@ button:disabled { cursor: default; }
   .discussion-head button, .tool-close { min-width: 44px; }
 }
 @media (pointer: coarse) { .tool-flyout .desk-ops { --ops-control-height: 44px; } }
+
+/* Watchlist Custom Builder */
+.watchlist-builder { display: flex; flex-direction: column; gap: 6px; padding: 6px 0; border-top: 1px dashed var(--line); }
+.watchlist-header { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
+.watchlist-count strong { color: var(--teal); font-family: var(--font-mono); }
+.watchlist-max-badge { font-size: 10px; font-weight: 700; color: var(--warn); background: rgba(224, 138, 46, 0.12); padding: 1px 6px; border-radius: var(--radius-sm); border: 1px solid rgba(224, 138, 46, 0.3); }
+.watchlist-hint { font-size: 10px; color: var(--text-dim); }
+.watchlist-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.watchlist-chip { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 999px; padding: 3px 8px 3px 10px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; line-height: 1.2; transition: all 0.12s ease; }
+.watchlist-chip:hover { border-color: var(--teal); }
+.watchlist-chip.pos-long { box-shadow: 0 0 0 1.5px var(--long); }
+.watchlist-chip.pos-short { box-shadow: 0 0 0 1.5px var(--short); }
+.chip-name { font-weight: 800; letter-spacing: 0.3px; }
+.chip-remove-btn { background: transparent !important; border: none !important; color: var(--text-dim) !important; padding: 0 3px !important; font-size: 13px !important; line-height: 1 !important; cursor: pointer; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; transition: color 0.12s ease; }
+.chip-remove-btn:hover:not(:disabled) { color: var(--short) !important; background: rgba(230, 80, 80, 0.15) !important; }
+.watchlist-add-wrapper { position: relative; display: inline-flex; align-items: center; }
+.watchlist-add-select { border: 1px dashed var(--teal) !important; background: rgba(0, 168, 150, 0.08) !important; color: var(--teal) !important; border-radius: 999px !important; padding: 3px 10px !important; font-family: var(--font-mono) !important; font-size: 11px !important; font-weight: 800 !important; cursor: pointer; height: 26px; outline: none; transition: all 0.12s ease; }
+.watchlist-add-select:hover:not(:disabled) { background: rgba(0, 168, 150, 0.18) !important; border-style: solid !important; }
+.watchlist-add-select option { background: var(--bg-card); color: var(--text); font-family: var(--font-mono); font-size: 12px; }
+.ops-symbols-field-raw { margin-top: 4px; opacity: 0.85; }

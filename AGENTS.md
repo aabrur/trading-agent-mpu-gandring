@@ -8,39 +8,39 @@ The person brings their **own** venue account and keys. Nothing from the maintai
 
 1. **Run the interview, one question at a time.** "Which venue?" (show the list from `docs/setup/README.md`; Bybit is the only non-experimental one). "Which mode?" Always start in **PAPER** (no key), then **TESTNET**, **LIVE** last and only when they ask for it.
 2. **Give one direct link per step, and wait.** Print the steps with `npm run setup -- guide <venue> --network testnet` (or `--network mainnet` for LIVE) and hand them over one at a time: sign-up, test funds, the key / API wallet / agent / subkey page, the permissions to tick. Say "sign in first" for pages that need it. Wait for "done" before the next step.
-3. **Keys never go into the chat.** Local mode: they type them into `npm run setup` (hidden prompts), the office Setup wizard (masked inputs, `http://localhost:5173/#setup`), or straight into `.env` on **this** computer. Grok Bot mode: only the Grok Bot secret request card on **Grok Bot's** computer, with the exact `.env` names from the guide. If a key appears in the chat anyway, tell them to revoke it and make a new one.
+3. **Keys never go into the chat.** Local mode: they type them into `mpu setup` (or `npm run setup`) (hidden prompts), the office Setup wizard (masked inputs, `http://localhost:5173/#setup`), or straight into `.env` on **this** computer. Grok Bot mode: only the Grok Bot secret request card on **Grok Bot's** computer, with the exact `.env` names from the guide. If a key appears in the chat anyway, tell them to revoke it and make a new one.
 4. **Refuse** main wallet private keys, seed phrases and any key that can withdraw or transfer. Only delegated trade-only keys: CEX API key with trading only, Hyperliquid / Aster agent wallet, dYdX API Trading Key, Paradex subkey, Orderly key (read,trading). The app refuses them too; never work around it.
 5. **Hyperliquid and Aster:** offer Connect wallet (MetaMask or Rabby, one signature approving a fresh trade-only agent made on their computer). It works in local mode with the office on 127.0.0.1.
-6. **Verify:** run `npm run doctor`. It must say the key can trade and cannot withdraw. Then switch mode (`--trading-mode testnet`; LIVE also needs `--confirm-live "I understand LIVE trades real money"` typed by the person), restart, and after the first order **confirm the stop loss is resting on the exchange** (an open trigger order on the venue; `npm run gb -- positions` shows the stop). If it is not there, the desk closes the position; tell the person.
+6. **Verify:** run `npm run doctor`. It must say the key can trade and cannot withdraw. Then switch mode (`--trading-mode testnet`; LIVE also needs `--confirm-live "I understand LIVE trades real money"` typed by the person), restart, and after the first order **confirm the stop loss is resting on the exchange** (an open trigger order on the venue; `mpu positions` shows the stop). If it is not there, the desk closes the position; tell the person.
 
 ## CLI and office parity
 
 Everything can be done in the terminal or in the office, through the same code (`server/setup/*`, `server/sizing.ts`, the desk's single execution path):
 
-| Action | CLI | Office (web UI) |
+| Action | CLI (`mpu` or `npm run`) | Office (web UI) |
 | --- | --- | --- |
-| Setup wizard: venue, network, mode | `npm run setup` | **Setup** button (top right), or open `http://localhost:5173/#setup` |
-| Direct links for a venue, step by step | `npm run setup -- guide <venue> [--network mainnet]` | Setup, step 3 (Back / Next step) |
-| Enter keys (hidden, written to `.env`, chmod 600) | `npm run setup` hidden prompts | Setup, step 4 (masked inputs) |
-| Connect wallet (Hyperliquid, Aster; one signature) | `npm run setup` offers it and opens the office | Setup, step 4, or the Venue keys panel |
-| Doctor / permission check | `npm run doctor`, `npm run setup -- check-key --network testnet` | Setup, step 5 **Run doctor** |
-| Switch mode (TESTNET, LIVE with typed confirmation) | `npm run setup -- --yes --trading-mode testnet` / `... live --confirm-live "I understand LIVE trades real money"` | Setup, step 6 |
-| What is configured (secrets masked) | `npm run setup -- status` | Setup header and step 4 status lines |
-| Balance, equity, safety net, N, Money Trade | `npm run gb -- account`, `npm run gb -- split` | Portfolio panel; command bar `status`, `safety 200`, `n 3` |
-| Size a ticket (read only) | `npm run gb -- size <sym> <LONG\|SHORT> <entry> <stop>` | Desk ops, **Size** |
-| Open (stop required) | `npm run gb -- open <sym> <LONG\|SHORT> --stop P [--tp P]` | Desk ops, **Open with stop** |
-| Close one / all | `npm run gb -- close <sym\|all>` | Desk ops **Close**, Portfolio, command bar `close BTC` |
-| Pick orders (debate a symbol) | `npm run debate -- --symbol BTCUSDT`, `curl -X POST /api/debate` | **Start debate**, command bar `analyze BTCUSDT` |
-| Positions | `npm run gb -- positions` | Portfolio panel, chart lines |
-| Proaktif scan | `npm run gb -- scan` | Desk ops **Proaktif scan** |
-| Journal (verdicts, closed trades, log) | `npm run gb -- report`, `reports/` | Verdicts, Trade log, Reports panels |
-| Lessons | `npm run gb -- lessons list` / `lessons add ...` | Lessons panel; Desk ops **Add lesson** |
-| Reports | `npm run gb -- report` | Reports panel **Report now** |
-| Kill switch | `curl -X POST http://127.0.0.1:8787/api/kill`, or `kill confirm` from an allowlisted chat | **Kill** in the command bar; status in Desk ops |
-| Chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp) | `npm run channels -- setup <channel>` (or in `npm run setup`) | Setup, section 7 |
-| Test a chat channel | `npm run channels -- test <channel>` | Setup, section 7 **Send test message** |
-| Chat channel status (secrets masked) | `npm run channels -- status` | Setup, section 7 status line |
-| Release the kill switch | `npm run unkill -- --yes`, then restart | Not in the UI on purpose; the command is shown |
+| Setup wizard: venue, network, mode | `mpu setup` (or `npm run setup`) | **Setup** button (top right), or open `http://localhost:5173/#setup` |
+| Direct links for a venue, step by step | `mpu setup guide <venue> [--network mainnet]` | Setup, step 3 (Back / Next step) |
+| Enter keys (hidden, written to `.env`, chmod 600) | `mpu setup` hidden prompts | Setup, step 4 (masked inputs) |
+| Connect wallet (Hyperliquid, Aster; one signature) | `mpu setup` offers it and opens the office | Setup, step 4, or the Venue keys panel |
+| Doctor / permission check | `mpu doctor`, `mpu setup check-key --network testnet` | Setup, step 5 **Run doctor** |
+| Switch mode (TESTNET, LIVE with typed confirmation) | `mpu testnet` / `mpu live --confirm-live "I understand LIVE trades real money"` | Setup, step 6 |
+| What is configured (secrets masked) | `mpu status` | Setup header and step 4 status lines |
+| Balance, equity, safety net, N, Money Trade | `mpu account`, `mpu split` | Portfolio panel; command bar `status`, `safety 200`, `n 3` |
+| Size a ticket (read only) | `mpu size <sym> <LONG\|SHORT> <entry> <stop>` | Desk ops, **Size** |
+| Open (stop required) | `mpu open <sym> <LONG\|SHORT> --stop P [--tp P]` | Desk ops, **Open with stop** |
+| Close one / all | `mpu close <sym\|all>` | Desk ops **Close**, Portfolio, command bar `close BTC` |
+| Pick orders (debate a symbol) | `mpu analyze BTCUSDT` (or `mpu debate --symbol BTCUSDT`) | **Start debate**, command bar `analyze BTCUSDT` |
+| Positions | `mpu positions` | Portfolio panel, chart lines |
+| Proaktif scan | `mpu scan` | Desk ops **Proaktif scan** |
+| Journal (verdicts, closed trades, log) | `mpu report`, `reports/` | Verdicts, Trade log, Reports panels |
+| Lessons | `mpu lessons list` / `mpu lessons add ...` | Lessons panel; Desk ops **Add lesson** |
+| Reports | `mpu report` | Reports panel **Report now** |
+| Kill switch | `mpu kill confirm` (or `curl -X POST http://127.0.0.1:8787/api/kill`) | **Kill** in the command bar; status in Desk ops |
+| Chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp) | `mpu channels setup <channel>` | Setup, section 7 |
+| Test a chat channel | `mpu channels test <channel>` | Setup, section 7 **Send test message** |
+| Chat channel status (secrets masked) | `mpu channels status` | Setup, section 7 status line |
+| Release the kill switch | `mpu unkill --yes`, then restart | Not in the UI on purpose; the command is shown |
 
 
 ## Head supervisor: the Desk Lead, or your own AI agent
@@ -54,13 +54,13 @@ An external AI agent can play the same head-supervisor role from outside: Grok B
 | What | Command |
 | --- | --- |
 | Alive, mode, venue, kill switch | `curl -s http://127.0.0.1:8787/api/health` |
-| Balance, equity, daily loss stop | `npm run gb -- account --json` |
-| Open positions with stop and take profit | `npm run gb -- positions --json` |
+| Balance, equity, daily loss stop | `mpu account --json` |
+| Open positions with stop and take profit | `mpu positions --json` |
 | Kill switch status and release command | `curl -s http://127.0.0.1:8787/api/ops/kill` |
 | Latest reports | `curl -s http://127.0.0.1:8787/api/reports` |
-| Lessons | `npm run gb -- lessons list --json` |
-| Chat channel status (masked) | `npm run channels -- status` |
-| Proaktif scan (adds a line to the desk log, changes nothing else) | `npm run gb -- scan --json` |
+| Lessons | `mpu lessons list --json` |
+| Chat channel status (masked) | `mpu channels status` |
+| Proaktif scan (adds a line to the desk log, changes nothing else) | `mpu scan --json` |
 
 **Cadence:** check every 5 to 15 minutes; send a report every `REPORT_INTERVAL_MIN` (default 60) and at the end of the person's day; send an alert at once when an escalation rule fires. Use your agent's own scheduler if it has one, otherwise cron or a loop in a terminal.
 
