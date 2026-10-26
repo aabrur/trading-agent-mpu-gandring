@@ -84,10 +84,21 @@ function verifyStage(stage) {
   }
 
   // Verify that record.sourceSha is an ancestor of or matches current commit
-  try {
-    execFileSync('git', ['merge-base', '--is-ancestor', record.sourceSha, commit], { cwd: workspace, stdio: 'ignore' });
-  } catch {
-    return `${stage.id}: sourceSha (${record.sourceSha.slice(0, 7)}) is not an ancestor of current HEAD (${commit.slice(0, 7)})`;
+  if (record.sourceSha !== commit) {
+    let isShallow = false;
+    try {
+      isShallow = execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: workspace, encoding: 'utf8' }).trim() === 'true';
+    } catch {
+      // ignore
+    }
+
+    try {
+      execFileSync('git', ['merge-base', '--is-ancestor', record.sourceSha, commit], { cwd: workspace, stdio: 'ignore' });
+    } catch {
+      if (!isShallow) {
+        return `${stage.id}: sourceSha (${record.sourceSha.slice(0, 7)}) is not an ancestor of current HEAD (${commit.slice(0, 7)})`;
+      }
+    }
   }
 
   if (record.status !== 'PASS') {

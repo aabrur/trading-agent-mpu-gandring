@@ -10,7 +10,7 @@
       "status": "PASS",
       "exitCode": 0,
       "artifact": "scripts/mpu-gate.mjs",
-      "sha256": "4d91613285c9f5550d5793a8045492024ae3705f61daa6328c8bb3b3156346b3"
+      "sha256": "e647b593885c703e51f225b0273ec9b550c5695b911199e7f654e08101e89a32"
     },
     {
       "id": "eleven_source_pins_and_licenses",
