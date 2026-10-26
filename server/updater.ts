@@ -118,32 +118,93 @@ export interface ApplyUpdateResult {
   message: string;
 }
 
+export interface ApplyUpdateOptions {
+  force?: boolean;
+}
+
 export function applyUpdate(
   cwd = process.cwd(),
-  runner?: (cmd: string, args: string[]) => { status: number | null; stdout: string; stderr: string }
+  runner?: (cmd: string, args: string[]) => { status: number | null; stdout: string; stderr: string },
+  options?: ApplyUpdateOptions
 ): ApplyUpdateResult {
   const previousVersion = readLocalVersion(cwd);
   const exec = runner ?? ((cmd: string, args: string[]) => {
-    const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: 60_000, shell: process.platform === 'win32' });
+    const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: 120_000, shell: process.platform === 'win32' });
     return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
   });
 
-  const pull = exec('git', ['pull', '--ff-only', 'origin', 'main']);
-  if (pull.status !== 0) {
-    const detail = (pull.stderr || pull.stdout || 'git pull failed').trim().slice(0, 300);
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+  // 1. Check if working tree has tracked modifications.
+  const statusCheck = exec('git', ['status', '--porcelain']);
+  const dirtyLines = (statusCheck.stdout || '').split('\n').filter((l) => l.trim().length > 0);
+  const hasTrackedChanges = dirtyLines.some((l) => !l.startsWith('??'));
+
+  if (hasTrackedChanges) {
+    if (options?.force) {
+      exec('git', ['stash', 'push', '-m', `mpu-auto-stash-${Date.now()}`]);
+      exec('git', ['checkout', '--', '.']);
+    } else {
+      const stash = exec('git', ['stash', 'push', '-m', `mpu-auto-stash-${Date.now()}`]);
+      if (stash.status !== 0) {
+        exec('git', ['checkout', '--', 'bin/mpu.mjs', 'package-lock.json']);
+      }
+    }
+  }
+
+  // 2. Fetch origin main
+  const fetchRes = exec('git', ['fetch', 'origin', 'main']);
+  if (fetchRes.status !== 0) {
+    const detail = (fetchRes.stderr || fetchRes.stdout || 'git fetch origin main failed').trim().slice(0, 300);
     return {
       ok: false,
       previousVersion,
       currentVersion: previousVersion,
       updated: false,
       output: detail,
-      message: `Update check finished. Could not fast-forward automatically: ${detail}`
+      message: `Update fetch failed: ${detail}`
     };
   }
 
+  // 3. Fast-forward merge or pull
+  let pull = exec('git', ['pull', '--ff-only', 'origin', 'main']);
+  if (pull.status !== 0) {
+    if (options?.force) {
+      const reset = exec('git', ['reset', '--hard', 'origin/main']);
+      if (reset.status !== 0) {
+        const detail = (reset.stderr || reset.stdout || 'git reset --hard failed').trim().slice(0, 300);
+        return {
+          ok: false,
+          previousVersion,
+          currentVersion: previousVersion,
+          updated: false,
+          output: detail,
+          message: `Force update reset failed: ${detail}`
+        };
+      }
+      pull = { status: 0, stdout: 'Reset to origin/main successfully.', stderr: '' };
+    } else {
+      const detail = (pull.stderr || pull.stdout || 'git pull failed').trim().slice(0, 300);
+      return {
+        ok: false,
+        previousVersion,
+        currentVersion: previousVersion,
+        updated: false,
+        output: detail,
+        message: `Could not fast-forward automatically: ${detail}. You can use Force Update to sync cleanly.`
+      };
+    }
+  }
+
   const alreadyUpToDate = /already up to date/i.test(pull.stdout);
-  if (!alreadyUpToDate) {
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  if (!alreadyUpToDate || options?.force) {
+    // 4. Install dependencies if package or lockfile changed
+    const ci = exec(npmCmd, ['ci']);
+    if (ci.status !== 0) {
+      exec(npmCmd, ['install', '--no-audit', '--no-fund']);
+    }
+
+    // 5. Rebuild application
     const build = exec(npmCmd, ['run', 'build']);
     if (build.status !== 0) {
       const detail = (build.stderr || build.stdout || 'build failed').trim().slice(0, 300);

@@ -153,7 +153,8 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.post('/api/update/apply', (req, res) => {
     const a = walletAccess({ appMode: cfg.appMode, host: cfg.host, remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host ?? null, origin: (req.headers.origin as string | undefined) ?? null });
     if (!a.ok) return res.status(403).json({ ok: false, error: a.reason });
-    res.json(applyUpdate());
+    const force = Boolean(req.body && typeof req.body === 'object' && (req.body as { force?: boolean }).force);
+    res.json(applyUpdate(process.cwd(), undefined, { force }));
   });
 
   // Trakteer Cendol real-time celebration: local WebSocket config + tip/webhook handler so the Desk Lead speaks and the office banner fires.

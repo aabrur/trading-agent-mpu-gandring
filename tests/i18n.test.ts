@@ -61,4 +61,46 @@ describe('Dual language i18n parity and updater adapter', () => {
     expect(applied.ok).toBe(true);
     expect(applied.currentVersion).toBe('0.0.0.4.1');
   });
+
+  it('handles dirty working tree gracefully by auto-stashing and pulling', () => {
+    const executed: string[] = [];
+    const runner = (cmd: string, args: string[]) => {
+      const full = `${cmd} ${args.join(' ')}`;
+      executed.push(full);
+      if (args[0] === 'status') {
+        return { status: 0, stdout: ' M bin/mpu.mjs\n M package-lock.json\n', stderr: '' };
+      }
+      if (args[0] === 'pull') {
+        return { status: 0, stdout: 'Updating a72f476..9bacf40\nFast-forward\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+
+    const res = applyUpdate(process.cwd(), runner);
+    expect(res.ok).toBe(true);
+    expect(executed.some((c) => c.includes('git stash push'))).toBe(true);
+    expect(executed.some((c) => c.includes('git fetch origin main'))).toBe(true);
+    expect(executed.some((c) => c.includes('git pull --ff-only origin main'))).toBe(true);
+    expect(executed.some((c) => c.includes('run build'))).toBe(true);
+  });
+
+  it('resets cleanly when force update is requested after merge conflict', () => {
+    const executed: string[] = [];
+    const runner = (cmd: string, args: string[]) => {
+      const full = `${cmd} ${args.join(' ')}`;
+      executed.push(full);
+      if (args[0] === 'status') {
+        return { status: 0, stdout: ' M bin/mpu.mjs\n', stderr: '' };
+      }
+      if (args[0] === 'pull') {
+        return { status: 1, stdout: '', stderr: 'error: Your local changes would be overwritten by merge' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+
+    const res = applyUpdate(process.cwd(), runner, { force: true });
+    expect(res.ok).toBe(true);
+    expect(executed.some((c) => c.includes('git reset --hard origin/main'))).toBe(true);
+    expect(executed.some((c) => c.includes('run build'))).toBe(true);
+  });
 });

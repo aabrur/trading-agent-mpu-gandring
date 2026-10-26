@@ -37,11 +37,11 @@ export function UpdateModal({
     setChecking(false);
   };
 
-  const applyNow = async () => {
+  const applyNow = async (force = false) => {
     setBusy(true);
     setResult(null);
     try {
-      const r = await fetch('/api/update/apply', { method: 'POST' }).then((x) => x.json());
+      const r = await fetch('/api/update/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force }) }).then((x) => x.json());
       setResult({ ok: !!r.ok, message: r.message ?? (r.error || 'Update failed'), output: r.output });
       await onRefresh();
     } catch (e) {
@@ -101,7 +101,7 @@ export function UpdateModal({
           <button onClick={checkNow} disabled={checking || busy}>
             {checking ? '...' : t('checkUpdateBtn')}
           </button>
-          <button className="primary" onClick={applyNow} disabled={busy}>
+          <button className="primary" onClick={() => applyNow(false)} disabled={busy}>
             {busy ? t('updatingBtn') : `${t('applyUpdateBtn')} v${latest}`}
           </button>
           <button type="button" onClick={restartDesk} disabled={busy}>
@@ -116,6 +116,13 @@ export function UpdateModal({
           <div className={`wallet-msg ${result.ok ? 'ok' : 'bad'}`}>
             <p>{result.message}</p>
             {result.output && <pre className="update-log">{result.output}</pre>}
+            {!result.ok && (
+              <div style={{ marginTop: '10px' }}>
+                <button type="button" className="primary" onClick={() => applyNow(true)} disabled={busy}>
+                  {busy ? 'Updating...' : 'Force Update (Clean & Overwrite Local Mod)'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
