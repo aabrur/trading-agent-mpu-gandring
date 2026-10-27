@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { loadConfig } from '../server/config.js';
@@ -56,6 +56,77 @@ describe('trading modes: no confirmation, automatic guards only', () => {
   });
 });
 
+describe('Bybit request clock', () => {
+  const local = 1_793_119_523_494;
+  const aheadMs = 1400;
+  const server = local - aheadMs;
+  const timeBody = (ms: number, includeTime: boolean) => new Response(JSON.stringify({
+    retCode: 0, retMsg: 'OK',
+    result: { timeSecond: String(Math.floor(ms / 1000)), timeNano: `${ms}000000` },
+    ...(includeTime ? { time: ms } : {})
+  }), { status: 200 });
+  const allowed = () => new Response(JSON.stringify({ retCode: 0, retMsg: 'OK', result: { readOnly: 0, permissions: { ContractTrade: ['Order', 'Position'], Wallet: ['AccountTransfer'] }, ips: ['1.2.3.4'] } }), { status: 200 });
+  const rejected = () => new Response(JSON.stringify({ retCode: 10002, retMsg: 'invalid request, please check your server timestamp or recv_window param', time: server }), { status: 200 });
+
+  it('signs inside the future window when the local clock is 1400ms ahead', async () => {
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(local);
+    let timeReads = 0;
+    const stamps: number[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit = {}) => {
+      const path = new URL(url).pathname;
+      if (path === '/v5/market/time') { timeReads++; return timeBody(server, false); }
+      if (path === '/v5/user/query-api') {
+        const headers = init.headers as Record<string, string>;
+        stamps.push(Number(headers['X-BAPI-TIMESTAMP']));
+        expect(headers['X-BAPI-RECV-WINDOW']).toBe('5000');
+        return stamps[0] >= server - 5000 && stamps[0] < server + 1000 ? allowed() : rejected();
+      }
+      return new Response('not found', { status: 404 });
+    }) as typeof fetch;
+    try {
+      const v = await verifyKey(new BybitAdapter('mainnet', MAIN_KEY, MAIN_SECRET, fetchImpl));
+      expect(v.ok).toBe(true);
+      expect(timeReads).toBe(1);
+      expect(stamps).toEqual([server]);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('resyncs once after 10002 and does not ask for time a third time', async () => {
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(local);
+    let timeReads = 0;
+    const stamps: number[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit = {}) => {
+      const path = new URL(url).pathname;
+      if (path === '/v5/market/time') { timeReads++; return timeBody(timeReads === 1 ? local : server, true); }
+      if (path === '/v5/user/query-api') {
+        const ts = Number((init.headers as Record<string, string>)['X-BAPI-TIMESTAMP']);
+        stamps.push(ts);
+        return ts >= server - 5000 && ts < server + 1000 ? allowed() : rejected();
+      }
+      return new Response('not found', { status: 404 });
+    }) as typeof fetch;
+    try {
+      const recovered = await verifyKey(new BybitAdapter('mainnet', MAIN_KEY, MAIN_SECRET, fetchImpl));
+      expect(recovered.ok).toBe(true);
+      expect(timeReads).toBe(2);
+      expect(stamps).toEqual([local, server]);
+      timeReads = 0;
+      stamps.length = 0;
+      const stuck = (async (url: string) => {
+        const path = new URL(url).pathname;
+        if (path === '/v5/market/time') { timeReads++; return timeBody(local, true); }
+        if (path === '/v5/user/query-api') { stamps.push(1); return rejected(); }
+        return new Response('not found', { status: 404 });
+      }) as typeof fetch;
+      const refused = await verifyKey(new BybitAdapter('mainnet', MAIN_KEY, MAIN_SECRET, stuck));
+      expect(refused.ok).toBe(false);
+      expect(refused.detail).toMatch(/10002/);
+      expect(timeReads).toBe(2);
+      expect(stamps).toHaveLength(2);
+    } finally { spy.mockRestore(); }
+  });
+});
+
 describe('optional testnet round trip (doctor --roundtrip, mocked Bybit testnet)', () => {
   it('places with a stop, reconciles and closes without sweeping owner orders', async () => {
     const t = fakeBybit(), m = fakeBybit();
@@ -66,7 +137,7 @@ describe('optional testnet round trip (doctor --roundtrip, mocked Bybit testnet)
     expect(Number(create[0].body.stopLoss)).toBeGreaterThan(0);
     expect(create[1].body.reduceOnly).toBe(true);
     expect(t.count('/v5/order/cancel-all')).toBe(0);
-    expect(t.calls[0].headers['X-BAPI-SIGN']).toMatch(/^[0-9a-f]{64}$/);
+    expect(t.calls.find((c) => c.headers['X-BAPI-SIGN'])?.headers['X-BAPI-SIGN']).toMatch(/^[0-9a-f]{64}$/);
     expect(m.calls).toHaveLength(0);
   });
   it('reports a failure when the entry never fills', async () => {

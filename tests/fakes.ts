@@ -13,6 +13,10 @@ export function fakeBybit(opts: { withdraw?: boolean; readOnly?: number; failCre
     const body = init.body ? JSON.parse(String(init.body)) : null;
     calls.push({ method: init.method ?? 'GET', path: u.pathname, headers: (init.headers ?? {}) as Record<string, string>, body });
     switch (u.pathname) {
+      case '/v5/market/time': {
+        const ms = Date.now();
+        return new Response(JSON.stringify({ retCode: 0, retMsg: 'OK', result: { timeSecond: String(Math.floor(ms / 1000)), timeNano: `${ms}000000` }, time: ms }), { status: 200 });
+      }
       case '/v5/user/query-api': return ok({ readOnly: opts.readOnly ?? 0, permissions: { ContractTrade: ['Order', 'Position'], Wallet: opts.withdraw ? ['AccountTransfer', 'Withdraw'] : ['AccountTransfer'] }, ips: ['1.2.3.4'] });
       case '/v5/account/wallet-balance': return ok({ list: [{ totalEquity: '1000', totalAvailableBalance: '900' }] });
       case '/v5/market/instruments-info': return ok({ list: [{ lotSizeFilter: { qtyStep: '0.001', minOrderQty: '0.001' }, priceFilter: { tickSize: '0.1' } }] });

@@ -11,6 +11,8 @@ export class BybitAdapter implements ExchangeAdapter {
   private base: string;
   private recvWindow = '5000';
   private financialScope: string | null = null;
+  private timeOffsetMs = 0;
+  private clockReady = false;
   async financialHistory(q: FinancialQuery): Promise<FinancialPage> {
     historyWindow(q);
     if (!this.financialScope) this.financialScope = historyScope(this.name, this.network, historyObject(await this.req('GET', '/v5/user/query-api')).userID);
@@ -34,19 +36,55 @@ export class BybitAdapter implements ExchangeAdapter {
     this.base = network === 'testnet' ? 'https://api-testnet.bybit.com' : 'https://api.bybit.com';
   }
 
+  /** Bybit publishes `time` in ms. `timeNano` is a decimal string and does not fit in a JS number. */
+  private serverMillis(json: { time?: unknown; result?: { timeNano?: unknown } } | null): number | null {
+    const reported = Number(json?.time);
+    if (Number.isFinite(reported)) return reported;
+    const nano = json?.result?.timeNano;
+    if (typeof nano !== 'string' || !/^\d{7,}$/.test(nano)) return null;
+    const millis = Number(nano.slice(0, -6));
+    return Number.isFinite(millis) ? millis : null;
+  }
+
+  private async syncTime(): Promise<void> {
+    try {
+      const before = Date.now();
+      const json = await httpJson(this.fetchImpl, `${this.base}/v5/market/time`, { method: 'GET' });
+      const after = Date.now();
+      const server = this.serverMillis(json);
+      if (server == null) return;
+      this.timeOffsetMs = Math.round(server - (before + after) / 2);
+    } catch {
+      // A missed public time read keeps the last offset. The signed call still runs.
+    }
+  }
+
   private async req(method: 'GET' | 'POST', path: string, params: Record<string, string | number | boolean | undefined> = {}) {
-    const ts = Date.now().toString();
+    // Bybit accepts server_time - recv_window <= timestamp < server_time + 1000. recv_window does not cover a fast clock.
+    if (!this.clockReady) {
+      await this.syncTime();
+      this.clockReady = true;
+    }
+    let json = await this.signed(method, path, params);
+    if (Number(json?.retCode) === 10002) {
+      await this.syncTime();
+      json = await this.signed(method, path, params);
+    }
+    if (json?.retCode !== 0) throw new ExchangeError(`bybit ${path}: ${json?.retMsg ?? 'error'} (${json?.retCode})`, json?.retCode);
+    return json.result;
+  }
+
+  private async signed(method: 'GET' | 'POST', path: string, params: Record<string, string | number | boolean | undefined>) {
+    const ts = String(Date.now() + this.timeOffsetMs);
     const defined = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined));
     const query = method === 'GET' ? new URLSearchParams(Object.fromEntries(Object.entries(defined).map(([k, v]) => [k, String(v)]))).toString() : '';
     const body = method === 'POST' ? JSON.stringify(defined) : '';
     const sign = createHmac('sha256', this.secret).update(ts + this.key + this.recvWindow + (method === 'GET' ? query : body)).digest('hex');
-    const json = await httpJson(this.fetchImpl, `${this.base}${path}${query ? `?${query}` : ''}`, {
+    return httpJson(this.fetchImpl, `${this.base}${path}${query ? `?${query}` : ''}`, {
       method,
       headers: { 'Content-Type': 'application/json', 'X-BAPI-API-KEY': this.key, 'X-BAPI-TIMESTAMP': ts, 'X-BAPI-RECV-WINDOW': this.recvWindow, 'X-BAPI-SIGN': sign },
       body: method === 'POST' ? body : undefined
     });
-    if (json?.retCode !== 0) throw new ExchangeError(`bybit ${path}: ${json?.retMsg ?? 'error'} (${json?.retCode})`, json?.retCode);
-    return json.result;
   }
 
   async ping() {

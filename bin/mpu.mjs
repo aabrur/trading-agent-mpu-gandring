@@ -101,8 +101,7 @@ function runCli(cmdName, subArgs) {
     const res = spawnSync(process.execPath, existsSync(wrapper) ? [wrapper, cmdName, ...subArgs] : [jsFile, ...subArgs], { cwd: root, stdio: 'inherit' });
     process.exit(res.status ?? 0);
   } else if (existsSync(tsFile)) {
-    const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    const res = spawnSync(npxCmd, ['tsx', path.join(root, 'cli/session-entry.ts'), cmdName, ...subArgs], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+    const res = runTool('npx', ['tsx', path.join(root, 'cli/session-entry.ts'), cmdName, ...subArgs]);
     process.exit(res.status ?? 0);
   } else {
     console.error(`CLI target ${cmdName} not found.`);
@@ -110,13 +109,32 @@ function runCli(cmdName, subArgs) {
   }
 }
 
-const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+function quoteCmd(value) {
+  const text = String(value);
+  if (text.length === 0) return '""';
+  if (/[\s"&|<>^%!\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function toolLaunch(name) {
+  const cli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', `${name}-cli.js`);
+  if (existsSync(cli)) return { command: process.execPath, prefix: [cli] };
+  return { command: process.platform === 'win32' ? `${name}.cmd` : name, prefix: [] };
+}
+
+function runTool(name, toolArgs) {
+  const launch = toolLaunch(name);
+  if (launch.prefix.length === 0 && process.platform === 'win32') {
+    return spawnSync([launch.command, ...toolArgs].map(quoteCmd).join(' '), { cwd: root, stdio: 'inherit', shell: true });
+  }
+  return spawnSync(launch.command, [...launch.prefix, ...toolArgs], { cwd: root, stdio: 'inherit' });
+}
 
 if (first === 'version' || first === '--version' || first === '-v' || first === '-V') {
   runCli('version', [first, ...args.slice(1)]);
 } else if (first === 'link') {
   console.log('Linking mpu globally via npm link...');
-  const res = spawnSync(npmCmd, ['link'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  const res = runTool('npm', ['link']);
   if (res.status === 0) {
     console.log('mpu is now linked globally. You can run "mpu <command>" from any directory.');
   }
@@ -132,16 +150,16 @@ if (first === 'version' || first === '--version' || first === '-v' || first === 
 } else if (first === 'analyze') {
   runCli('debate', ['--symbol', args[1] || 'BTCUSDT', ...args.slice(2)]);
 } else if (first === 'dev') {
-  const res = spawnSync(npmCmd, ['run', 'dev'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  const res = runTool('npm', ['run', 'dev']);
   process.exit(res.status ?? 0);
 } else if (first === 'test') {
-  const res = spawnSync(npmCmd, ['test', ...args.slice(1)], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  const res = runTool('npm', ['test', ...args.slice(1)]);
   process.exit(res.status ?? 0);
 } else if (first === 'typecheck') {
-  const res = spawnSync(npmCmd, ['run', 'typecheck', ...args.slice(1)], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  const res = runTool('npm', ['run', 'typecheck', ...args.slice(1)]);
   process.exit(res.status ?? 0);
 } else if (first === 'build') {
-  const res = spawnSync(npmCmd, ['run', 'build'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  const res = runTool('npm', ['run', 'build']);
   process.exit(res.status ?? 0);
 } else if (first && GB_SUBCOMMANDS.has(first)) {
   const subCmd = first === 'balance' ? 'account' : first;
@@ -167,7 +185,7 @@ const latest = (dir) => Math.max(0, ...readdirSync(dir, { withFileTypes: true })
 const serverFile = path.join(root, 'dist/server/server/index.js');
 if (!existsSync(serverFile) || !existsSync(path.join(root, 'dist/web/index.html')) || Math.max(...['server', 'web', 'cli'].filter((p) => existsSync(path.join(root, p))).map((p) => latest(path.join(root, p)))) > statSync(serverFile).mtimeMs) {
   console.log('Building Trading Agent Mpu Gandring...');
-  const result = spawnSync(npmCmd, ['run', 'build'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  const result = runTool('npm', ['run', 'build']);
   if (result.status !== 0) process.exit(result.status || 1);
 }
 async function getRunningHealth() {
