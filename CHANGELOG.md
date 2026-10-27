@@ -2,6 +2,11 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.3] - 2026-10-27
+
+### Fixed
+- Use the active theme's panel background for Add Token dropdown options so token names remain readable and match the other dropdowns in day and night mode.
+
 ## [v0.0.0.4.2] - 2026-10-27
 
 ### Fixed

@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.2",
-  "appVersion": "0.0.0.4.2",
+  "version": "0.4.3",
+  "appVersion": "0.0.0.4.3",
   "changelog": [
+    "Match Add Token dropdown option backgrounds to the active theme so token names remain readable.",
     "Preserve successful local CLI replies when Windows temporary-directory cleanup is locked.",
     "Recover OpenRouter structured responses consistently and report provider timeouts and output limits.",
     "Apply saved desk settings immediately and verify managed restarts using the replacement server identity.",

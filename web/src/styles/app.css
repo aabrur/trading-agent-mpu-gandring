@@ -1333,5 +1333,5 @@ button:disabled { cursor: default; }
 .watchlist-add-wrapper { position: relative; display: inline-flex; align-items: center; }
 .watchlist-add-select { border: 1px dashed var(--teal) !important; background: rgba(0, 168, 150, 0.08) !important; color: var(--teal) !important; border-radius: 999px !important; padding: 3px 10px !important; font-family: var(--font-mono) !important; font-size: 11px !important; font-weight: 800 !important; cursor: pointer; height: 26px; outline: none; transition: all 0.12s ease; }
 .watchlist-add-select:hover:not(:disabled) { background: rgba(0, 168, 150, 0.18) !important; border-style: solid !important; }
-.watchlist-add-select option { background: var(--bg-card); color: var(--text); font-family: var(--font-mono); font-size: 12px; }
+.watchlist-add-select option { background: var(--panel); color: var(--text); font-family: var(--font-mono); font-size: 12px; }
 .ops-symbols-field-raw { margin-top: 4px; opacity: 0.85; }
