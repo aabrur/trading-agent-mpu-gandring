@@ -48,6 +48,12 @@ export interface LessonInput {
 export function loosensGuard(_text: string): boolean { return false; }
 
 const clean = (s: string, n: number) => safe(sanitizeUntrusted(String(s ?? ''), n).text).replace(/\s+/g, ' ').trim();
+
+/** Unscoped legacy advice stays visible. A stored scope must match the requested account exactly. */
+export function lessonInScope(itemScope: string | undefined, requested?: string): boolean {
+  if (!requested || !itemScope) return true;
+  return itemScope === requested;
+}
 export const lessonKey = (role: string, kind: string, lesson: string) => `${role}|${kind}|${lesson.toLowerCase().replace(/[0-9.,%$-]+/g, '#').replace(/[^a-z#]+/g, ' ').trim().slice(0, 120)}`;
 
 export class Learnings {
@@ -169,8 +175,9 @@ export class Learnings {
     return { lesson, event };
   }
 
-  standingRules(role?: AgentId): Lesson[] {
+  standingRules(role?: AgentId, accountScope?: string): Lesson[] {
     return this.items.filter((x) =>
+      lessonInScope(x.accountScope, accountScope) &&
       x.status === 'promoted' &&
       x.evaluationStatus !== 'inactive' &&
       x.evaluationStatus !== 'disputed' &&
@@ -179,8 +186,9 @@ export class Learnings {
     );
   }
 
-  forRole(role: AgentId, n = 5): string[] {
+  forRole(role: AgentId, n = 5, accountScope?: string): string[] {
     return this.items.filter((x) =>
+      lessonInScope(x.accountScope, accountScope) &&
       x.status !== 'promoted' &&
       x.evaluationStatus !== 'inactive' &&
       (x.role === role || x.role === 'desk')
@@ -190,7 +198,7 @@ export class Learnings {
   /** Deterministic ranking and filtering of experience by role, symbol, account scope, and evidence status. */
   queryRelevant(opts: { role: AgentId | 'desk' | 'lead'; symbol?: string; accountScope?: string; mode?: string; limit?: number }): Lesson[] {
     const limit = opts.limit ?? 5;
-    const scored = this.items.filter(x => x.evaluationStatus !== 'inactive').map(item => {
+    const scored = this.items.filter(x => x.evaluationStatus !== 'inactive' && lessonInScope(x.accountScope, opts.accountScope)).map(item => {
       let score = 0;
       // Role match
       if (item.role === opts.role) score += 10;
@@ -250,8 +258,8 @@ export class Learnings {
     }).join('\n');
   }
 
-  since(t: number): Lesson[] { return this.items.filter((x) => x.lastAt >= t).reverse(); }
-  recent(n = 12): Lesson[] { return this.items.slice(-n).reverse(); }
+  since(t: number, accountScope?: string): Lesson[] { return this.items.filter((x) => x.lastAt >= t && lessonInScope(x.accountScope, accountScope)).reverse(); }
+  recent(n = 12, accountScope?: string): Lesson[] { return this.items.filter((x) => lessonInScope(x.accountScope, accountScope)).slice(-n).reverse(); }
 
   private save() {
     if (!this.file) return;

@@ -3,11 +3,20 @@ import { z } from 'zod';
 const conf = z.number().min(0).max(1).default(0.65);
 const boundedText = (limit: number) => z.string().transform((s) => s.slice(0, limit)).pipe(z.string().min(1).max(limit));
 const text = boundedText(1500);
+const entryFields = {
+  entryScenarioId: z.string().min(1).max(120).optional(),
+  entryZone: z.object({ low: z.number().finite().positive(), high: z.number().finite().positive(), basis: z.string().min(1).max(500) }).optional(),
+  invalidationLevel: z.number().finite().positive().optional(),
+};
+export const CloseTriggerSchema = z.enum(['INVALIDATION_HIT', 'MOMENTUM_REVERSAL', 'SENTIMENT_REVERSAL', 'OPPOSING_NEWS', 'WHALE_EXIT', 'EXCHANGE_STOP_OR_TP', 'EARLY_TAKE_PROFIT', 'DATA_ANOMALY_OR_CONFLICT', 'GUARD_THREATENED']);
+const exitSignal = z.object({ kind: z.enum(['MOMENTUM_EXHAUSTION', 'TARGET_COMPLETE']), evidenceRefs: z.array(z.string().min(1).max(160)).min(1).max(10) }).optional();
 
 export const OpinionSchema = z.object({
   stance: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
   confidence: conf,
-  argument: text
+  argument: text,
+  ...entryFields,
+  exitSignal
 });
 
 export const ResearchSchema = z.object({
@@ -27,7 +36,10 @@ export const RebuttalSchema = z.object({
 export const LeadSchema = z.object({
   action: z.enum(['OPEN_LONG', 'OPEN_SHORT', 'CLOSE', 'HOLD']),
   confidence: conf,
-  reason: text
+  reason: text,
+  ...entryFields,
+  closeTrigger: CloseTriggerSchema.optional(),
+  exitSignal
 });
 
 const RiskSizing = z.object({
@@ -93,10 +105,10 @@ export const SCHEMAS: Schemas = { opinion: OpinionSchema, research: ResearchSche
 export type TaskKind = keyof Schemas;
 
 export const SCHEMA_HINTS: Record<TaskKind, string> = {
-  opinion: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"argument":"max 2 sentences"}',
+  opinion: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"argument":"max 2 sentences","entryScenarioId":"Strategist: supplied scenario id","entryZone":{"low":number,"high":number,"basis":"verified structure"},"invalidationLevel":number,"exitSignal":{"kind":"MOMENTUM_EXHAUSTION|TARGET_COMPLETE","evidenceRefs":["supplied evidence id"]}}. Entry fields are required for a Strategist directional setup. Market/Strategist may supply exitSignal only from observed evidence.',
   research: '{"vote":"LONG|SHORT|ABSTAIN|VETO","confidence":0..1,"argument":"max 2 sentences","sources":["id or source name"]}',
   rebuttal: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"target":"agent id you answer or none","rebuttal":"max 2 sentences, direct and in character"}',
-  lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences"}',
+  lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences","entryScenarioId":"selected supplied scenario id","entryZone":{"low":number,"high":number,"basis":"supplied setup"},"invalidationLevel":number,"closeTrigger":"one supplied verified CloseTriggerReason","exitSignal":{"kind":"MOMENTUM_EXHAUSTION|TARGET_COMPLETE","evidenceRefs":["supplied evidence id"]}}. OPEN must select the Strategist scenario and its geometry. CLOSE must identify one supplied verified trigger; free-text reasoning alone cannot authorize a close.',
   risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":1..125,"stopPct":positive percentage points up to 50 (2 means 2%),"reason":"1..1500 characters"}. APPROVE/REDUCE require all numeric fields as JSON numbers. REJECT may omit sizing. Never substitute null or strings for numbers.',
   review: '{"lesson":"one sentence","grade":"A|B|C|D|F"}',
   chat: '{"reply":"answer in character, up to 64000 characters","commandToExecute":"optional exact supported command explicitly requested by Boss","askTeammates":[{"to":"lead|market|research|strategist|risk|execution","question":"one assigned question","symbol":"optional symbol"}],"askTeammate":"legacy single request object or null"}. Use structured askTeammates for real consultation. Never claim completed handoffs before receiving their results.'

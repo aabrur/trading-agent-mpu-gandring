@@ -258,7 +258,9 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
   const atTable = atDiscussionTable(state.debate?.phase);
   const heat = Math.min(1, disagreement);
   const up = spark.length > 1 && spark.at(-1)! >= spark[0];
-  const latestSpeech = (Object.values(speech).filter(Boolean) as Speech[]).sort((a, b) => b.at - a.at)[0];
+  const latestSpeech = (Object.values(speech).filter(Boolean) as Speech[])
+    .filter(item => (item.conversationId ?? 'office') === (activeConversationId || 'office'))
+    .sort((a, b) => b.at - a.at)[0];
   const activeFight = useOfficeFight(state, fights);
   const displayFights = activeFight ? [activeFight] : [];
   const pnl = officePnl(state);

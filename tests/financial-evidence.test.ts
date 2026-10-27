@@ -78,9 +78,12 @@ describe('financial evidence ledger', () => {
       { kind: 'fee' as const, id: 'fee' + i, tradeId: 'f' + i, symbol: p.symbol, amount: 0.5, currency: 'USDT', at: i ? 1600 : 1100 }
     ]);
     const e = new FinancialEvidence(null); e.ingest(page, window); e.attribute(intents, [t]);
-    expect(e.summary(1000, 2000).confirmedNetRealized).toBe(9);
+    expect(e.summary(1000, 2000)).toMatchObject({ confirmedNetRealized: 9, slippage: 0, expectancyUsdt: 9 });
     expect(book.closed).toEqual(before);
-    page.records.push({ kind: 'funding', id: 'ambiguous', symbol: p.symbol, amount: -1, currency: 'USDT', at: 1400 });
+    page.records.push({ kind: 'funding', id: 'fund', symbol: p.symbol, amount: -1, currency: 'USDT', at: 1400 });
+    e.ingest(page, window); e.attribute(intents, [t]);
+    expect(e.summary(1000, 2000)).toMatchObject({ confirmedNetRealized: 8, slippage: 0, expectancyUsdt: 8, funding: -1 });
+    page.records[page.records.length - 1].currency = 'BTC';
     e.ingest(page, window); e.attribute(intents, [t]);
     expect(e.summary(1000, 2000).confirmedNetRealized).toBeNull();
     e.attribute([], [t]); expect(e.summary(1000, 2000).confirmedNetRealized).toBeNull();

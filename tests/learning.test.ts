@@ -9,6 +9,7 @@ import { buildReport } from '../server/reports.js';
 import { makeCaller, type ModelCaller } from '../server/providers/index.js';
 import { Learnings, loosensGuard } from '../server/learnings.js';
 import { proactiveScan } from '../server/scan.js';
+import { armOpening } from './opening-snapshot.js';
 
 const base = { TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', AUTO_TRADING: 'on', AUTO_SYMBOLS: 'ETHUSDT' };
 const tmp = () => path.join(mkdtempSync(path.join(tmpdir(), 'mg-learn-')), 'learnings.json');
@@ -76,10 +77,12 @@ describe('self-improving: reflect and promote', () => {
   });
   it('a closed losing trade writes lessons and updates the scorecard', async () => {
     const desk = mk();
-    await desk.runDebate('ETHUSDT'); // opens a SHORT on sample data
+    armOpening(desk);
+    await desk.runDebate('ETHUSDT');
     const p = desk.book.positions[0];
     expect(p).toBeTruthy();
-    await desk.executeClose('ETHUSDT', p.entry * 1.01, 'stop loss hit');
+    const exit = p.side === 'SHORT' ? p.entry * 1.01 : p.entry * 0.99;
+    await desk.executeClose('ETHUSDT', exit, 'stop loss hit');
     for (let i = 0; i < 40 && !desk.learnings.items.some((x) => x.kind === 'stop'); i++) await new Promise((r) => setTimeout(r, 25));
     expect(desk.learnings.items.some((x) => x.role === 'lead' && x.kind === 'stop')).toBe(true);
     const lead = desk.scorecard.rows().find((r) => r.role === 'lead')!;

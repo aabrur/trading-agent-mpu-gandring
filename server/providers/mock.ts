@@ -55,7 +55,8 @@ function strategist(c: Ctx) {
   const txt = side === 'NEUTRAL'
     ? `Rule says ABSTAIN. ${v.reason ?? ''} I do not vote on feelings.`
     : `Closed bars say ${side}. ${v.reason} Invalidation at EMA9 ${inv}. Below that I am out.`.replace('Below', side === 'SHORT' ? 'Above' : 'Below');
-  return { stance: side, confidence: r2(conf), argument: txt.trim() };
+  const scenario = c.tacticalTradePlan?.scenarios?.find((item: { side: string; entryZone?: unknown; invalidationLevel?: number }) => item.side === side && item.entryZone && item.invalidationLevel);
+  return { stance: side, confidence: r2(conf), argument: txt.trim(), ...(scenario ? { entryScenarioId: scenario.id ?? scenario.kind, entryZone: scenario.entryZone, invalidationLevel: scenario.invalidationLevel } : {}) };
 }
 
 function rebuttal(c: Ctx) {
@@ -95,23 +96,15 @@ function rebuttal(c: Ctx) {
 
 function lead(c: Ctx) {
   const w = Number(c.weighted ?? 0);
-  const dis = Number(c.disagreement ?? 0);
-  if (c.researchVote === 'VETO') return { action: c.hasPosition ? 'CLOSE' : 'HOLD', confidence: 0.85, reason: 'Research vetoed. We do not argue with a halt or an exploit.' };
   if (c.hasPosition) {
-    const closeBar = c.liveFeed ? 0.08 : 0.2;
-    const against = (c.positionSide === 'LONG' && w < -closeBar) || (c.positionSide === 'SHORT' && w > closeBar);
-    const takeProfitFade = c.liveFeed && Number(c.unrealizedPnl ?? 0) > 1.2 && Math.abs(w) < 0.06;
-    if (against || c.strategyInvalidated || takeProfitFade) {
-      return { action: 'CLOSE', confidence: 0.72, reason: takeProfitFade ? `Momentum faded on our ${c.positionSide} while in profit. Close it and lock the gain.` : `The room turned against our ${c.positionSide}. Close it and reset.` };
-    }
+    const trigger = c.closeTriggers?.[0];
+    if (trigger) return { action: 'CLOSE', closeTrigger: trigger.reason, confidence: 0.72, reason: `Verified ${trigger.reason} against our ${c.positionSide}.` };
     return { action: 'HOLD', confidence: 0.6, reason: `Our ${c.positionSide} still has support. Hold and let the stop do its job.` };
   }
   if (!c.slotsFree) return { action: 'HOLD', confidence: 0.8, reason: 'All N order slots are taken. Nothing new today.' };
-  const bar = c.liveFeed ? 0.05 : 0.15;
-  if (dis > 0.75) return { action: 'HOLD', confidence: 0.55, reason: 'This room is split down the middle. A split desk does not get my money.' };
-  if (w > bar) return { action: 'OPEN_LONG', confidence: r2(clamp(0.5 + w / 2)), reason: `Bulls carried it with a weighted score of ${w.toFixed(2)}. Long, with a stop.` };
-  if (w < -bar) return { action: 'OPEN_SHORT', confidence: r2(clamp(0.5 + Math.abs(w) / 2)), reason: `Bears carried it with a weighted score of ${w.toFixed(2)}. Short, with a stop.` };
-  return { action: 'HOLD', confidence: 0.5, reason: `Score ${w.toFixed(2)} is too weak. Idle cash is not a reason to trade.` };
+  const proposal = c.entryScenario;
+  if (proposal && c.debateEvidence?.openAllowed) return { action: proposal.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', confidence: r2(clamp(0.5 + Math.abs(w) / 2)), reason: 'Structure and independent directional evidence align.', entryScenarioId: proposal.id, entryZone: proposal.entryZone, invalidationLevel: proposal.invalidationLevel };
+  return { action: 'HOLD', confidence: 0.5, reason: c.debateEvidence?.openReasons?.join('; ') || 'No complete verified entry setup.' };
 }
 
 function risk(c: Ctx) {

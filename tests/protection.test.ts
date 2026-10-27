@@ -1,5 +1,8 @@
 // Exchange-side protection: every TESTNET/LIVE position must have its stop resting ON THE EXCHANGE.
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { LiveExecutor } from '../server/live/executor.js';
 import { BybitAdapter } from '../server/exchange/bybit.js';
@@ -8,6 +11,7 @@ import { OkxAdapter } from '../server/exchange/okx.js';
 import { HyperliquidAdapter } from '../server/exchange/hyperliquid.js';
 import { pickProtection } from '../server/exchange/types.js';
 import { fakeBybit, MemoryAdapter } from './fakes.js';
+import type { Position } from '../server/types.js';
 
 const order = { symbol: 'BTCUSDT', side: 'LONG' as const, qty: 0.01, stop: 58800, tp: 63000, leverage: 3 };
 const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
@@ -53,6 +57,55 @@ describe('executor enforces exchange-side stops', () => {
     expect(a.protects[0]).toMatchObject({ symbol: 'BTCUSDT', stop: 58200 }); // 3% under min(61000, 60000)
     expect(a.protects[1]).toMatchObject({ symbol: 'ETHUSDT', stop: 3150, tp: 2800 });
     expect(notes.every((n) => /protected on the exchange/.test(n))).toBe(true);
+  });
+  it('reports unknown after a repair read times out without a panic close or repeated placement', async () => {
+    const a = new MemoryAdapter();
+    a.pos = [{ symbol: 'BTCUSDT', side: 'LONG', qty: 0.01, entry: 60000, stop: null, tp: null, unrealizedPnl: 0 }];
+    let reads = 0;
+    a.protection = async () => {
+      if (++reads === 1) return { stop: null, tp: null };
+      throw new Error('timeout');
+    };
+    const result = await new LiveExecutor(a, 0).ensureOnExchange(order.symbol, order.side, order.qty, order.stop, order.tp);
+    expect(result).toMatchObject({ ok: true, status: 'unknown', stop: null, tp: null });
+    expect(result.note).toMatch(/after protection placement/);
+    expect(reads).toBe(3);
+    expect(a.protects).toHaveLength(1);
+    expect(a.closes).toBe(0);
+    expect(a.pos).toHaveLength(1);
+  });
+  it('startup reports failed reads as unknown instead of claiming a null stop is protected', async () => {
+    const a = new MemoryAdapter();
+    a.pos = [{ symbol: 'BTCUSDT', side: 'LONG', qty: 0.01, entry: 60000, stop: null, tp: null, unrealizedPnl: 0 }];
+    a.protection = async () => { throw new Error('timeout'); };
+    const executor = new LiveExecutor(a, 0);
+    const result = await executor.ensureOnExchange(order.symbol, order.side, order.qty, order.stop, order.tp);
+    expect(result).toMatchObject({ ok: true, status: 'unknown' });
+    const notes = await executor.ensureProtection({ BTCUSDT: { stop: order.stop, tp: order.tp } });
+    expect(notes[0]).toMatch(/unknown/);
+    expect(notes[0]).not.toMatch(/protected on the exchange/);
+    expect(a.protects).toHaveLength(0);
+    expect(a.closes).toBe(0);
+  });
+  it('restores persisted structural protection per side while excluding external and invalid stops', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'mpu-protection-'));
+    try {
+      const a = new MemoryAdapter();
+      const file = path.join(dir, 'execution.json');
+      const original = new LiveExecutor(a, 0, file);
+      const long: Position = { id: 'long', symbol: 'BTCUSDT', side: 'LONG', qty: 0.01, entry: 60000, stop: 59000, tp: 64000, margin: 200, leverage: 3, openedAt: 1, mark: 60000, unrealizedPnl: 0, ownership: 'managed' };
+      const short: Position = { ...long, id: 'short', side: 'SHORT', stop: 62000, tp: 56000, ownership: 'recovered' };
+      original.journal.positions = [long, short, { ...long, symbol: 'ETHUSDT', ownership: 'external' }, { ...long, symbol: 'SOLUSDT', stop: 0 }];
+      original.journal.save();
+      const restored = new LiveExecutor(a, 0, file);
+      const known = restored.knownProtection();
+      expect(known).toEqual({ 'BTCUSDT:LONG': { stop: 59000, tp: 64000 }, 'BTCUSDT:SHORT': { stop: 62000, tp: 56000 } });
+      a.pos = [long, short].map((p) => ({ ...p, stop: null, tp: null }));
+      await restored.ensureProtection({ ...known, BTCUSDT: { stop: 1, tp: null } });
+      expect(a.protects).toHaveLength(2);
+      expect(a.protects[0]).toMatchObject({ side: 'LONG', stop: 59000, tp: 64000 });
+      expect(a.protects[1]).toMatchObject({ side: 'SHORT', stop: 62000, tp: 56000 });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it('startup reconcile closes a position whose stop cannot be placed', async () => {
     const a = new MemoryAdapter(); a.failProtect = true;

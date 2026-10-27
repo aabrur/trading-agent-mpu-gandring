@@ -31,3 +31,7 @@ data/execution-*.json.financial.json.tmp
 
 data/conversations.json
 data/conversations.json.tmp
+
+# Local agent locks and operational audits. Never publish these.
+.taskplane/
+MPU_GANDRING_LIVE_OPERATIONAL_FORENSIC_AUDIT.md

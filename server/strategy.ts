@@ -16,6 +16,8 @@ export interface RuleVote {
   close: number;
   ema9: number; ema21: number; ema50: number;
   change5Pct: number;
+  roc5?: number;
+  momentumConflict?: boolean;
   invalidation: number | null;
   reason: string;
   barTime: number | null;
@@ -25,7 +27,7 @@ export function closedOnly(candles: Candle[], now = Date.now(), barMs = 15 * 60_
   return candles.filter((c) => c.t + barMs <= now);
 }
 
-export function strategyVote(candles: Candle[]): RuleVote {
+export function strategyVote(candles: Candle[], observed: { roc5?: number | null; orderflow?: { cvdDelta: number; buySellRatio: number | null } | null } = {}): RuleVote {
   const closes = candles.map((c) => c.c);
   const blank: RuleVote = { side: 'ABSTAIN', close: closes.at(-1) ?? 0, ema9: NaN, ema21: NaN, ema50: NaN, change5Pct: 0, invalidation: null, reason: '', barTime: candles.at(-1)?.t ?? null };
   if (closes.length < 55) return { ...blank, reason: `Only ${closes.length} closed bars. Need at least 55. Abstaining.` };
@@ -33,11 +35,24 @@ export function strategyVote(candles: Candle[]): RuleVote {
   const close = closes.at(-1)!;
   const c5 = closes.at(-5)!;
   const change5Pct = ((close - c5) / c5) * 100;
-  const base = { ...blank, close, ema9: e9, ema21: e21, ema50: e50, change5Pct };
-  if (close > e9 && close > e21 && close > e50) return { ...base, side: 'LONG', invalidation: e9, reason: 'Close is above EMA9, EMA21 and EMA50.' };
-  if (close < e9 && close < e21 && close < e50) return { ...base, side: 'SHORT', invalidation: e9, reason: 'Close is below EMA9, EMA21 and EMA50.' };
-  if (change5Pct > 0.3 && close > e9) return { ...base, side: 'LONG', invalidation: e9, reason: `Five-bar change ${change5Pct.toFixed(2)}% with close above EMA9.` };
-  if (change5Pct < -0.3 && close < e9) return { ...base, side: 'SHORT', invalidation: e9, reason: `Five-bar change ${change5Pct.toFixed(2)}% with close below EMA9.` };
+  const roc5 = Number.isFinite(observed.roc5) ? observed.roc5! : (close - closes.at(-6)!) / closes.at(-6)!;
+  const base = { ...blank, close, ema9: e9, ema21: e21, ema50: e50, change5Pct, roc5, momentumConflict: false };
+  const candidate = close > e9 && close > e21 && close > e50 ? 'LONG'
+    : close < e9 && close < e21 && close < e50 ? 'SHORT'
+      : change5Pct > 0.3 && close > e9 ? 'LONG'
+        : change5Pct < -0.3 && close < e9 ? 'SHORT' : null;
+  if (candidate) {
+    const sign = candidate === 'LONG' ? 1 : -1;
+    const flow = observed.orderflow;
+    const opposing = [
+      ...(sign * change5Pct < 0 ? ['five-bar price change'] : []),
+      ...(sign * roc5 < 0 ? ['ROC5'] : []),
+      ...(flow && Number.isFinite(flow.cvdDelta) && sign * flow.cvdDelta < 0 ? ['observed CVD'] : []),
+      ...(flow && flow.buySellRatio !== null && Number.isFinite(flow.buySellRatio) && sign * (flow.buySellRatio - 1) < 0 ? ['observed taker-flow ratio'] : []),
+    ];
+    if (opposing.length) return { ...base, momentumConflict: true, reason: `${candidate} price structure conflicts with ${opposing.join(', ')}. Abstaining.` };
+    return { ...base, side: candidate, invalidation: e9, reason: `${candidate} price structure with no opposing observed short-term momentum.` };
+  }
   return { ...base, reason: 'Trend and momentum gates both undecided.' };
 }
 

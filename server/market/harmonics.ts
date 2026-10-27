@@ -7,6 +7,7 @@
  * - Computes Potential Reversal Zone (PRZ) with invalidation stop and target levels.
  */
 
+import { structuralPrice } from '../money.js';
 import { findSwingPoints, type SMCSwingPoint } from './smc.js';
 
 export type HarmonicPatternName = 'GARTLEY' | 'BAT' | 'BUTTERFLY' | 'CRAB';
@@ -167,11 +168,11 @@ export function detectHarmonicPatterns(candles: any[]): HarmonicPattern[] {
           xd_xa: Number(xd_xa.toFixed(3)),
         },
         prz: {
-          entryMin: Number(entryMin.toFixed(2)),
-          entryMax: Number(entryMax.toFixed(2)),
-          stopLoss: Number(stopLoss.toFixed(2)),
-          target1: Number(target1.toFixed(2)),
-          target2: Number(target2.toFixed(2)),
+          entryMin: structuralPrice(entryMin),
+          entryMax: structuralPrice(entryMax),
+          stopLoss: structuralPrice(stopLoss),
+          target1: structuralPrice(target1),
+          target2: structuralPrice(target2),
         },
         qualityScore,
       });

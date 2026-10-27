@@ -116,6 +116,7 @@ describe('Evidence-based learning and traceable transaction history', () => {
     expect(relevantForMarketEth.length).toBeGreaterThan(0);
     expect(relevantForMarketEth[0].symbol).toBe('ETHUSDT');
     expect(relevantForMarketEth[0].role).toBe('market');
+    expect(relevantForMarketEth.some((l) => l.accountScope === 'LIVE:bybit:mainnet')).toBe(false);
 
     const promptText = learnings.formatForPrompt(relevantForMarketEth);
     expect(promptText).toContain('ETHUSDT');

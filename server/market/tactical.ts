@@ -14,6 +14,7 @@ export interface TacticalTradePlan {
   alphaFactors?: Alpha158Factors | null;
   harmonics?: HarmonicPattern[] | null;
   scenarios: Array<{
+    id: string;
     kind: 'PULLBACK_CONTINUATION' | 'BREAKDOWN_CONTINUATION' | 'FAILED_BREAKDOWN_REVERSAL' | 'BREAKOUT_CONTINUATION' | 'FAILED_BREAKOUT_REVERSAL';
     side: 'LONG' | 'SHORT';
     entryZone: { low: number; high: number; basis: string } | null;
@@ -181,7 +182,7 @@ export function buildTacticalTradePlan(snapshot: MarketSnapshot): TacticalTradeP
       const flow = completeFlowWindows[0][1];
       evidence.push(`Observed ${completeFlowWindows[0][0]} taker-flow window: delta ${flow.delta} across ${flow.tradesCount} trades (${flow.coveragePct}% coverage).`);
     }
-    return { kind, side, entryZone, invalidationLevel, target1, target2, evidence, missingEvidence };
+    return { id: kind, kind, side, entryZone, invalidationLevel, target1, target2, evidence, missingEvidence };
   });
 
   const exhaustionEvidence: string[] = [];

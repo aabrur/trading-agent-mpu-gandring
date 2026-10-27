@@ -134,6 +134,9 @@ export function evaluateAutoHedge(
 export interface SizingRules { qtyStep: number; minQty: number; tickSize: number; minNotional?: number | null; maxQty?: number | null; takerFee?: number | null; source?: string }
 
 export interface PlanInput {
+  /** Autonomous setup boundaries. They never replace Owner profile sizing or SL/TP. */
+  entryZone?: { low: number; high: number; basis: string };
+  invalidationLevel?: number;
   availableFunds?: number;
   orderSizePct?: number;
   /** LIVE/TESTNET can meet the exchange minimum within available capital. */
@@ -190,6 +193,11 @@ export function planOrder(p: PlanInput): Plan {
   if (!split.canOpen) return { ok: false, reason: 'Balance is at or below the safety net. Not opening anything.', split };
   if (p.openPositions >= p.n) return { ok: false, reason: `Already ${p.openPositions} open position(s). The limit is N = ${p.n}.`, split };
   if (!(p.price > 0) || !Number.isFinite(p.price)) return { ok: false, reason: 'No valid price.', split };
+  if (p.entryZone || p.invalidationLevel !== undefined) {
+    const zone = p.entryZone, invalidation = p.invalidationLevel;
+    if (!zone || ![zone.low, zone.high, invalidation].every(value => typeof value === 'number' && Number.isFinite(value) && value > 0) || zone.low > zone.high || p.price < zone.low || p.price > zone.high) return { ok: false, reason: 'Execution quote is outside the binding entry zone or setup geometry is invalid.', split };
+    if (invalidation === undefined || (p.side === 'LONG' ? invalidation >= p.price || invalidation >= zone.low : invalidation <= p.price || invalidation <= zone.high)) return { ok: false, reason: 'Structural invalidation is not beyond the entry zone on the correct side.', split };
+  }
   if (!(p.leverage >= 1) || !Number.isFinite(p.leverage)) return { ok: false, reason: 'No valid leverage.', split };
 
   const notes: string[] = [];
@@ -293,6 +301,11 @@ export function floorTo(v: number, step: number): number {
   return Number(f.toFixed(decimals));
 }
 export const round2 = (v: number) => Math.round(v * 100) / 100;
+/** Analysis geometry. Execution still rounds to the instrument tick. */
+export function structuralPrice(v: number): number {
+  if (!Number.isFinite(v) || v === 0) return v;
+  return Number(v.toPrecision(12));
+}
 export function roundPrice(v: number): number {
   if (v >= 1000) return Math.round(v * 10) / 10;
   if (v >= 1) return Math.round(v * 1000) / 1000;

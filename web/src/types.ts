@@ -6,6 +6,7 @@ export interface AgentView {
   id: AgentId; name: string; title: string; color: string; desk: { x: number; y: number };
   provider: string; model: string; fellBackToMock: boolean;
   status: AgentStatus; mood: number; stance: Stance | null; confidence: number | null; lastLine: string;
+  lastFailure?: { kind: string; attempts: number; requestId: string | null; at: number } | null;
 }
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface Position {
@@ -17,7 +18,7 @@ export interface Verdict {
   disagreement: number; camps: { bull: AgentId[]; bear: AgentId[]; neutral: AgentId[] };
   order?: { positionId?: string; status?: 'partial' | 'filled'; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number }; example: boolean; at: number;
 }
-export interface LogLine { id?: string; at: number; kind: string; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: 'info' | 'warn' | 'error'; status?: string; durationMs?: number }
+export interface LogLine { id?: string; conversationId?: string; at: number; kind: string; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: 'info' | 'warn' | 'error'; status?: string; durationMs?: number }
 export interface ChatLine { id?: string; seq?: number; conversationId?: string; from: 'user' | AgentId | 'system'; text: string; at: number }
 export interface RoomMessage { id: string; seq?: number; conversationId?: string; at: number; from: AgentId | 'owner'; to?: AgentId | 'all' | 'owner'; text: string; symbol?: string; example?: boolean }
 export interface ConversationSummary { id: string; title?: string; createdAt: number; updatedAt: number; messageCount: number; lastMessage?: string; symbol?: string; }
@@ -75,7 +76,7 @@ export interface Report {
   opened: Activity[]; closed: Activity[]; skipped: Activity[]; text: string;
   scorecard?: RoleScore[]; lessons?: { role: string; kind: string; status: string; count: number; symbol?: string; lesson: string; rootCause: string }[]; standingRules?: string[]; scan?: Finding[];
 }
-export interface Speech { agent: AgentId; text: string; done: boolean; example: boolean; at: number }
+export interface Speech { id?: string; conversationId?: string; agent: AgentId; text: string; done: boolean; example: boolean; at: number }
 export interface CendolEvent { id: string; supporter: string; quantity: number; message?: string; text: string; at: number }
 export interface Fight { id: number; from: AgentId; to: AgentId; intensity: number; punches: number; at: number }
 export const AGENT_ORDER: AgentId[] = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'];

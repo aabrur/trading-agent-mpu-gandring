@@ -32,6 +32,9 @@ describe('hold reasons', () => {
     expect(classifyHoldReason('Daily loss stop is on (3% for today).')).toBe(HOLD_REASON.DAILY_LOSS_CAP);
     expect(classifyHoldReason('Stale signal: closed-bar rule flipped from LONG to SHORT.')).toBe(HOLD_REASON.STALE_SIGNAL);
     expect(classifyHoldReason('Risk rejected: verdict rejected.')).toBe(HOLD_REASON.RISK_REJECT);
+    expect(classifyHoldReason('No free slot, pending order requires reconciliation.')).toBe(HOLD_REASON.UNRESOLVED_ORDER);
+    expect(classifyHoldReason('No free slot')).toBeNull();
+    expect(classifyHoldReason('Invalid lot size.')).toBe(HOLD_REASON.EXCHANGE_CONSTRAINT);
     expect(outcomeFor({ action: 'HOLD', executed: false })).toBe('HOLD');
     expect(outcomeFor({ action: 'HOLD', executed: false, blocked: true })).toBe('BLOCKED');
     expect(outcomeFor({ action: 'OPEN_LONG', executed: false, failed: true })).toBe('FAILED');
@@ -138,7 +141,7 @@ describe('stale signal revalidation', () => {
     const result = revalidateEntry({ original, originalRule: { ...originalRule, side }, side, fresh });
     expect(strategyVote(flipped).side).toBe('SHORT');
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/Hard reversal/);
+    expect(result.reason).toMatch(/momentum.*opposes/i);
     expect(revalidateEntry({ original, originalRule, side, fresh: { ...original, fetchedAt: Date.now(), ask: 0, bid: 0, last: 0 } }).ok).toBe(false);
   });
 });

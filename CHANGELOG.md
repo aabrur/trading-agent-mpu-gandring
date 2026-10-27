@@ -2,6 +2,16 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.4] - 2026-10-27
+
+### Changed
+- OPEN requires a live entry zone and invalidation, aligned measured momentum, and at least one distinct supporting evidence family. One verified opposing dimension cancels the entry. Unknown optional news, whale, or JEV data does not.
+- CLOSE can fire from any one verified trigger. Holding duration does not close a position.
+- Lessons stay in the account scope that recorded them, and room/chat history caps apply per conversation.
+- Structural levels and ATR keep low-price precision. Realized-profit evaluation separates book PnL from fees, USDT funding, and expectancy.
+
+This is local remediation. It does not start production trading and it does not claim profitability.
+
 ## [v0.0.0.4.3] - 2026-10-27
 
 ### Fixed

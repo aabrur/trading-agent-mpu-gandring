@@ -12,17 +12,25 @@ export interface ExecutionIntent {
   accountedQty: number; accountedValue: number | null; record: OrderRecord | null; at: number;
 }
 
+export interface DailyLossState { key: string; startEquity: number; lossHit: boolean }
+
 /** Local ownership evidence and cumulative fill checkpoints. Contains no credentials. */
 export class ExecutionJournal {
   intents: ExecutionIntent[] = [];
   positions: Position[] = [];
   closed: ClosedTrade[] = [];
+  dailyLoss: DailyLossState | null = null;
   protectionClients: { symbol: string; clientId: string }[] = [];
   constructor(private file: string | null = null, private venue = '') {
     if (file && existsSync(file)) {
-      const saved = JSON.parse(readFileSync(file, 'utf8')) as { venue: string; intents: ExecutionIntent[]; positions: Position[]; closed: ClosedTrade[]; protectionClients?: { symbol: string; clientId: string }[] };
+      const saved = JSON.parse(readFileSync(file, 'utf8')) as { venue: string; intents: ExecutionIntent[]; positions: Position[]; closed: ClosedTrade[]; protectionClients?: { symbol: string; clientId: string }[]; dailyLoss?: DailyLossState };
       if (saved.venue !== venue || !Array.isArray(saved.intents) || !Array.isArray(saved.positions) || !Array.isArray(saved.closed)) throw new Error('Execution journal does not match this venue/network; inspect the local journal before starting.');
       this.intents = saved.intents; this.positions = saved.positions; this.closed = saved.closed; this.protectionClients = saved.protectionClients ?? [];
+      if (saved.dailyLoss) {
+        const day = saved.dailyLoss;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day.key) || !Number.isFinite(day.startEquity) || day.startEquity < 0 || typeof day.lossHit !== 'boolean') throw new Error('Invalid persisted daily loss state; inspect the local journal before starting.');
+        this.dailyLoss = { ...day };
+      }
     }
   }
   save() {
@@ -30,7 +38,7 @@ export class ExecutionJournal {
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
-      writeFileSync(tmp, JSON.stringify({ venue: this.venue, intents: this.intents, positions: this.positions, closed: this.closed, protectionClients: this.protectionClients }));
+      writeFileSync(tmp, JSON.stringify({ venue: this.venue, intents: this.intents, positions: this.positions, closed: this.closed, protectionClients: this.protectionClients, dailyLoss: this.dailyLoss }));
       renameSync(tmp, this.file);
       recordDiagnostic({ source: 'journal', category: 'JOURNAL', eventName: 'journal.persisted', status: 'persisted', message: 'Execution journal persisted', correlationId: this.intents.at(-1)?.clientId, details: { venue: this.venue, intents: this.intents.length, positions: this.positions.length, closed: this.closed.length } });
     } catch (error) {

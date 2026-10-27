@@ -4,8 +4,8 @@ import { fetchCoinMarketCapQuotes, cmcMomentum } from './market/coinmarketcap.js
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Full auto. Every DEBATE_INTERVAL_MIN: close anything past MAX_HOLD_HOURS, then debate each
-// allowed symbol in turn. Verdicts execute on their own (open, close, stop, take profit, size).
+// Full auto. Every DEBATE_INTERVAL_MIN the desk debates each allowed symbol.
+// Holding duration does not close a position. Verdicts execute on their own (open, close, stop, take profit, size).
 // There is no approval step. The guards live in the desk: risk gate, money split, stop loss,
 // daily loss stop, kill switch.
 // Every cycle also runs the two learning skills on its own:
@@ -102,7 +102,6 @@ export class AutoTrader {
     d.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.cycle_started', status: 'started', correlationId, message: 'Auto cycle started', details: { trigger } });
     try {
       if (d.cfg.learning.scan) d.scan();
-      await d.closeStale(() => !cancelled());
 
       // PHASE A: Authoritative exchange reconciliation before determining the work queue
       if (d.hasExecutor) {

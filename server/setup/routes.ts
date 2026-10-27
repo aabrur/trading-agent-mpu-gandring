@@ -354,27 +354,26 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
       const r = await saveVenueKeys(c.envFile, p.data.venue, p.data.network, p.data, { fetchImpl: c.fetchImpl });
       if (r.ok) {
         const env = setupEnv(c.envFile);
-        const nextCfg = loadConfig(env);
-        c.cfg.exchange = nextCfg.exchange;
-        c.cfg.live = nextCfg.live;
-        c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
-        await c.desk.syncLive?.();
+        loadConfig(env);
+        await c.desk.reloadRuntimeConfig(env, c.fetchImpl);
         c.desk.emit('state', c.desk.snapshot());
       }
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) { res.status(400).json({ ok: false, detail: safe((e as Error).message) }); }
   });
-  app.post('/api/setup/venue', (req, res) => {
+  app.post('/api/setup/venue', async (req, res) => {
     if (!gate(req, res, true)) return;
     const v = String(req.body?.venue ?? '');
     const r = setVenue(c.envFile, v);
     if (r.ok && EXCHANGES.includes(v as ExchangeName)) {
-      const env = setupEnv(c.envFile);
-      const nextCfg = loadConfig(env);
-      c.cfg.exchange = nextCfg.exchange;
-      c.cfg.live = nextCfg.live;
-      c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
-      c.desk.emit('state', c.desk.snapshot());
+      try {
+        const env = setupEnv(c.envFile);
+        loadConfig(env);
+        await c.desk.reloadRuntimeConfig(env, c.fetchImpl);
+        c.desk.emit('state', c.desk.snapshot());
+      } catch (e) {
+        return res.status(409).json({ ok: false, detail: `Settings saved but active scope could not be changed: ${safe((e as Error).message)}` });
+      }
     }
     res.status(r.ok ? 200 : 400).json(r);
   });
@@ -384,14 +383,14 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     if (!p.success) return res.status(400).json({ ok: false, detail: 'mode must be PAPER, TESTNET or LIVE' });
     const r = await setTradingMode(c.envFile, p.data.mode, { confirm: p.data.confirm, fetchImpl: c.fetchImpl });
     if (r.ok) {
-      const env = setupEnv(c.envFile);
-      const nextCfg = loadConfig(env);
-      c.cfg.tradingMode = nextCfg.tradingMode;
-      c.cfg.exchange = nextCfg.exchange;
-      c.cfg.live = nextCfg.live;
-      c.desk.reloadRuntimeConfig?.(env, c.fetchImpl);
-      await c.desk.syncLive?.();
-      c.desk.emit('state', c.desk.snapshot());
+      try {
+        const env = setupEnv(c.envFile);
+        loadConfig(env);
+        await c.desk.reloadRuntimeConfig(env, c.fetchImpl);
+        c.desk.emit('state', c.desk.snapshot());
+      } catch (e) {
+        return res.status(409).json({ ok: false, detail: `Settings saved but active scope could not be changed: ${safe((e as Error).message)}` });
+      }
     }
     res.status(r.ok ? 200 : 400).json(r);
   });
@@ -431,7 +430,7 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     res.json(await c.desk.gbClose(target, 'closed from the office'));
   });
   app.post('/api/ops/scan', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, findings: c.desk.scan() }); });
-  app.get('/api/ops/lessons', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, lessons: c.desk.learnings.recent(30), standingRules: c.desk.learnings.standingRules(), refused: c.desk.learnings.refused }); });
+  app.get('/api/ops/lessons', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, lessons: c.desk.learnings.recent(30, c.desk.accountScope()), standingRules: c.desk.learnings.standingRules(undefined, c.desk.accountScope()), refused: c.desk.learnings.refused }); });
   app.post('/api/ops/lessons', (req, res) => {
     if (!gate(req, res)) return;
     const p = LessonBody.safeParse(req.body); if (!p.success) return res.status(400).json({ ok: false, error: 'role and a lesson of 2+ characters' });

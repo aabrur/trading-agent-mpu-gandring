@@ -86,6 +86,11 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   const auto = new AutoTrader(desk);
   const reporter = new Reporter(desk, opts.reportsDir === undefined ? 'reports' : opts.reportsDir, opts.outboxPath);
   const app = express();
+  const requireLocalOwner: express.RequestHandler = (req, res, next) => {
+    const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
+    if (!access.ok) { res.status(403).json({ ok: false, error: access.reason }); return; }
+    next();
+  };
   mountSessionLogRoutes(app, { logger: sessionLog, root: opts.sessionLogRoot });
   const unsubscribeActivity = onActivity(entry => desk.recordActivity(entry));
   const frontendLogLimit = limiter(30, 60_000);
@@ -143,8 +148,8 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.post('/api/conversations/new', (req, res) => {
     const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
     if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });
-    const id = `conv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    res.json({ ok: true, conversationId: id });
+    try { res.json({ ok: true, conversationId: desk.createConversation().id }); }
+    catch (error) { res.status(500).json({ ok: false, error: safe((error as Error).message) }); }
   });
 
   // Self-update adapter: check version status and apply git fast-forward update on localhost.
@@ -278,7 +283,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     } catch (e) { res.status(400).json({ error: (e as Error).message }); }
   });
   // Starts a debate and waits for the verdict (used by the CLI, scripts and Grok Bot routines).
-  app.post('/api/debate', async (req, res) => {
+  app.post('/api/debate', requireLocalOwner, async (req, res) => {
     const symbol = String(req.body?.symbol ?? '').slice(0, 20);
     try { res.json({ ok: true, verdict: await desk.runDebate(symbol) }); }
     catch (e) { res.status(409).json({ ok: false, error: safe((e as Error).message) }); }
@@ -301,11 +306,11 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   });
 
   app.get('/api/reports', (_req, res) => res.json({ reports: desk.reports.slice(0, 50) }));
-  app.post('/api/reports/now', async (_req, res) => res.json({ ok: true, report: await reporter.generate() }));
-  app.post('/api/auto/cycle', async (_req, res) => res.json({ ok: true, ...(await auto.cycle()) }));
+  app.post('/api/reports/now', requireLocalOwner, async (_req, res) => res.json({ ok: true, report: await reporter.generate() }));
+  app.post('/api/auto/cycle', requireLocalOwner, async (_req, res) => res.json({ ok: true, ...(await auto.cycle()) }));
 
   // Kill switch: pause, cancel, flatten, or release. Friction-free toggle.
-  app.post('/api/kill', async (req, res) => {
+  app.post('/api/kill', requireLocalOwner, async (req, res) => {
     const isRelease = req.body?.on === false || req.body?.action === 'release' || req.body?.action === 'unkill' || req.body?.killed === false;
     if (isRelease) {
       desk.unkill();
@@ -315,7 +320,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     res.json({ ok: true, killed: true, notes: await desk.kill() });
   });
 
-  app.post('/api/unkill', async (_req, res) => {
+  app.post('/api/unkill', requireLocalOwner, async (_req, res) => {
     desk.unkill();
     res.json({ ok: true, killed: false, released: true });
   });
@@ -359,7 +364,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.post('/api/gb/scan', (req, res) => { if (!gbAuth(req, res)) return; res.json({ ok: true, findings: desk.scan() }); });
   app.get('/api/gb/lessons', (req, res) => {
     if (!gbAuth(req, res)) return;
-    res.json({ ok: true, lessons: desk.learnings.recent(Math.min(100, Number(req.query.n ?? 30) || 30)), standingRules: desk.learnings.standingRules(), refused: desk.learnings.refused });
+    res.json({ ok: true, lessons: desk.learnings.recent(Math.min(100, Number(req.query.n ?? 30) || 30), desk.accountScope()), standingRules: desk.learnings.standingRules(undefined, desk.accountScope()), refused: desk.learnings.refused });
   });
   app.post('/api/gb/lessons', (req, res) => {
     if (!gbAuth(req, res)) return;
@@ -387,7 +392,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   });
 
   // Harmless test event for the Grok Bot bridge. The routine prompt should ignore kind=probe.
-  app.post('/api/bridge/probe', async (_req, res) => {
+  app.post('/api/bridge/probe', requireLocalOwner, async (_req, res) => {
     res.json({ result: await sendToGrokBot(cfg, 'probe', { note: 'bridge probe, ignore' }, opts.outboxPath) });
   });
 

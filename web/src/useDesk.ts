@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { officeFetch } from './officeApi';
 import { installDiagnostics } from './diagnostics';
+import { appendEvent, mergeSpeech } from './discussion';
 import { verdictReactions, type SceneEvent } from './sceneDirector';
 import type { AgentId, CendolEvent, DeskState, Fight, Reaction, Speech, Verdict } from './types';
 
@@ -15,6 +16,13 @@ declare global {
 }
 
 const CONV_STORAGE_KEY = 'mpu_gandring_active_conversation_id';
+
+export async function requestNewConversation(): Promise<string> {
+  const response = await officeFetch('/api/conversations/new', { method: 'POST' });
+  const result = await response.json() as { ok?: boolean; conversationId?: string; error?: string };
+  if (!response.ok || !result.ok || !result.conversationId) throw new Error(result.error || 'Conversation could not be created. Your current conversation is unchanged.');
+  return result.conversationId;
+}
 
 function getSavedConversationId(): string {
   try {
@@ -31,26 +39,16 @@ export function useDesk() {
 
   const selectConversation = useCallback((id: string) => {
     const next = id || 'office';
+    conversationId.current = next;
     setActiveConversationId(next);
     try { localStorage.setItem(CONV_STORAGE_KEY, next); } catch {}
   }, []);
 
   const newConversation = useCallback(async () => {
-    let freshId = '';
-    try {
-      const res = await fetch('/api/conversations/new', { method: 'POST' });
-      if (res.ok) {
-        const body = await res.json() as { ok: boolean; conversationId?: string };
-        if (body.ok && body.conversationId) freshId = body.conversationId;
-      }
-    } catch {}
-    if (!freshId) {
-      freshId = 'conv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
-    }
-    setActiveConversationId(freshId);
-    try { localStorage.setItem(CONV_STORAGE_KEY, freshId); } catch {}
+    const freshId = await requestNewConversation();
+    selectConversation(freshId);
     return freshId;
-  }, []);
+  }, [selectConversation]);
   useEffect(installDiagnostics, []);
   const [state, setState] = useState<DeskState | null>(null);
   const [connected, setConnected] = useState(false);
@@ -146,11 +144,15 @@ export function useDesk() {
           setSceneEvents((events) => events.some((e) => e.id === event.id) ? events : [...events.slice(-11), event]);
         }
         if (type === 'state') { setState(payload); if (!payload.debate) setMeter(null); }
-        else if (type === 'log') setState(current => current ? { ...current, logs: [...current.logs, payload].slice(-2000) } : current);
-        else if (type === 'room') setState(current => current ? { ...current, roomHistory: [...(current.roomHistory || []), payload].slice(-100) } : current);
+        else if (type === 'log') setState(current => current ? { ...current, logs: appendEvent(current.logs, payload, 2000) } : current);
+        else if (type === 'room') setState(current => current ? { ...current, roomHistory: appendEvent(current.roomHistory || [], payload, 100) } : current);
         else if (type === 'speech') {
           const at = typeof payload.at === 'number' ? payload.at : Date.now();
-          setSpeech((s) => ({ ...s, [payload.agent]: { ...payload, at } }));
+          setSpeech((s) => {
+            const current = s[payload.agent as AgentId];
+            const next = mergeSpeech(current, { ...payload, at });
+            return next === current ? s : { ...s, [payload.agent]: next };
+          });
           const id = String(payload.id ?? 'speech:' + payload.agent + ':' + payload.text);
           if (payload.done) setSceneEvents((events) => events.some((e) => e.id === id) ? events : [...events.slice(-11), { id, kind: 'speech', agent: payload.agent, at }]);
         }
@@ -198,8 +200,8 @@ export function useDesk() {
 
   const command = useCallback(async (text: string, agent?: AgentId) => {
     const res = await officeFetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent, conversationId: conversationId.current }) }, 150_000);
-    const result = await res.json() as { ok: boolean; reply?: string; error?: string; command?: string };
-    return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid' };
+    const result = await res.json() as { ok: boolean; reply?: string; error?: string; command?: string; failureKind?: string; requestId?: string };
+    return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid', failureKind: result.failureKind, requestId: result.requestId };
   }, []);
 
   return { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation };

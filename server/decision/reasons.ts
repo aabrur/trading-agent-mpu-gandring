@@ -35,7 +35,7 @@ export function classifyHoldReason(reason: string): HoldReasonCode | null {
   if (/external/.test(t)) return HOLD_REASON.EXTERNAL_POSITION;
   if (/nothing left|too small|minimum|insufficient|safety net/.test(t)) return HOLD_REASON.INSUFFICIENT_CAPITAL;
   if (/risk rejected|rejected:/.test(t)) return HOLD_REASON.RISK_REJECT;
-  if (/instrument|not trading|lot|notional|exchange/.test(t)) return HOLD_REASON.EXCHANGE_CONSTRAINT;
+  if (/instrument|not trading|\blot\b|notional|exchange/.test(t)) return HOLD_REASON.EXCHANGE_CONSTRAINT;
   if (/not filled|execution venue|no fill/.test(t)) return HOLD_REASON.EXECUTION_FAILURE;
   if (/reconcil|pending|unresolved/.test(t)) return HOLD_REASON.UNRESOLVED_ORDER;
   if (/no strategy|abstain|undecided|no valid setup/.test(t)) return HOLD_REASON.NO_STRATEGY_SIGNAL;

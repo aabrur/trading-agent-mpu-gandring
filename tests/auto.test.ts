@@ -20,6 +20,7 @@ const { makeCaller } = await import('../server/providers/index.js');
 const { LiveExecutor } = await import('../server/live/executor.js');
 const { registerSecrets } = await import('../server/redact.js');
 const { MemoryAdapter } = await import('./fakes.js');
+const { armOpening } = await import('./opening-snapshot.js');
 
 const base = { TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', AUTO_TRADING: 'on', AUTO_SYMBOLS: 'ETHUSDT' };
 const mk = (extra: Record<string, string> = {}) => {
@@ -34,8 +35,10 @@ const mk = (extra: Record<string, string> = {}) => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('AUTO scheduler (fake exchange, no approval step)', () => {
-  it('opens on its own, then closes on its own at max holding time', async () => {
+  it('opens on its own and keeps the position past max holding time until an explicit close', async () => {
     const { a, desk, auto } = mk({ MAX_HOLD_HOURS: '0.0001' });
+    // A complete setup is supplied explicitly; duration alone supplies no exit evidence.
+    armOpening(desk, a);
     const r1 = await auto.cycle();
     expect(r1.ran).toEqual(['ETHUSDT']);
     expect(a.placed).toHaveLength(1);
@@ -44,9 +47,13 @@ describe('AUTO scheduler (fake exchange, no approval step)', () => {
     expect(desk.activity.some((x) => x.kind === 'opened')).toBe(true);
     await new Promise((r) => setTimeout(r, 450)); // past 0.0001 h
     await auto.cycle();
-    expect(a.closes).toBeGreaterThanOrEqual(1);
-    expect(desk.activity.some((x) => x.kind === 'closed' && /max holding time/.test(x.detail))).toBe(true);
+    expect(a.closes).toBe(0);
+    expect(desk.book.positions).toHaveLength(1);
+    expect(desk.activity.some((x) => x.kind === 'closed' && /max holding time/.test(x.detail))).toBe(false);
     expect(desk.autoState.cycles).toBe(2);
+    await desk.command('close all');
+    expect(a.closes).toBe(1);
+    expect(desk.book.positions).toHaveLength(0);
     // the Desk Lead keeps the journal (no separate reviewer agent)
     const journaled = () => desk.logs.some((l) => l.kind === 'speech' && l.agent === 'lead' && /Journal: grade/.test(l.text));
     for (let i = 0; i < 40 && !journaled(); i++) await new Promise((r) => setTimeout(r, 25));
@@ -60,8 +67,9 @@ describe('AUTO scheduler (fake exchange, no approval step)', () => {
   });
   it('daily loss stop pauses new orders until the next UTC day', async () => {
     const { a, desk, auto } = mk();
-    desk.checkDay();
-    (desk as unknown as { day: { startEquity: number } }).day.startEquity = desk.book.balance * 1.5; // equity is 33% under today's start
+    await desk.syncLive();
+    vi.spyOn(a, 'balance').mockResolvedValue({ equityUsdt: 670, availableUsdt: 670 });
+    armOpening(desk, a);
     await auto.cycle();
     expect(a.placed).toHaveLength(0);
     expect(desk.activity.some((x) => x.kind === 'skipped' && /Daily loss stop/.test(x.detail))).toBe(true);
@@ -119,7 +127,8 @@ describe('reports', () => {
   });
   it('list positions, what opened and closed, and never contain a secret', async () => {
     const SECRET = 'tgSECRETabcdefghij0123456789';
-    const { desk, auto } = mk({ TELEGRAM_BOT_TOKEN: SECRET, TELEGRAM_CHAT_ID: '42', BYBIT_API_KEY: 'byKEYzzzzzzzzzzzz9' });
+    const { a, desk, auto } = mk({ TELEGRAM_BOT_TOKEN: SECRET, TELEGRAM_CHAT_ID: '42', BYBIT_API_KEY: 'byKEYzzzzzzzzzzzz9' });
+    armOpening(desk, a);
     registerSecrets([SECRET, 'byKEYzzzzzzzzzzzz9']);
     const sent: string[] = [];
     const fakeFetch = (async (_u: string, init: RequestInit) => { sent.push(String(init.body)); return new Response('{"ok":true}'); }) as unknown as typeof fetch;

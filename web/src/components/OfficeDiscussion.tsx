@@ -28,6 +28,7 @@ export function OfficeDiscussion({
   const [text, setText] = useState('');
   const [target, setTarget] = useState<Speech['agent'] | 'all'>('all');
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const messages = discussionMessages(state, latest, activeConversationId);
   const last = messages.at(-1);
@@ -50,6 +51,14 @@ export function OfficeDiscussion({
     } finally {
       setBusy(false);
     }
+  };
+
+  const createConversation = async () => {
+    if (!onNewConversation || creating) return;
+    setCreating(true); setError('');
+    try { await onNewConversation(); followLatest.current = true; }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Conversation could not be created.'); }
+    finally { setCreating(false); }
   };
 
   return <div className="office-discussion" onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); } }}>
@@ -79,10 +88,12 @@ export function OfficeDiscussion({
             <button
               type="button"
               title={lang === 'id' ? 'Mulai percakapan baru' : 'Start new conversation'}
-              onClick={() => void onNewConversation()}
+              disabled={creating || busy}
+              aria-busy={creating}
+              onClick={() => void createConversation()}
               style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', background: 'var(--panel-3, rgba(255,255,255,0.1))', color: 'inherit', border: '1px solid var(--line, rgba(255,255,255,0.2))' }}
             >
-              + New
+              {creating ? (lang === 'id' ? 'Membuat…' : 'Creating…') : '+ New'}
             </button>
           )}
         </div>
@@ -90,12 +101,12 @@ export function OfficeDiscussion({
       </div>
       <div className="discussion-lines" role="log" aria-live="polite" ref={body} onScroll={() => { const element = body.current; if (element) followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40; }}>
         {!messages.length && <p className="muted">{lang === 'id' ? 'Percakapan muncul saat agen berdiskusi.' : 'Agent conversations appear here during a debate.'}</p>}
-        {messages.map((msg, i) => {
+        {messages.map((msg) => {
             const fromName = msg.from === 'owner' ? 'Boss' : (state.agents[msg.from]?.name ?? msg.from);
             const toName = msg.to ? (msg.to === 'owner' ? 'Boss' : msg.to === 'all' ? '@all' : (state.agents[msg.to]?.name ?? msg.to)) : '';
             const targetAgent = msg.from !== 'owner' ? msg.from : (msg.to && msg.to !== 'all' && msg.to !== 'owner' ? msg.to : undefined);
             return (
-              <button key={`${msg.id || msg.at}-${i}`} onClick={() => targetAgent && onSelect(targetAgent)}>
+              <button key={msg.id} onClick={() => targetAgent && onSelect(targetAgent)}>
                 <b>{fromName}{toName ? ` -> ${toName}` : ''}</b>
                 <span>{msg.text}</span>
                 {msg.example && <small>EXAMPLE</small>}

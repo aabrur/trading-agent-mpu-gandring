@@ -10,6 +10,8 @@
  * - Multi-Factor Composite Score normalized to [-1.0, +1.0].
  */
 
+import { structuralPrice } from '../money.js';
+
 export interface UnifiedBar {
   timestamp: number;
   open: number;
@@ -206,7 +208,7 @@ export function calculateAlphaFactors(candles: any[]): Alpha158Factors | null {
     ma20Ratio: Number(ma20Ratio.toFixed(4)),
     std5: Number(std5.toFixed(4)),
     std20: Number(std20.toFixed(4)),
-    atr14: Number(atr14.toFixed(2)),
+    atr14: structuralPrice(atr14),
     atrRatio: Number(atrRatio.toFixed(4)),
     bbBandwidth20: Number(bbBandwidth20.toFixed(4)),
     vma5Ratio: Number(vma5Ratio.toFixed(4)),

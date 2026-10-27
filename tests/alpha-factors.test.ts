@@ -106,4 +106,15 @@ describe('Alpha158 Formulaic Factor Library', () => {
     expect(factors.bbBandwidth20).toBeGreaterThan(0);
     expect(factors.vma5Ratio).toBeGreaterThan(0); // Rising volume
   });
+
+  it('keeps a sub-cent ATR instead of rounding it to zero', () => {
+    const candles = Array.from({ length: 20 }, (_, i) => {
+      const close = 0.0000095 + i * 1e-9;
+      return { t: i, o: close, h: close + 2e-9, l: close - 1e-9, c: close, v: 10 };
+    });
+    const factors = calculateAlphaFactors(candles);
+    expect(factors).not.toBeNull();
+    expect(factors!.atr14).toBeGreaterThan(0);
+    expect(factors!.atr14).toBeLessThan(0.01);
+  });
 });

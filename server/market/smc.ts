@@ -9,6 +9,8 @@
  * - Order Block (OB) institutional supply & demand zones.
  */
 
+import { structuralPrice } from '../money.js';
+
 export interface SMCSwingPoint {
   index: number;
   timestamp: number;
@@ -316,9 +318,9 @@ export function analyzeSMC(candles: any[]): SMCAnalysis | null {
     recentSwingHighs: swingHighs.slice(-3),
     recentSwingLows: swingLows.slice(-3),
     premiumDiscountZone: {
-      rangeHigh: Number(rangeHigh.toFixed(2)),
-      rangeLow: Number(rangeLow.toFixed(2)),
-      equilibrium: Number(equilibrium.toFixed(2)),
+      rangeHigh: structuralPrice(rangeHigh),
+      rangeLow: structuralPrice(rangeLow),
+      equilibrium: structuralPrice(equilibrium),
       currentZone,
     },
   };

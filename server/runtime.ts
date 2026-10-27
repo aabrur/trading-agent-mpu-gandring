@@ -51,7 +51,7 @@ export async function startServer() {
       log(`${cfg.tradingMode} on ${ex.name}: ${v.detail}`);
       // Every open position must have its stop resting ON THE EXCHANGE, so it stays protected while this computer is off.
       const pct = Math.min(20, Math.max(0.5, Number(process.env.PROTECT_STOP_PCT ?? 3) || 3));
-      for (const n of await executor.ensureProtection({}, pct)) log(`[startup protection] ${n}`);
+      for (const n of await executor.ensureProtection(executor.knownProtection(), pct)) log(`[startup protection] ${n}`);
     } catch (e) {
       recordDiagnostic({ source: 'startup', category: 'SESSION', eventName: 'startup.exchange_failed', status: 'failed', level: 'ERROR', message: 'Exchange startup failed', details: { error: e } });
       console.error(`[trading-agent-mpu-gandring] ${cfg.tradingMode} refused at startup: ${safe((e as Error).message)}`);

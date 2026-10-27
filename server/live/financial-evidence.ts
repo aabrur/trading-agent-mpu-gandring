@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { FinancialPage, FinancialRecord, FinancialFill, FinancialCost } from '../exchange/types.js';
+import type { FinancialPage, FinancialRecord, FinancialFill, FinancialCost, FinancialFunding } from '../exchange/types.js';
 import type { ExecutionIntent } from './journal.js';
 import type { ClosedTrade } from '../types.js';
 import { log } from '../redact.js';
 import { recordDiagnostic } from '../session-log.js';
-export interface FinancialSummary { accountScope: string | null; coverage: 'complete' | 'partial' | 'unsupported'; actualFees: number | null; funding: number | null; confirmedNetRealized: number | null; unattributedRecords: number; observedAt: number | null }
+export interface FinancialSummary { accountScope: string | null; coverage: 'complete' | 'partial' | 'unsupported'; actualFees: number | null; funding: number | null; slippage: number | null; confirmedNetRealized: number | null; expectancyUsdt: number | null; unattributedRecords: number; observedAt: number | null }
 type Window = { since: number; until: number; supported: FinancialPage['supported']; fillSymbols?: string[] };
 const key = (r: FinancialRecord) => r.kind + ':' + r.symbol + ':' + r.id;
 export class FinancialEvidence {
@@ -15,7 +15,7 @@ export class FinancialEvidence {
   private observedAt: number | null = null;
   private mismatch = false;
   private attributed = new Map<string, string>();
-  private net: { at: number; amount: number | null }[] = [];
+  private net: { at: number; amount: number | null; slippage: number | null }[] = [];
   constructor(private file: string | null = null) {
     if (file && existsSync(file)) try {
       const s = JSON.parse(readFileSync(file, 'utf8')) as { scope: string; records: FinancialRecord[]; windows: Window[]; observedAt: number; mismatch?: boolean };
@@ -70,9 +70,13 @@ export class FinancialEvidence {
       const closeExpected = own.filter((i) => i.kind === 'close').reduce((s, i) => s + (i.record?.filledQty ?? 0), 0);
       const tolerance = Math.max(1, expected) * 1e-10;
       const coverage = ['fills', 'fees', 'funding'].every((c) => this.covered(start, trade.closedAt, c as 'fills' | 'fees' | 'funding', trade.symbol));
-      const funding = [...this.records.values()].some((r) => r.kind === 'funding' && r.symbol === trade.symbol && r.at >= start && r.at <= trade.closedAt && r.amount !== 0);
+      const fundingRows = [...this.records.values()].filter((r): r is FinancialFunding => r.kind === 'funding' && r.symbol === trade.symbol && r.at >= start && r.at <= trade.closedAt);
+      const sharedSymbol = trades.some((other) => other !== trade && other.remainingQty === 0 && other.symbol === trade.symbol && other.closedAt >= start && other.closedAt <= trade.closedAt);
+      const fundingKnown = !sharedSymbol && fundingRows.every((r) => r.currency === 'USDT' && Number.isFinite(r.amount));
+      const fundingNet = fundingKnown ? fundingRows.reduce((sum, r) => sum + r.amount, 0) : 0;
       let amount: number | null = null;
-      if (opens.length && closes.length && expected > 0 && Math.abs(allQty(opens) - expected) <= tolerance && Math.abs(allQty(closes) - expected) <= tolerance && Math.abs(closeExpected - expected) <= tolerance && trade.entryStatus !== 'estimated' && coverage && !funding) {
+      let slippage: number | null = null;
+      if (opens.length && closes.length && expected > 0 && Math.abs(allQty(opens) - expected) <= tolerance && Math.abs(allQty(closes) - expected) <= tolerance && Math.abs(closeExpected - expected) <= tolerance && trade.entryStatus !== 'estimated' && coverage && fundingKnown) {
         let fees = 0, gross = 0, known = true;
         for (const fill of related) {
           const feeRows = costs.filter((c) => c.tradeId === fill.id && c.symbol === fill.symbol);
@@ -81,9 +85,20 @@ export class FinancialEvidence {
           if (fee == null || closes.includes(fill) && realized?.currency !== 'USDT') known = false;
           fees += fee ?? 0; if (closes.includes(fill)) gross += realized?.amount ?? 0;
         }
-        if (known) amount = Number((gross - fees).toFixed(8));
+        if (known) {
+          const slips = related.map((fill) => {
+            const intent = own.find((i) => i.clientId === fill.clientId || i.record?.orderId === fill.orderId);
+            if (!intent || intent.accountedValue == null || !(fill.qty > 0)) return null;
+            const delta = fill.price * fill.qty - intent.accountedValue;
+            const adverse = intent.kind === 'open' ? (intent.side === 'LONG' ? delta : -delta) : (intent.side === 'LONG' ? -delta : delta);
+            return Math.max(0, adverse);
+          });
+          // Fill realized PnL already uses the fill price, so slippage is disclosed and not subtracted again.
+          slippage = slips.every((n) => n != null) ? Number(slips.reduce((sum, n) => sum + n!, 0).toFixed(8)) : null;
+          amount = Number((gross - fees + fundingNet).toFixed(8));
+        }
       }
-      this.net.push({ at: trade.closedAt, amount });
+      this.net.push({ at: trade.closedAt, amount, slippage });
     }
   }
   summary(since: number, until: number): FinancialSummary {
@@ -100,7 +115,11 @@ export class FinancialEvidence {
     else if (fees != null) fees = Number((fees + unmatched.reduce((sum, f) => sum + f.fee!.amount, 0)).toFixed(8));
     const funding = total('funding', 'funding');
     const net = this.net.filter((r) => r.at >= since && r.at <= until);
-    return { accountScope: valid ? this.scope : null, coverage: !valid ? 'unsupported' : fees != null && funding != null ? 'complete' : 'partial', actualFees: fees, funding, confirmedNetRealized: valid && net.length && net.every((r) => r.amount != null) ? Number(net.reduce((s, r) => s + r.amount!, 0).toFixed(8)) : null, unattributedRecords: rows.filter((r) => !this.attributed.has(key(r))).length, observedAt: this.observedAt };
+    const priced = net.filter((r) => r.amount != null);
+    const confirmedNetRealized = valid && net.length && priced.length === net.length ? Number(priced.reduce((s, r) => s + r.amount!, 0).toFixed(8)) : null;
+    const slippage = valid && priced.length && priced.every((r) => r.slippage != null) ? Number(priced.reduce((s, r) => s + r.slippage!, 0).toFixed(8)) : null;
+    const expectancyUsdt = confirmedNetRealized != null && priced.length ? Number((confirmedNetRealized / priced.length).toFixed(8)) : null;
+    return { accountScope: valid ? this.scope : null, coverage: !valid ? 'unsupported' : fees != null && funding != null ? 'complete' : 'partial', actualFees: fees, funding, slippage, confirmedNetRealized, expectancyUsdt, unattributedRecords: rows.filter((r) => !this.attributed.has(key(r))).length, observedAt: this.observedAt };
   }
   private save() {
     if (!this.file) return;

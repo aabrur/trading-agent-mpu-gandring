@@ -3,6 +3,9 @@ import { safe } from '../redact.js';
 import type { WhaleOnChainSummary } from '../types.js';
 import { fetchDeribitMeasurements } from './observations.js';
 
+/** Existing provider query coverage, shared with evidence classification. */
+export const WHALE_OBSERVATION_POLICY = { minUsd: 500_000, maxAgeMs: 24 * 3600 * 1000 } as const;
+
 export interface NormalizedWhaleEvent {
   chainId: string | number;
   txHash: string;
@@ -120,7 +123,7 @@ export async function getEnterpriseWhaleBriefing(
   fetchImpl: typeof fetch = fetch
 ): Promise<WhaleBriefing> {
   const coin = symbol.replace(/USDT?$|USDC$/, '').toUpperCase();
-  const startSec = Math.floor((Date.now() - 24 * 3600 * 1000) / 1000);
+  const startSec = Math.floor((Date.now() - WHALE_OBSERVATION_POLICY.maxAgeMs) / 1000);
   const host = 'https://leviathan.whale-alert.io';
   const heightUrl = `${host}/${encodeURIComponent(blockchain)}/height_at_time/${startSec}?api_key=${encodeURIComponent(apiKey)}`;
   const heightRes = await fetchImpl(heightUrl);
@@ -259,8 +262,8 @@ export async function getWhaleBriefing(
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 6000);
   try {
-    const minVal = 500_000;
-    const startSec = Math.floor((Date.now() - 24 * 3600 * 1000) / 1000);
+    const minVal = WHALE_OBSERVATION_POLICY.minUsd;
+    const startSec = Math.floor((Date.now() - WHALE_OBSERVATION_POLICY.maxAgeMs) / 1000);
     const url = `https://api.whale-alert.io/v1/transactions?api_key=${encodeURIComponent(apiKey)}&min_value=${minVal}&start=${startSec}&currency=${encodeURIComponent(coin.toLowerCase())}`;
     const res = await fetchImpl(url, { signal: ctrl.signal });
     if (!res.ok) throw new Error(`Whale Alert HTTP ${res.status}`);

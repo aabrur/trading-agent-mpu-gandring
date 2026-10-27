@@ -107,7 +107,7 @@ describe('network trading settings', () => {
     const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null, killFile: null });
     await d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, safetyNet: 25, maxPositions: 2 });
     d.book.balance = 900;
-    d.reloadRuntimeConfig({ PAPER_BALANCE: '1000', SAFETY_NET: '200', OPEN_ORDERS_N: '4' });
+    await d.reloadRuntimeConfig({ PAPER_BALANCE: '1000', SAFETY_NET: '200', OPEN_ORDERS_N: '4' });
     expect(d.book.balance).toBe(900); expect(d.book.safetyNet).toBe(25); expect(d.book.n).toBe(2);
     expect(cfg.tradingMode).toBe('TESTNET'); d.stop();
   });

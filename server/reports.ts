@@ -14,7 +14,7 @@ export interface Report {
   monitoring?: { symbols: string[]; killed: boolean; running: boolean; current: string | null; previous: string | null };
   opportunityReviews?: { observed: number; pending: number; unavailable: number; items: import('./opportunity-review.js').OpportunityReview[] };
   id: string; at: number; since: number; mode: string; exchange: string | null;
-  accounting?: { source: string; status: string; observedAt: number | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: number | null; funding: number | null; financialEvidence?: import('./live/financial-evidence.js').FinancialSummary };
+  accounting?: { source: string; status: string; observedAt: number | null; accountScope: string | null; confirmedRealized: number; estimatedRealized: number; unknownExits: number; actualFees: number | null; funding: number | null; slippage: number | null; expectancyUsdt: number | null; financialEvidence?: import('./live/financial-evidence.js').FinancialSummary };
   balance: number; safetyNet: number; moneyTrade: number; n: number; perOrder: number; orderSizePct?: number; equity: number; unrealized: number; realized: number;
   dailyLoss: { limitPct: number; hit: boolean }; auto: { on: boolean; cycles: number; intervalMin: number };
   positions: ReportPosition[]; opened: Activity[]; closed: Activity[]; skipped: Activity[];
@@ -41,7 +41,7 @@ export function buildReport(desk: Desk, since: number, at = Date.now()): Report 
   const r: Omit<Report, 'text'> = {
     monitoring: { symbols: [...new Set(desk.autoState.on ? desk.cfg.auto.symbols : desk.cfg.watchlist)], killed: desk.killed, running: desk.autoState.running, current: desk.debate?.symbol ?? null, previous: desk.lastCycle ? `${desk.lastCycle.symbol} · ${desk.lastCycle.verdict ?? desk.lastCycle.stage} · ${desk.lastCycle.outcome ?? desk.lastCycle.executionStatus ?? 'no fill recorded'}` : null },
     id: `rep-${at.toString(36)}`, at, since, mode: desk.cfg.tradingMode, exchange: desk.cfg.live?.exchange ?? null,
-    accounting: { source: desk.venueAccount ? 'exchange' : 'local book', status: desk.venueAccount?.status ?? (desk.cfg.tradingMode === 'PAPER' ? 'paper' : 'unverified'), observedAt: desk.venueAccount?.at ?? null, confirmedRealized, estimatedRealized, unknownExits: exits.filter((t) => t.pnlStatus === 'unknown').length, actualFees: financial?.actualFees ?? null, funding: financial?.funding ?? null, financialEvidence: financial },
+    accounting: { source: desk.venueAccount ? 'exchange' : 'local book', status: desk.venueAccount?.status ?? (desk.cfg.tradingMode === 'PAPER' ? 'paper' : 'unverified'), observedAt: desk.venueAccount?.at ?? null, accountScope: financial?.accountScope ?? desk.accountScope(), confirmedRealized, estimatedRealized, unknownExits: exits.filter((t) => t.pnlStatus === 'unknown').length, actualFees: financial?.actualFees ?? null, funding: financial?.funding ?? null, slippage: financial?.slippage ?? null, expectancyUsdt: financial?.expectancyUsdt ?? null, financialEvidence: financial },
     opportunityReviews: { observed: reviews.filter((r) => r.status === 'observed').length, pending: reviews.filter((r) => r.status === 'pending').length, unavailable: reviews.filter((r) => r.status === 'unavailable').length, items: reviews.slice(-10) },
     balance: desk.book.balance, safetyNet: desk.book.safetyNet, moneyTrade: s.moneyTrade, n: desk.book.n, perOrder: s.perOrder, orderSizePct: s.orderSizePct,
     equity: round2(desk.book.balance + desk.book.unrealized), unrealized: desk.book.unrealized, realized,
@@ -50,8 +50,8 @@ export function buildReport(desk: Desk, since: number, at = Date.now()): Report 
     positions: desk.book.positions.map((p) => ({ ownership: p.ownership, protectionStatus: p.protectionStatus, entryStatus: p.entryStatus, symbol: p.symbol, side: p.side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, mark: p.mark, pnl: p.unrealizedPnl, openedAt: p.openedAt })),
     opened: acts.filter((a) => a.kind === 'opened'), closed: acts.filter((a) => a.kind === 'closed'), skipped: acts.filter((a) => a.kind === 'skipped'),
     scorecard: desk.scorecard.rows(),
-    lessons: desk.learnings.since(since + 1).slice(0, 20).map((l) => ({ role: l.role, kind: l.kind, status: l.status, count: l.count, symbol: l.symbol, happened: l.happened, rootCause: l.rootCause, lesson: l.lesson })),
-    standingRules: desk.learnings.standingRules().map((l) => `${l.role}: ${l.lesson}`).slice(-10),
+    lessons: desk.learnings.since(since + 1, desk.accountScope()).slice(0, 20).map((l) => ({ role: l.role, kind: l.kind, status: l.status, count: l.count, symbol: l.symbol, happened: l.happened, rootCause: l.rootCause, lesson: l.lesson })),
+    standingRules: desk.learnings.standingRules(undefined, desk.accountScope()).map((l) => `${l.role}: ${l.lesson}`).slice(-10),
     scan: [...(desk.lastScan?.findings ?? []).filter((f) => f.code !== 'safety_net'), ...(capital ? [capital] : [])]
   };
   return { ...r, text: safe(renderText(r)) };
@@ -112,7 +112,8 @@ export function renderText(r: Omit<Report, 'text'>) {
       `• Source: ${r.accounting.source} (${r.accounting.status})`,
       `• Realized: confirmed ${signed(r.accounting.confirmedRealized)} | estimated ${signed(r.accounting.estimatedRealized)}`,
       `• Unknown exits: ${r.accounting.unknownExits} | Fees: ${r.accounting.actualFees ?? 'unknown'} | Funding: ${r.accounting.funding ?? 'unknown'}`,
-      `• Managed net: ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'}`
+      `• Managed net: ${r.accounting.financialEvidence?.confirmedNetRealized ?? 'unknown'}`,
+      `• Expectancy: ${r.accounting.expectancyUsdt ?? 'unknown'} | Slippage: ${r.accounting.slippage ?? 'unknown'} | Scope: ${r.accounting.accountScope ?? 'unscoped'}`
     ] : ['Evidence unavailable']),
     '────────────────────────────────────────',
     `Scorecard (Desk Lead): ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0) ? `${r.scorecard.reduce((n, x) => n + x.right, 0)} right / ${r.scorecard.reduce((n, x) => n + x.right + x.wrong, 0)} scored calls` : 'no scored calls yet'}.`,
@@ -155,7 +156,14 @@ export class Reporter {
     const rep = structuredClone(buildReport(this.desk, since, at));
     await this.desk.refreshFinancialEvidence(since + 1, at);
     const financial = this.desk.financialSummary(since + 1, at);
-    if (rep.accounting) { rep.accounting.actualFees = financial?.actualFees ?? null; rep.accounting.funding = financial?.funding ?? null; rep.accounting.financialEvidence = financial; }
+    if (rep.accounting) {
+      rep.accounting.actualFees = financial?.actualFees ?? null;
+      rep.accounting.funding = financial?.funding ?? null;
+      rep.accounting.slippage = financial?.slippage ?? null;
+      rep.accounting.expectancyUsdt = financial?.expectancyUsdt ?? null;
+      if (financial?.accountScope) rep.accounting.accountScope = financial.accountScope;
+      rep.accounting.financialEvidence = financial;
+    }
     rep.text = safe(renderText(rep));
     this.last = Math.max(this.last, rep.at);
     this.desk.reports.unshift(rep);

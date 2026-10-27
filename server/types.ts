@@ -191,6 +191,10 @@ export interface NewsItem {
 }
 
 export interface Position {
+  /** Structural thesis boundary, independent of the Owner's margin-based SL/TP. */
+  invalidationLevel?: number;
+  entryZone?: { low: number; high: number; basis: string };
+  entryScenarioId?: string;
   decisionEvidence?: Record<string, unknown>;
   ownership?: 'managed' | 'recovered' | 'external';
   protectionStatus?: 'confirmed' | 'missing' | 'unknown';
@@ -230,6 +234,8 @@ export interface Opinion {
 }
 
 export interface Verdict {
+  debateEvidence?: import('./decision/debate-evidence.js').DebateEvidence;
+  closeTrigger?: import('./decision/debate-evidence.js').CloseTriggerReason;
   executionStatus?: 'partial' | 'filled' | 'closed';
   id: string;
   symbol: string;

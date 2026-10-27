@@ -10,6 +10,7 @@ export const newClientId = (tag = 'o') => `mg${tag}${Date.now().toString(36)}${r
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface Fill { ok: boolean; clientId: string; record: OrderRecord | null; qty: number; requestedQty: number; remainingQty: number; avgPrice: number | null; note: string }
+export interface ProtectionResult { ok: boolean; status: 'confirmed' | 'missing' | 'unknown'; note: string; stop: number | null; tp: number | null }
 
 // Every exchange write goes through here. Rules:
 //  - one send per intent, never a blind retry
@@ -108,7 +109,7 @@ export class LiveExecutor {
     const fill = await this.reconcile(o.symbol, clientId, sendError, o.qty);
     if (!fill.ok) return fill;
     const guard = await this.ensureOnExchange(o.symbol, o.side, fill.qty, o.stop, o.tp);
-    recordDiagnostic({ source: 'exchange', category: 'PROTECTION', eventName: 'protection.observed', level: guard.stop ? 'INFO' : 'WARN', status: guard.stop ? 'confirmed' : guard.ok ? 'unknown' : 'missing', correlationId: clientId, message: guard.note || 'Exchange protection confirmed', details: { clientId, symbol: o.symbol, stop: guard.stop, tp: guard.tp, ok: guard.ok } });
+    recordDiagnostic({ source: 'exchange', category: 'PROTECTION', eventName: 'protection.observed', level: guard.status === 'confirmed' ? 'INFO' : 'WARN', status: guard.status, correlationId: clientId, message: guard.note || 'Exchange protection confirmed', details: { clientId, symbol: o.symbol, stop: guard.stop, tp: guard.tp, ok: guard.ok } });
     if (!guard.ok) return { ...fill, ok: false, qty: 0, note: safe(`${fill.note}. ${guard.note}`) };
     return guard.note ? { ...fill, note: safe(`${fill.note}. ${guard.note}`) } : fill;
   }
@@ -118,11 +119,11 @@ export class LiveExecutor {
    * A missing leg is placed once. If the stop is still missing, the position is closed at once (fail closed).
    * A missing take profit is reported, never a reason to drop the stop.
    */
-  async ensureOnExchange(symbol: string, side: Side, qty: number, stop: number, tp: number | null): Promise<{ ok: boolean; note: string; stop: number | null; tp: number | null }> {
+  async ensureOnExchange(symbol: string, side: Side, qty: number, stop: number, tp: number | null): Promise<ProtectionResult> {
     // A failed read is "unknown", not "missing": we never stack orders or close on a network blip.
     const read = async () => { for (let i = 0; i < 2; i++) { try { return await this.adapter.protection(symbol, side); } catch (e) { log(`[live] protection read failed on ${symbol}: ${safe((e as Error).message)}`); } } return null; };
     let have = await read();
-    if (!have) return { ok: true, note: 'WARNING: could not read exchange-side orders to verify the stop; the entry was sent with its stop and will be checked again at next start', stop: null, tp: null };
+    if (!have) return { ok: true, status: 'unknown', note: 'WARNING: could not read exchange-side orders to verify protection; exchange state is unknown and requires reconciliation', stop: null, tp: null };
     const notes: string[] = [];
     const missStop = !have.stop, missTp = !!tp && !have.tp;
     if (missStop || missTp) {
@@ -131,28 +132,38 @@ export class LiveExecutor {
       try { await this.adapter.protect({ symbol, side, qty, stop: missStop ? stop : null, tp: missTp ? tp : null, clientId: protectionId }); }
       catch (e) { notes.push(`placing the missing ${missStop ? 'stop' : 'take profit'} failed: ${safe((e as Error).message)}`); }
       if (this.reconcileDelayMs) await pause(this.reconcileDelayMs);
-      have = (await read()) ?? { stop: null, tp: null };
+      have = await read();
+      if (!have) return { ok: true, status: 'unknown', note: `WARNING: could not read exchange-side orders after protection placement; exchange state is unknown and requires reconciliation${notes.length ? `; ${notes.join('; ')}` : ''}`, stop: null, tp: null };
     }
     if (!have.stop) {
       const c = await this.close(symbol, side, qty);
-      return { ok: false, note: `FAIL CLOSED: no exchange-side stop could be confirmed, close attempted (${c.note}); confirmed filled ${c.qty}, requested ${qty}${notes.length ? `; ${notes.join('; ')}` : ''}`, stop: null, tp: null };
+      return { ok: false, status: 'missing', note: `FAIL CLOSED: no exchange-side stop could be confirmed, close attempted (${c.note}); confirmed filled ${c.qty}, requested ${qty}${notes.length ? `; ${notes.join('; ')}` : ''}`, stop: null, tp: null };
     }
     if (tp && !have.tp) notes.push('take profit is NOT on the exchange (stop is)');
     if (missStop) notes.push(`exchange-side stop re-placed at ${have.stop}`);
-    return { ok: true, note: notes.join('; '), stop: have.stop, tp: have.tp };
+    return { ok: true, status: 'confirmed', note: notes.join('; '), stop: have.stop, tp: have.tp };
+  }
+
+  knownProtection(): Record<string, { stop: number; tp: number | null }> {
+    const known: Record<string, { stop: number; tp: number | null }> = {};
+    for (const p of this.journal.positions) {
+      if (p.ownership === 'external' || !Number.isFinite(p.stop) || p.stop <= 0) continue;
+      known[`${p.symbol}:${p.side}`] = { stop: p.stop, tp: p.tp != null && Number.isFinite(p.tp) && p.tp > 0 ? p.tp : null };
+    }
+    return known;
   }
 
   /**
    * Startup reconcile: every open position on the venue must have an exchange-side stop.
    * Known stops come from the desk; unknown positions get a stop PROTECT_STOP_PCT away from the worse of entry and mark.
-   * If a stop cannot be placed, that position is closed (fail closed).
+   * If a read confirms the stop is still missing after placement, that position is closed (fail closed).
    */
   async ensureProtection(known: Record<string, { stop: number; tp: number | null }> = {}, fallbackPct = 3): Promise<string[]> {
     const notes: string[] = [];
     let venue: Awaited<ReturnType<ExchangeAdapter['positions']>> = [];
     try { venue = await this.adapter.positions(); } catch (e) { return [`could not read positions: ${safe((e as Error).message)}`]; }
     for (const p of venue) {
-      let k = known[p.symbol];
+      let k = known[`${p.symbol}:${p.side}`] ?? known[p.symbol];
       if (!k) {
         let mark = p.entry;
         try { mark = await this.adapter.ticker(p.symbol); } catch { /* entry only */ }
@@ -160,7 +171,7 @@ export class LiveExecutor {
         k = { stop: Number((p.side === 'LONG' ? ref * (1 - fallbackPct / 100) : ref * (1 + fallbackPct / 100)).toPrecision(8)), tp: null };
       }
       const g = await this.ensureOnExchange(p.symbol, p.side, p.qty, k.stop, k.tp);
-      notes.push(`${p.symbol} ${p.side}: ${g.ok ? `protected on the exchange, stop ${g.stop}${g.tp ? `, take profit ${g.tp}` : ''}${g.note ? ` (${g.note})` : ''}` : g.note}`);
+      notes.push(`${p.symbol} ${p.side}: ${g.status === 'confirmed' ? `protected on the exchange, stop ${g.stop}${g.tp ? `, take profit ${g.tp}` : ''}${g.note ? ` (${g.note})` : ''}` : g.note}`);
     }
     return notes;
   }

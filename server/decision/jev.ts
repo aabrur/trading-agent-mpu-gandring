@@ -38,6 +38,9 @@ export interface JevCallResult {
   response: DecisionsResponse | null;
   latencyMs: number;
   cached: boolean;
+  origin: 'remote' | 'heuristic' | 'cache' | 'unavailable';
+  evaluatedOrigin: 'remote' | 'heuristic' | null;
+  fallback: boolean;
 }
 
 export interface JevMetrics {
@@ -45,6 +48,8 @@ export interface JevMetrics {
   success: number;
   errors: number;
   timeouts: number;
+  fallbacks: number;
+  cacheHits: number;
   lastLatencyMs: number | null;
   lastModel: string | null;
   lastCost: number | null;
@@ -120,6 +125,8 @@ export function publicJevStatus(settings: JevSettings, metrics: JevMetrics, extr
       success: metrics.success,
       errors: metrics.errors,
       timeouts: metrics.timeouts,
+      fallbacks: metrics.fallbacks,
+      cacheHits: metrics.cacheHits,
       lastLatencyMs: metrics.lastLatencyMs,
       lastModel: metrics.lastModel,
       lastCost: metrics.lastCost,
@@ -171,8 +178,8 @@ export async function submitDecisions(opts: {
   timeoutMs?: number;
 }): Promise<JevCallResult> {
   const started = Date.now();
-  if (!opts.settings.enabled) return { ok: false, health: 'DISABLED', error: 'Jev is disabled.', response: null, latencyMs: 0, cached: false };
-  if (!opts.key) return { ok: false, health: 'MISSING_KEY', error: 'No OpenRouter API key is configured for Jev.', response: null, latencyMs: 0, cached: false };
+  if (!opts.settings.enabled) return { ok: false, health: 'DISABLED', error: 'Jev is disabled.', response: null, latencyMs: 0, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
+  if (!opts.key) return { ok: false, health: 'MISSING_KEY', error: 'No OpenRouter API key is configured for Jev.', response: null, latencyMs: 0, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
   const body: DecisionsRequest = {
     model: opts.settings.model,
     state: sanitizeJevState(opts.state),
@@ -180,7 +187,7 @@ export async function submitDecisions(opts: {
   };
   const parsedReq = DecisionsRequestSchema.safeParse(body);
   if (!parsedReq.success) {
-    return { ok: false, health: 'PROVIDER_ERROR', error: 'Invalid Jev request.', response: null, latencyMs: Date.now() - started, cached: false };
+    return { ok: false, health: 'PROVIDER_ERROR', error: 'Invalid Jev request.', response: null, latencyMs: Date.now() - started, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
   }
   const ctrl = new AbortController();
   const timeoutMs = opts.timeoutMs ?? opts.settings.timeoutMs;
@@ -205,18 +212,18 @@ export async function submitDecisions(opts: {
         error: `Jev HTTP ${res.status}`,
         response: null,
         latencyMs: Date.now() - started,
-        cached: false
+        cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false
       };
     }
     let json: unknown;
     try { json = await res.json(); } catch {
-      return { ok: false, health: 'PROVIDER_ERROR', error: 'Jev returned a malformed body.', response: null, latencyMs: Date.now() - started, cached: false };
+      return { ok: false, health: 'PROVIDER_ERROR', error: 'Jev returned a malformed body.', response: null, latencyMs: Date.now() - started, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
     }
     const parsed = DecisionsResponseSchema.safeParse(json);
     if (!parsed.success) {
-      return { ok: false, health: 'PROVIDER_ERROR', error: 'Jev response failed schema validation.', response: null, latencyMs: Date.now() - started, cached: false };
+      return { ok: false, health: 'PROVIDER_ERROR', error: 'Jev response failed schema validation.', response: null, latencyMs: Date.now() - started, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
     }
-    return { ok: true, health: 'READY', error: null, response: parsed.data, latencyMs: Date.now() - started, cached: false };
+    return { ok: true, health: 'READY', error: null, response: parsed.data, latencyMs: Date.now() - started, cached: false, origin: 'remote', evaluatedOrigin: 'remote', fallback: false };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const timeout = /abort/i.test(msg);
@@ -226,7 +233,7 @@ export async function submitDecisions(opts: {
       error: timeout ? 'Jev request timed out.' : safe(msg),
       response: null,
       latencyMs: Date.now() - started,
-      cached: false
+      cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false
     };
   } finally {
     clearTimeout(t);
@@ -235,12 +242,13 @@ export async function submitDecisions(opts: {
 
 export class JevService {
   settings: JevSettings;
-  metrics: JevMetrics = { requests: 0, success: 0, errors: 0, timeouts: 0, lastLatencyMs: null, lastModel: null, lastCost: null, lastInputTokens: null, lastError: null };
+  metrics: JevMetrics = { requests: 0, success: 0, errors: 0, timeouts: 0, fallbacks: 0, cacheHits: 0, lastLatencyMs: null, lastModel: null, lastCost: null, lastInputTokens: null, lastError: null };
   lastRecord: Record<string, unknown> | null = null;
   private cache = new Map<string, { at: number; result: JevCallResult }>();
   private generation = 0;
   private appliedGeneration = 0;
   private inflight = new Set<Promise<unknown>>();
+  private observedHealth: JevHealth | null = null;
   constructor(private env: NodeJS.ProcessEnv, private tradingMode: string, private fetchImpl: typeof fetch = fetch) {
     this.settings = loadJevSettings(env, tradingMode);
   }
@@ -248,11 +256,14 @@ export class JevService {
     this.env = env;
     this.tradingMode = tradingMode;
     this.settings = loadJevSettings(env, tradingMode);
+    this.observedHealth = null;
+    this.cache.clear();
   }
   private key() { return resolveJevKey(this.env).key; }
   async flush() { await Promise.allSettled([...this.inflight]); }
   status() {
     this.settings = loadJevSettings(this.env, this.tradingMode);
+    if (this.settings.enabled && this.settings.keySource !== 'none' && this.observedHealth) this.settings.health = this.observedHealth;
     return publicJevStatus(this.settings, this.metrics, {
       lastDecision: this.lastRecord,
       affectedContext: this.settings.effectiveMode === 'assist'
@@ -261,7 +272,8 @@ export class JevService {
   private remember(result: JevCallResult) {
     this.metrics.requests += 1;
     this.metrics.lastLatencyMs = result.latencyMs;
-    if (result.ok) {
+    this.observedHealth = result.health;
+    if (result.ok && result.origin === 'remote') {
       this.metrics.success += 1;
       this.metrics.lastModel = result.response?.model ?? this.settings.model;
       this.metrics.lastCost = result.response?.usage?.cost ?? null;
@@ -278,42 +290,44 @@ export class JevService {
   async evaluate(state: unknown, questions: Record<string, Question>, cacheTtlMs = 45_000, opts?: { timeoutMs?: number; generation?: number; decisionId?: string }): Promise<JevCallResult> {
     this.settings = loadJevSettings(this.env, this.tradingMode);
     if (this.settings.effectiveMode === 'off') {
-      const r: JevCallResult = { ok: false, health: this.settings.health, error: this.settings.health === 'MISSING_KEY' ? 'No OpenRouter API key is configured for Jev.' : 'Jev is off.', response: null, latencyMs: 0, cached: false };
+      const r: JevCallResult = { ok: false, health: this.settings.health, error: this.settings.health === 'MISSING_KEY' ? 'No OpenRouter API key is configured for Jev.' : 'Jev is off.', response: null, latencyMs: 0, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
       return r;
     }
     if (Object.keys(questions).length === 0) {
-      return { ok: false, health: this.settings.health, error: 'No applicable Jev questions.', response: null, latencyMs: 0, cached: false };
+      return { ok: false, health: this.settings.health, error: 'No applicable Jev questions.', response: null, latencyMs: 0, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
     }
     const cacheKey = createHash('sha256').update(JSON.stringify({ m: this.settings.model, s: sanitizeJevState(state), q: questions })).digest('hex');
     const hit = this.cache.get(cacheKey);
     if (hit && Date.now() - hit.at < cacheTtlMs && hit.result.ok) {
+      this.metrics.cacheHits += 1;
       recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.cache_hit', status: 'cached', correlationId: opts?.decisionId, message: 'Jev cached result reused', details: { questionIds: Object.keys(questions), model: this.settings.model } });
-      return { ...hit.result, cached: true };
+      return { ...hit.result, cached: true, origin: 'cache' };
     }
     const requestId = `jev-${cacheKey.slice(0, 12)}-${Date.now()}`;
     recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.dispatched', status: 'started', correlationId: opts?.decisionId ?? requestId, message: 'Jev decision request dispatched', details: { requestId, questionIds: Object.keys(questions), model: this.settings.model } });
     const result = await submitDecisions({ settings: this.settings, key: this.key(), state, questions, fetchImpl: this.fetchImpl, timeoutMs: opts?.timeoutMs });
+    this.remember(result);
     recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.completed', level: result.ok ? 'INFO' : 'WARN', status: result.health, correlationId: opts?.decisionId ?? requestId, durationMs: result.latencyMs, message: result.ok ? 'Jev decision request completed' : result.error ?? 'Jev decision request failed', details: { requestId, questionIds: Object.keys(questions), model: result.response?.model ?? this.settings.model, answers: result.response?.answers ?? null, fallback: !result.ok } });
     if (!result.ok) {
       const fallback = localHeuristicEvaluation(state, questions);
       if (fallback) {
-        const heuristicResult: JevCallResult = { ok: true, health: 'READY', error: null, response: fallback, latencyMs: result.latencyMs, cached: false };
-        this.remember(heuristicResult);
+        const heuristicResult: JevCallResult = { ok: true, health: result.health, error: result.error, response: fallback, latencyMs: result.latencyMs, cached: false, origin: 'heuristic', evaluatedOrigin: 'heuristic', fallback: true };
+        this.metrics.fallbacks += 1;
+        recordDiagnostic({ source: 'jev', category: 'PREDICTION', eventName: 'jev.fallback', level: 'WARN', status: 'heuristic', correlationId: opts?.decisionId ?? requestId, durationMs: result.latencyMs, message: 'Local heuristic evaluation used after remote Jev failure', details: { requestId, origin: 'heuristic', fallback: true, remoteHealth: result.health, remoteError: result.error, model: fallback.model } });
         const gen = opts?.generation ?? ++this.generation;
         if (gen >= this.appliedGeneration) {
           this.appliedGeneration = gen;
           this.cache.set(cacheKey, { at: Date.now(), result: heuristicResult });
-          this.lastRecord = { at: Date.now(), decisionId: opts?.decisionId ?? null, model: fallback.model, answers: fallback.answers, latencyMs: result.latencyMs };
+          this.lastRecord = { at: Date.now(), decisionId: opts?.decisionId ?? null, model: fallback.model, answers: fallback.answers, latencyMs: result.latencyMs, origin: 'heuristic', fallback: true, health: result.health, error: result.error };
         }
         return heuristicResult;
       }
     }
-    this.remember(result);
     const gen = opts?.generation ?? ++this.generation;
     if (result.ok && gen >= this.appliedGeneration) {
       this.appliedGeneration = gen;
       this.cache.set(cacheKey, { at: Date.now(), result });
-      this.lastRecord = { at: Date.now(), decisionId: opts?.decisionId ?? null, model: result.response?.model ?? null, answers: result.response?.answers ?? {}, latencyMs: result.latencyMs };
+      this.lastRecord = { at: Date.now(), decisionId: opts?.decisionId ?? null, model: result.response?.model ?? null, answers: result.response?.answers ?? {}, latencyMs: result.latencyMs, origin: result.origin, fallback: result.fallback, health: result.health };
     }
     return result;
   }
@@ -326,7 +340,7 @@ export class JevService {
   }
   async testConnection(): Promise<JevCallResult> {
     this.settings = loadJevSettings(this.env, this.tradingMode);
-    if (!this.settings.enabled) return { ok: false, health: 'DISABLED', error: 'Enable Jev before testing the connection.', response: null, latencyMs: 0, cached: false };
+    if (!this.settings.enabled) return { ok: false, health: 'DISABLED', error: 'Enable Jev before testing the connection.', response: null, latencyMs: 0, cached: false, origin: 'unavailable', evaluatedOrigin: null, fallback: false };
     const result = await submitDecisions({
       settings: this.settings,
       key: this.key(),
@@ -349,7 +363,7 @@ export function localHeuristicEvaluation(state: unknown, questions: Record<strin
   const last = typeof ind.last === 'number' ? ind.last : null;
   const chg24 = typeof ind.change24hPct === 'number' ? ind.change24hPct : null;
   const vol = typeof ind.volumeRatio === 'number' ? ind.volumeRatio : null;
-  const answers: Record<string, any> = {};
+  const answers: DecisionsResponse['answers'] = {};
 
   for (const [qid, q] of Object.entries(questions)) {
     if (qid === 'market_regime' && q.type === 'choice') {
@@ -376,13 +390,13 @@ export function localHeuristicEvaluation(state: unknown, questions: Record<strin
       answers[qid] = { type: 'noul', noul };
     } else if (qid === 'news_needs_research' && q.type === 'noul') {
       const newsArr = Array.isArray(s.news) ? s.news : [];
-      const noul = newsArr.some((n: any) => n.freshness === 'fresh' || n.category === 'critical') ? 0.85 : 0.15;
+      const noul = newsArr.some((n: unknown) => n !== null && typeof n === 'object' && ('freshness' in n && n.freshness === 'fresh' || 'category' in n && n.category === 'critical')) ? 0.85 : 0.15;
       answers[qid] = { type: 'noul', noul };
     } else if (qid === 'news_false_critical' && q.type === 'noul') {
       answers[qid] = { type: 'noul', noul: 0.05 };
     } else if (qid === 'whale_significant' && q.type === 'noul') {
       const whaleArr = Array.isArray(s.whale) ? s.whale : [];
-      const noul = whaleArr.some((w: any) => typeof w.usdValueOrNull === 'number' && w.usdValueOrNull > 5_000_000) ? 0.9 : 0.05;
+      const noul = whaleArr.some((w: unknown) => w !== null && typeof w === 'object' && 'usdValueOrNull' in w && typeof w.usdValueOrNull === 'number' && w.usdValueOrNull > 5_000_000) ? 0.9 : 0.05;
       answers[qid] = { type: 'noul', noul };
     } else if (qid === 'material_conflict' && q.type === 'noul') {
       answers[qid] = { type: 'noul', noul: 0.05 };
@@ -393,7 +407,6 @@ export function localHeuristicEvaluation(state: unknown, questions: Record<strin
   return {
     model: 'typesafe/jev-local-heuristics',
     answers,
-    usage: { input_tokens: 50, output_tokens: 20, cost: 0 },
     id: `loc-jev-${Date.now()}`,
     provider: 'local-deterministic'
   };
