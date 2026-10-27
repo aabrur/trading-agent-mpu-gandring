@@ -22,7 +22,7 @@ describe('Aster (EXPERIMENTAL, mocked)', () => {
   it('signs the exact query string with EIP-712 (AsterSignTransaction v1, Message{msg})', async () => {
     const a = make();
     const { msg, signature, query } = await a.signedQuery({ symbol: 'BTCUSDT', side: 'BUY' }, 1700000000000000);
-    expect(msg).toBe(`symbol=BTCUSDT&side=BUY&nonce=1700000000000000&user=${MAIN.address}&signer=${a.signerAddress}`);
+    expect(msg).toBe(`symbol=BTCUSDT&side=BUY&asterChain=Testnet&user=${MAIN.address}&signer=${a.signerAddress}&nonce=1700000000000000`);
     expect(query).toBe(`${msg}&signature=${signature}`);
     const valid = await verifyTypedData({ address: a.signerAddress, domain: { name: 'AsterSignTransaction', version: '1', chainId: ASTER_CHAIN_ID.testnet, verifyingContract: '0x0000000000000000000000000000000000000000' }, types: { Message: [{ name: 'msg', type: 'string' }] }, primaryType: 'Message', message: { msg }, signature });
     expect(valid).toBe(true);
@@ -35,6 +35,14 @@ describe('Aster (EXPERIMENTAL, mocked)', () => {
     expect((await verifyKey(make(fakeAster({ canWithdraw: true }), AGENT_KEY, 'mainnet'))).ok).toBe(false);
     expect((await verifyKey(make(fakeAster({ canWithdraw: null }), AGENT_KEY, 'mainnet'))).ok).toBe(false);
     expect((await verifyKey(make(fakeAster(), AGENT_KEY, 'mainnet'))).ok).toBe(true);
+  });
+  it('reports Aster "No agent found" as a refusal the startup guard can read', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ code: -1000, msg: 'No agent found' }), { status: 400 })) as typeof fetch;
+    const a = new AsterAdapter('mainnet', MAIN.address, AGENT_KEY, fetchImpl, 'https://aster.test', privateKeyToAccount(AGENT_KEY).address);
+    const v = await verifyKey(a);
+    expect(v.ok).toBe(false);
+    expect(v.detail).toMatch(/No agent found/);
+    expect(v.detail).not.toMatch(/could not read key permissions/);
   });
   it('opens with a closePosition STOP_MARKET (and TP) resting on the exchange, reconciled from the order record', async () => {
     const f = fakeAster();

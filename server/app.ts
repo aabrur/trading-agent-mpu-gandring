@@ -214,9 +214,10 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const rawVenue = String(req.query.venue ?? cfg.live?.exchange ?? cfg.exchange.name).toLowerCase();
     const venue = (EXCHANGES.includes(rawVenue as ExchangeName) ? rawVenue : cfg.exchange.name) as ExchangeName;
     const network: Network = req.query.network === 'mainnet' || (req.query.network !== 'testnet' && cfg.tradingMode === 'LIVE') ? 'mainnet' : 'testnet';
-    const address = typeof req.query.address === 'string' ? req.query.address.slice(0, 120) : undefined;
+    const rawAddress = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+    const address = /^0x[0-9a-fA-F]{40}$/.test(rawAddress) ? rawAddress : undefined;
     const bal = await wallet.readVenueBalance(venue, network, address);
-    if (bal.ok && bal.equityUsdt != null && cfg.tradingMode !== 'PAPER' && venue === cfg.exchange.name && network === (cfg.tradingMode === 'LIVE' ? 'mainnet' : 'testnet')) {
+    if (bal.ok && bal.equityUsdt != null && Number.isFinite(bal.equityUsdt) && cfg.tradingMode !== 'PAPER' && venue === cfg.exchange.name && network === (cfg.tradingMode === 'LIVE' ? 'mainnet' : 'testnet')) {
       desk.applyVenueBalanceObservation(bal.equityUsdt, bal.availableUsdt ?? bal.equityUsdt);
     }
     res.json(bal);

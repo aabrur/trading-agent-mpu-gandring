@@ -21,7 +21,8 @@ function fakeVenue(agentWorks = true) {
     calls.push({ url, body: String(init.body) });
     if (url.endsWith('/exchange')) { approved = JSON.parse(String(init.body)).action.agentAddress; return new Response(JSON.stringify({ status: 'ok', response: { type: 'default' } })); }
     if (url.endsWith('/info')) return new Response(JSON.stringify(agentWorks ? [{ address: approved, name: 'mpugandring', validUntil: null }] : []));
-    if (url.includes('/registerAndApproveAgent')) return new Response(JSON.stringify({ code: 200, msg: 'success' }));
+    if (url.includes('/fapi/v3/approveAgent')) return new Response(JSON.stringify({ code: 200, msg: 'success' }));
+    if (url.includes('/fapi/v3/account')) return agentWorks ? new Response(JSON.stringify({ canTrade: true, canWithdraw: false, totalMarginBalance: '0', availableBalance: '0' })) : new Response(JSON.stringify({ code: -1000, msg: 'No agent found' }), { status: 400 });
     if (url.includes('/fapi/v3/balance')) return agentWorks ? new Response(JSON.stringify([{ asset: 'USDT', balance: '0' }])) : new Response(JSON.stringify({ code: -1000, msg: 'No agent found' }), { status: 400 });
     return new Response(JSON.stringify({ code: 200, msg: 'success' }));
   }) as unknown as typeof fetch;
@@ -94,25 +95,46 @@ describe('Hyperliquid approveAgent', () => {
   });
 });
 
-describe('Aster registerAndApproveAgent', () => {
-  it('signs the documented message with canWithdraw=false, chain id 56', () => {
-    const a = asterApproval(mainWallet.address, '0x' + '2'.repeat(40), 1700000000000000, 1800000000000);
-    expect(a.msg).toBe(`user=${mainWallet.address}&nonce=1700000000000000&agentName=mpugandring&agentAddress=0x${'2'.repeat(40)}&expired=1800000000000&signatureChainId=56&canSpotTrade=false&canPerpTrade=true&canWithdraw=false&ipWhitelist=`);
+describe('Aster approveAgent', () => {
+  it('signs ApproveAgent with canWithdraw false and chain id 56; signatureChainId is not inside the signature', () => {
+    const agent = '0x' + '2'.repeat(40);
+    const a = asterApproval(mainWallet.address, agent, 1700000000000000, 1800000000000, 'mainnet');
+    expect(a.params.map(([k]) => k)).toEqual(['agentName', 'agentAddress', 'ipWhitelist', 'expired', 'canSpotTrade', 'canPerpTrade', 'canWithdraw', 'asterChain', 'user', 'nonce']);
+    expect(a.typedData.primaryType).toBe('ApproveAgent');
     expect(a.typedData.domain.chainId).toBe(ASTER_SIGNATURE_CHAIN_ID);
+    expect(a.typedData.message).toMatchObject({ AgentName: 'mpugandring', AgentAddress: agent, CanWithdraw: false, CanPerpTrade: true, CanSpotTrade: false, AsterChain: 'Mainnet', User: mainWallet.address, Nonce: 1700000000000000, Expired: 1800000000000 });
+    expect(a.typedData.message).not.toHaveProperty('signatureChainId');
+    expect(asterApproval(mainWallet.address, agent, 1, 2, 'testnet').typedData.message).toMatchObject({ AsterChain: 'Testnet' });
   });
-  it('submits the form and saves ASTER_USER_ADDRESS / ASTER_SIGNER_PRIVATE_KEY', async () => {
+  it('submits approveAgent and saves ASTER_USER_ADDRESS / ASTER_SIGNER_PRIVATE_KEY only after permissions pass', async () => {
     const envFile = path.join(dir, 'aster.env');
     const v = fakeVenue();
     const w = new WalletConnector({ envFile, fetchImpl: v.fetchImpl });
     const s = w.start('aster', 'mainnet', mainWallet.address, 56);
     await w.approve(s.id, await sign(s.typedData));
-    expect(v.calls[0].url).toBe('https://fapi.asterdex.com/fapi/v3/registerAndApproveAgent');
-    const form = new URLSearchParams(v.calls[0].body);
-    expect(form.get('canWithdraw')).toBe('false');
-    expect(form.get('agentAddress')).toBe(s.agentAddress);
-    expect(form.get('signature')).toMatch(/^0x[0-9a-f]{130}$/);
+    const submitted = new URL(v.calls[0].url);
+    expect(submitted.pathname).toBe('/fapi/v3/approveAgent');
+    expect(submitted.searchParams.get('canWithdraw')).toBe('false');
+    expect(submitted.searchParams.get('agentAddress')).toBe(s.agentAddress);
+    expect(submitted.searchParams.get('asterChain')).toBe('Mainnet');
+    expect(submitted.searchParams.get('signatureChainId')).toBe('56');
+    expect(submitted.searchParams.get('signature')).toMatch(/^0x[0-9a-f]{130}$/);
     expect(readFileSync(envFile, 'utf8')).toMatch(/ASTER_SIGNER_PRIVATE_KEY=0x[0-9a-f]{64}/);
-    expect(v.calls.some((c) => c.url.includes('/fapi/v3/balance') && c.url.includes(`signer=${s.agentAddress}`))).toBe(true); // signed read with the NEW agent
+    expect(v.calls.some((c) => c.url.includes('/fapi/v3/account') && c.url.includes('asterChain=Mainnet') && c.url.includes(`signer=${s.agentAddress}`))).toBe(true);
+  });
+  it('reads public Aster USDT when no agent key is saved, and drops a non-finite balance', async () => {
+    const envFile = path.join(dir, 'aster-public.env');
+    writeFileSync(envFile, 'TRADING_MODE=PAPER\n');
+    const fetchImpl = (async (url: string) => {
+      expect(String(url)).toBe('https://tapi.asterdex.com/info');
+      return new Response(JSON.stringify({ result: { perpAssets: [{ asset: 'USDT', walletBalance: '12.5' }] } }));
+    }) as typeof fetch;
+    const w = new WalletConnector({ envFile, fetchImpl });
+    const res = await w.readVenueBalance('aster', 'mainnet', mainWallet.address);
+    expect(res.equityUsdt).toBe(12.5);
+    expect(res.availableUsdt).toBe(12.5);
+    const bad = new WalletConnector({ envFile, fetchImpl: (async () => new Response(JSON.stringify({ result: { perpAssets: [{ asset: 'USDT', walletBalance: 'nope' }] } }))) as typeof fetch });
+    expect((await bad.readVenueBalance('aster', 'mainnet', mainWallet.address)).equityUsdt).toBeNull();
   });
   it('Aster answers {"code":200,"msg":"success"} but then "No agent found": nothing saved, error says so', async () => {
     const envFile = path.join(dir, 'aster-dead.env'); writeFileSync(envFile, 'TRADING_MODE=PAPER\n');

@@ -5,7 +5,24 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DeskState } from '../types';
 import { useI18n } from '../i18n';
 import { fmt } from './format';
-import { browserWallet as eth, disconnectWallet, saveWalletSession, screenAccount, selectWallet, useWalletOptions, useWalletSession } from '../walletSession';
+import { browserWallet as eth, disconnectWallet, saveWalletSession, screenAccount, selectWallet, useWalletOptions, useWalletSession, type BrowserWallet } from '../walletSession';
+
+const BNB_CHAIN_ID = 56;
+async function ensureBnbChain(w: BrowserWallet): Promise<number> {
+  const hex = `0x${BNB_CHAIN_ID.toString(16)}`;
+  const current = Number(await w.request({ method: 'eth_chainId' }));
+  if (current === BNB_CHAIN_ID) return current;
+  try {
+    await w.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] });
+  } catch (e) {
+    const code = (e as { code?: number }).code;
+    if (code !== 4902) throw e;
+    await w.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: 'BNB Smart Chain', nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 }, rpcUrls: ['https://bsc-dataseed.binance.org'], blockExplorerUrls: ['https://bscscan.com'] }] });
+  }
+  const after = Number(await w.request({ method: 'eth_chainId' }));
+  if (after !== BNB_CHAIN_ID) throw new Error('Switch your wallet to BNB Smart Chain, then approve again.');
+  return after;
+}
 
 interface VenueInfo { venue: string; label: string; kind: 'CEX' | 'DEX'; support: 'signature' | 'manual' | 'cex'; steps: string[]; revokeUrl: string | null; docsUrl: string; depositUrl: string; status: string }
 interface WalletState { available: boolean; reason: string; appMode: string; current: string | null; venues: VenueInfo[] }
@@ -62,7 +79,10 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
     fetch(`/api/wallet/balance?${qs.toString()}`)
       .then((r) => r.json())
       .then((d: VenueBalance) => { if (request === balanceRequest.current) setBal(d); })
-      .catch(() => {})
+      .catch(() => {
+        if (request !== balanceRequest.current) return;
+        setBal({ ok: false, venue: targetVenue, label: targetVenue, kind: 'DEX', network: targetNet, configured: false, address: targetAddr || null, equityUsdt: null, availableUsdt: null, depositUrl: '', error: 'Balance could not be read. Refresh to retry.' });
+      })
       .finally(() => { if (request === balanceRequest.current) setBalBusy(false); });
   }, []);
 
@@ -113,8 +133,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
     try {
       const accounts = await w.request({ method: 'eth_accounts' });
       if (!Array.isArray(accounts) || screenAccount(accounts[0]) !== address) throw new Error('Wallet account changed. Reconnect before approving.');
-      const chainId = Number(await w.request({ method: 'eth_chainId' }));
-      if (v.venue === 'aster' && chainId !== 56) throw new Error('Switch your wallet to BNB Smart Chain, then reconnect before approving Aster.');
+      const chainId = v.venue === 'aster' ? await ensureBnbChain(w) : Number(await w.request({ method: 'eth_chainId' }));
       const start = await fetch('/api/wallet/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ venue: v.venue, network, mainAddress: address, chainId }) }).then((r) => r.json());
       if (!start.ok) throw new Error(start.error);
       setAgent(start.agentAddress);
@@ -155,18 +174,19 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
       <div className="venue-balance-box">
         <div className="venue-balance-head">
           <b>{v.label} · {network.toUpperCase()} {t('venueBalanceTitle')}</b>
-          <button className="mini" disabled={balBusy} onClick={() => loadBalance(v.venue, network, address)}>
-            {balBusy ? '...' : t('refreshBalance')}
+          <button className="mini" disabled={balBusy} aria-busy={balBusy} onClick={() => loadBalance(v.venue, network, address)}>
+            {balBusy ? '…' : t('refreshBalance')}
           </button>
         </div>
         {bal && bal.equityUsdt !== null ? (
           <div className="venue-balance-stats">
             <span>{t('equityUsdt')}: <b>{fmt(bal.equityUsdt)} USDT</b></span>
             <span>{t('availableUsdt')}: <b>{bal.availableUsdt == null ? 'Unknown' : fmt(bal.availableUsdt)} USDT</b></span>
-            {bal.address && <code>{bal.address.slice(0, 6)}...{bal.address.slice(-4)}</code>}
+            {bal.address && <code translate="no">{bal.address.slice(0, 6)}…{bal.address.slice(-4)}</code>}
+            {bal.note && <p className="wallet-note small" role="status">{bal.note}</p>}
           </div>
         ) : (
-          <p className="wallet-note small">{bal?.error ? bal.error : (bal?.note ?? t('notConnectedBalance'))}</p>
+          <p className="wallet-note small" role="status">{bal?.error ? bal.error : (bal?.note ?? t('notConnectedBalance'))}</p>
         )}
       </div>
 

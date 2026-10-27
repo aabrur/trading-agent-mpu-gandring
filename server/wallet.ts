@@ -14,7 +14,7 @@ import { readEnv, setEnv } from '../cli/envfile.js';
 import { registerSecrets } from './redact.js';
 import { looksLikeSeed } from './live/steps.js';
 import { HyperliquidAdapter } from './exchange/hyperliquid.js';
-import { AsterAdapter } from './exchange/aster.js';
+import { AsterAdapter, asterChainName } from './exchange/aster.js';
 
 export type WalletSupport = 'signature' | 'manual' | 'cex';
 export interface VenueWalletInfo { venue: ExchangeName; label: string; kind: 'CEX' | 'DEX'; support: WalletSupport; steps: string[]; revokeUrl: string | null; docsUrl: string; depositUrl: string }
@@ -28,7 +28,7 @@ export const WALLET_GUIDE: Record<ExchangeName, Omit<VenueWalletInfo, 'venue' | 
   hyperliquid: { support: 'signature', revokeUrl: 'https://app.hyperliquid.xyz/API', docsUrl: 'https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/nonces-and-api-wallets', depositUrl: 'https://app.hyperliquid.xyz/portfolio',
     steps: ['Connect your wallet: main address is read for display only.', 'The app makes a fresh agent key on this computer and shows its address.', 'Sign "ApproveAgent" in your wallet. Agent wallets can trade but cannot withdraw.', 'The agent key and your main address are saved to .env with chmod 600. Restart the office to use them.'] },
   aster: { support: 'signature', revokeUrl: 'https://www.asterdex.com/en/api-wallet', docsUrl: 'https://github.com/asterdex/api-docs', depositUrl: 'https://www.asterdex.com/en/portfolio',
-    steps: ['Connect your wallet on BNB Chain: Aster signs approvals with chain id 56.', 'The app makes a fresh agent key on this computer and shows its address.', 'Sign the registerAndApproveAgent message: perp trading on, spot off, withdraw OFF forced.', 'The agent key and your main address are saved to .env with chmod 600. Restart the office to use them.'] },
+    steps: ['Connect your wallet. Approval switches it to BNB Chain (chain id 56).', 'The app makes a fresh agent key on this computer and shows its address.', 'Sign ApproveAgent: perp trading on, spot off, withdraw OFF forced. The signature does not include a withdraw permission.', 'The agent key and your main address are saved to .env with chmod 600. Restart the office to use them.'] },
   dydx: { support: 'manual', revokeUrl: 'https://dydx.trade', docsUrl: 'https://help.dydx.trade/en/articles/267486-api-trading-keys-creating-a-new-key-on-the-front-end', depositUrl: 'https://dydx.trade/portfolio',
     steps: ['dYdX has no browser-signature agent approval this app can use.', 'In the dYdX app open More, API Trading Keys, and create a key: trade only.', 'Copy your dydx1 address, the API key private key and the authenticator id.', 'Run npm run setup, pick dydx, paste them. Also run npm install @dydxprotocol/v4-client-js.'] },
   paradex: { support: 'manual', revokeUrl: 'https://app.paradex.trade', docsUrl: 'https://docs.paradex.trade/api/general-information/api-authentication', depositUrl: 'https://app.paradex.trade/portfolio',
@@ -81,18 +81,49 @@ export function hyperliquidApproval(network: Network, agentAddress: string, chai
   return { action, typedData, nonce };
 }
 
-/** Aster registerAndApproveAgent: canWithdraw is always false, spot off, perp on. */
-export function asterApproval(user: string, agentAddress: string, nonce = Date.now() * 1000, expiredMs = Date.now() + 180 * 86_400_000) {
+/**
+ * Aster POST /fapi/v3/approveAgent. The wallet signs ApproveAgent (chain id 56).
+ * Field names are capitalized in the typed data only. signature and signatureChainId are added after signing.
+ * canWithdraw is always false, spot off, perp on.
+ */
+export function asterApproval(user: string, agentAddress: string, nonce = Date.now() * 1000, expiredMs = Date.now() + 180 * 86_400_000, network: Network = 'mainnet') {
+  const asterChain = asterChainName(network);
   const params: [string, string][] = [
-    ['user', user], ['nonce', String(nonce)], ['agentName', AGENT_NAME], ['agentAddress', agentAddress], ['expired', String(expiredMs)],
-    ['signatureChainId', String(ASTER_SIGNATURE_CHAIN_ID)], ['canSpotTrade', 'false'], ['canPerpTrade', 'true'], ['canWithdraw', 'false'], ['ipWhitelist', '']
+    ['agentName', AGENT_NAME], ['agentAddress', agentAddress], ['ipWhitelist', ''], ['expired', String(expiredMs)],
+    ['canSpotTrade', 'false'], ['canPerpTrade', 'true'], ['canWithdraw', 'false'],
+    ['asterChain', asterChain], ['user', user], ['nonce', String(nonce)]
   ];
-  const msg = params.map(([k, v]) => `${k}=${v}`).join('&');
-  const typedData: TypedData = { domain: { name: 'AsterSignTransaction', version: '1', chainId: ASTER_SIGNATURE_CHAIN_ID, verifyingContract: ZERO }, types: { Message: [{ name: 'msg', type: 'string' }] }, primaryType: 'Message', message: { msg } };
-  return { params, msg, typedData };
+  const message = {
+    AgentName: AGENT_NAME, AgentAddress: agentAddress, IpWhitelist: '', Expired: expiredMs,
+    CanSpotTrade: false, CanPerpTrade: true, CanWithdraw: false, AsterChain: asterChain, User: user, Nonce: nonce
+  };
+  const typedData: TypedData = {
+    domain: { name: 'AsterSignTransaction', version: '1', chainId: ASTER_SIGNATURE_CHAIN_ID, verifyingContract: ZERO },
+    types: { ApproveAgent: [
+      { name: 'AgentName', type: 'string' }, { name: 'AgentAddress', type: 'string' }, { name: 'IpWhitelist', type: 'string' },
+      { name: 'Expired', type: 'uint256' }, { name: 'CanSpotTrade', type: 'bool' }, { name: 'CanPerpTrade', type: 'bool' },
+      { name: 'CanWithdraw', type: 'bool' }, { name: 'AsterChain', type: 'string' }, { name: 'User', type: 'string' }, { name: 'Nonce', type: 'uint256' }
+    ] },
+    primaryType: 'ApproveAgent', message
+  };
+  return { params, typedData };
 }
 
+const ASTER_INFO = 'https://tapi.asterdex.com/info';
 const HL_BASE: Record<Network, string> = { mainnet: 'https://api.hyperliquid.xyz', testnet: 'https://api.hyperliquid-testnet.xyz' };
+function screenUsdt(n: unknown): number | null {
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+/** Public Aster perp USDT. No key. Mainnet info RPC only; a testnet address is a different book. */
+async function readAsterPublic(f: FetchLike, address: string): Promise<{ equityUsdt: number; availableUsdt: number } | null> {
+  const r = await httpJson(f, ASTER_INFO, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'aster_getBalance', params: [address, 'latest'] }) });
+  const assets = r?.result?.perpAssets;
+  if (!Array.isArray(assets)) return null;
+  const row = assets.find((a: { asset?: string }) => a?.asset === 'USDT');
+  const equityUsdt = Number(row?.walletBalance);
+  if (!Number.isFinite(equityUsdt)) return null;
+  return { equityUsdt, availableUsdt: equityUsdt };
+}
 const ASTER_BASE: Record<Network, string> = { mainnet: 'https://fapi.asterdex.com', testnet: 'https://fapi.asterdex-testnet.com' };
 
 export class WalletConnector {
@@ -114,7 +145,7 @@ export class WalletConnector {
       const a = hyperliquidApproval(network, agentAddress, chainId, this.now());
       typedData = a.typedData; submit = { action: a.action, nonce: a.nonce };
     } else {
-      const a = asterApproval(mainAddress, agentAddress, this.now() * 1000);
+      const a = asterApproval(mainAddress, agentAddress, this.now() * 1000, this.now() + 180 * 86_400_000, network);
       typedData = a.typedData; submit = { params: a.params };
     }
     this.pending.set(id, { id, venue: venue as 'hyperliquid' | 'aster', network, main: mainAddress as Hex, agentKey, agentAddress, typedData, submit, until: this.now() + PENDING_TTL_MS });
@@ -134,8 +165,8 @@ export class WalletConnector {
       const r = await httpJson(f, `${HL_BASE[p.network]}/exchange`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...p.submit, signature: sig }) });
       if (r?.status !== 'ok') throw new Error(`Hyperliquid refused the approval: ${typeof r?.response === 'string' ? r.response : JSON.stringify(r).slice(0, 160)}`);
     } else {
-      const body = new URLSearchParams([...(p.submit.params as [string, string][]), ['signature', signature]]);
-      const r = await httpJson(f, `${process.env[p.network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'] || ASTER_BASE[p.network]}/fapi/v3/registerAndApproveAgent`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
+      const body = new URLSearchParams([...(p.submit.params as [string, string][]), ['signature', signature], ['signatureChainId', String(ASTER_SIGNATURE_CHAIN_ID)]]);
+      const r = await httpJson(f, `${process.env[p.network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'] || ASTER_BASE[p.network]}/fapi/v3/approveAgent?${body.toString()}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
       if (r && typeof r.code === 'number' && r.code < 0) throw new Error(`Aster refused the approval: ${r.msg ?? r.code}`);
     }
     // The venue saying "success" is not enough: prove the new agent key works with a signed read before saving anything.
@@ -152,7 +183,7 @@ export class WalletConnector {
     this.pending.delete(id);
     return { ok: true, venue: p.venue, network: p.network, agentAddress: p.agentAddress, mainAddress: p.main, saved: [n.key, n.secret, 'EXCHANGE', ...Object.keys(extra)], note: `Saved to ${this.opts.envFile} (chmod 600). Restart the office (or npm run trade) to use it. Revoke any time: ${WALLET_GUIDE[p.venue].revokeUrl}` };
   }
-  /** Signed read with the NEW agent key (Hyperliquid: approved agent list; Aster: signed balance read, then the withdraw flag). */
+  /** Signed read with the NEW agent key (Hyperliquid and Aster: permissions(), which refuses a withdraw-capable key). */
   private async verifyAgent(p: Pending, f: FetchLike): Promise<{ ok: boolean; detail: string; guard?: string }> {
     const tries = Math.max(1, this.opts.verifyTries ?? 3);
     const sleep = this.opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -165,10 +196,10 @@ export class WalletConnector {
           if (perm.ok) return { ok: true, detail: perm.detail };
           last = perm.detail;
         } else {
-          const a = new AsterAdapter(p.network, p.main, p.agentKey, f, process.env[p.network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL']);
-          const ping = await a.ping();
-          if (ping.ok) return { ok: true, detail: ping.detail };
-          last = ping.detail;
+          const a = new AsterAdapter(p.network, p.main, p.agentKey, f, process.env[p.network === 'testnet' ? 'ASTER_TESTNET_BASE_URL' : 'ASTER_BASE_URL'], p.agentAddress);
+          const perm = await a.permissions();
+          if (perm.ok) return { ok: true, detail: perm.detail };
+          last = perm.detail;
         }
       } catch (e) { last = (e as Error).message; }
     }
@@ -197,9 +228,11 @@ export class WalletConnector {
         savedPass = getVar(altNames.passphrase);
       }
     }
-    const addr = (address || '').trim() || (VENUE_KIND[venue] === 'DEX' ? savedKey : '');
+    const rawAddr = (address || '').trim();
+    const addr = (/^0x[0-9a-fA-F]{40}$/.test(rawAddr) ? rawAddr : '') || (VENUE_KIND[venue] === 'DEX' && /^0x[0-9a-fA-F]{40}$/.test(savedKey) ? savedKey : '');
     const depositUrl = WALLET_GUIDE[venue].depositUrl;
     const base = { venue, label: VENUE_LABEL[venue], kind: VENUE_KIND[venue], network: activeNet, depositUrl };
+    const pack = (row: { ok: boolean; configured: boolean; address: string | null; equityUsdt: number | null; availableUsdt: number | null; note?: string; error?: string }) => ({ ...base, ...row, equityUsdt: screenUsdt(row.equityUsdt), availableUsdt: screenUsdt(row.availableUsdt) });
 
     if (venue === 'hyperliquid' && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
       try {
@@ -207,9 +240,9 @@ export class WalletConnector {
         if (s?.marginSummary?.accountValue == null || s?.withdrawable == null) throw new Error('Incomplete venue balance response');
         const equityUsdt = Number(s.marginSummary.accountValue);
         const availableUsdt = Number(s?.withdrawable ?? 0);
-        return { ok: true, ...base, configured: true, address: addr, equityUsdt, availableUsdt };
+        return pack({ ok: true, configured: true, address: addr, equityUsdt, availableUsdt });
       } catch (e) {
-        return { ok: true, ...base, configured: true, address: addr, equityUsdt: null, availableUsdt: null, note: (e as Error).message };
+        return pack({ ok: true, configured: true, address: addr, equityUsdt: null, availableUsdt: null, note: (e as Error).message });
       }
     }
 
@@ -217,27 +250,39 @@ export class WalletConnector {
       try {
         const adapter = makeAdapter(venue, activeNet, { key: savedKey, secret: savedSecret, passphrase: savedPass || undefined }, f);
         const b = await adapter.balance();
-        return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: b.equityUsdt, availableUsdt: b.availableUsdt };
+        return pack({ ok: true, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: b.equityUsdt, availableUsdt: b.availableUsdt });
       } catch (e) {
-        return { ok: true, ...base, configured: true, address: VENUE_KIND[venue] === 'DEX' ? savedKey : null, equityUsdt: null, availableUsdt: null, note: (e as Error).message };
+        const note = (e as Error).message;
+        if (venue === 'aster' && activeNet === 'mainnet' && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
+          const pub = await readAsterPublic(f, addr).catch(() => null);
+          if (pub) return pack({ ok: true, configured: true, address: addr, ...pub, note });
+        }
+        return pack({ ok: true, configured: true, address: VENUE_KIND[venue] === 'DEX' ? (addr || savedKey) : null, equityUsdt: null, availableUsdt: null, note });
+      }
+    }
+
+    if (venue === 'aster' && activeNet === 'mainnet' && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
+      try {
+        const pub = await readAsterPublic(f, addr);
+        if (pub) return pack({ ok: true, configured: true, address: addr, ...pub, note: 'Public Aster balance. Approve the agent before this desk can trade it.' });
+      } catch (e) {
+        return pack({ ok: true, configured: true, address: addr, equityUsdt: null, availableUsdt: null, note: (e as Error).message });
       }
     }
 
     if (VENUE_KIND[venue] === 'DEX' && addr.length >= 10) {
-      return {
+      return pack({
         ok: true,
-        ...base,
         configured: true,
         address: addr,
         equityUsdt: null,
         availableUsdt: null,
         note: 'Wallet connected. Approve agent key or deposit funds on this venue to trade.'
-      };
+      });
     }
 
-    return {
+    return pack({
       ok: true,
-      ...base,
       configured: false,
       address: addr || null,
       equityUsdt: null,
@@ -245,7 +290,7 @@ export class WalletConnector {
       note: VENUE_KIND[venue] === 'DEX'
         ? 'Connect wallet or configure your agent key in Setup to read live balance on this DEX.'
         : 'Configure your trade-only API key in Setup to read live balance on this exchange.'
-    };
+    });
   }
   /** For tests only. */
   peek(id: string) { const p = this.pending.get(id); return p ? { agentAddress: p.agentAddress, main: p.main, typedData: p.typedData, submit: p.submit } : null; }

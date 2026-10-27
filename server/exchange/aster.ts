@@ -9,11 +9,14 @@ import { readEnv } from '../../cli/envfile.js';
 // EXPERIMENTAL, UNTESTED against a real account. Aster perpetual futures, API v3, one-way mode.
 // Docs: https://github.com/asterdex/api-docs (V3 Futures), https://asterdex.github.io/aster-api-website/asterCode/authentication/
 // Auth: the main wallet ADDRESS (public, "user") plus a Pro API agent wallet ("signer") private key.
-// Every signed request sends user, signer, nonce (microseconds) and an EIP-712 signature over the exact
-// query string (domain AsterSignTransaction, version 1, chainId 1666 mainnet / 714 testnet, primaryType Message{msg}).
+// Trading reads and orders send asterChain, user, signer, nonce (microseconds) and an EIP-712 signature
+// over that exact query string (domain AsterSignTransaction, version 1, chainId 1666 mainnet / 714 testnet,
+// primaryType Message{msg}). Agent approval is a different signature (ApproveAgent, chain id 56).
 // The main wallet key is refused. Stops are STOP_MARKET closePosition orders resting on Aster.
 
 export const ASTER_CHAIN_ID: Record<Network, number> = { mainnet: 1666, testnet: 714 };
+/** Name Aster puts in every signed request so the agent lookup hits the right registry. */
+export const asterChainName = (network: Network) => (network === 'mainnet' ? 'Mainnet' : 'Testnet');
 const BASE: Record<Network, string> = { mainnet: 'https://fapi.asterdex.com', testnet: 'https://fapi.asterdex-testnet.com' };
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -49,7 +52,7 @@ export class AsterAdapter implements ExchangeAdapter {
     const envKey = network === 'testnet' ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED' : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
     const fromEnv = () => { try { const e = readEnv(process.env.DOTENV_PATH || '.env') as Record<string, string>; return e[envKey] ?? e.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ?? ''; } catch { return ''; } };
     const rawPin = pinnedAgent !== undefined ? pinnedAgent : (fromEnv() || process.env[envKey] || process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED || '');
-    this.pinnedAgent = (pinnedAgent !== undefined ? rawPin : this.account.address).trim();
+    this.pinnedAgent = rawPin.trim();
   }
   get signerAddress() { return this.account.address; }
 
@@ -57,7 +60,8 @@ export class AsterAdapter implements ExchangeAdapter {
   async signedQuery(params: Record<string, string | number | boolean | undefined>, nonce = asterNonce()) {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== undefined) q.append(k, String(v));
-    q.append('nonce', String(nonce)); q.append('user', this.user); q.append('signer', this.account.address);
+    // Official order: business params, then asterChain, user, signer, nonce. The signed string is this query.
+    q.append('asterChain', asterChainName(this.network)); q.append('user', this.user); q.append('signer', this.account.address); q.append('nonce', String(nonce));
     const msg = q.toString();
     const signature = await this.account.signTypedData({
       domain: { name: 'AsterSignTransaction', version: '1', chainId: ASTER_CHAIN_ID[this.network], verifyingContract: ZERO },
@@ -79,7 +83,13 @@ export class AsterAdapter implements ExchangeAdapter {
       return { ok: false, canWithdraw: true, canTrade: true, verified: true, detail: 'this is the MAIN wallet key, not a Pro API agent wallet. Refusing. Create an API wallet (asterdex.com/en/api-wallet, Pro API) with withdraw off and use that key.' };
     }
     // Account flags read with the agent signature. canWithdraw here is the ACCOUNT flag ("can transfer out asset").
-    const r = await this.req('GET', '/fapi/v3/account');
+    let r: any;
+    try { r = await this.req('GET', '/fapi/v3/account'); }
+    catch (e) {
+      const msg = (e as Error).message;
+      if (/no agent found/i.test(msg)) return { ok: false, canWithdraw: null, canTrade: false, verified: true, detail: `agent ${this.account.address} is not an approved agent of ${this.user}. Aster says No agent found. Approve this agent from Connect wallet (BNB Chain), then restart.` };
+      throw e;
+    }
     const canWithdraw = r?.canWithdraw === false ? false : r?.canWithdraw === true ? true : null;
     const canTrade = r?.canTrade !== false;
     const detail = `agent ${this.account.address} for ${this.user}; account reports canTrade ${String(r?.canTrade)}, canWithdraw ${String(r?.canWithdraw)}`;
