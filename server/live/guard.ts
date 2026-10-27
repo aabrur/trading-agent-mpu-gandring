@@ -27,6 +27,11 @@ export function checkTradingMode(env: NodeJS.ProcessEnv, mode: TradingMode): Mod
   return { ok: reasons.length === 0, reasons, exchange: ex.name, experimental };
 }
 
+/** Aster looked up this signer and does not have it. The office can open so the owner can approve the agent. Trading stays off. */
+export function opensOfficeForApproval(detail: string): boolean {
+  return /No agent found/i.test(detail);
+}
+
 /** Asks the exchange. LIVE needs a verified answer; any key that can withdraw is refused in every mode. */
 export async function verifyKey(adapter: ExchangeAdapter): Promise<{ ok: boolean; detail: string; perm: PermissionReport | null }> {
   let perm: PermissionReport;

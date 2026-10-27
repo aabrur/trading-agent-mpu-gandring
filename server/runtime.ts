@@ -3,7 +3,7 @@ import { createApp } from './app.js';
 import { log, safe } from './redact.js';
 import { exchangeSettings, makeAdapter } from './exchange/index.js';
 import { LiveExecutor } from './live/executor.js';
-import { verifyKey, networkFor } from './live/guard.js';
+import { verifyKey, networkFor, opensOfficeForApproval } from './live/guard.js';
 import { DEFAULT_KILL_FILE, readKill } from './killswitch.js';
 import { readEnv } from '../cli/envfile.js';
 import { getSessionLogger, recordDiagnostic, registerDiagnosticSecrets } from './session-log.js';
@@ -33,6 +33,7 @@ export async function startServer() {
     providers: Object.fromEntries(Object.entries(cfg.agents).map(([id, agent]) => [id, { provider: agent.provider, model: agent.model, fellBackToMock: agent.fellBackToMock }])),
     configFingerprint: configurationFingerprint({ mode: cfg.tradingMode, appMode: cfg.appMode, exchange: cfg.exchange.name, paper: cfg.paper, risk: cfg.risk, auto: cfg.auto }) });
   let executor: LiveExecutor | null = null;
+  let tradingHeld = '';
   const net = networkFor(cfg.tradingMode);
   if (net) {
     // Automatic guard on every start: the exchange must say this key cannot withdraw.
@@ -42,16 +43,22 @@ export async function startServer() {
       const v = await verifyKey(adapter);
       if (!v.ok) {
         recordDiagnostic({ source: 'startup', category: 'SESSION', eventName: 'startup.permission_refused', status: 'refused', level: 'ERROR', message: v.detail });
-        console.error(`[trading-agent-mpu-gandring] ${cfg.tradingMode} refused at startup: ${v.detail}`);
-        process.exitCode = 2;
-        return;
+        if (!opensOfficeForApproval(v.detail)) {
+          console.error(`[trading-agent-mpu-gandring] ${cfg.tradingMode} refused at startup: ${v.detail}`);
+          process.exitCode = 2;
+          return;
+        }
+        tradingHeld = v.detail;
+        console.error(`[trading-agent-mpu-gandring] ${cfg.tradingMode} trading is off: ${v.detail}`);
+        console.error('[trading-agent-mpu-gandring] The office will open so you can approve this agent. No orders will be sent. After Aster accepts the agent, restart.');
+      } else {
+        executor = new LiveExecutor(adapter, 1200, `data/execution-${ex.name}-${net}.json`);
+        if (v.perm?.exception) log(`[withdraw guard] ${safe(v.perm.exception)}`);
+        log(`${cfg.tradingMode} on ${ex.name}: ${v.detail}`);
+        // Every open position must have its stop resting ON THE EXCHANGE, so it stays protected while this computer is off.
+        const pct = Math.min(20, Math.max(0.5, Number(process.env.PROTECT_STOP_PCT ?? 3) || 3));
+        for (const n of await executor.ensureProtection(executor.knownProtection(), pct)) log(`[startup protection] ${n}`);
       }
-      executor = new LiveExecutor(adapter, 1200, `data/execution-${ex.name}-${net}.json`);
-      if (v.perm?.exception) log(`[withdraw guard] ${safe(v.perm.exception)}`);
-      log(`${cfg.tradingMode} on ${ex.name}: ${v.detail}`);
-      // Every open position must have its stop resting ON THE EXCHANGE, so it stays protected while this computer is off.
-      const pct = Math.min(20, Math.max(0.5, Number(process.env.PROTECT_STOP_PCT ?? 3) || 3));
-      for (const n of await executor.ensureProtection(executor.knownProtection(), pct)) log(`[startup protection] ${n}`);
     } catch (e) {
       recordDiagnostic({ source: 'startup', category: 'SESSION', eventName: 'startup.exchange_failed', status: 'failed', level: 'ERROR', message: 'Exchange startup failed', details: { error: e } });
       console.error(`[trading-agent-mpu-gandring] ${cfg.tradingMode} refused at startup: ${safe((e as Error).message)}`);
@@ -67,7 +74,8 @@ export async function startServer() {
   server.listen(cfg.port, cfg.host, () => {
     recordDiagnostic({ source: 'server', category: 'SESSION', eventName: 'service.ready', status: 'ready', message: 'Office services ready', details: { host: cfg.host, port: (server.address() as import('node:net').AddressInfo)?.port } });
     log(`Trading Agent Mpu Gandring backend on http://${cfg.host}:${cfg.port} (mode ${cfg.tradingMode}, app ${cfg.appMode}, market ${cfg.marketSource}, bridge ${cfg.bridge.enabled ? 'on' : 'off'})`);
-    if (cfg.tradingMode === 'LIVE') log('LIVE TRADING IS ON. Real money, full auto. Kill switch: POST /api/kill or the red button in the office.');
+    if (tradingHeld) log('Trading is off until this agent is approved. Connect wallet, approve the agent, then restart.');
+    else if (cfg.tradingMode === 'LIVE') log('LIVE TRADING IS ON. Real money, full auto. Kill switch: POST /api/kill or the red button in the office.');
     for (const [id, a] of Object.entries(cfg.agents)) log(`  ${id.padEnd(10)} ${a.provider}/${a.model}${a.fellBackToMock ? '  (no key found, using mock)' : ''}`);
     desk.start();
     auto.start();

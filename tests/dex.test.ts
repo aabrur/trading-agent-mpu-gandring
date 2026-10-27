@@ -9,7 +9,7 @@ import { AsterAdapter, ASTER_CHAIN_ID } from '../server/exchange/aster.js';
 import { OrderlyAdapter, parseOrderlySecret } from '../server/exchange/orderly.js';
 import { ParadexAdapter, chainNumber } from '../server/exchange/paradex.js';
 import { DydxAdapter, dydxAddressOf, dydxClientId, flattenAuthenticator } from '../server/exchange/dydx.js';
-import { verifyKey } from '../server/live/guard.js';
+import { opensOfficeForApproval, verifyKey } from '../server/live/guard.js';
 import { LiveExecutor } from '../server/live/executor.js';
 import { fakeAster, fakeOrderly, fakeParadex, fakeDydx } from './dexfakes.js';
 
@@ -43,6 +43,8 @@ describe('Aster (EXPERIMENTAL, mocked)', () => {
     expect(v.ok).toBe(false);
     expect(v.detail).toMatch(/No agent found/);
     expect(v.detail).not.toMatch(/could not read key permissions/);
+    expect(opensOfficeForApproval(v.detail)).toBe(true);
+    expect(opensOfficeForApproval('REFUSED: key HAS withdraw permission. Use a key with trading only, withdrawals off.')).toBe(false);
   });
   it('opens with a closePosition STOP_MARKET (and TP) resting on the exchange, reconciled from the order record', async () => {
     const f = fakeAster();

@@ -24,7 +24,7 @@ import { parseCommand, authorizedChatCommand, HELP, normSymbol, type Command } f
 import { sendToGrokBot } from './bridge.js';
 import { safe, log } from './redact.js';
 import { LiveExecutor } from './live/executor.js';
-import { networkFor } from './live/guard.js';
+import { networkFor, verifyKey } from './live/guard.js';
 import { exchangeSettings, makeAdapter, type FetchLike } from './exchange/index.js';
 import type { ClosedTrade } from './types.js';
 import { Learnings, type LessonInput } from './learnings.js';
@@ -1533,6 +1533,8 @@ export class Desk extends EventEmitter {
     this.checkpoint();
     if (net && ex.name && ex.creds[net]) {
       const adapter = makeAdapter(ex.name, net, ex.creds[net]!, fetchImpl);
+      const verdict = await verifyKey(adapter);
+      if (!verdict.ok) throw new Error(verdict.detail);
       const journalPath = process.env.VITEST ? undefined : `data/execution-${ex.name}-${net}.json`;
       executor = new LiveExecutor(adapter, 1200, journalPath);
     } else if (!net) executor = null;
