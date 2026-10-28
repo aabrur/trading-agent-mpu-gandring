@@ -96,23 +96,51 @@ export function allowed(list: readonly string[], id: string | number | null | un
   return v !== '' && list.includes(v);
 }
 
-const fmt = (n: number) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : 0);
+const fmt = (n: number) => Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'unavailable';
+const signed = (n: number) => `${n > 0 ? '+' : ''}${fmt(n)}`;
 
 export function statusText(desk: Desk): string {
   const s = desk.snapshot();
   const scan = desk.lastScan?.findings.filter((f) => f.level === 'warn' || f.level === 'alert') ?? [];
+  const slots = s.accountState;
   return safe([
-    `Desk Lead status: ${s.mode}${s.venue ? ` on ${s.venue.label}` : ''}${s.killed ? ', KILL SWITCH ON' : ''}${s.paused ? ', paused' : ''}.`,
-    `Equity ${fmt(s.paper.equity)} USDT, balance ${fmt(s.paper.balance)}, safety net ${fmt(s.paper.safetyNet)}, open positions ${s.paper.positions.length}.`,
-    `Daily loss stop ${s.dailyLoss.hit ? 'HIT' : 'not hit'} (limit ${s.dailyLoss.limitPct}%). Auto trading ${s.auto.on ? 'on' : 'off'}.`,
-    scan.length ? `Open findings: ${scan.map((f) => `[${f.level}] ${f.text}`).join(' | ')}` : 'No open warnings.'
+    `🧭 Desk Lead status: ${s.mode}`,
+    'Trading Agent Mpu Gandring',
+    '',
+    'DESK',
+    `Venue: ${s.venue?.label ?? 'Not configured'}`,
+    `Auto trading: ${s.auto.on ? 'ON' : 'OFF'} · Desk: ${s.killed ? 'STOPPED' : s.paused ? 'PAUSED' : 'ACTIVE'}`,
+    `Entry quality: ${desk.cfg.risk.minEntryConfidencePct}% · Position limit: ${s.paper.n}`,
+    '',
+    'CAPITAL · USDT',
+    `Equity: ${fmt(s.paper.equity)} · Balance: ${fmt(s.paper.balance)}`,
+    `Safety net: ${fmt(s.paper.safetyNet)}`,
+    `Money Trade: ${fmt(s.paper.moneyTrade)} · Per order: ${fmt(s.paper.perOrder)}`,
+    `Unrealized PnL: ${signed(s.paper.unrealized)}`,
+    '',
+    'POSITIONS & GUARDS',
+    `Open positions: ${s.paper.positions.length} · Occupied slots: ${slots.occupiedSlots}/${s.paper.n} · Free: ${slots.freeSlots}`,
+    `Account observation: ${slots.status} (${slots.source})`,
+    `Kill switch: ${s.killed ? 'ON' : 'OFF'}`,
+    `Daily loss stop: ${s.dailyLoss.hit ? 'HIT' : 'not hit'} · Limit: ${s.dailyLoss.limitPct}%`,
+    '',
+    'LAST SCAN',
+    !desk.lastScan ? 'Not run yet. Use /scan for current findings.' : scan.length ? scan.map(f => `• [${f.level.toUpperCase()}] ${f.text}`).join('\n') : 'No open warnings in the last scan.'
   ].join('\n'));
 }
 
 export function positionsText(desk: Desk): string {
   const ps = desk.book.positions;
-  if (!ps.length) return 'No open positions.';
-  return safe(ps.map((p) => `${p.symbol} ${p.side} qty ${p.qty} entry ${p.entry} stop ${p.stop > 0 ? p.stop : 'NONE (alert)'}${p.tp ? ` tp ${p.tp}` : ''}`).join('\n'));
+  const header = `📌 Open positions · ${ps.length}\nTrading Agent Mpu Gandring`;
+  if (!ps.length) return `${header}\n\nNo open positions.`;
+  return safe([header, ...ps.map((p, i) => [
+    `${i + 1}. ${p.symbol} · ${p.side} · ${p.leverage}x`,
+    `Qty: ${p.qty} · Margin: ${fmt(p.margin)} USDT`,
+    `Entry: ${p.entry} · Mark: ${p.mark}`,
+    `SL: ${p.stop > 0 ? p.stop : 'NONE (alert)'} · TP: ${p.tp ?? 'Not set'}`,
+    `Protection: ${desk.cfg.tradingMode === 'PAPER' ? 'Local (PAPER)' : p.protectionStatus === 'confirmed' ? 'Confirmed at last exchange check' : p.protectionStatus === 'missing' ? 'MISSING (alert)' : 'Unverified on exchange'}`,
+    `Unrealized PnL: ${signed(p.unrealizedPnl)} USDT`
+  ].join('\n'))].join('\n\n'));
 }
 
 export function reportText(desk: Desk): string {
@@ -130,8 +158,19 @@ export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void, con
     case 'report': return reportText(desk);
     case 'scan': {
       const findings = proactiveScan(desk);
-      if (!findings.length) return 'Proactive scan: all clear, no open warnings.';
-      return safe(`Proactive Scan Findings:\n${findings.map((f) => `[${f.level.toUpperCase()}] ${f.text}`).join('\n')}`);
+      const sections = [
+        { level: 'alert', label: '🚨 ALERTS' }, { level: 'warn', label: '⚠ WARNINGS' },
+        { level: 'info', label: 'ℹ INFORMATION' }, { level: 'ok', label: '✓ CHECKS' }
+      ] as const;
+      return safe([
+        '🔎 Proactive scan\nTrading Agent Mpu Gandring',
+        `Alerts: ${findings.filter(f => f.level === 'alert').length} · Warnings: ${findings.filter(f => f.level === 'warn').length} · Info: ${findings.filter(f => f.level === 'info').length}`,
+        ...sections.flatMap(section => {
+          const items = findings.filter(f => f.level === section.level);
+          return items.length ? [`${section.label}\n${items.map(f => `• ${f.text}`).join('\n')}`] : [];
+        }),
+        ...(!findings.length ? ['No findings.'] : [])
+      ].join('\n\n'));
     }
     case 'analyze':
     case 'debate': {
@@ -148,7 +187,11 @@ export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void, con
     }
     case 'scorecard': {
       const rows = desk.scorecard.rows();
-      return safe(`Employee Scorecard:\n${rows.map((r) => `• ${r.name}: ${r.note}`).join('\n')}`);
+      return safe([
+        '📊 Employee Scorecard\nTrading Agent Mpu Gandring',
+        'Current session · Scores use recorded outcomes',
+        ...rows.map(r => `${r.name}\nCalls: ${r.calls} · Right: ${r.right} · Wrong: ${r.wrong}\n${r.note}`)
+      ].join('\n\n'));
     }
     case 'lessons': {
       const ls = desk.learnings.recent(5);
