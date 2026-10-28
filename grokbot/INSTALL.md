@@ -8,7 +8,7 @@ You need **no AI model API keys**. Six Grok Bot agents are the employees and the
 
 ## Option A: template (one click)
 
-Open the template link: `https://x.ai/bot/fX91UALWOlFMk_Oj2LBjn`
+Open the template link: `https://x.ai/bot/0C_VPQ2CNYDfzD5kAqK-A`
 
 Send the new bot any first message (for example "hi"). It starts [BOOTSTRAP.md](BOOTSTRAP.md) right away on **its own computer**; you do not paste anything. The installed bot turns itself into the **Head of Trading** and creates the other five, so you get exactly six agents, not seven. Then it clones the repo, saves the two learning skills, creates the group chat, kicks off the five (each posts an intro in the group), starts the office web UI, interviews you once, and asks you to confirm before the desk trades on its own. Only the Head of Trading talks to you; the others work in the group.
 
