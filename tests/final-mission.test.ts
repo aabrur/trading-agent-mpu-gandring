@@ -47,7 +47,7 @@ describe('Final mission decision integrity', () => {
     expect({ risk: cfg.risk, paper: cfg.paper }).toEqual(saved);
     expect(adapter.pos[0].stop).toBeGreaterThan(0);
   });
-  it.each([[60, .599, false], [60, .6, true], [70, .699, false], [70, .7, true], [90, .899, false], [90, .9, true]])('T2 Owner %s and confidence %s: open=%s', async (min, confidence, open) => {
+  it.each([[60, .599, false], [60, .6, true], [70, .69, false], [70, .7, true], [90, .899, false], [90, .9, true]])('T2 Owner %s and confidence %s: open=%s', async (min, confidence, open) => {
     const { desk, adapter } = fixture(Number(min), Number(confidence));
     const result = await desk.runDebate('BTCUSDT');
     expect(result.executed).toBe(open);
@@ -93,6 +93,126 @@ describe('Final mission decision integrity', () => {
     adapter.pos = [{ ...pos, unrealizedPnl: 0 }];
     expect((await desk.runDebate('BTCUSDT')).executed).toBe(false);
     expect(adapter.closes).toBe(0);
+  });
+
+  it.each([2, 3])('closes a verified position with all %s slots occupied despite entry rejection and low confidence', async n => {
+    const { desk, adapter, cfg, call } = fixture(70, .2, true);
+    desk.book.n = n;
+    const original = vi.mocked(call).getMockImplementation()!;
+    vi.mocked(call).mockImplementation(async req => req.task === 'lead'
+      ? JSON.stringify({ action: 'CLOSE', confidence: .2, closeTrigger: 'INVALIDATION_HIT', reason: 'Persisted invalidation breached.' })
+      : req.task === 'risk_assessment' ? JSON.stringify({ decision: 'REJECT', reason: 'CAPACITY_FULL: additional entry has no slot or margin.' }) : original(req));
+    for (let i = 0; i < n; i++) {
+      const pos = desk.book.open({ symbol: i ? `ALT${i}USDT` : 'BTCUSDT', side: 'LONG', qty: 1, entry: 108, stop: 90, tp: 130, margin: 108, leverage: 1 });
+      pos.ownership = 'managed'; pos.invalidationLevel = 110;
+    }
+    adapter.pos = desk.book.positions.map(pos => ({ ...pos, unrealizedPnl: 0 }));
+    vi.spyOn(adapter, 'balance').mockResolvedValue({ equityUsdt: 1000, availableUsdt: 0 });
+    adapter.closeAt = () => 108;
+    const saved = structuredClone({ risk: cfg.risk, paper: cfg.paper, n: desk.book.n });
+    const result = await desk.runDebate('BTCUSDT');
+    expect(result, result.reason).toMatchObject({ action: 'CLOSE', executed: true, closeTrigger: 'INVALIDATION_HIT', riskDecision: 'REJECT' });
+    expect(adapter.closes).toBe(1);
+    expect(adapter.placed).toHaveLength(0);
+    expect(adapter.pos).toHaveLength(n - 1);
+    expect(adapter.pos.every(pos => pos.stop === 90 && pos.tp === 130)).toBe(true);
+    const risk = vi.mocked(call).mock.calls.find(([req]) => req.task === 'risk_assessment')![0];
+    const execution = vi.mocked(call).mock.calls.find(([req]) => req.agent === 'execution')![0];
+    expect(risk.context).toMatchObject({ intent: 'CLOSE_REVIEW', newEntryCapacity: { freeSlots: 0, canOpenNew: false }, closeEligibility: { eligible: true }, protection: { status: 'confirmed', stop: 90, tp: 130 } });
+    expect(execution.context.accountSnapshot).toEqual(risk.context.accountSnapshot);
+    expect(execution.context.intent).toBe(risk.context.intent);
+    expect(execution.context.newEntryCapacity).toEqual(risk.context.newEntryCapacity);
+    expect({ risk: cfg.risk, paper: cfg.paper, n: desk.book.n }).toEqual(saved);
+  });
+
+  it.each([true, false])('opposite OPEN becomes only a verified CLOSE, trigger valid=%s', async valid => {
+    const { desk, adapter, call } = fixture(70, .2);
+    const pos = desk.book.open({ symbol: 'BTCUSDT', side: 'SHORT', qty: 1, entry: 108, stop: 120, tp: 80, margin: 108, leverage: 1 });
+    pos.ownership = 'managed'; pos.invalidationLevel = valid ? 105 : 120;
+    adapter.pos = [{ ...pos, unrealizedPnl: 0 }];
+    const original = vi.mocked(call).getMockImplementation()!;
+    vi.mocked(call).mockImplementation(async req => req.task === 'lead'
+      ? JSON.stringify({ action: 'OPEN_LONG', confidence: .2, closeTrigger: valid ? 'INVALIDATION_HIT' : 'SENTIMENT_REVERSAL', reason: 'Opposite signal.' }) : original(req));
+    const result = await desk.runDebate('BTCUSDT');
+    expect(result.executed, result.reason).toBe(valid);
+    expect(result.action).toBe(valid ? 'CLOSE' : 'HOLD');
+    expect(adapter.closes).toBe(valid ? 1 : 0);
+    expect(adapter.placed).toHaveLength(0);
+    if (!valid) expect(result.reason).toMatch(/No verified CLOSE trigger/);
+  });
+
+  it('scopes a protected full-capacity position without exit evidence to MANAGE_EXISTING', async () => {
+    const { desk, adapter, call } = fixture(70, .2, true);
+    desk.book.n = 2;
+    for (const symbol of ['BTCUSDT', 'ALTUSDT']) {
+      const pos = desk.book.open({ symbol, side: 'LONG', qty: 1, entry: 108, stop: 90, tp: 130, margin: 108, leverage: 1 });
+      pos.ownership = 'managed'; pos.invalidationLevel = 90;
+    }
+    adapter.pos = desk.book.positions.map(pos => ({ ...pos, unrealizedPnl: 0 }));
+    const original = vi.mocked(call).getMockImplementation()!;
+    vi.mocked(call).mockImplementation(async req => req.task === 'lead' ? JSON.stringify({ action: 'HOLD', confidence: .2, reason: 'Existing thesis and protection remain valid.' }) : original(req));
+    const result = await desk.runDebate('BTCUSDT');
+    const context = vi.mocked(call).mock.calls.find(([req]) => req.task === 'risk_assessment')![0].context;
+    expect(context).toMatchObject({ intent: 'MANAGE_EXISTING', closeEligibility: { eligible: false, closeTriggers: [] }, newEntryCapacity: { freeSlots: 0 }, protection: { status: 'confirmed', stop: 90, tp: 130 } });
+    expect(result).toMatchObject({ action: 'HOLD', reason: 'Existing thesis and protection remain valid.', executed: false });
+    expect(adapter.closes).toBe(0);
+  });
+
+  it.each(['absent', 'increased', 'reduced', 'side'] as const)('does not close when the exchange position is %s after the verdict', async change => {
+    const { desk, adapter, call } = fixture(70, .2);
+    const pos = desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 1, entry: 108, stop: 90, tp: 130, margin: 108, leverage: 1 });
+    pos.ownership = 'managed'; pos.invalidationLevel = 110;
+    adapter.pos = [{ ...pos, unrealizedPnl: 0 }];
+    const original = vi.mocked(call).getMockImplementation()!;
+    vi.mocked(call).mockImplementation(async req => {
+      if (req.task !== 'lead') return original(req);
+      if (change === 'absent') adapter.pos = [];
+      else if (change === 'side') adapter.pos = [{ ...adapter.pos[0], side: 'SHORT', stop: 120, tp: 80 }];
+      else adapter.pos[0].qty = change === 'increased' ? 2 : .5;
+      return JSON.stringify({ action: 'CLOSE', confidence: .2, closeTrigger: 'INVALIDATION_HIT', reason: 'Persisted invalidation breached.' });
+    });
+    const result = await desk.runDebate('BTCUSDT');
+    expect(result.executed).toBe(false);
+    expect(result.reason).toMatch(/position.*changed|position already closed/);
+    expect(adapter.closes).toBe(0);
+    expect(adapter.placed).toHaveLength(0);
+  });
+
+  it('rejects CLOSE without a position with the actual reason', async () => {
+    const { desk, adapter, call } = fixture();
+    const original = vi.mocked(call).getMockImplementation()!;
+    vi.mocked(call).mockImplementation(async req => req.task === 'lead' ? JSON.stringify({ action: 'CLOSE', confidence: .2, reason: 'Close it.' }) : original(req));
+    expect(await desk.runDebate('BTCUSDT')).toMatchObject({ action: 'HOLD', executed: false, reason: expect.stringMatching(/No.*position/i) });
+    expect(adapter.closes).toBe(0);
+  });
+
+  it('reports stale venue evidence as unknown CLOSE eligibility and protection', async () => {
+    const { desk, adapter, call } = fixture();
+    const pos = desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 1, entry: 108, stop: 90, tp: 130, margin: 108, leverage: 1 });
+    pos.ownership = 'managed'; pos.invalidationLevel = 110; pos.protectionStatus = 'confirmed';
+    vi.spyOn(adapter, 'balance').mockRejectedValue(new Error('fixture account unavailable'));
+    await desk.runDebate('BTCUSDT');
+    const context = vi.mocked(call).mock.calls.find(([req]) => req.task === 'risk_assessment')![0].context;
+    expect(context).toMatchObject({ positionObservation: 'unknown', closeEligibility: { eligible: false }, protection: { status: 'unknown' } });
+    expect(adapter.closes).toBe(0);
+  });
+
+  it('revalidates net profit before an EARLY_TAKE_PROFIT close', async () => {
+    const { desk, adapter, call, snapshot } = fixture(70, .2);
+    snapshot.tacticalTradePlan!.exhaustion = { present: true, direction: 'BUYER', evidence: ['observed exhaustion'] };
+    const pos = desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 1, entry: 100, stop: 90, tp: 130, margin: 100, leverage: 1 });
+    pos.ownership = 'managed'; pos.invalidationLevel = 90;
+    adapter.pos = [{ ...pos, mark: 108, unrealizedPnl: 8 }];
+    const original = vi.mocked(call).getMockImplementation()!;
+    vi.mocked(call).mockImplementation(async req => {
+      if (req.task !== 'lead') return original(req);
+      adapter.pos[0].unrealizedPnl = -1; adapter.pos[0].mark = 99;
+      return JSON.stringify({ action: 'CLOSE', confidence: .2, closeTrigger: 'EARLY_TAKE_PROFIT', reason: 'Observed exhaustion in profit.' });
+    });
+    const result = await desk.runDebate('BTCUSDT');
+    expect(result).toMatchObject({ action: 'CLOSE', executed: false, executionOutcome: 'EXECUTION_BLOCKED' });
+    expect(adapter.closes).toBe(0);
+    expect(adapter.pos[0]).toMatchObject({ stop: 90, tp: 130 });
   });
 
   it('T6 Owner kill persists its cause and never creates a strategy-loss lesson', async () => {

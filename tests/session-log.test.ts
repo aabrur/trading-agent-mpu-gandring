@@ -2,14 +2,79 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, readdir, rm, writeFile, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { SessionLogger, listSessions, readSessionEvents, readSession, sanitizeDiagnostic, setSessionLogger, recordDiagnostic, registerDiagnosticSecrets } from '../server/session-log.js';
+import { SessionLogger, listSessions, readSessionEvents, readSession, sessionFiles, sanitizeDiagnostic, setSessionLogger, recordDiagnostic, registerDiagnosticSecrets } from '../server/session-log.js';
 import { registerSecrets } from '../server/redact.js';
 
 const roots: string[] = [];
+const metadataFault = vi.hoisted(() => ({ remaining: 0, attempts: 0, onFailure: null as (() => void) | null }));
+vi.mock('node:fs/promises', async original => {
+  const fs = await original<typeof import('node:fs/promises')>();
+  return { ...fs, rename: async (...args: Parameters<typeof fs.rename>) => {
+    if (String(args[1]).endsWith('session.json') && metadataFault.remaining) {
+      metadataFault.remaining--; metadataFault.attempts++;
+      metadataFault.onFailure?.();
+      throw Object.assign(new Error('EPERM: rename session metadata'), { code: 'EPERM' });
+    }
+    return fs.rename(...args);
+  } };
+});
 async function root() { const dir = await mkdtemp(path.join(os.tmpdir(), 'mpu-session-test-')); roots.push(dir); return dir; }
-afterEach(async () => { setSessionLogger(null); vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+afterEach(async () => { metadataFault.remaining = 0; metadataFault.attempts = 0; metadataFault.onFailure = null; setSessionLogger(null); vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
 describe('persistent diagnostic sessions', () => {
+  it('recovers transient metadata EPERM without blocking concurrent updates or losing history', async () => {
+    const dir = await root(), fallback = vi.fn();
+    const logger = await SessionLogger.start({ root: dir, fallback });
+    metadataFault.remaining = 2;
+    let timerRan = false;
+    const timer = setTimeout(() => { timerRan = true; }, 0);
+    logger.updateContext({ mode: 'TESTNET' });
+    const first = logger.flush();
+    logger.updateContext({ mode: 'LIVE', configFingerprint: 'latest' });
+    logger.write({ source: 'fixture', eventName: 'concurrent', message: 'retained event' });
+    expect(await first).toBe(true);
+    expect(await logger.flush()).toBe(true);
+    clearTimeout(timer);
+    expect(timerRan).toBe(true);
+    expect(metadataFault.attempts).toBe(2);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(await readSession(dir, logger.session.sessionId)).toMatchObject({ mode: 'LIVE', configFingerprint: 'latest', lastSequence: logger.session.lastSequence });
+    expect((await readSessionEvents(dir, logger.session.sessionId, {})).events.map(event => event.eventName)).toContain('concurrent');
+    expect((await readdir(logger.directory)).filter(name => name.endsWith('.tmp'))).toHaveLength(0);
+    await logger.finish('CLEAN_SHUTDOWN', 'test');
+  });
+
+  it('reports exhausted metadata EPERM and preserves the last valid readback', async () => {
+    const dir = await root(), fallback = vi.fn();
+    const logger = await SessionLogger.start({ root: dir, fallback });
+    const lastGood = await readFile(path.join(logger.directory, 'session.json'), 'utf8');
+    metadataFault.remaining = 100;
+    logger.updateContext({ mode: 'LIVE' });
+    expect(await logger.flush()).toBe(false);
+    expect(await readFile(path.join(logger.directory, 'session.json'), 'utf8')).toBe(lastGood);
+    expect(logger.session.storageErrors).toBeGreaterThan(0);
+    expect(fallback).toHaveBeenCalledWith(expect.stringMatching(/EPERM/));
+    expect(metadataFault.attempts).toBeLessThanOrEqual(5);
+    expect((await readdir(logger.directory)).filter(name => name.endsWith('.tmp'))).toHaveLength(0);
+    metadataFault.remaining = 0;
+    await logger.finish('CLEAN_SHUTDOWN', 'test');
+  });
+
+  it('keeps synchronous terminal metadata when an older asynchronous writer finishes later', async () => {
+    const dir = await root(), logger = await SessionLogger.start({ root: dir });
+    metadataFault.remaining = 1;
+    const failedRename = new Promise<void>(resolve => { metadataFault.onFailure = resolve; });
+    logger.updateContext({ mode: 'PAPER' });
+    const writing = logger.flush();
+    await failedRename;
+    logger.finishSync('INTERRUPTED', 'fixture interruption');
+    await writing;
+    expect(await readSession(dir, logger.session.sessionId)).toMatchObject({ outcome: 'INTERRUPTED', exitReason: 'fixture interruption', lastSequence: logger.session.lastSequence });
+    const files = await sessionFiles(dir, logger.session.sessionId, 'session');
+    expect(files).toHaveLength(1);
+    expect(JSON.parse(await readFile(files[0], 'utf8'))).toMatchObject({ outcome: 'INTERRUPTED' });
+  });
+
   it('creates distinct durable sessions, writes a clean outcome and retains earlier runs', async () => {
     const dir = await root();
     const first = await SessionLogger.start({ root: dir, entrypoint: 'fixture', version: '0.4.0' });

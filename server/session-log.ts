@@ -1,8 +1,9 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { hostname } from 'node:os';
-import { createReadStream, writeFileSync, renameSync } from 'node:fs';
-import { appendFile, mkdir, readFile, readdir, lstat, realpath, rename, writeFile, open } from 'node:fs/promises';
+import { createReadStream, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { appendFile, mkdir, readFile, readdir, lstat, realpath, rename, writeFile, open, unlink } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { safe, registerSecrets } from './redact.js';
 
@@ -65,8 +66,20 @@ function alive(pid: number) {
 }
 async function atomicMetadata(directory: string, session: SessionSummary) {
   const tmp = path.join(directory, `session.${randomUUID()}.tmp`);
-  await writeFile(tmp, JSON.stringify(sanitizeDiagnostic(session), null, 2) + '\n', { mode: 0o600 });
-  await rename(tmp, path.join(directory, 'session.json'));
+  try {
+    const file = await open(tmp, 'wx', 0o600);
+    try { await file.writeFile(JSON.stringify(sanitizeDiagnostic(session), null, 2) + '\n'); await file.sync(); }
+    finally { await file.close(); }
+    for (let attempt = 0; ; attempt++) {
+      try { await rename(tmp, path.join(directory, 'session.json')); return; }
+      catch (error) {
+        if (attempt >= 4 || !['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        await delay(20 * 2 ** attempt);
+      }
+    }
+  } finally {
+    try { await unlink(tmp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
 }
 
 export class SessionLogger {
@@ -80,6 +93,7 @@ export class SessionLogger {
   private scheduled = false;
   private closed = false;
   private finishPromise: Promise<void> | null = null;
+  private syncFinished = false;
   private bytes = 0;
   private segment = 0;
   private lastFallback = 0;
@@ -210,11 +224,14 @@ export class SessionLogger {
     return this.writer;
   }
   async flush() {
+    const errors = this.session.storageErrors;
     do { await this.drain(); } while (this.queue.length || this.writer);
+    return this.session.storageErrors === errors;
   }
   /** Only process exit/fatal paths use synchronous I/O; never called by execution. */
   finishSync(outcome: SessionOutcome, reason: string) {
-    if (this.session.outcome && !this.queue.length && !this.inFlight.length) return;
+    if (this.syncFinished) return;
+    const tmp = path.join(this.directory, `session.exit.${randomUUID()}.tmp`);
     try {
       this.closed = true;
       const pending = [...this.inFlight, ...this.queue.map(item => item.event)].filter(event => event.sequence > this.session.lastSequence);
@@ -228,10 +245,12 @@ export class SessionLogger {
       this.session.outcome = outcome; this.session.exitReason = text(reason); this.session.endedAt = terminal.timestamp;
       this.session.durationMs = Date.parse(terminal.timestamp) - Date.parse(this.session.startedAt);
       this.session.lastSequence = terminal.sequence;
-      const tmp = path.join(this.directory, 'session.exit.tmp');
       writeFileSync(tmp, JSON.stringify(sanitizeDiagnostic(this.session), null, 2) + '\n', { mode: 0o600 });
-      renameSync(tmp, path.join(this.directory, 'session.json'));
+      // An in-flight async rename must never replace terminal process metadata.
+      renameSync(tmp, path.join(this.directory, 'session.exit.json'));
+      this.syncFinished = true;
     } catch (error) { this.failure(error); }
+    finally { try { unlinkSync(tmp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.failure(error); } }
   }
   finish(outcome: SessionOutcome, reason: string): Promise<void> {
     if (this.finishPromise) return this.finishPromise;
@@ -240,7 +259,7 @@ export class SessionLogger {
     this.session.endedAt = new Date().toISOString(); this.session.outcome = outcome;
     this.session.exitReason = text(reason); this.session.durationMs = Date.parse(this.session.endedAt) - Date.parse(this.session.startedAt);
     this.finishPromise = (async () => {
-      await this.flush();
+      if (await this.flush()) this.syncFinished = true;
       // Normal shutdown explicitly flushes the persisted diagnostic source to the filesystem.
       for (let segment = 0; segment <= this.segment; segment++) {
         const suffix = segment ? `.${String(segment).padStart(5, '0')}` : '';
@@ -278,7 +297,9 @@ export async function sessionDirectory(root: string, sessionId: string) {
   return directory;
 }
 export async function readSession(root: string, sessionId: string): Promise<SessionSummary> {
-  const directory = await sessionDirectory(root, sessionId), file = path.join(directory, 'session.json');
+  const directory = await sessionDirectory(root, sessionId);
+  let file = path.join(directory, 'session.exit.json');
+  try { await lstat(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; file = path.join(directory, 'session.json'); }
   if ((await lstat(file)).isSymbolicLink() || (await lstat(file)).size > 128 * 1024) throw new Error('Invalid session metadata');
   const parsed = JSON.parse(await readFile(file, 'utf8')) as SessionSummary;
   if (parsed.sessionId !== sessionId) throw new Error('Invalid session metadata');
@@ -305,13 +326,14 @@ export async function listSessions(root: string, opts: { limit?: number; cursor?
 }
 export async function sessionFiles(root: string, sessionId: string, kind: 'events' | 'console' | 'errors' | 'session') {
   const directory = await sessionDirectory(root, sessionId);
-  const matcher = kind === 'session' ? /^session\.json$/ : new RegExp(`^${kind}(?:\\.\\d{5})?\\.${kind === 'events' ? 'jsonl' : 'log'}$`);
+  const matcher = kind === 'session' ? /^session(?:\.exit)?\.json$/ : new RegExp(`^${kind}(?:\\.\\d{5})?\\.${kind === 'events' ? 'jsonl' : 'log'}$`);
   const names = (await readdir(directory)).filter(name => matcher.test(name)).sort((a, b) => {
     const number = (v: string) => Number(v.match(/\.(\d{5})\./)?.[1] ?? 0);
     return number(a) - number(b);
   });
   const files: string[] = [];
-  for (const name of names) { const file = path.join(directory, name), stat = await lstat(file); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Invalid session file'); files.push(file); }
+  const selected = kind === 'session' && names.includes('session.exit.json') ? ['session.exit.json'] : names;
+  for (const name of selected) { const file = path.join(directory, name), stat = await lstat(file); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Invalid session file'); files.push(file); }
   return files;
 }
 export async function* diagnosticLines(file: string) {

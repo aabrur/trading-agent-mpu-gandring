@@ -17,7 +17,7 @@ export function researchPolicy(env: NodeJS.ProcessEnv = process.env): ResearchPo
   return ResearchPolicyBody.parse({ enabled: env.LOCAL_CODEX_RESEARCH_TOOLS === 'on', mcpTools });
 }
 export function researchArgs(policy: ResearchPolicy, configuredServers: string[], port = '8787', transports: Record<string, Record<string, unknown>> = {}): string[] {
-  if (!policy.enabled) return ['--disable', 'plugins', '-c', 'mcp_servers={}'];
+  if (!policy.enabled) return ['--disable', 'plugins', '-c', 'web_search="disabled"', '-c', 'mcp_servers={}'];
   const js = fileURLToPath(new URL('../research/mcp.js', import.meta.url));
   const ts = fileURLToPath(new URL('../research/mcp.ts', import.meta.url));
   const brokerArgs = existsSync(js) ? [js] : ['--import', pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href, ts];

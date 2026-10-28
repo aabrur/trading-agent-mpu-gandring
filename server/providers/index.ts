@@ -18,7 +18,7 @@ export interface ModelRequest {
   user: string;
   context: Record<string, unknown>; // structured facts, used by the mock provider
   attempt: number;
-  retryReason?: 'output_limit';
+  retryReason?: 'output_limit' | 'format_repair';
 }
 export type ModelCaller = (req: ModelRequest) => Promise<string>;
 
@@ -62,7 +62,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       case 'mock':
         return mockReply(req);
       case 'local':
-        return runLocalAgent(model, `${system}\n\n${user}`, req.signal, effort, { allowResearch: req.task !== 'chat' || req.context.allowResearch === true });
+        return runLocalAgent(model, `${system}\n\n${user}`, req.signal, effort, { allowResearch: req.retryReason !== 'format_repair' && (req.task !== 'chat' || req.context.allowResearch === true) });
       case 'xai':
       case 'openai':
       case 'deepseek':

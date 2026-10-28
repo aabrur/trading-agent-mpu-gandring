@@ -1086,6 +1086,7 @@ export class Desk extends EventEmitter {
       const researchVote = (newsBriefing.criticalVetoFound && (newsBriefing.providerStatus === 'CONFIGURED_LIVE' || this.cfg.tradingMode === 'PAPER')) ? 'VETO' : (this.cfg.tradingMode === 'PAPER' && rs.data.vote === 'VETO') ? 'VETO' : (rs.data.vote === 'VETO' ? 'ABSTAIN' : rs.data.vote);
       this.setOpinion('research', researchVote === 'LONG' || researchVote === 'SHORT' ? researchVote : 'NEUTRAL', rs.data.confidence);
       await this.say('research', `${researchVote}. ${rs.data.argument}`, rs.example); note('Research Analyst', `${researchVote}. ${rs.data.argument}`);
+      if (rs.data.sources.length) note('Research sources', JSON.stringify({ sources: rs.data.sources, sourceDetails: rs.data.sourceDetails }));
       if (news.some((n) => n.flagged)) this.addLog({ kind: 'warn', text: `Prompt injection line removed from ${symbol} news before any agent saw it.` });
 
       this.setOpinion('strategist', st.data.stance, st.data.confidence);
@@ -1150,9 +1151,8 @@ export class Desk extends EventEmitter {
       this.checkDay();
       if (this.opts.executor) await this.syncLive();
       const { weighted, disagreement, camps } = this.score();
-      const pos = this.book.positions.find((p) => p.symbol === symbol);
+      let pos = this.book.positions.find((p) => p.symbol === symbol);
       const { maxLossPerTradePct: _legacyLoss, minStopPct: _legacyMinStop, takeProfitR: _legacyR, ...entrySettings } = tradingSettingsFromConfig(this.cfg);
-      const slots = this.availableSlots();
       const candidateScenarios = tacticalPlan.scenarios.filter(scenario => scenario.side === st.data.stance);
       const suppliedScenario = tacticalPlan.scenarios.find(scenario => (scenario.id ?? scenario.kind) === st.data.entryScenarioId && scenario.side === st.data.stance) ?? candidateScenarios[0];
       const selectedScenario: EntryScenario | null = !st.fallback && suppliedScenario
@@ -1172,7 +1172,11 @@ export class Desk extends EventEmitter {
         snap = await this.marketSnapshot(symbol, true);
         if (this.opts.executor) await this.syncLive();
       }
-      const evidenceFor = (side: 'LONG' | 'SHORT', scenario: EntryScenario | null = selectedScenario, snapshot = snap) => buildDebateEvidence({
+      // Freeze one current account/position observation for Risk, Execution and Lead.
+      pos = this.book.positions.find(p => p.symbol === symbol);
+      pos = pos ? structuredClone(pos) : undefined;
+      const slots = this.availableSlots();
+      const evidenceFor = (side: 'LONG' | 'SHORT', scenario: EntryScenario | null = selectedScenario, snapshot = snap, executionQuote = nativeQuote) => buildDebateEvidence({
         snapshot,
         side,
         scenario,
@@ -1182,7 +1186,7 @@ export class Desk extends EventEmitter {
         whale: whaleBriefing,
         whalePolicy: WHALE_OBSERVATION_POLICY,
         jev: jevEvidence,
-        nativeExecutionQuote: nativeQuote,
+        nativeExecutionQuote: executionQuote,
         contractMultiplier: nativeRules?.contractMultiplier,
         instrumentSymbol: nativeRules?.symbol ?? symbol
       });
@@ -1197,14 +1201,24 @@ export class Desk extends EventEmitter {
       const specialistExit = st.data.exitSignal ?? mk.data.exitSignal;
       const closeTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, leadClose: specialistExit ? { exitSignal: { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } } : undefined }) : [];
       this.setPhase('risk gate');
-      const sharedRoleEvidence = { symbol, debateEvidence, closeTriggers, position: pos, opinions: DEBATERS.map(agent => ({ agent, stance: this.agents[agent].stance, confidence: this.agents[agent].confidence, reasoning: this.agents[agent].lastLine })), ownerSettings: entrySettings, allocation: this.book.split(), nativeQuoteEvidence };
+      const intent = pos ? (closeTriggers.length ? 'CLOSE_REVIEW' : 'MANAGE_EXISTING') : 'OPEN';
+      const accountCurrent = this.cfg.tradingMode === 'PAPER' || !!this.venueAccount && this.venueAccount.status === 'confirmed' && Date.now() >= this.venueAccount.at && Date.now() - this.venueAccount.at <= 30_000;
+      const positionContext = {
+        intent,
+        accountSnapshot: this.venueAccount ? structuredClone(this.venueAccount) : null,
+        positionObservation: this.opts.executor ? accountCurrent ? 'confirmed' : this.venueAccount ? 'stale' : 'unknown' : 'local',
+        newEntryCapacity: { ...slots, availableMargin: this.venueAccount?.available ?? null },
+        closeEligibility: { eligible: accountCurrent && !!pos && pos.ownership !== 'external' && closeTriggers.length > 0, closeTriggers, requiresFreshRevalidation: true },
+        protection: { status: accountCurrent ? pos?.protectionStatus ?? 'unknown' : 'unknown', stop: pos?.stop ?? null, tp: pos?.tp ?? null, observedAt: this.venueAccount?.at ?? null, source: this.opts.executor ? 'exchange reconciliation' : 'local' }
+      };
+      const sharedRoleEvidence = { ...positionContext, symbol, debateEvidence, closeTriggers, position: pos, opinions: DEBATERS.map(agent => ({ agent, stance: this.agents[agent].stance, confidence: this.agents[agent].confidence, reasoning: this.agents[agent].lastLine })), ownerSettings: entrySettings, allocation: this.book.split(), nativeQuoteEvidence };
       const [aiRisk, aiExecution] = await Promise.all([
         timer.measure('riskManager', () => this.run('risk', 'risk_assessment', {
-          instruction: 'Assess the actual debate evidence and position risk. Return APPROVE or REJECT with a specific reason. Missing optional news/whale/JEV is not a veto. Do not impose confidence thresholds or change Owner sizing, leverage or SL/TP. Owner settings are binding. A rejection must identify the risk, not repeat boilerplate.',
+          instruction: 'Assess the supplied decision intent and evidence. For OPEN, assess new-entry admission. For MANAGE_EXISTING or CLOSE_REVIEW, assess the existing position, verified CLOSE triggers and protection; full slots, entry margin and entry confidence cannot veto management or CLOSE. Return APPROVE or REJECT with a specific reason scoped to that intent. Missing optional news/whale/JEV is not a veto. Do not impose confidence thresholds or change Owner sizing, leverage or SL/TP. Owner settings are binding. A rejection must identify the risk, not repeat boilerplate.',
           data: sharedRoleEvidence, context: { ...sharedRoleEvidence, leverage: this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct }
         })),
         timer.measure('executionTrader', () => this.run('execution', 'chat', {
-          instruction: 'Review the supplied instrument, native quote, capacity, stop requirements and any position. Give a concise readiness assessment identifying confirmed and UNKNOWN facts. You do not send orders. No teammates or commands.',
+          instruction: 'Review the supplied decision intent from the same accountSnapshot as Risk. For an existing position, report position status, CLOSE eligibility and exchange protection separately from newEntryCapacity. debateEvidence.openAllowed describes analytical entry evidence only, not CLOSE authorization or available slots. Zero free slots or entry margin does not prevent a verified reduce-only CLOSE. Distinguish exchange-confirmed, locally inferred, stale and UNKNOWN facts; report conflicts with earlier narrative. You do not send orders. No teammates or commands.',
           data: sharedRoleEvidence, context: sharedRoleEvidence
         }))
       ]);
@@ -1214,29 +1228,29 @@ export class Desk extends EventEmitter {
       note('Risk Manager', aiRisk.data.reason); note('Execution Trader', aiExecution.data.reply);
       const roleAnalysis = {
         market: { stance: mk.data.stance, momentum: debateEvidence.momentum, exhaustion: tacticalPlan.exhaustion, fallback: mk.fallback },
-        research: { vote: researchVote, catalyst: debateEvidence.dimensions.catalyst, news: newsBriefing, whale: whaleBriefing, fallback: rs.fallback },
+        research: { vote: researchVote, sources: rs.data.sources, sourceDetails: rs.data.sourceDetails, catalyst: debateEvidence.dimensions.catalyst, news: newsBriefing, whale: whaleBriefing, fallback: rs.fallback },
         strategist: { stance: st.data.stance, scenario: selectedScenario, fallback: st.fallback },
-        risk: { assessment: aiRisk.data, fallback: aiRisk.fallback, ownerSettings: entrySettings, allocation: this.book.split(), closeTriggers },
-        execution: { assessment: aiExecution.data.reply, fallback: aiExecution.fallback, nativeQuoteEvidence, marketSource: snap.source, venue: this.opts.executor?.adapter.name ?? null, provenance: debateEvidence.provenance, quote: snap.last, fee: this.cfg.risk.takerFee, instrumentRules: nativeRules ?? 'Unavailable; validated at submission.' },
+        risk: { ...positionContext, assessment: aiRisk.data, fallback: aiRisk.fallback, ownerSettings: entrySettings, allocation: this.book.split(), closeTriggers },
+        execution: { ...positionContext, assessment: aiExecution.data.reply, fallback: aiExecution.fallback, nativeQuoteEvidence, marketSource: snap.source, venue: this.opts.executor?.adapter.name ?? null, provenance: debateEvidence.provenance, quote: snap.last, fee: this.cfg.risk.takerFee, instrumentRules: nativeRules ?? 'Unavailable; validated at submission.' },
         jev: jevEvidence
       };
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
         instruction: `Decide the ${symbol} debate from roleAnalysis and structured DebateEvidence. Entry zones are recommendations, not binding price constraints. Use OPEN for an immediate executable entry or explicitly HOLD to wait for a pullback. Preserve valid structural invalidation. Group structure, tape, verified catalyst and JEV independently; UNKNOWN optional data is neither support nor veto. Weigh opposing dimensions with Risk; they are evidence, not independent system vetoes. Disagreement alone never vetoes. CLOSE needs any one supplied verified closeTrigger; name it explicitly. You may identify EARLY_TAKE_PROFIT via exitSignal only from the supplied exhaustion/target evidenceRefs and known net profit. Holding duration is never an exit reason. Preserve all Owner sizing, leverage, N and margin SL/TP.`,
-        data: { marketEvidence, symbol, roleAnalysis, debateEvidence, entryScenario: selectedScenario, closeTriggers, exitEvidenceRefs: exitRefs, netUnrealizedPnl, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, openPosition: pos, freeSlots: slots.freeSlots, journal, strategyInvalidated },
-        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, debateEvidence, entryScenario: selectedScenario, closeTriggers, liveFeed: !snap.example, strategyInvalidated }
+        data: { ...positionContext, marketEvidence, symbol, roleAnalysis, debateEvidence, entryScenario: selectedScenario, closeTriggers, exitEvidenceRefs: exitRefs, netUnrealizedPnl, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, openPosition: pos, freeSlots: slots.freeSlots, journal, strategyInvalidated },
+        context: { ...positionContext, weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, debateEvidence, entryScenario: selectedScenario, closeTriggers, liveFeed: !snap.example, strategyInvalidated }
       }));
       let action: Action = ld.data.action;
       let flipNote = '';
-      if (pos?.ownership === 'external') action = 'HOLD';
-      if (action === 'CLOSE' && !pos) action = 'HOLD';
+      let exitBlock: string | null = null;
+      if (pos?.ownership === 'external') { action = 'HOLD'; exitBlock = 'Existing position is externally owned; automatic management requires ownership review.'; }
+      if (action === 'CLOSE' && !pos) { action = 'HOLD'; exitBlock = 'No current position exists for CLOSE.'; }
       // An opposite signal on an open position closes it. Re-entry the other way waits for the next cycle.
       if ((action === 'OPEN_LONG' && pos?.side === 'SHORT') || (action === 'OPEN_SHORT' && pos?.side === 'LONG')) { action = 'CLOSE'; flipNote = ' Opposite signal, closing first.'; }
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
-      const riskBlock = !aiRiskApproved && (action.startsWith('OPEN') || action === 'CLOSE') ? `Risk ${aiRisk.data.decision}: ${aiRisk.data.reason}` : null;
+      const riskBlock = !aiRiskApproved && action.startsWith('OPEN') ? `Risk ${aiRisk.data.decision}: ${aiRisk.data.reason}` : null;
       if (riskBlock) action = 'HOLD';
-      let exitBlock: string | null = null;
       const leadSignal = ld.data.exitSignal;
       const eligibleCloseTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, strategyInvalidated, leadClose: { closeTrigger: ld.data.closeTrigger, reason: ld.data.reason, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : specialistExit ? { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } : undefined } }) : [];
       const selectedCloseTrigger = eligibleCloseTriggers.find(trigger => trigger.reason === ld.data.closeTrigger) ?? (!ld.data.closeTrigger ? eligibleCloseTriggers[0] : undefined);
@@ -1264,7 +1278,7 @@ export class Desk extends EventEmitter {
           criticalClaimFound: newsBriefing.criticalClaimFound
         }), conflictQuestions(), { decisionId: id });
       }
-      const confidenceBlock = (action.startsWith('OPEN') || ld.data.action.startsWith('OPEN')) ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
+      const confidenceBlock = action.startsWith('OPEN') ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
       if (confidenceBlock) action = 'HOLD';
       const decisionReason = confidenceBlock ?? riskBlock ?? exitBlock ?? ld.data.reason;
       await this.say('lead', `${action.replace('_', ' ')}. ${decisionReason}${flipNote}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
@@ -1330,16 +1344,27 @@ export class Desk extends EventEmitter {
           note('Execution Trader', res.line);
         }
       } else if (action === 'CLOSE' && pos) {
+        const decisionPosition = pos;
         await this.debateBeat(0);
         this.setPhase('execution');
         const fresh = await this.marketSnapshot(symbol, true);
-        if (this.opts.executor) await this.syncLive();
-        const current = this.book.positions.find(p => p.id === pos.id);
-        const freshTriggers = current && closeInput ? evaluateCloseTriggers({ ...closeInput, snapshot: fresh, position: current, nativeExecutionQuote: this.venueAccount?.status === 'confirmed' ? current.mark : undefined, strategyInvalidated: this.invalidated(current.side, strategyVote(fresh.candles)), conviction: undefined, leadClose: { closeTrigger: ld.data.closeTrigger, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : undefined } }) : [];
-        const nativeStateConfirmed = !this.opts.executor || !!this.venueAccount && this.venueAccount.status === 'confirmed' && Date.now() - this.venueAccount.at <= 30_000;
-        const confirmed = nativeStateConfirmed ? freshTriggers.find(t => t.reason === selectedCloseTrigger?.reason) : undefined;
-        const t = confirmed ? await this.executeClose(symbol, current?.mark ?? fresh.last, 'desk verdict CLOSE', true) : [];
-        if (!confirmed) { verdict.executionOutcome = 'EXECUTION_BLOCKED'; verdict.reason = 'Decision-time CLOSE trigger no longer verified, or position already closed.'; }
+        const t = await this.exclusive(async () => {
+          if (this.opts.executor) await this.syncLiveUnlocked();
+          const current = this.book.positions.find(p => p.id === decisionPosition.id);
+          const unchanged = current && current.ownership !== 'external' && current.side === decisionPosition.side && current.qty === decisionPosition.qty && current.entry === decisionPosition.entry && current.openedAt === decisionPosition.openedAt;
+          const closeQuote = this.venueAccount?.status === 'confirmed' ? current?.mark : undefined;
+          const freshTriggers = unchanged && closeInput ? evaluateCloseTriggers({ ...closeInput, snapshot: fresh, position: current, nativeExecutionQuote: closeQuote, evidence: evidenceFor(current.side, null, fresh, closeQuote),
+            netUnrealizedPnl: estimatedNetUnrealized({ unrealizedPnl: current.unrealizedPnl, entry: current.entry, mark: closeQuote ?? fresh.last, qty: current.qty, takerFee: this.cfg.risk.takerFee }),
+            guards: { ...closeInput.guards, dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null },
+            strategyInvalidated: this.invalidated(current.side, strategyVote(fresh.candles)), conviction: undefined, leadClose: { closeTrigger: ld.data.closeTrigger, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : undefined } }) : [];
+          const nativeStateConfirmed = !this.opts.executor || !!this.venueAccount && this.venueAccount.status === 'confirmed' && Date.now() - this.venueAccount.at <= 30_000;
+          const confirmed = nativeStateConfirmed ? freshTriggers.find(t => t.reason === selectedCloseTrigger?.reason) : undefined;
+          if (!confirmed) {
+            verdict.executionOutcome = 'EXECUTION_BLOCKED'; verdict.reason = 'Decision-time CLOSE trigger no longer verified, position changed, or position already closed.';
+            return [];
+          }
+          return this.executeCloseUnlocked(symbol, current!.mark ?? fresh.last, 'desk verdict CLOSE', true);
+        });
         verdict.executionOutcome = t.length ? (t.some(x => x.remainingQty) ? 'PARTIAL' : 'CLOSED') : verdict.executionOutcome ?? 'PENDING';
         verdict.exitCause = t[0]?.exitCause;
         verdict.executed = t.length > 0; verdict.executionStatus = t.some((x) => x.remainingQty) ? 'partial' : t.length ? 'closed' : undefined;

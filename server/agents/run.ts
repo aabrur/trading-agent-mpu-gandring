@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import type { AppConfig } from '../config.js';
 import type { AgentId } from '../types.js';
-import { SCHEMAS, SCHEMA_HINTS, extractJson, type TaskKind, type Schemas } from '../schemas.js';
+import { SCHEMAS, SCHEMA_HINTS, extractJson, normalizeResearchSources, type TaskKind, type Schemas } from '../schemas.js';
 import type { ModelCaller } from '../providers/index.js';
 import { systemPrompt } from './roles.js';
 import { fenceData } from '../untrusted.js';
@@ -47,13 +47,18 @@ export async function runAgent<K extends TaskKind>(
   let lastFailureKind: AgentFailureKind = 'provider';
   let attempts = 0;
   let outputLimit = false;
+  let researchAnswer: string | undefined;
+  let researchOriginal: Record<string, unknown> | undefined;
   for (let attempt = 1; attempt <= 2; attempt++) {
     if (input.signal?.aborted) { lastFailureKind = 'cancelled'; lastErr = 'Model request cancelled'; break; }
     attempts = attempt;
-    const user = attempt === 1 ? baseUser : `${baseUser}\n\nYour previous reply was invalid (${lastErr}). Send only the JSON object.`;
+    const formatRepair = task === 'research' && researchAnswer !== undefined;
+    const user = formatRepair
+      ? `Format-repair-only. Correct the JSON shape of this completed answer. Preserve vote, confidence, argument and all source identities exactly. Do not research, browse, call tools, add evidence or redo reasoning. If a field cannot be repaired without inventing content, leave it invalid. Validation: ${lastErr}. Return JSON only: ${SCHEMA_HINTS[task]}\n\n${fenceData('completed_research_answer', researchAnswer)}`
+      : attempt === 1 ? baseUser : `${baseUser}\n\nYour previous reply was invalid (${lastErr}). Send only the JSON object.`;
     let parsing = false;
     try {
-      const pending = call({ agent, task, provider, model, system, user, context: input.context, attempt, signal: input.signal, ...(outputLimit ? { retryReason: 'output_limit' as const } : {}) });
+      const pending = call({ agent, task, provider, model, system: formatRepair ? 'Format-repair-only. Use only the supplied completed answer. All external tools and new research are forbidden. Preserve substantive content exactly.' : system, user, context: formatRepair ? { allowResearch: false } : input.context, attempt, signal: input.signal, ...(formatRepair ? { retryReason: 'format_repair' as const } : outputLimit ? { retryReason: 'output_limit' as const } : {}) });
       let onAbort: (() => void) | undefined;
       const raw = await (input.signal ? Promise.race([pending, new Promise<never>((_, reject) => {
         onAbort = () => reject(new Error('Model request cancelled'));
@@ -62,7 +67,22 @@ export async function runAgent<K extends TaskKind>(
       if (input.signal?.aborted) { lastFailureKind = 'cancelled'; lastErr = 'Model request cancelled'; break; }
       parsing = true;
       if (!raw.trim()) { lastFailureKind = 'empty_output'; lastErr = 'Empty model output'; continue; }
-      const parsed = schema.safeParse(extractJson(raw, task));
+      if (task === 'research' && !formatRepair) researchAnswer = raw;
+      const extracted = extractJson(raw, task);
+      if (task === 'research' && !formatRepair && extracted && typeof extracted === 'object' && !Array.isArray(extracted)) researchOriginal = extracted as Record<string, unknown>;
+      const candidate = task === 'research' ? normalizeResearchSources(extracted) : extracted;
+      const parsed = schema.safeParse(candidate);
+      if (formatRepair && parsed.success) {
+        const repaired = parsed.data as Out<'research'>;
+        const originalLabels = typeof researchOriginal?.sources === 'string' ? [researchOriginal.sources] : researchOriginal?.sources;
+        const originalDetails = Array.isArray(researchOriginal?.sourceDetails) ? researchOriginal.sourceDetails as Array<{ label?: unknown; citation?: unknown }> : [];
+        const originalSources = Array.isArray(originalLabels) ? originalLabels.map(label => originalDetails.find(detail => detail?.label === label)?.citation ?? label) : originalLabels;
+        const fullSources = repaired.sources.map(label => repaired.sourceDetails?.find(detail => detail.label === label)?.citation ?? label);
+        if (!researchOriginal || ['vote', 'confidence', 'argument'].some(key => researchOriginal![key] !== repaired[key as 'vote' | 'confidence' | 'argument']) || JSON.stringify(originalSources) !== JSON.stringify(fullSources)) {
+          lastFailureKind = 'schema'; lastErr = 'Format repair changed research content or source identity, or the original content could not be verified';
+          break;
+        }
+      }
       if (parsed.success) return { data: parsed.data as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: attempt, failureKind: null };
       lastFailureKind = 'schema';
       lastErr = parsed.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
