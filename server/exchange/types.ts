@@ -65,6 +65,8 @@ export interface ExchangeAdapter {
   financialHistory?(query: FinancialQuery): Promise<FinancialPage>;
   readonly name: ExchangeName;
   readonly network: Network;
+  /** Verified nonsecret public account identifier (e.g. main wallet 0x address, account ID, user ID). */
+  readonly publicAccountId?: string;
   /** Harmless authenticated read. Used by `npm run doctor`. */
   ping(): Promise<{ ok: boolean; detail: string }>;
   permissions(): Promise<PermissionReport>;

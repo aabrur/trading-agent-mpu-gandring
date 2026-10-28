@@ -54,6 +54,8 @@ export class AsterAdapter implements ExchangeAdapter {
     const rawPin = pinnedAgent !== undefined ? pinnedAgent : (fromEnv() || process.env[envKey] || process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED || '');
     this.pinnedAgent = rawPin.trim();
   }
+  get userAddress() { return this.user; }
+  get publicAccountId() { return this.user; }
   get signerAddress() { return this.account.address; }
 
   /** Builds the exact query string Aster verifies and signs it. Exposed for tests. */

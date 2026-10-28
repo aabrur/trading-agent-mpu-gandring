@@ -57,6 +57,8 @@ export class HyperliquidAdapter implements ExchangeAdapter {
     this.account = privateKeyToAccount(agentPrivateKey as Hex);
     this.base = network === 'testnet' ? 'https://api.hyperliquid-testnet.xyz' : 'https://api.hyperliquid.xyz';
   }
+  get userAddress() { return this.user; }
+  get publicAccountId() { return this.user; }
   get agentAddress() { return this.account.address; }
   private info(body: Record<string, unknown>) { return httpJson(this.fetchImpl, `${this.base}/info`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
   private async exchange(action: Record<string, unknown>) {

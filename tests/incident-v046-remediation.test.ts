@@ -395,10 +395,31 @@ describe('Case E: Account-scope memory isolation and HOLD bias elimination', () 
     expect(paperRules).toContain('Unscoped tape advice');
   });
 
-  it('includes public account identifier in LIVE accountScope', () => {
+  it('includes public account identifier in LIVE accountScope and falls back to UNKNOWN', () => {
     const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample' });
     const desk = new Desk(cfg, async () => '{}', { reportsDir: null });
     expect(desk.accountScope()).toBe('PAPER:paper:mainnet');
+
+    desk.cfg.tradingMode = 'LIVE';
+    desk.cfg.exchange.name = 'aster';
+    desk.cfg.live = { network: 'mainnet', exchange: 'aster' };
+
+    desk.opts.executor = {
+      adapter: {
+        name: 'aster',
+        network: 'mainnet',
+        userAddress: '0x1111111111111111111111111111111111111111'
+      }
+    } as any;
+    expect(desk.accountScope()).toBe('LIVE:aster:mainnet:0x1111111111111111111111111111111111111111');
+
+    desk.opts.executor = {
+      adapter: {
+        name: 'aster',
+        network: 'mainnet'
+      }
+    } as any;
+    expect(desk.accountScope()).toBe('LIVE:aster:mainnet:UNKNOWN');
   });
 
   it('reflection does not emit generalized HOLD lessons on near-minimum allocations', () => {

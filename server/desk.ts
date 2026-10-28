@@ -367,7 +367,8 @@ export class Desk extends EventEmitter {
   reflect(since: number): number {
     if (!this.cfg.learning.on) return 0;
     let n = 0;
-    const add = (l: LessonInput) => { if (this.learn(l)) n++; };
+    const currentScope = this.accountScope();
+    const add = (l: LessonInput) => { if (this.learn({ accountScope: currentScope, ...l })) n++; };
     for (const a of this.activity.filter((x) => x.at >= since && x.kind === 'skipped')) {
       if (/Daily loss stop/i.test(a.detail)) add({ role: 'risk', kind: 'loss', symbol: a.symbol, happened: `New order blocked: ${a.detail}`, rootCause: 'losses reached the daily loss cap', lesson: 'After the daily loss stop, only manage open positions and wait for the next UTC day. Be more selective early in the day.' });
       else if (/not filled|LIVE order/i.test(a.detail)) add({ role: 'execution', kind: 'error', symbol: a.symbol, happened: a.detail, rootCause: 'the exchange did not fill the order', lesson: 'Check the exchange record after a failed send and skip the symbol this cycle; one send per ticket.' });
@@ -392,17 +393,23 @@ export class Desk extends EventEmitter {
     const venue = this.cfg.exchange.name || 'paper';
     const network = this.cfg.live?.network || 'mainnet';
     if (mode === 'PAPER') return `${mode}:${venue}:${network}`;
-    let pubId = 'default';
+    let pubId: string | undefined;
     if (this.opts.executor) {
       const adapter = this.opts.executor.adapter as any;
-      if (adapter.user) pubId = String(adapter.user);
+      if (adapter.publicAccountId) pubId = String(adapter.publicAccountId);
+      else if (adapter.userAddress) pubId = String(adapter.userAddress);
+      else if (adapter.user) pubId = String(adapter.user);
       else if (adapter.account) pubId = String(adapter.account);
       else if (adapter.accountId) pubId = String(adapter.accountId);
       else if (adapter.owner) pubId = String(adapter.owner);
       else if (adapter.financialScope) pubId = String(adapter.financialScope);
-      else if (typeof adapter.key === 'string' && adapter.key) pubId = adapter.key.slice(0, 16);
+      else if (adapter.publicId) pubId = String(adapter.publicId);
     }
-    return `${mode}:${venue}:${network}:${pubId}`;
+    const cleanId = pubId?.trim();
+    if (!cleanId || cleanId.toLowerCase() === 'default' || cleanId.toLowerCase() === 'unknown') {
+      return `${mode}:${venue}:${network}:UNKNOWN`;
+    }
+    return `${mode}:${venue}:${network}:${cleanId}`;
   }
 
   // ---------- state ----------

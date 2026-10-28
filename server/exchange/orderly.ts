@@ -31,6 +31,7 @@ export class OrderlyAdapter implements ExchangeAdapter {
   private base: string;
   private secret: Uint8Array;
   readonly orderlyKey: string;
+  get publicAccountId(): string { return this.accountId; }
   constructor(public readonly network: Network, private accountId: string, keySecret: string, private fetchImpl: FetchLike = fetch, base = process.env[network === 'testnet' ? 'ORDERLY_TESTNET_BASE_URL' : 'ORDERLY_BASE_URL']) {
     if (!/^0x[0-9a-fA-F]{64}$/.test(accountId)) throw new ExchangeError('ORDERLY account id must be the 0x account id (public, 32 bytes)');
     this.secret = parseOrderlySecret(keySecret);

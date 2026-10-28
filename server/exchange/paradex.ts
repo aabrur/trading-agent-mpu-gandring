@@ -23,6 +23,7 @@ export class ParadexAdapter implements ExchangeAdapter {
   private chainId: string | null = null;
   private jwt: { token: string; until: number } | null = null;
   readonly subkeyPublic: string;
+  get publicAccountId(): string { return this.account; }
   constructor(public readonly network: Network, private account: string, private subkey: string, private fetchImpl: FetchLike = fetch, base = process.env[network === 'testnet' ? 'PARADEX_TESTNET_BASE_URL' : 'PARADEX_BASE_URL']) {
     if (!/^0x[0-9a-fA-F]{1,64}$/.test(account)) throw new ExchangeError('PARADEX account address must be the 0x main Paradex (Starknet) account address (public)');
     if (!/^0x[0-9a-fA-F]{1,64}$/.test(subkey)) throw new ExchangeError('Paradex subkey must be a 0x Starknet private key of a registered subkey');

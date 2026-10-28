@@ -64,6 +64,7 @@ export class DydxAdapter implements ExchangeAdapter {
   readonly exchangeStops = true;
   private indexer: string;
   readonly apiAddress: string;
+  get publicAccountId(): string { return this.owner; }
   private pubKey: Buffer;
   private chainImpl: DydxChain | null;
   constructor(public readonly network: Network, private owner: string, private apiKey: string, private authenticatorId: string, private fetchImpl: FetchLike = fetch, chain: DydxChain | null = null, private subaccount = Number(process.env.DYDX_SUBACCOUNT ?? 0)) {

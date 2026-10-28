@@ -49,10 +49,12 @@ export function loosensGuard(_text: string): boolean { return false; }
 
 const clean = (s: string, n: number) => safe(sanitizeUntrusted(String(s ?? ''), n).text).replace(/\s+/g, ' ').trim();
 
-/** Legacy unscoped advice stays visible for PAPER/dev, but never contaminates LIVE account scopes. */
+/** Legacy unscoped advice stays visible for PAPER/dev, but never contaminates LIVE or TESTNET account scopes. */
 export function lessonInScope(itemScope: string | undefined, requested?: string): boolean {
   if (!requested) return true;
-  if (requested.startsWith('LIVE:') && !itemScope) return false;
+  if (requested.endsWith(':UNKNOWN') || requested.endsWith(':UNVERIFIED')) return false;
+  if (itemScope?.endsWith(':UNKNOWN') || itemScope?.endsWith(':UNVERIFIED')) return false;
+  if ((requested.startsWith('LIVE:') || requested.startsWith('TESTNET:')) && !itemScope) return false;
   if (!itemScope) return true;
   return itemScope === requested;
 }

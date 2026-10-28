@@ -11,6 +11,8 @@ export class BybitAdapter implements ExchangeAdapter {
   private base: string;
   private recvWindow = '5000';
   private financialScope: string | null = null;
+  private userId: string | null = null;
+  get publicAccountId(): string | undefined { return this.userId ?? (this.financialScope ? this.financialScope : undefined); }
   private timeOffsetMs = 0;
   private clockReady = false;
   async financialHistory(q: FinancialQuery): Promise<FinancialPage> {
@@ -94,6 +96,7 @@ export class BybitAdapter implements ExchangeAdapter {
 
   async permissions(): Promise<PermissionReport> {
     const r = await this.req('GET', '/v5/user/query-api');
+    if (r?.userID) this.userId = String(r.userID);
     const wallet: string[] = r?.permissions?.Wallet ?? [];
     const canWithdraw = wallet.includes('Withdraw');
     const trade = [...(r?.permissions?.ContractTrade ?? []), ...(r?.permissions?.Derivatives ?? [])];
