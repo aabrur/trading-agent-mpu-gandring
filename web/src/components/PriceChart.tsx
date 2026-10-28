@@ -15,7 +15,8 @@ interface Props { state: DeskState; symbol: string; onSymbol: (s: string) => voi
 export function PriceChart({ state, symbol, onSymbol, data, theme, timeframe, onTimeframe, error, onRetry }: Props) {
   const { t, lang } = useI18n();
   const id = lang === 'id';
-  const [view, setView] = useState<'desk' | 'tv'>('desk');
+  const [view, setView] = useState<'desk' | 'tv'>(() => state.nativeMarketPreferred ? 'desk' : state.tradingview?.widget ? 'tv' : 'desk');
+  useEffect(() => { setView(state.nativeMarketPreferred ? 'desk' : state.tradingview?.widget ? 'tv' : 'desk'); }, [state.venue?.name, state.nativeMarketPreferred, state.tradingview?.widget]);
   const tv = !!state.tradingview?.widget && view === 'tv';
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);

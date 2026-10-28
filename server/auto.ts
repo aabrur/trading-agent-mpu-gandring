@@ -19,7 +19,7 @@ export class AutoTrader {
   get intervalMs() { return this.desk.cfg.auto.intervalMin * 60_000; }
 
   start() {
-    if (!this.desk.cfg.auto.on || this.timer) return;
+    if (!this.desk.cfg.auto.on || this.desk.killed || this.timer) return;
     if (this.desk.grokbot) { log('[auto] Grok Bot mode: the trading loop runs as a Grok Bot routine (see grokbot/BOOTSTRAP.md), not here'); return; }
     this.desk.autoState = { ...this.desk.autoState, on: true, intervalMin: this.desk.cfg.auto.intervalMin };
     this.desk.diagnostic({ source: 'automation', category: 'AUTO', eventName: 'automation.started', status: 'started', message: 'Auto trader started', details: { intervalMin: this.desk.cfg.auto.intervalMin } });

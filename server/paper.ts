@@ -48,7 +48,7 @@ export class PaperBook {
     return hits;
   }
 
-  close(positionId: string, price: number, reason: string, details: { qty?: number; executionId?: string; pnlStatus?: ClosedTrade['pnlStatus']; exitStatus?: ClosedTrade['exitStatus'] } = {}): ClosedTrade | null {
+  close(positionId: string, price: number, reason: string, details: { qty?: number; executionId?: string; pnlStatus?: ClosedTrade['pnlStatus']; exitStatus?: ClosedTrade['exitStatus']; exitCause?: ClosedTrade['exitCause'] } = {}): ClosedTrade | null {
     if (details.executionId && this.closed.some((t) => t.executionId === details.executionId)) return null;
     const i = this.positions.findIndex((p) => p.id === positionId);
     if (i < 0) return null;
@@ -64,6 +64,7 @@ export class PaperBook {
     if (this.autoExit) this.balance = round2(this.balance + realizedPnl);
     const { unrealizedPnl: _u, ...rest } = slice;
     const t: ClosedTrade = { ...rest, id: id('exit'), positionId, remainingQty, exit: price, closedAt: Date.now(), realizedPnl, reason,
+      exitCause: details.exitCause ?? (/kill switch/i.test(reason) ? 'OWNER_KILL' : /owner command/i.test(reason) ? 'OWNER_MANUAL' : /desk verdict|opposite signal/i.test(reason) ? 'AI_DEBATE' : /stop loss hit/i.test(reason) ? 'EXCHANGE_SL' : /take profit hit/i.test(reason) ? 'EXCHANGE_TP' : 'UNKNOWN'),
       pnlStatus: details.pnlStatus ?? (this.autoExit ? 'confirmed' : 'estimated'), exitStatus: details.exitStatus ?? 'confirmed', executionId: details.executionId };
     this.closed.unshift(t);
     this.closed = this.closed.slice(0, 100);

@@ -40,20 +40,20 @@ describe('model response recovery', () => {
     expect(LeadSchema.parse({ action: 'HOLD', reason: 'Waiting' }).confidence).toBe(0.65);
     expect(LeadSchema.safeParse({ action: 'OPEN_LONG', confidence: 3, reason: 'bad' }).success).toBe(false);
   });
-  it('uses the profile without requesting Risk model sizing or its legacy equity loss cap', async () => {
+  it('requires a completed Risk judgment while preserving Owner sizing and ignoring the legacy equity loss cap', async () => {
     const config = cfg(), base = makeCaller(config);
-    let mode: 'format' | 'reject' = 'format';
-    const caller = vi.fn(async (request: Parameters<typeof base>[0]) => request.task === 'risk' ? mode === 'format' ? 'no JSON object' : '{"decision":"REJECT","reason":"Verified veto"}' : base(request));
+    let mode: 'format' | 'reject' | 'approve' = 'format';
+    const caller = vi.fn(async (request: Parameters<typeof base>[0]) => request.task === 'risk_assessment' ? mode === 'format' ? 'no JSON object' : mode === 'reject' ? '{"decision":"REJECT","reason":"Verified veto"}' : '{"decision":"APPROVE","reason":"Evidence and Owner exposure reviewed"}' : base(request));
     const desk = new Desk(config, caller, { reportsDir: null, learningsPath: null, killFile: null });
     const recovered = await desk.runDebate('ETHUSDT');
-    expect(recovered.executed).toBe(true);
-    expect(desk.logs.some((line) => line.text.includes('Owner profile:'))).toBe(true);
+    expect(recovered.executed).toBe(false);
+    expect(recovered.riskDecision).toBe('REJECT');
     await desk.command('close all');
     mode = 'reject';
-    expect((await desk.runDebate('ETHUSDT')).riskDecision).toBe('APPROVE');
-    expect(desk.book.positions).toHaveLength(1);
+    expect((await desk.runDebate('ETHUSDT')).riskDecision).toBe('REJECT');
+    expect(desk.book.positions).toHaveLength(0);
     await desk.command('close all');
-    mode = 'format'; config.risk.maxLossPerTradePct = 0.000001;
+    mode = 'approve'; config.risk.maxLossPerTradePct = 0.000001;
     expect((await desk.runDebate('ETHUSDT')).executed).toBe(true);
     expect(desk.book.positions).toHaveLength(1);
     expect(caller.mock.calls.some(([request]) => request.task === 'risk')).toBe(false);

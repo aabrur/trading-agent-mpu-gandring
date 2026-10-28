@@ -1,4 +1,7 @@
 export interface CycleTiming {
+  instrumentMetadata: number;
+  nativeQuote: number;
+  quoteRevalidation: number;
   marketData: number;
   marketAnalyst: number;
   researchAnalyst: number;
@@ -7,6 +10,7 @@ export interface CycleTiming {
   rebuttals: number;
   deskLead: number;
   jevReview: number;
+  executionTrader: number;
   riskManager: number;
   orderSubmission: number;
   fillConfirmation: number;
@@ -14,9 +18,9 @@ export interface CycleTiming {
 }
 
 const ZERO: CycleTiming = {
-  marketData: 0, marketAnalyst: 0, researchAnalyst: 0, strategist: 0,
+  instrumentMetadata: 0, nativeQuote: 0, quoteRevalidation: 0, marketData: 0, marketAnalyst: 0, researchAnalyst: 0, strategist: 0,
   jevPreAnalysis: 0, rebuttals: 0, deskLead: 0, jevReview: 0,
-  riskManager: 0, orderSubmission: 0, fillConfirmation: 0, total: 0
+  executionTrader: 0, riskManager: 0, orderSubmission: 0, fillConfirmation: 0, total: 0
 };
 
 export class CycleTimer {
@@ -38,6 +42,10 @@ export class CycleTimer {
 
 export function formatCycleTiming(t: CycleTiming): string {
   const rows: [string, number][] = [
+    ['INSTRUMENT METADATA', t.instrumentMetadata],
+    ['NATIVE QUOTE', t.nativeQuote],
+    ['QUOTE REVALIDATION', t.quoteRevalidation],
+    ['EXECUTION TRADER', t.executionTrader],
     ['MARKET DATA', t.marketData],
     ['MARKET ANALYST', t.marketAnalyst],
     ['RESEARCH ANALYST', t.researchAnalyst],

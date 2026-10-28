@@ -14,6 +14,7 @@ export const FALLBACK: { [K in TaskKind]: Out<K> } = {
   research: { vote: 'ABSTAIN', confidence: 0, argument: 'My reply did not pass validation twice, so I abstain.', sources: [] },
   rebuttal: { stance: 'NEUTRAL', confidence: 0, target: 'none', rebuttal: 'Pass. My reply failed validation, counting me as neutral.' },
   lead: { action: 'HOLD', confidence: 0, reason: 'Verdict failed validation twice. Safe default: HOLD.' },
+  risk_assessment: { decision: 'REJECT', reason: 'Risk assessment failed validation; no AI approval.' },
   risk: { decision: 'REJECT', sizeFactor: 0, leverage: 1, stopPct: 1, reason: 'Risk reply failed validation twice. Safe default: REJECT.' },
   review: { lesson: 'Review failed validation, nothing logged.', grade: 'C' },
   chat: { reply: 'I could not put together a valid answer just now. Try again.' }
@@ -52,7 +53,12 @@ export async function runAgent<K extends TaskKind>(
     const user = attempt === 1 ? baseUser : `${baseUser}\n\nYour previous reply was invalid (${lastErr}). Send only the JSON object.`;
     let parsing = false;
     try {
-      const raw = await call({ agent, task, provider, model, system, user, context: input.context, attempt, signal: input.signal, ...(outputLimit ? { retryReason: 'output_limit' as const } : {}) });
+      const pending = call({ agent, task, provider, model, system, user, context: input.context, attempt, signal: input.signal, ...(outputLimit ? { retryReason: 'output_limit' as const } : {}) });
+      let onAbort: (() => void) | undefined;
+      const raw = await (input.signal ? Promise.race([pending, new Promise<never>((_, reject) => {
+        onAbort = () => reject(new Error('Model request cancelled'));
+        if (input.signal!.aborted) onAbort(); else input.signal!.addEventListener('abort', onAbort, { once: true });
+      })]).finally(() => { if (onAbort) input.signal!.removeEventListener('abort', onAbort); }) : pending);
       if (input.signal?.aborted) { lastFailureKind = 'cancelled'; lastErr = 'Model request cancelled'; break; }
       parsing = true;
       if (!raw.trim()) { lastFailureKind = 'empty_output'; lastErr = 'Empty model output'; continue; }
@@ -82,6 +88,7 @@ export async function runAgent<K extends TaskKind>(
     research: { ...FALLBACK.research, argument: `${reason} Abstaining.` },
     rebuttal: { ...FALLBACK.rebuttal, rebuttal: `${reason} Counting this rebuttal as neutral.` },
     lead: { ...FALLBACK.lead, reason: `${reason} Safe default: HOLD.` },
+    risk_assessment: { decision: 'REJECT', reason: `${reason}${validationDetail} No completed AI risk approval.` },
     risk: { ...FALLBACK.risk, reason: `${reason}${validationDetail} Safe default: REJECT.` },
     review: { ...FALLBACK.review, lesson: `${reason} No model review completed.` },
     chat: { reply: reason },

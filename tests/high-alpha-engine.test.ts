@@ -97,7 +97,7 @@ describe('Phase 2: Direct Inter-Agent Communication and Huddle', () => {
     expect(desk.verdicts.length).toBe(initialVerdicts);
   });
 
-  it('chains autonomous askTeammate handoff and stops within 3 hops', async () => {
+  it('performs explicitly requested consultation and stops within 3 hops', async () => {
     const config = loadConfig({
       TRADING_MODE: 'PAPER',
       MARKET_SOURCE: 'sample',
@@ -115,9 +115,10 @@ describe('Phase 2: Direct Inter-Agent Communication and Huddle', () => {
     };
 
     const desk = new Desk(config, customCaller);
-    await desk.command('Market, what do you see in the orderbook?');
+    await desk.command('Market, consult colleagues about the orderbook.');
 
     expect(callCount).toBeGreaterThanOrEqual(2);
+    expect(callCount).toBeLessThanOrEqual(3);
     expect(desk.roomHistory.length).toBeGreaterThanOrEqual(2);
   });
 });

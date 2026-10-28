@@ -62,7 +62,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
       case 'mock':
         return mockReply(req);
       case 'local':
-        return runLocalAgent(model, `${system}\n\n${user}`, req.signal, effort);
+        return runLocalAgent(model, `${system}\n\n${user}`, req.signal, effort, { allowResearch: req.task !== 'chat' || req.context.allowResearch === true });
       case 'xai':
       case 'openai':
       case 'deepseek':

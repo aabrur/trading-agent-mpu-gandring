@@ -6,6 +6,8 @@ import { httpJson, type FetchLike, type Network } from './types.js';
  */
 export interface InstrumentRules {
   symbol: string;
+  contractMultiplier?: number;
+  marketType?: string;
   qtyStep: number;
   minQty: number;
   maxQty: number | null;
@@ -62,7 +64,7 @@ export function rulesFromExchangeInfo(info: any, symbol: string, source: string,
   if (!(qtyStep > 0) || !(tickSize > 0)) throw new Error(`${source}: ${symbol} lot step or tick size missing`);
   const minNotionalRaw = Number(mn?.notional ?? mn?.minNotional);
   return {
-    symbol, qtyStep, minQty: Math.max(qtyStep, ...mins), maxQty: maxs.length ? Math.min(...maxs) : null, tickSize,
+    symbol, marketType: s.contractType ? (s.contractType === 'PERPETUAL' ? 'perpetual' : String(s.contractType)) : undefined, contractMultiplier: Number(s.contractSize) > 0 ? Number(s.contractSize) : undefined, qtyStep, minQty: Math.max(qtyStep, ...mins), maxQty: maxs.length ? Math.min(...maxs) : null, tickSize,
     minNotional: minNotionalRaw > 0 ? minNotionalRaw : null, takerFee, status: s.status ?? null, source, fetchedAt: Date.now()
   };
 }

@@ -4,7 +4,7 @@ import path from 'node:path';
 /**
  * The kill switch survives restarts. Pressing it writes this file; while the file exists the desk
  * starts killed (no new orders, auto off). Only the owner clears it, on the machine itself:
- * `npm run unkill -- --yes`, then restart the office. There is no HTTP route that clears it.
+ * `npm run unkill -- --yes` or the authorized local Office OFF button. Release never places an order or enables Auto Trading.
  */
 export const DEFAULT_KILL_FILE = 'data/kill-switch.json';
 export interface KillRecord { at: number; reason: string }

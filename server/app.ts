@@ -82,7 +82,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   const instanceId = randomUUID();
   const caller = opts.caller ?? (cfg.appMode === 'grokbot' ? noModelCaller : makeCaller(cfg));
   const sessionLog = opts.sessionLog === undefined ? getSessionLogger() : opts.sessionLog;
-  const desk = new Desk(cfg, caller, { settingsFile: opts.envFile ?? (process.env.VITEST ? undefined : process.env.DOTENV_PATH ?? '.env'), opportunityReviewsPath: opts.reportsDir === null ? null : undefined, reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, conversationsPath: opts.conversationsPath, killFile: opts.killFile ?? null, jevFetch: opts.jevFetch, jevEnv: opts.jevEnv, ...(sessionLog ? { diagnostics: input => { sessionLog.write(input); } } : {}) });
+  const desk = new Desk(cfg, caller, { settingsFile: opts.envFile ?? (process.env.VITEST ? undefined : process.env.DOTENV_PATH ?? '.env'), opportunityReviewsPath: opts.reportsDir === null ? null : undefined, reportsDir: opts.reportsDir === undefined ? 'reports' : opts.reportsDir, outboxPath: opts.outboxPath, executor: opts.executor ?? null, learningsPath: opts.learningsPath, conversationsPath: opts.conversationsPath, operationalSessionId: sessionLog?.session.sessionId, killFile: opts.killFile ?? null, jevFetch: opts.jevFetch, jevEnv: opts.jevEnv, ...(sessionLog ? { diagnostics: input => { sessionLog.write(input); } } : {}) });
   const auto = new AutoTrader(desk);
   const reporter = new Reporter(desk, opts.reportsDir === undefined ? 'reports' : opts.reportsDir, opts.outboxPath);
   const app = express();
@@ -151,6 +151,30 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     try { res.json({ ok: true, conversationId: desk.createConversation().id }); }
     catch (error) { res.status(500).json({ ok: false, error: safe((error as Error).message) }); }
   });
+
+  app.get('/api/chat/history/:agent', requireLocalOwner, (req, res) => {
+    const agent = req.params.agent as AgentId;
+    if (!AGENT_IDS.includes(agent)) return res.status(400).json({ ok: false, error: 'Unknown agent' });
+    const offset = Number(req.query.offset ?? 0), limit = Number(req.query.limit ?? 50);
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) return res.status(400).json({ ok: false, error: 'Invalid pagination' });
+    const sessions = desk.listChatHistory(agent);
+    res.json({ ok: true, sessions: sessions.slice(offset, offset + limit), nextOffset: offset + limit < sessions.length ? offset + limit : null });
+  });
+  app.get('/api/chat/history/:agent/:id', requireLocalOwner, (req, res) => {
+    const agent = req.params.agent as AgentId;
+    if (!AGENT_IDS.includes(agent)) return res.status(400).json({ ok: false, error: 'Unknown agent' });
+    const offset = Number(req.query.offset ?? 0), limit = Number(req.query.limit ?? 50);
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) return res.status(400).json({ ok: false, error: 'Invalid pagination' });
+    try { res.json({ ok: true, ...desk.readChatHistory(agent, String(req.params.id), offset, limit) }); }
+    catch (error) { res.status(404).json({ ok: false, error: safe((error as Error).message) }); }
+  });
+  app.delete('/api/chat/history/:agent/:id', requireLocalOwner, (req, res) => {
+    const agent = req.params.agent as AgentId;
+    if (!AGENT_IDS.includes(agent) || req.body?.confirm !== true) return res.status(400).json({ ok: false, error: 'Confirm one archived agent chat deletion' });
+    try { desk.deleteChatHistory(agent, String(req.params.id)); res.json({ ok: true }); }
+    catch (error) { res.status(404).json({ ok: false, error: safe((error as Error).message) }); }
+  });
+  app.post('/api/chat/cancel/:id', requireLocalOwner, (req, res) => { desk.cancelChatRequest(String(req.params.id)); res.json({ ok: true }); });
 
   // Self-update adapter: check version status and apply git fast-forward update on localhost.
   app.get('/api/update/status', async (_req, res) => {
@@ -258,15 +282,16 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const symbol = normSymbol(String(req.query.symbol ?? cfg.watchlist[0] ?? 'BTCUSDT')).slice(0, 20);
     const tf = String(req.query.tf ?? '15m');
     if (!/^[A-Z0-9]{2,20}$/.test(symbol) || !(TIMEFRAMES as readonly string[]).includes(tf)) return res.status(400).json({ error: 'Invalid symbol or timeframe.' });
-    const key = `${symbol}:${tf}`;
+    const preferred = desk.preferredMarketSource();
+    const key = `${preferred}:${cfg.live?.network ?? "mainnet"}:${symbol}:${tf}`;
     const hit = candleCache.get(key);
     if (hit && Date.now() - hit.at < 20_000) return res.json(hit.body);
     if (!candlePending.has(key)) {
       if (candlePending.size >= 12) return res.status(429).json({ error: 'Chart is busy. Try again shortly.' });
-      const request = getCandles(symbol, tf as Timeframe, cfg.marketSource, 200, cfg.tradingMode !== 'PAPER').then((snap) => {
+      const request = getCandles(symbol, tf as Timeframe, preferred, 200, cfg.tradingMode !== 'PAPER', cfg.live?.network ?? 'mainnet').then((snap) => {
         if (snap.tf !== tf) throw new Error('Requested timeframe unavailable');
         const body = {
-          symbol, tf: snap.tf, source: snap.source, example: snap.example, fetchedAt: Date.now(), last: snap.candles.at(-1)?.c ?? null,
+          symbol, tf: snap.tf, source: snap.source, requestedVenue: cfg.exchange.name ?? preferred, dataType: snap.source === (cfg.exchange.name ?? preferred) ? 'native' : 'reference', symbolMapping: { requested: symbol, actual: symbol, transformed: false }, example: snap.example, fetchedAt: Date.now(), last: snap.candles.at(-1)?.c ?? null,
           candles: snap.candles.map((c) => ({ time: Math.floor(c.t / 1000), open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v }))
         };
         if (candleCache.size >= 100) candleCache.delete(candleCache.keys().next().value!);
@@ -299,10 +324,13 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     if (agent && !AGENT_IDS.includes(agent)) return res.status(400).json({ ok: false, error: 'unknown agent' });
     const conversationId = req.body?.conversationId ?? 'office';
     if (typeof conversationId !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(conversationId)) return res.status(400).json({ ok: false, error: 'Invalid conversation id' });
+    const clientRequestId = req.body?.clientRequestId;
+    if (clientRequestId !== undefined && (typeof clientRequestId !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(clientRequestId))) return res.status(400).json({ ok: false, error: 'Invalid request id' });
+    if (req.body?.operationalSessionId && req.body.operationalSessionId !== desk.activeChatSession().id) return res.status(409).json({ ok: false, error: 'Operational session changed. Reload active chat.' });
     const controller = new AbortController();
-    const cancel = () => { if (!res.writableEnded) controller.abort(); };
+    const cancel = () => { if (!clientRequestId && !res.writableEnded) controller.abort(); };
     res.once('close', cancel);
-    try { res.json(await desk.command(text, agent, conversationId, controller.signal)); }
+    try { res.json(await desk.command(text, agent, conversationId, controller.signal, clientRequestId)); }
     finally { res.removeListener('close', cancel); }
   });
 
@@ -314,7 +342,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   app.post('/api/kill', requireLocalOwner, async (req, res) => {
     const isRelease = req.body?.on === false || req.body?.action === 'release' || req.body?.action === 'unkill' || req.body?.killed === false;
     if (isRelease) {
-      desk.unkill();
+      try { desk.unkill(); } catch (error) { return res.status(409).json({ ok: false, error: safe((error as Error).message) }); }
       return res.json({ ok: true, killed: false, released: true, notes: ['Kill switch released.'] });
     }
     auto.stop();
@@ -322,7 +350,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
   });
 
   app.post('/api/unkill', requireLocalOwner, async (_req, res) => {
-    desk.unkill();
+    try { desk.unkill(); } catch (error) { return res.status(409).json({ ok: false, error: safe((error as Error).message) }); }
     res.json({ ok: true, killed: false, released: true });
   });
 

@@ -70,7 +70,7 @@ export async function startServer() {
   const killFile = process.env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE;
   const { server, desk, auto, reporter, lead, inbound } = createApp(cfg, { executor, killFile });
   const killRec = readKill(killFile);
-  if (killRec) log(`KILL SWITCH IS ON (saved ${killRec.at ? new Date(killRec.at).toISOString() : 'earlier'}). No new orders. Release it with: npm run unkill -- --yes, then restart.`);
+  if (killRec) log(`KILL SWITCH IS ON (saved ${killRec.at ? new Date(killRec.at).toISOString() : 'earlier'}). No new orders. Release it with the local Office OFF button or npm run unkill -- --yes.`);
   server.listen(cfg.port, cfg.host, () => {
     recordDiagnostic({ source: 'server', category: 'SESSION', eventName: 'service.ready', status: 'ready', message: 'Office services ready', details: { host: cfg.host, port: (server.address() as import('node:net').AddressInfo)?.port } });
     log(`Trading Agent Mpu Gandring backend on http://${cfg.host}:${cfg.port} (mode ${cfg.tradingMode}, app ${cfg.appMode}, market ${cfg.marketSource}, bridge ${cfg.bridge.enabled ? 'on' : 'off'})`);
@@ -88,7 +88,7 @@ export async function startServer() {
     ? inbound.listen(ch.inbound.port, ch.inbound.host, () => log(`chat command webhooks on http://${ch.inbound.host}:${ch.inbound.port}/api/channels/* (point your tunnel at this port only)`))
     : null;
   desk.recordActivity({ kind: 'process', source: 'server', level: 'info', status: 'started', text: 'Trading Agent Mpu Gandring server started' });
-  const shutdown = () => { desk.recordActivity({ kind: 'process', source: 'server', level: 'info', status: 'stopping', text: 'Server shutting down' }); auto.stop(); reporter.stop(); lead.stop(); inboundServer?.close(); desk.stop(); server.close(() => { void (getSessionLogger()?.finish('INTERRUPTED', 'Server shutdown completed') ?? Promise.resolve()).finally(() => process.exit(0)); }); setTimeout(() => process.exit(0), 1500).unref(); };
+  const shutdown = () => { desk.recordActivity({ kind: 'process', source: 'server', level: 'info', status: 'stopping', text: 'Server shutting down' }); desk.closeOperationalSession(); auto.stop(); reporter.stop(); lead.stop(); inboundServer?.close(); desk.stop(); server.close(() => { void (getSessionLogger()?.finish('INTERRUPTED', 'Server shutdown completed') ?? Promise.resolve()).finally(() => process.exit(0)); }); setTimeout(() => process.exit(0), 1500).unref(); };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('unhandledRejection', (reason) => {

@@ -3,6 +3,7 @@ import { strategyVote, type RuleVote } from '../strategy.js';
 import { snapshotMomentum, isRecognizedReferenceMarket } from './debate-evidence.js';
 
 export interface RevalidateInput {
+  aiApproved?: boolean;
   original: MarketSnapshot;
   originalRule: RuleVote;
   side: 'LONG' | 'SHORT';
@@ -24,7 +25,7 @@ export interface RevalidateResult {
 }
 
 export function snapshotIsFresh(snap: MarketSnapshot, now = Date.now(), maxAgeMs = 30_000): boolean {
-  return Number.isFinite(snap.fetchedAt) && now - snap.fetchedAt <= maxAgeMs;
+  return Number.isFinite(snap.fetchedAt) && snap.fetchedAt <= now + 5000 && now - snap.fetchedAt <= maxAgeMs;
 }
 
 export function revalidateEntry(input: RevalidateInput): RevalidateResult {
@@ -46,7 +47,7 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
   if (isCrossVenue && !isRecognizedReferenceMarket(input.fresh.source, input.expectedVenue)) {
     return { ok: false, reason: `Market source conflict: reference source ${input.fresh.source} does not match execution venue ${input.expectedVenue}.`, quote: 0, rule, usedFreshSnapshot };
   }
-  if (isCrossVenue && (input.executionQuote == null || !(input.executionQuote > 0) || !Number.isFinite(input.executionQuote))) {
+  if (input.expectedVenue && input.tradingMode !== 'PAPER' && (input.executionQuote == null || !(input.executionQuote > 0) || !Number.isFinite(input.executionQuote))) {
     return { ok: false, reason: `Execution-native quote is required for cross-venue execution on ${input.expectedVenue}.`, quote: 0, rule, usedFreshSnapshot };
   }
 
@@ -63,7 +64,7 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
   if (input.tradingMode && input.tradingMode !== 'PAPER' && input.fresh.example) {
     return { ok: false, reason: 'Sample market data cannot authorize an exchange entry.', quote, rule, usedFreshSnapshot };
   }
-  if (input.entryZone !== undefined) {
+  if (!input.aiApproved && input.entryZone !== undefined) {
     const zone = input.entryZone;
     const invalidation = input.invalidationLevel;
     if (!zone || ![zone.low, zone.high].every(value => Number.isFinite(value) && value > 0) || zone.low > zone.high || !zone.basis.trim()) {
@@ -95,14 +96,14 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
   const momentum = snapshotMomentum(input.fresh), sign = input.side === 'LONG' ? 1 : -1;
   const opposingMomentum = [momentum.change5Pct, momentum.roc5].some(value => value != null && Number.isFinite(value) && value * sign < -0.05);
   const opposingFlow = momentum.flowVerified && ((momentum.cvdDelta != null && Math.abs(momentum.cvdDelta) >= 10 && momentum.cvdDelta * sign < 0) || (momentum.buySellRatio != null && Math.abs(momentum.buySellRatio - 1) >= 0.02 && (momentum.buySellRatio - 1) * sign < 0));
-  if (opposingMomentum || opposingFlow) {
+  if (!input.aiApproved && (opposingMomentum || opposingFlow)) {
     return { ok: false, reason: 'Measured momentum or authenticated order flow opposes the proposed entry direction.', quote, rule, usedFreshSnapshot };
   }
 
   // Only abort if the closed-bar rule actively flipped to the OPPOSITE directional side (e.g., LONG flipped to SHORT).
   // Do NOT abort if the bar merely paused into ABSTAIN while whale/news/momentum consensus remains valid.
   const oppositeSide = input.side === 'LONG' ? 'SHORT' : 'LONG';
-  if (input.entryZone === undefined && rule.side === oppositeSide && rule.side !== input.originalRule.side) {
+  if (!input.aiApproved && input.entryZone === undefined && rule.side === oppositeSide && rule.side !== input.originalRule.side) {
     return {
       ok: false,
       reason: `Hard reversal detected: closed-bar rule flipped to opposite side (${rule.side}).`,
@@ -112,5 +113,6 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
     };
   }
 
+  if (input.invalidationLevel != null && (!(input.invalidationLevel > 0) || (input.side === 'LONG' ? input.invalidationLevel >= quote : input.invalidationLevel <= quote))) return { ok: false, reason: 'Structural invalidation is on the wrong side of the executable quote.', quote, rule, usedFreshSnapshot };
   return { ok: true, reason: null, quote, rule, usedFreshSnapshot };
 }

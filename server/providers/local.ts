@@ -572,7 +572,7 @@ export function recordResearchActivity(output: string) {
     } catch { /* Only structured CLI tool events establish tool usage. */ }
   }
 }
-export async function runLocalAgent(selection: string, prompt: string, signal?: AbortSignal, reasoningEffort?: string, options: { timeoutMs?: number } = {}): Promise<string> {
+export async function runLocalAgent(selection: string, prompt: string, signal?: AbortSignal, reasoningEffort?: string, options: { timeoutMs?: number; allowResearch?: boolean } = {}): Promise<string> {
   const { id, model } = localSelection(selection);
   const executable = localExecutable(id);
   if (!executable) throw new Error(`${id} is not installed on PATH. Open Setup to connect it.`);
@@ -592,7 +592,7 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
     folder = mkdtempSync(path.join(tmpdir(), 'mpu-agent-'));
     writeFileSync(path.join(folder, 'prompt.txt'), prompt, { mode: 0o600 });
     writeFileSync(path.join(folder, 'reasoner.md'), '---\nname: desk-reasoner\ndescription: Return a structured trading desk opinion\ntools: []\nsubagents: []\n---\nUse only the supplied facts. Return JSON only.\n', { mode: 0o600 });
-    const policy = id === 'codex' ? researchPolicy() : { enabled: false, mcpTools: {} };
+    const policy = id === 'codex' && options.allowResearch !== false ? researchPolicy() : { enabled: false, mcpTools: {} };
     const inventory = policy.enabled ? await loadMcpInventory() : [];
     const transports = Object.fromEntries(inventory.map(server => [server.name, server.transport]));
     const extra = { ...(localAgentSettings(process.env)[id] || {}), ...(reasoningEffort ? { effort: reasoningEffort } : {}) };

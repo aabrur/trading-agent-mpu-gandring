@@ -427,7 +427,7 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
   app.post('/api/ops/close', async (req, res) => {
     if (!gate(req, res)) return;
     const target = String(req.body?.symbol ?? '').slice(0, 20); if (!target) return res.status(400).json({ ok: false, reply: 'symbol or all' });
-    res.json(await c.desk.gbClose(target, 'closed from the office'));
+    res.json(await c.desk.gbClose(target, 'owner command: closed from the office'));
   });
   app.post('/api/ops/scan', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, findings: c.desk.scan() }); });
   app.get('/api/ops/lessons', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, lessons: c.desk.learnings.recent(30, c.desk.accountScope()), standingRules: c.desk.learnings.standingRules(undefined, c.desk.accountScope()), refused: c.desk.learnings.refused }); });
@@ -440,18 +440,20 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
   });
   app.get('/api/ops/kill', (req, res) => {
     if (!gate(req, res)) return;
-    res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, release: c.desk.killed ? `Only on this machine, in a terminal: ${UNKILL_COMMAND}, then restart the office.` : null, unkillCommand: UNKILL_COMMAND });
+    res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, release: c.desk.killed ? `Use the local Office OFF button or ${UNKILL_COMMAND}. Auto Trading is unchanged.` : null, unkillCommand: UNKILL_COMMAND });
   });
   app.post('/api/ops/kill', async (req, res) => {
     if (!gate(req, res)) return;
-    const on = typeof req.body?.on === 'boolean' ? req.body.on : (req.body?.action === 'release' ? false : !!req.body?.killed);
+    const on = typeof req.body?.on === 'boolean' ? req.body.on : req.body?.action === 'release' ? false : typeof req.body?.killed === 'boolean' ? req.body.killed : undefined;
+    if (on === undefined) return res.status(400).json({ ok: false, error: 'Explicit kill ON or OFF is required.' });
+    let notes: string[] = [];
     if (on) {
       c.auto?.stop();
-      await c.desk.kill();
+      notes = await c.desk.kill();
     } else {
-      c.desk.unkill();
+      try { c.desk.unkill(); } catch (error) { return res.status(409).json({ ok: false, error: safe((error as Error).message) }); }
     }
-    res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, unkillCommand: UNKILL_COMMAND });
+    res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, notes, unkillCommand: UNKILL_COMMAND });
   });
   app.post('/api/ops/restart', async (req, res) => {
     if (!gate(req, res)) return;

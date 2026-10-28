@@ -19,10 +19,12 @@ export interface Verdict {
   order?: { positionId?: string; status?: 'partial' | 'filled'; side: 'LONG' | 'SHORT'; qty: number; entry: number; stop: number; tp: number | null; margin: number; leverage: number }; example: boolean; at: number;
 }
 export interface LogLine { id?: string; conversationId?: string; at: number; kind: string; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: 'info' | 'warn' | 'error'; status?: string; durationMs?: number }
-export interface ChatLine { id?: string; seq?: number; conversationId?: string; from: 'user' | AgentId | 'system'; text: string; at: number }
+export interface ChatLine { operationalSessionId?: string; clientRequestId?: string; status?: 'pending' | 'model_working' | 'waiting_on_venue' | 'consulting' | 'completed' | 'failed' | 'cancelled'; id?: string; seq?: number; conversationId?: string; from: 'user' | AgentId | 'system'; text: string; at: number }
 export interface RoomMessage { id: string; seq?: number; conversationId?: string; at: number; from: AgentId | 'owner'; to?: AgentId | 'all' | 'owner'; text: string; symbol?: string; example?: boolean }
 export interface ConversationSummary { id: string; title?: string; createdAt: number; updatedAt: number; messageCount: number; lastMessage?: string; symbol?: string; }
 export interface DeskState {
+  nativeMarketPreferred?: boolean;
+  operationalChat?: { id: string; startedAt: number; recovered: boolean };
   version?: string;
   conversations?: ConversationSummary[];
   accountState?: { hasTradableCapital: boolean | null; openPositionsCount: number; maxPositions: number; freeSlots: number; canOpenNewSlot: boolean; mode: string; source: string; status: string; observedAt: number | null };
@@ -83,7 +85,7 @@ export const AGENT_ORDER: AgentId[] = ['lead', 'market', 'research', 'strategist
 export type Reaction = 'cheer' | 'worried';
 export type ChartTimeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 export interface Candle { time: number; open: number; high: number; low: number; close: number; volume?: number }
-export interface CandleData { symbol: string; tf?: ChartTimeframe; source: string; example: boolean; fetchedAt?: number; last: number | null; change24hPct?: number; candles: Candle[] }
+export interface CandleData { requestedVenue?: string; dataType?: 'native' | 'reference'; symbol: string; tf?: ChartTimeframe; source: string; example: boolean; fetchedAt?: number; last: number | null; change24hPct?: number; candles: Candle[] }
 
 export const VERIFIED_TOKENS = [
   // Tier 1 Mega-Cap (10)

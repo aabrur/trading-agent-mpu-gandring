@@ -189,15 +189,12 @@ export function DeskOps({ state }: { state: DeskState }) {
 
   const toggleKillSwitch = async (turnOn: boolean) => {
     if (killBusy) return;
-    if (turnOn) {
-      if (!window.confirm(t('opsKillOnConfirm'))) return;
-    }
     setKillBusy(true);
     const r = await post('/api/ops/kill', { on: turnOn }).catch(() => null);
     setKillBusy(false);
     if (r?.ok) {
       setKill({ killed: r.killed, release: null, unkillCommand: r.unkillCommand });
-      show(true, r.killed ? t('opsKillNowOn') : t('opsKillReleased'));
+      show(true, `${r.killed ? t('opsKillNowOn') : t('opsKillReleased')}${r.notes?.length ? ` ${r.notes.join('; ')}` : ''}`);
     } else {
       show(false, r?.error ?? t('cbKillFailedMsg'));
     }

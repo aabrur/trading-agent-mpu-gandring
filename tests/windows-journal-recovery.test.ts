@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, openSync, closeSync, readdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ExecutionJournal, sleepSync } from '../server/live/journal.js';
+import { ExecutionJournal } from '../server/live/journal.js';
 import { LiveExecutor } from '../server/live/executor.js';
 import { MemoryAdapter } from './fakes.js';
 
@@ -13,7 +13,7 @@ afterEach(() => {
   }
 });
 
-describe('Case F: Windows native journal recovery and persistence integrity', () => {
+describe('Case F: Windows filesystem persistence with injected contention', () => {
   it('recovers from transient EPERM handle contention during bounded retries', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'mg-win-eperm-'));
     dirs.push(dir);
@@ -55,7 +55,7 @@ describe('Case F: Windows native journal recovery and persistence integrity', ()
     expect(saved.intents[0].clientId).toBe('mg-win-order-1');
   });
 
-  it('preserves last-good journal file when native Windows handle lock is unrecoverable', () => {
+  it('preserves last-good journal on an injected unrecoverable Windows rename error', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'mg-win-unrec-'));
     dirs.push(dir);
     const journalPath = path.join(dir, 'journal.json');
@@ -76,18 +76,9 @@ describe('Case F: Windows native journal recovery and persistence integrity', ()
 
     const goodRaw = readFileSync(journalPath, 'utf8');
 
-    // On Windows, holding handle open without delete share triggers real native EPERM from OS kernel.
-    // On POSIX (Linux/macOS in CI), file handles do not block rename, so simulate the OS EPERM via renameFn.
+    // Node opens files with delete sharing on Windows. Inject the error rather than claim a native lock proof.
     let fd: number | null = null;
-    if (process.platform === 'win32') {
-      fd = openSync(journalPath, 'r');
-    } else {
-      journal.renameFn = () => {
-        const err: any = new Error('EPERM: operation not permitted, rename');
-        err.code = 'EPERM';
-        throw err;
-      };
-    }
+    journal.renameFn = () => { const err = new Error('EPERM: operation not permitted, rename') as NodeJS.ErrnoException; err.code = 'EPERM'; throw err; };
     try {
       journal.intents.push({
         clientId: 'mg-failing-order',
@@ -200,11 +191,29 @@ describe('Case F: Windows native journal recovery and persistence integrity', ()
     expect(adapter.placed).toHaveLength(0);
   });
 
-  it('demonstrates sleepSync backoff is bounded and does not busy-spin', () => {
-    const start = Date.now();
-    sleepSync(50);
-    const elapsed = Date.now() - start;
-    expect(elapsed).toBeGreaterThanOrEqual(45);
-    expect(elapsed).toBeLessThan(150);
+  it.each(['EPERM', 'EBUSY'])('retries %s asynchronously and reads the completed checkpoint after restart', async code => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'mg-async-rename-')); dirs.push(dir);
+    const file = path.join(dir, 'journal.json');
+    const journal = new ExecutionJournal(file, 'aster:mainnet');
+    let attempts = 0, heartbeat = false;
+    journal.renameFn = (source: string, destination: string) => { if (++attempts < 3) throw Object.assign(new Error(code), { code }); renameSync(source, destination); };
+    setTimeout(() => { heartbeat = true; }, 5);
+    await journal.saveAsync();
+    expect(heartbeat).toBe(true); expect(attempts).toBe(3);
+    expect(new ExecutionJournal(file, 'aster:mainnet').intents).toEqual([]);
+  });
+
+  it('keeps an alive lock older than ten seconds and lets the heartbeat run during async contention', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'mg-async-lock-')); dirs.push(dir);
+    const file = path.join(dir, 'journal.json');
+    writeFileSync(`${file}.lock`, JSON.stringify({ pid: process.pid, at: Date.now() - 60_000 }));
+    const journal = new ExecutionJournal(file, 'aster:mainnet');
+    let heartbeat = false;
+    const tick = new Promise<void>(resolve => setTimeout(() => { heartbeat = true; resolve(); }, 5));
+    await expect(journal.saveAsync()).rejects.toThrow(/Conflicting journal lock/);
+    await tick;
+    expect(heartbeat).toBe(true);
+    expect(JSON.parse(readFileSync(`${file}.lock`, 'utf8')).pid).toBe(process.pid);
+    expect(existsSync(file)).toBe(false);
   });
 });

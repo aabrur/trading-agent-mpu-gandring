@@ -138,7 +138,6 @@ describe('Owner CLOSE evidence contract', () => {
   const individual: Array<{ reason: CloseTriggerReason; input: () => Partial<CloseEvaluationInput> }> = [
     { reason: 'INVALIDATION_HIT', input: () => ({ snapshot: { ...snapshot(), last: 94 }, invalidationLevel: 95 }) },
     { reason: 'MOMENTUM_REVERSAL', input: () => ({ momentum: { change5Pct: -1, roc5: -0.01, cvdDelta: -10, buySellRatio: 0.8, flowVerified: true } }) },
-    { reason: 'SENTIMENT_REVERSAL', input: () => ({ conviction: { opposing: true, verified: true, evidenceRefs: ['agent:market', 'agent:strategist'] } }) },
     { reason: 'OPPOSING_NEWS', input: () => ({ news: news([newsEvent()]) }) },
     { reason: 'WHALE_EXIT', input: () => ({ whale: whales([whaleEvent()]), whalePolicy }) },
     { reason: 'EXCHANGE_STOP_OR_TP', input: () => ({ snapshot: { ...snapshot(), last: 89 } }) },
@@ -151,6 +150,10 @@ describe('Owner CLOSE evidence contract', () => {
     expect(triggers.map(trigger => trigger.reason)).toEqual([reason]);
     expect(closeAuthorized(triggers, reason)).toBe(true);
     expect(closeAuthorized(triggers)).toBe(true);
+  });
+
+  it('never promotes completed model opinions into independent sentiment evidence', () => {
+    expect(close({ conviction: { opposing: true, verified: true, evidenceRefs: ['agent:market', 'agent:strategist'] } })).toHaveLength(0);
   });
 
   it('does not authorize a model-declared trigger without its observed evidence', () => {

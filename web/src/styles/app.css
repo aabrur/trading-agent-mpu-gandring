@@ -1335,3 +1335,13 @@ button:disabled { cursor: default; }
 .watchlist-add-select:hover:not(:disabled) { background: rgba(0, 168, 150, 0.18) !important; border-style: solid !important; }
 .watchlist-add-select option { background: var(--panel); color: var(--text); font-family: var(--font-mono); font-size: 12px; }
 .ops-symbols-field-raw { margin-top: 4px; opacity: 0.85; }
+
+/* Private chat keeps the existing panel frame and token palette. */
+.agent-panel [hidden] { display: none !important; }
+.ap-history-controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.ap-history-controls button, .ap-history-entry { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 11px; padding: 5px 8px; cursor: pointer; }
+.ap-history-controls button:hover, .ap-history-entry:hover { border-color: var(--teal); }
+.ap-history-entry { display: flex; flex-direction: column; gap: 4px; text-align: left; width: 100%; margin-bottom: 6px; overflow-wrap: anywhere; }
+.ap-chat .msg small { display: block; font-size: 10px; margin-top: 4px; }
+.ap-chat { overscroll-behavior: contain; }
+.ap-chat .msg { content-visibility: auto; }

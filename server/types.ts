@@ -16,6 +16,7 @@ export interface MeasurementEvidence {
 }
 
 export interface RoomMessage {
+  operationalSessionId?: string;
   conversationId?: string;
   id: string;
   seq?: number;
@@ -28,6 +29,8 @@ export interface RoomMessage {
 }
 
 export interface ConversationSummary {
+  operationalSessionId?: string;
+  accountScope?: string;
   id: string;
   title?: string;
   createdAt: number;
@@ -150,6 +153,7 @@ export interface WhaleOnChainSummary {
 }
 
 export interface MarketSnapshot {
+  dataProvenance?: { requestedVenue: string; actualVenue: string; dataType: 'native' | 'reference'; symbolMapping: { requested: string; actual: string; transformed: boolean }; executionCompatible: boolean; fetchedAt: number };
   snapshotId?: string;
   cmcMomentum?: import('./market/coinmarketcap.js').CmcMomentum;
   tacticalTradePlan?: import('./market/tactical.js').TacticalTradePlan;
@@ -214,7 +218,9 @@ export interface Position {
   unrealizedPnl: number;
 }
 
+export type ExitCause = 'EXCHANGE_SL' | 'EXCHANGE_TP' | 'AI_DEBATE' | 'OWNER_MANUAL' | 'OWNER_KILL' | 'RECONCILIATION' | 'EXTERNAL' | 'UNKNOWN';
 export interface ClosedTrade extends Omit<Position, 'unrealizedPnl'> {
+  exitCause?: ExitCause;
   positionId?: string;
   remainingQty?: number;
   pnlStatus?: 'confirmed' | 'estimated' | 'unknown';
@@ -234,6 +240,14 @@ export interface Opinion {
 }
 
 export interface Verdict {
+  entryPolicy?: 'RISK_AND_OWNER_CONFIDENCE';
+  aiDecision?: Action;
+  exitCause?: ExitCause;
+  executionOutcome?: string;
+  finalOperationalStatus?: string;
+  ownerMinConfidencePct?: number;
+  riskAssessment?: { decision: string; reason: string; fallback: boolean };
+  nativeQuote?: Record<string, unknown>;
   debateEvidence?: import('./decision/debate-evidence.js').DebateEvidence;
   closeTrigger?: import('./decision/debate-evidence.js').CloseTriggerReason;
   executionStatus?: 'partial' | 'filled' | 'closed';
@@ -257,7 +271,7 @@ export interface Verdict {
   at: number;
 }
 
-export interface ChatLine {
+export interface ChatLine { operationalSessionId?: string; clientRequestId?: string; status?: 'pending' | 'model_working' | 'waiting_on_venue' | 'consulting' | 'completed' | 'failed' | 'cancelled';
   id?: string;
   seq?: number;
   conversationId?: string;

@@ -1,3 +1,4 @@
+import type { ExitCause } from '../types.js';
 import { randomBytes } from 'node:crypto';
 import type { ExchangeAdapter, OrderRecord, Side } from '../exchange/index.js';
 import { ExecutionJournal, type ExecutionIntent } from './journal.js';
@@ -55,10 +56,10 @@ export class LiveExecutor {
     })().finally(() => { this.financialRead = null; });
     return this.financialRead;
   }
-  private intent(kind: 'open' | 'close', o: { symbol: string; side: Side; qty: number; stop?: number; tp?: number | null; leverage?: number; positionId?: string }) {
+  private async intent(kind: 'open' | 'close', o: { symbol: string; side: Side; qty: number; stop?: number; tp?: number | null; leverage?: number; positionId?: string; exitCause?: ExitCause }) {
     const intent: ExecutionIntent = { ...o, kind, requestedQty: o.qty, clientId: newClientId(kind === 'open' ? 'e' : 'c'), accountedQty: 0, accountedValue: 0, record: null, at: Date.now() };
     this.journal.intents.push(intent);
-    this.journal.save(); // Persist before sending so a restart cannot lose ownership evidence.
+    await this.journal.saveAsync(); // Persist before sending so a restart cannot lose ownership evidence.
     recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.intent', status: 'created', message: `${kind} intent persisted`, correlationId: intent.clientId, details: { clientId: intent.clientId, positionId: o.positionId, symbol: o.symbol, side: o.side, requestedQty: o.qty } });
     return intent;
   }
@@ -72,7 +73,7 @@ export class LiveExecutor {
       }
       catch (e) { log(`[live] pending order read failed: ${safe((e as Error).message)}`); }
     }
-    this.journal.save();
+    await this.journal.saveAsync();
   }
   hasPending(symbol: string, _side: Side, kind: 'open' | 'close') {
     return this.journal.intents.some((i) => i.symbol === symbol && i.kind === kind && !this.journal.settled(i));
@@ -88,7 +89,7 @@ export class LiveExecutor {
     try { rec = await this.adapter.getOrder(symbol, clientId); } catch (e) { log(`[live] reconcile read failed for ${clientId}: ${safe((e as Error).message)}`); }
     const filled = !!rec && rec.status !== 'unknown' && Number.isFinite(rec.filledQty) && rec.filledQty > 0;
     const intent = this.journal.intents.find((i) => i.clientId === clientId);
-    if (intent && rec) { intent.record = rec; this.journal.save(); }
+    if (intent && rec) { intent.record = rec; await this.journal.saveAsync(); }
     const note = filled
       ? `exchange record: ${rec!.status} ${rec!.filledQty} @ ${rec!.avgPrice ?? '?'}${sendError ? ` (send reported: ${sendError})` : ''}`
       : `not filled per exchange record (${rec?.status ?? 'no record'})${sendError ? `; send error: ${sendError}` : ''}. Not retried.`;
@@ -100,14 +101,18 @@ export class LiveExecutor {
     if (!(o.stop > 0)) return { ok: false, clientId: '', record: null, qty: 0, requestedQty: o.qty, remainingQty: o.qty, avgPrice: null, note: 'refused: no stop loss' };
     // Fail closed: a venue that cannot hold the stop on its own side never gets an entry.
     if (this.adapter.exchangeStops !== true) return { ok: false, clientId: '', record: null, qty: 0, requestedQty: o.qty, remainingQty: o.qty, avgPrice: null, note: `refused: the ${this.adapter.name} adapter cannot place an exchange-side stop loss` };
-    const { clientId } = this.intent('open', o);
-    this.journal.protectionClients.push({ symbol: o.symbol, clientId }); this.journal.save();
+    const { clientId } = await this.intent('open', o);
+    this.journal.protectionClients.push({ symbol: o.symbol, clientId }); await this.journal.saveAsync();
     let sendError: string | null = null;
     recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.submission', status: 'submitting', correlationId: clientId, message: 'Submitting entry order', details: { clientId, symbol: o.symbol, side: o.side, requestedQty: o.qty } });
     try { await this.adapter.placeOrder({ ...o, clientId }); }
     catch (e) { sendError = safe((e as Error).message); log(`[live] send for ${clientId} failed: ${sendError}. Reconciling, not retrying.`); }
     const fill = await this.reconcile(o.symbol, clientId, sendError, o.qty);
     if (!fill.ok) return fill;
+    if (fill.avgPrice != null && (o.side === 'LONG' ? o.stop >= fill.avgPrice : o.stop <= fill.avgPrice)) {
+      const exit = await this.close(o.symbol, o.side, fill.qty);
+      return { ...fill, ok: false, note: `${fill.note}. FAIL CLOSED: actual fill crossed the required stop; reduce-only close: ${exit.note}` };
+    }
     const guard = await this.ensureOnExchange(o.symbol, o.side, fill.qty, o.stop, o.tp);
     recordDiagnostic({ source: 'exchange', category: 'PROTECTION', eventName: 'protection.observed', level: guard.status === 'confirmed' ? 'INFO' : 'WARN', status: guard.status, correlationId: clientId, message: guard.note || 'Exchange protection confirmed', details: { clientId, symbol: o.symbol, stop: guard.stop, tp: guard.tp, ok: guard.ok } });
     if (!guard.ok) return { ...fill, ok: false, qty: 0, note: safe(`${fill.note}. ${guard.note}`) };
@@ -128,7 +133,7 @@ export class LiveExecutor {
     const missStop = !have.stop, missTp = !!tp && !have.tp;
     if (missStop || missTp) {
       const protectionId = newClientId('p');
-      this.journal.protectionClients.push({ symbol, clientId: protectionId }); this.journal.save();
+      this.journal.protectionClients.push({ symbol, clientId: protectionId }); await this.journal.saveAsync();
       try { await this.adapter.protect({ symbol, side, qty, stop: missStop ? stop : null, tp: missTp ? tp : null, clientId: protectionId }); }
       catch (e) { notes.push(`placing the missing ${missStop ? 'stop' : 'take profit'} failed: ${safe((e as Error).message)}`); }
       if (this.reconcileDelayMs) await pause(this.reconcileDelayMs);
@@ -176,8 +181,8 @@ export class LiveExecutor {
     return notes;
   }
 
-  async close(symbol: string, side: Side, qty: number, positionId?: string): Promise<Fill> {
-    const { clientId } = this.intent('close', { symbol, side, qty, positionId });
+  async close(symbol: string, side: Side, qty: number, positionId?: string, exitCause: ExitCause = 'UNKNOWN'): Promise<Fill> {
+    const { clientId } = await this.intent('close', { symbol, side, qty, positionId, exitCause });
     recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.submission', status: 'submitting', correlationId: clientId, message: 'Submitting reduce-only close', details: { clientId, positionId, symbol, side, requestedQty: qty } });
     let sendError: string | null = null;
     try { await this.adapter.closePosition(symbol, side, qty, clientId); }
@@ -200,7 +205,7 @@ export class LiveExecutor {
           if (order.status === 'open' || order.status === 'partial') await this.adapter.cancelOrder(symbol, clientId);
         }
       }
-      this.journal.protectionClients = this.journal.protectionClients.filter((p) => p.symbol !== symbol); this.journal.save();
+      this.journal.protectionClients = this.journal.protectionClients.filter((p) => p.symbol !== symbol); await this.journal.saveAsync();
     } catch (e) { log(`[live] owned protection cleanup deferred: ${safe((e as Error).message)}`); }
   }
 
@@ -212,7 +217,7 @@ export class LiveExecutor {
     const all = new Set([...symbols, ...venue.map((p) => p.symbol)]);
     for (const s of all) { try { await this.adapter.cancelAll(s); notes.push(`${s}: orders cancelled`); } catch (e) { notes.push(`${s}: cancel failed ${safe((e as Error).message)}`); } }
     try { venue = await this.adapter.positions(); } catch (e) { notes.push(`post-cancel position read failed: ${safe((e as Error).message)}`); }
-    for (const p of venue) { const f = await this.close(p.symbol, p.side, p.qty); notes.push(`${p.symbol}: ${f.note}`); }
+    for (const p of venue) { const f = await this.close(p.symbol, p.side, p.qty, undefined, 'OWNER_KILL'); notes.push(`${p.symbol}: ${f.note}`); }
     return notes;
   }
 }

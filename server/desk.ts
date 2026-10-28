@@ -1,3 +1,4 @@
+import { emptyChats, newChatRun, recoverChatRun, type ChatRun, type ChatResult } from './personal-chat.js';
 import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS } from './exchange/types.js';
 import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE } from './killswitch.js';
 import { adapterRules, publicRules, type InstrumentRules } from './exchange/rules.js';
@@ -14,7 +15,7 @@ import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, A
 import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
 import { makeCaller, type ModelCaller } from './providers/index.js';
-import { getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem, liveNewsStatus } from './market/index.js';
+import { MARKET_SOURCES, getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem, liveNewsStatus } from './market/index.js';
 import { strategyVote, rsi, volumeDelta, atr } from './strategy.js';
 import { applyRiskGate } from './risk.js';
 import { planOrder, round2, roundPrice } from './money.js';
@@ -47,12 +48,13 @@ import { conversationSymbols, ownerTargets, teammateRequests, capitalAndSlots, t
 import { capabilityManifest, type ToolObservation, type CapabilityStatus } from './research/catalog.js';
 import { buildTacticalTradePlan } from './market/tactical.js';
 import { WHALE_OBSERVATION_POLICY } from './market/whale.js';
-import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, validateEntryGeometry, snapshotMomentum, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
+import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, snapshotMomentum, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
 import { researchPolicy } from './providers/research-policy.js';
 import { localResearchActivity } from './providers/local.js';
 import { getSuiEventBriefing } from './market/sui.js';
 import { recordDiagnostic, withDiagnosticContext, type DiagnosticInput } from './session-log.js';
 
+const executionFailure = (reason: string) => /unknown symbol|invalid.symbol|unsupported.*instrument/i.test(reason) ? 'REJECTED_INVALID_SYMBOL' : /min.*notional|minimum.*(?:size|order)|under.*minimum/i.test(reason) ? 'REJECTED_MIN_NOTIONAL' : /quote|price unavailable|stale/i.test(reason) ? 'PRICE_UNAVAILABLE' : /reconcil|pending|no record|unknown/i.test(reason) ? 'PENDING' : /cancel/i.test(reason) ? 'CANCELLED' : 'EXECUTION_BLOCKED';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEBATERS: AgentId[] = ['market', 'research', 'strategist'];
 const val = (s: Stance) => (s === 'LONG' ? 1 : s === 'SHORT' ? -1 : 0);
@@ -66,7 +68,7 @@ export interface AgentView {
 export interface Ticker { symbol: string; last: number; change24hPct: number; source: string; example: boolean; at: number }
 export interface LogLine { id?: string; conversationId?: string; at: number; kind: 'info' | 'speech' | 'fight' | 'verdict' | 'trade' | 'command' | 'chat' | 'warn' | ActivityEntry['kind']; agent?: AgentId; from?: RoomMessage['from']; to?: RoomMessage['to']; text: string; example?: boolean; source?: string; level?: ActivityEntry['level']; status?: string; durationMs?: number }
 
-export interface DeskOptions { settingsFile?: string; opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv; diagnostics?: (input: DiagnosticInput) => void }
+export interface DeskOptions { operationalSessionId?: string; settingsFile?: string; opportunityReviewsPath?: string | null; reportsDir?: string | null; outboxPath?: string; executor?: LiveExecutor | null; learningsPath?: string | null; conversationsPath?: string | null; /** Persisted kill switch file. null = in memory only (tests). */ killFile?: string | null; jevFetch?: typeof fetch; jevEnv?: NodeJS.ProcessEnv; diagnostics?: (input: DiagnosticInput) => void }
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action; stop?: number; tp?: number }
@@ -83,6 +85,11 @@ export class Desk extends EventEmitter {
   roomHistory: RoomMessage[] = [];
   conversationsRegistry: Record<string, ConversationSummary> = {};
   conversationsPath: string | null = null;
+  private unverifiedChatAccounts = new WeakMap<object, string>();
+  private chatRuns: ChatRun[] = [];
+  private chatRuntimeId: string;
+  private chatControllers = new Map<string, AbortController>();
+  private chatInflight = new Map<string, Promise<ChatResult>>();
   messageSeq = 0;
   private conversations = new Map<string, string[]>();
   private snapshotCache = new Map<string, { at: number; promise: Promise<MarketSnapshot & { errors: string[] }> }>();
@@ -126,22 +133,25 @@ export class Desk extends EventEmitter {
     await previous;
     try { return await work(); } finally { release(); }
   }
-  private checkpoint() { this.opts.executor?.journal.checkpoint(this.book.positions, this.book.closed); }
+  private checkpoint() { return this.opts.executor?.journal.checkpoint(this.book.positions, this.book.closed, true); }
   private executionEvent(status: string, symbol: string, extra: Record<string, unknown> = {}) {
     this.diagnostic({ source: 'execution', category: 'ORDER', eventName: `execution.${status}`, status, correlationId: String(extra.clientId ?? extra.positionId ?? this.debate?.id ?? ''), message: `Execution ${status}`, details: { symbol, ...extra } });
     this.emit('execution', { id: `${Date.now()}-${++this.executionSeq}`, status, symbol, at: Date.now(), ...extra });
   }
+  private debatePreflight = false;
+  private killInFlight: Promise<string[]> | null = null;
   private executionSeq = 0;
   private speechSeq = 0;
 
   constructor(public cfg: AppConfig, private call: ModelCaller, private opts: DeskOptions = {}) {
     super();
+    this.chatRuntimeId = opts.operationalSessionId ?? randomUUID();
     this.opportunityReviews = new OpportunityReviews(opts.opportunityReviewsPath !== undefined ? opts.opportunityReviewsPath : process.env.VITEST ? null : 'data/opportunity-reviews.json');
     this.setMaxListeners(50);
     this.autoState.intervalMin = cfg.auto.intervalMin;
     this.book = new PaperBook(cfg.paper.balance, cfg.paper.safetyNet, cfg.paper.n, cfg.risk.takerFee);
     this.book.orderSizePct = cfg.risk.orderSizePct;
-    // A kill switch pressed before a restart stays on until the owner runs `npm run unkill -- --yes`.
+    // A kill switch pressed before a restart stays on until the Owner uses the local Office OFF button or `npm run unkill -- --yes`.
     this.killFilePath = opts.killFile !== undefined ? opts.killFile : process.env.VITEST ? null : (process.env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE);
     const k = readKill(this.killFilePath);
     if (k) { this.killed = true; this.paused = true; this.stopFlag = true; this.killedAt = k.at; }
@@ -162,6 +172,8 @@ export class Desk extends EventEmitter {
     this.jev = new JevService(opts.jevEnv ?? process.env, cfg.tradingMode, opts.jevFetch);
     this.conversationsPath = opts.conversationsPath !== undefined ? opts.conversationsPath : process.env.VITEST ? null : 'data/conversations.json';
     this.loadConversations();
+    this.activeChatSession();
+    this.saveConversations();
     if (cfg.appMode === 'grokbot') for (const id of AGENT_IDS) Object.assign(this.agents[id], { provider: 'grokbot', model: 'Grok Bot agent', fellBackToMock: false });
   }
 
@@ -196,22 +208,21 @@ export class Desk extends EventEmitter {
           }
           this.roomHistory = this.boundByConversation(this.roomHistory, 200);
         }
-        if (data.chats && typeof data.chats === 'object') {
-          for (const role of AGENT_IDS) {
-            if (Array.isArray(data.chats[role])) {
-              for (const c of data.chats[role]) {
-                if (c && !this.chats[role].some((x) => (x.id && x.id === c.id) || (x.at === c.at && x.text === c.text))) {
-                  this.chats[role].push(c);
-                }
-                if (typeof c.seq === 'number' && c.seq > this.messageSeq) this.messageSeq = c.seq;
-              }
-              this.chats[role] = this.boundByConversation(this.chats[role], 100);
-            }
+        if (Array.isArray(data.chatRuns)) {
+          this.chatRuns = data.chatRuns;
+          for (const run of this.chatRuns) for (const role of AGENT_IDS) for (const line of run.chats[role] ?? []) {
+            if (!line.id) line.id = `legacy-${randomUUID()}`;
+            if (typeof line.seq === 'number') this.messageSeq = Math.max(this.messageSeq, line.seq);
           }
+        } else if (data.chats && typeof data.chats === 'object') {
+          const legacy = newChatRun('legacy', 'UNKNOWN');
+          legacy.legacy = true; legacy.endedAt = Date.now(); legacy.startedAt = 0;
+          for (const role of AGENT_IDS) legacy.chats[role] = (Array.isArray(data.chats[role]) ? data.chats[role] : []).map((line: ChatLine) => ({ ...line, id: line.id ?? `legacy-${randomUUID()}` }));
+          if (Object.values(legacy.chats).some(messages => messages.length)) this.chatRuns.push(legacy);
         }
       }
     } catch (e) {
-      log('[conversations]', e);
+      throw new Error('Conversation storage is unreadable. Preserve it and repair storage before starting chat.', { cause: e });
     }
   }
 
@@ -220,13 +231,13 @@ export class Desk extends EventEmitter {
     try {
       const dir = path.dirname(this.conversationsPath);
       mkdirSync(dir, { recursive: true });
-      const tmp = this.conversationsPath + '.tmp';
+      const tmp = `${this.conversationsPath}.${process.pid}.${randomUUID()}.tmp`;
       const payload = JSON.stringify({
         version: APP_VERSION,
         updatedAt: Date.now(),
         conversations: this.conversationsRegistry,
         roomHistory: this.boundByConversation(this.roomHistory, 200),
-        chats: this.chats
+        chatRuns: this.chatRuns
       }, null, 2);
       writeFileSync(tmp, payload, 'utf-8');
       renameSync(tmp, this.conversationsPath);
@@ -238,7 +249,7 @@ export class Desk extends EventEmitter {
 
   createConversation(): ConversationSummary {
     const id = `conv-${randomUUID()}`, now = Date.now();
-    const conversation = { id, title: 'New conversation', createdAt: now, updatedAt: now, messageCount: 0 };
+    const conversation = { id, operationalSessionId: this.activeChatSession().id, accountScope: this.personalChatScope(), title: 'New conversation', createdAt: now, updatedAt: now, messageCount: 0 };
     this.conversationsRegistry[id] = conversation;
     try { this.saveConversations(true); } catch (error) { delete this.conversationsRegistry[id]; throw error; }
     this.changed();
@@ -246,11 +257,62 @@ export class Desk extends EventEmitter {
   }
 
   listConversations(): ConversationSummary[] {
-    const list = Object.values(this.conversationsRegistry);
+    const session = this.activeChatSession();
+    const list = Object.values(this.conversationsRegistry).filter(conversation => conversation.operationalSessionId === session.id && conversation.accountScope === session.accountScope);
     if (!list.some((c) => c.id === 'office')) {
-      list.unshift({ id: 'office', title: 'Main Office', createdAt: 0, updatedAt: 0, messageCount: this.roomHistory.length });
+      list.unshift({ id: 'office', title: 'Main Office', createdAt: 0, updatedAt: 0, messageCount: this.roomHistory.filter(message => message.operationalSessionId === session.id).length });
     }
     return list.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  private personalChatScope(): string {
+    const scope = this.accountScope();
+    if (!scope.endsWith(':UNKNOWN')) return scope;
+    // An unknown public account is not a reusable identity. Quarantine it across adapter/process changes.
+    const owner = this.opts.executor?.adapter ?? this.cfg.exchange;
+    let identity = this.unverifiedChatAccounts.get(owner);
+    if (!identity) { identity = randomUUID(); this.unverifiedChatAccounts.set(owner, identity); }
+    return `${scope}:unverified:${identity}`;
+  }
+
+  activeChatSession(): ChatRun {
+    const scope = this.personalChatScope();
+    let active = this.chatRuns.find(run => !run.endedAt && run.accountScope === scope);
+    if (active && active.runtimeId !== this.chatRuntimeId) {
+      recoverChatRun(active); active.runtimeId = this.chatRuntimeId;
+    }
+    if (!active) { active = newChatRun(this.chatRuntimeId, scope); this.chatRuns.push(active); }
+    this.chats = active.chats;
+    return active;
+  }
+
+  closeOperationalSession() {
+    for (const controller of this.chatControllers.values()) controller.abort();
+    for (const run of this.chatRuns.filter(run => !run.endedAt && run.runtimeId === this.chatRuntimeId)) { recoverChatRun(run, false); run.endedAt = Date.now(); }
+    this.saveConversations(true);
+  }
+
+  listChatHistory(agent: AgentId) {
+    const scope = this.personalChatScope();
+    return this.chatRuns.filter(run => run.endedAt && (run.accountScope === scope || run.legacy) && run.chats[agent]?.length).map(run => ({ id: run.id, startedAt: run.startedAt, endedAt: run.endedAt, recovered: !!run.recovered, legacy: !!run.legacy, role: agent, messageCount: run.chats[agent].length, preview: run.chats[agent].at(-1)?.text.slice(0, 100) ?? '' })).reverse();
+  }
+
+  readChatHistory(agent: AgentId, id: string, offset = 0, limit = 50) {
+    const run = this.chatRuns.find(run => run.id === id && run.endedAt && (run.accountScope === this.personalChatScope() || run.legacy));
+    if (!run) throw new Error('Archived chat not found in this account.');
+    const messages = run.chats[agent] ?? [];
+    const start = Math.max(0, Math.floor(offset)), count = Math.min(100, Math.max(1, Math.floor(limit)));
+    return { messages: messages.slice(start, start + count), nextOffset: start + count < messages.length ? start + count : null };
+  }
+
+  deleteChatHistory(agent: AgentId, id: string) {
+    const run = this.chatRuns.find(run => run.id === id && run.endedAt && (run.accountScope === this.personalChatScope() || run.legacy));
+    if (!run) throw new Error('Archived chat not found in this account.');
+    const previous = run.chats[agent], requests = run.requests, room = this.roomHistory;
+    run.chats[agent] = []; run.requests = requests.filter(request => request.agentId !== agent);
+    this.roomHistory = room.filter(message => !(message.operationalSessionId === id && ((message.from === 'owner' && message.to === agent) || (message.from === agent && message.to === 'owner'))));
+    try { this.saveConversations(true); } catch (error) { run.chats[agent] = previous; run.requests = requests; this.roomHistory = room; throw error; }
+    this.changed();
   }
 
   get grokbot() { return this.cfg.appMode === 'grokbot'; }
@@ -418,6 +480,7 @@ export class Desk extends EventEmitter {
     return {
       app: 'Trading Agent Mpu Gandring', version: APP_VERSION, mode: this.cfg.tradingMode, appMode: this.cfg.appMode,
       conversations: this.listConversations(),
+      operationalChat: { id: this.activeChatSession().id, startedAt: this.activeChatSession().startedAt, recovered: !!this.activeChatSession().recovered },
       live: this.cfg.live, killed: this.killed,
       venue: this.cfg.exchange.name ? { name: this.cfg.exchange.name, label: VENUE_LABEL[this.cfg.exchange.name], kind: VENUE_KIND[this.cfg.exchange.name], experimental: ADAPTER_STATUS[this.cfg.exchange.name] === 'experimental' } : null,
       dailyLoss: { limitPct: this.cfg.risk.dailyLossLimitPct, startEquity: this.day.startEquity, hit: this.day.lossHit },
@@ -427,6 +490,7 @@ export class Desk extends EventEmitter {
       lessons: this.learnings.recent(12, this.accountScope()), standingRules: this.learnings.standingRules(undefined, this.accountScope()).slice(-8).reverse(), lessonsRefused: this.learnings.refused, scan: this.lastScan, scorecard: this.scorecard.rows(), learning: { on: this.cfg.learning.on, scan: this.cfg.learning.scan, promoteAfter: this.cfg.learning.promoteAfter },
       opportunities: this.opportunities, auto: { ...this.autoState, symbols: this.cfg.auto.symbols, maxHoldHours: this.cfg.auto.maxHoldHours },
       reports: this.reports.slice(0, 12), reportIntervalMin: this.cfg.reports.intervalMin, dataCollection: this.collectionLast,
+      nativeMarketPreferred: !!this.opts.executor || !!this.cfg.exchange.name && (this.cfg.exchange.hasMainnetKeys || this.cfg.exchange.hasTestnetKeys),
       venueAccount: this.venueAccount, marketSource: this.cfg.marketSource, bridgeEnabled: this.cfg.bridge.enabled, paused: this.paused,
       agents: this.agents, tickers: this.tickers, debate: this.debate,
       accountState: this.accountState(), capabilities: this.capabilities(), chatMetrics: { ...this.chatMetrics },
@@ -436,7 +500,7 @@ export class Desk extends EventEmitter {
         equity: round2(this.book.balance + this.book.unrealized), positions: this.book.positions, closed: this.book.closed.slice(0, 20),
         minOrderUsdt: this.cfg.risk.minOrderUsdt, maxOrderUsdt: this.cfg.risk.maxOrderUsdt, maxLeverage: this.cfg.risk.maxLeverage, defaultStopPct: this.cfg.risk.defaultStopPct, takeProfitR: this.cfg.risk.takeProfitR
       },
-      equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-2000), chats: this.chats, roomHistory: this.boundByConversation(this.roomHistory, 100),
+      equityHistory: this.equityHistory.slice(-240), verdicts: this.verdicts.slice(0, 20), logs: this.logs.slice(-2000), chats: Object.fromEntries(AGENT_IDS.map(role => [role, this.boundByConversation(this.chats[role], 100).map(line => ({ ...line, ...(line.from === 'user' ? { status: this.activeChatSession().requests.find(r => r.id === line.clientRequestId)?.status ?? line.status } : {}) }))])) as Record<AgentId, ChatLine[]>, roomHistory: this.boundByConversation(this.roomHistory.filter(message => message.operationalSessionId === this.activeChatSession().id), 100),
       watchlist: this.cfg.watchlist, fightThreshold: this.cfg.debate.fightThreshold,
       jev: { ...this.jev.status(), lastDecision: this.jevLast ?? this.jev.lastRecord },
       debateMode: this.cfg.debate.mode,
@@ -617,6 +681,7 @@ export class Desk extends EventEmitter {
       text: cleanText,
       symbol: msg.symbol,
       conversationId: convId,
+      operationalSessionId: this.activeChatSession().id,
       example: msg.example
     };
     this.roomHistory.push(roomMsg);
@@ -629,6 +694,7 @@ export class Desk extends EventEmitter {
       updatedAt: roomMsg.at,
       messageCount: 0
     };
+    conv.operationalSessionId = this.activeChatSession().id; conv.accountScope = this.personalChatScope();
     conv.updatedAt = roomMsg.at;
     conv.messageCount = (conv.messageCount || 0) + 1;
     conv.lastMessage = roomMsg.text.slice(0, 80);
@@ -679,13 +745,20 @@ export class Desk extends EventEmitter {
     this.collectionLast = collected.trace;
     return collected;
   }
-  private marketSnapshot(symbol: string) {
-    const source = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
-    const key = `${source}:${symbol}:${this.cfg.tradingMode}`;
+  preferredMarketSource(): MarketSnapshot['source'] {
+    const venue = this.opts.executor?.adapter.name ?? (this.cfg.exchange.name && (this.cfg.exchange.hasMainnetKeys || this.cfg.exchange.hasTestnetKeys) ? this.cfg.exchange.name : null);
+    return venue && MARKET_SOURCES.some(source => source === venue) ? venue as MarketSnapshot['source'] : venue ? 'bybit' : this.cfg.marketSource;
+  }
+  private marketSnapshot(symbol: string, force = false) {
+    const source = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.preferredMarketSource() : 'sample';
+    const key = `${source}:${this.cfg.live?.network ?? "mainnet"}:${symbol}:${this.cfg.tradingMode}`;
     const hit = this.snapshotCache.get(key);
-    if (hit && Date.now() - hit.at < 5000) return hit.promise;
+    if (!force && hit && Date.now() - hit.at < 5000) return hit.promise;
     const started = Date.now();
-    const promise = getSnapshot(symbol, source, this.cfg.tradingMode !== 'PAPER').then(snapshot => {
+    const promise = getSnapshot(symbol, source, this.cfg.tradingMode !== 'PAPER', this.cfg.live?.network ?? 'mainnet').then(snapshot => {
+      const requestedVenue = this.opts.executor?.adapter.name ?? this.cfg.exchange.name ?? source;
+      snapshot.dataProvenance = { requestedVenue, actualVenue: snapshot.source, dataType: snapshot.source === requestedVenue ? 'native' : 'reference', symbolMapping: { requested: symbol, actual: symbol, transformed: false }, executionCompatible: snapshot.source === requestedVenue, fetchedAt: snapshot.fetchedAt };
+      for (const observation of [snapshot.orderbook, snapshot.orderflow]) if (observation) { observation.requestedVenue = requestedVenue; observation.dataType = observation.actualDataVenue === requestedVenue ? 'native' : 'external_proxy'; }
       this.diagnostic({ source: `market:${snapshot.source}`, category: 'MARKET', eventName: 'market.snapshot', status: snapshot.example ? 'sample' : 'available', message: 'Market snapshot received', correlationId: this.debate?.id, durationMs: Date.now() - started, details: { symbol, provider: snapshot.source, fetchedAt: snapshot.fetchedAt, ageMs: Date.now() - snapshot.fetchedAt, sample: snapshot.example, errors: snapshot.errors } });
       return { ...snapshot, tacticalTradePlan: buildTacticalTradePlan(snapshot) };
     }).catch(error => { this.diagnostic({ source: `market:${source}`, category: 'MARKET', eventName: 'market.error', status: 'failed', level: 'ERROR', message: 'Market snapshot failed', durationMs: Date.now() - started, details: { symbol, error } }); throw error; });
@@ -695,7 +768,7 @@ export class Desk extends EventEmitter {
     return promise;
   }
   async refreshTickers() {
-    const live = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.cfg.marketSource : 'sample';
+    const live = this.cfg.tradingMode !== 'PAPER' || Date.now() >= this.liveBackoffUntil ? this.preferredMarketSource() : 'sample';
     let allSample = true;
     const symbols = [...new Set([...this.cfg.watchlist, ...this.cfg.auto.symbols])];
     await Promise.all(symbols.map(async (s) => {
@@ -779,8 +852,8 @@ export class Desk extends EventEmitter {
         if (intent.kind === 'close' && p) {
           const value = rec.avgPrice == null || intent.accountedValue == null ? null : rec.avgPrice * rec.filledQty;
           const price = value == null ? p.mark : (value - (intent.accountedValue ?? 0)) / delta;
-          const t = this.book.close(p.id, price > 0 ? price : p.mark, 'reconciled exchange close', { qty: delta, executionId: `${intent.clientId}:${rec.filledQty}`, pnlStatus: value == null ? 'unknown' : 'estimated', exitStatus: value == null ? 'estimated' : 'confirmed' });
-          if (t) { this.note('closed', t.symbol, `Reconciled ${t.qty} ${t.side}; remaining ${t.remainingQty}. PnL ${t.pnlStatus}.`); void this.review(t); }
+          const t = this.book.close(p.id, price > 0 ? price : p.mark, intent.exitCause === 'OWNER_KILL' ? 'kill switch' : 'reconciled exchange close', { exitCause: intent.exitCause ?? 'RECONCILIATION', qty: delta, executionId: `${intent.clientId}:${rec.filledQty}`, pnlStatus: value == null ? 'unknown' : 'estimated', exitStatus: value == null ? 'estimated' : 'confirmed' });
+          if (t) { this.note('closed', t.symbol, `Reconciled ${t.qty} ${t.side}; cause ${t.exitCause ?? 'RECONCILIATION'}; remaining ${t.remainingQty}. PnL ${t.pnlStatus}.`); void this.review(t); }
         }
         // Open fills are represented by the venue position below, never by submitting another order.
         ex.account(intent.clientId, rec.filledQty, rec.avgPrice);
@@ -851,7 +924,7 @@ export class Desk extends EventEmitter {
       }
       this.book.balance = round2(bal.equityUsdt - venueUpnl);
       this.checkDay(bal.equityUsdt);
-      this.checkpoint();
+      await this.checkpoint();
       this.changed();
     } catch (e) {
       if (this.venueAccount) this.venueAccount.status = 'stale';
@@ -873,10 +946,25 @@ export class Desk extends EventEmitter {
   async runDebate(symbolIn: string, signal?: ExternalSignal): Promise<Verdict> {
     const symbol = normSymbol(symbolIn);
     if (!symbol) throw new Error('no symbol');
-    if (this.killed) throw new Error('kill switch is on. Release it with npm run unkill -- --yes, then restart the server');
+    if (this.killed) throw new Error('kill switch is on. Release it with the local Office OFF button or npm run unkill -- --yes');
     if (this.paused) throw new Error('desk is paused, send "resume" first');
-    if (this.debate) throw new Error(`a debate on ${this.debate.symbol} is already running`);
+    if (this.debate || this.debatePreflight) throw new Error(`a debate on ${this.debate?.symbol ?? 'instrument preflight'} is already running`);
     if (this.grokbot) throw new Error('Grok Bot mode: the debate runs in your Grok Bot group chat (npm run gb -- event ...), the internal engine is off');
+    // Reject unsupported contracts before any expensive model work. Never guess symbol units.
+    const timer = new CycleTimer();
+    let nativeRules: InstrumentRules | null = null;
+    if (this.opts.executor) {
+      this.debatePreflight = true;
+      try {
+        nativeRules = await timer.measure('instrumentMetadata', () => adapterRules(this.opts.executor!.adapter, symbol));
+        if (![nativeRules.qtyStep, nativeRules.tickSize, nativeRules.minQty, nativeRules.fetchedAt].every(Number.isFinite) || nativeRules.fetchedAt > Date.now() + 5000 || nativeRules.symbol !== symbol || !(nativeRules.qtyStep > 0) || !(nativeRules.tickSize > 0) || !(nativeRules.minQty > 0) || Date.now() - nativeRules.fetchedAt > 300_000 || (nativeRules.marketType && nativeRules.marketType !== 'perpetual') || (nativeRules.status && nativeRules.status !== 'TRADING')) throw new Error('unsupported or inactive instrument');
+      } catch (error) {
+        const reason = `EXECUTION_BLOCKED_INVALID_SYMBOL: ${symbol}: ${safe((error as Error).message)}`;
+        this.executionEvent('REJECTED_INVALID_SYMBOL', symbol, { reason });
+        throw new Error(reason);
+      } finally { this.debatePreflight = false; }
+    }
+    if (this.killed || this.paused) throw new Error('Debate cancelled during instrument preflight.');
     this.stopFlag = false;
     const id = `deb-${Date.now().toString(36)}`;
     const mode = this.cfg.debate.mode;
@@ -885,7 +973,6 @@ export class Desk extends EventEmitter {
     this.emit('debate', { id, symbol, phase: 'opening' });
     const transcript: string[] = [`# Debate ${id} on ${symbol}`, `Mode: ${this.cfg.tradingMode}. Started ${new Date().toISOString()}`];
     const note = (who: string, t: string) => transcript.push(`- **${who}**: ${t}`);
-    const timer = new CycleTimer();
     try {
       for (const a of AGENT_IDS) { this.agents[a].stance = null; this.agents[a].confidence = null; }
       this.setAll('idle');
@@ -895,7 +982,7 @@ export class Desk extends EventEmitter {
       this.setPhase('reading');
       this.setStatus('market', 'reading'); this.changed();
       const collected = await timer.measure('marketData', () => this.collectResearchData(symbol));
-      const snap = collected.market;
+      let snap = collected.market;
       const tacticalPlan = snap.tacticalTradePlan ?? buildTacticalTradePlan(snap);
       snap.tacticalTradePlan = tacticalPlan;
       const marketEvidence = { snapshotId: snap.snapshotId ?? `${id}:${symbol}`, source: snap.source,
@@ -1023,9 +1110,15 @@ export class Desk extends EventEmitter {
       for (let round = 1; round <= rounds; round++) {
         if (this.stopFlag) break;
         this.setPhase(`round ${round}`, round);
-        for (const a of DEBATERS) {
-          if (this.stopFlag) break;
-          const others = DEBATERS.filter((o) => o !== a).map((o) => ({ agent: o, stance: this.agents[o].stance ?? 'NEUTRAL', confidence: this.agents[o].confidence ?? 0, lastLine: this.agents[o].lastLine }));
+        const roundStances = DEBATERS.map(a => this.agents[a].stance);
+        const contested = roundStances.includes('LONG') && roundStances.includes('SHORT');
+        const targets = contested ? DEBATERS.filter(a => this.agents[a].stance !== 'NEUTRAL') : hasConflict ? ['market', 'strategist'] as AgentId[] : [];
+        if (!targets.length) break;
+        // Freeze the round context before starting independent challenges.
+        const roundViews = structuredClone(this.agents);
+        await Promise.all(targets.map(async a => {
+          if (this.stopFlag) return;
+          const others = DEBATERS.filter((o) => o !== a).map((o) => ({ agent: o, stance: roundViews[o].stance ?? 'NEUTRAL', confidence: roundViews[o].confidence ?? 0, lastLine: roundViews[o].lastLine }));
           this.setStatus(a, 'thinking'); this.changed();
           const rb = await this.run(a, 'rebuttal', {
             instruction: `Round ${round} of the ${symbol} debate. Directly challenge the strongest opposing point from your colleagues using your domain evidence (Market uses price/ATR/RSI, Research uses verified news/on-chain facts, Strategist uses the canonical rule). You may change stance if the opposing evidence is objectively superior.`,
@@ -1048,7 +1141,7 @@ export class Desk extends EventEmitter {
           await this.say(a, rb.data.rebuttal, rb.example, fighting ? 'fighting' : 'arguing'); note(ROLES[a].name, `[${stance}] ${rb.data.rebuttal}`);
           await this.debateBeat(fighting ? this.cfg.debate.paceMs * 3.5 : 0, speechStarted);
           if (fighting && target) this.setStatus(target, 'arguing');
-        }
+        }));
       }
       timer.mark('rebuttals', Date.now() - rbStart);
 
@@ -1071,10 +1164,14 @@ export class Desk extends EventEmitter {
         regime: jevInterp?.marketRegime ?? null, materialConflict: jevInterp?.materialConflict === 1, evidenceRefs: [`jev:${id}`]
       };
       const executionVenue = this.opts.executor?.adapter.name ?? this.cfg.live?.exchange;
-      const cachedTicker = this.tickers[symbol];
-      const tickerIsNative = cachedTicker && executionVenue && cachedTicker.source?.toLowerCase() === executionVenue.toLowerCase();
-      const snapshotIsNative = executionVenue && snap.source?.toLowerCase() === executionVenue.toLowerCase();
-      const nativeQuote = tickerIsNative ? cachedTicker.last : (snapshotIsNative ? snap.last : undefined);
+      let nativeQuote: number | undefined;
+      try { nativeQuote = this.opts.executor ? await timer.measure('nativeQuote', () => this.opts.executor!.adapter.ticker(symbol)) : undefined; } catch { /* Execution remains blocked, reference data is analytical only. */ }
+      const nativeQuoteEvidence = { venue: executionVenue ?? null, symbol, marketType: nativeRules?.marketType ?? null, last: nativeQuote ?? null, fetchedAt: Date.now(), source: this.opts.executor ? `${executionVenue}.ticker` : null, certainty: nativeQuote && nativeQuote > 0 ? 'confirmed' : 'unknown', instrument: nativeRules };
+      // A long debate must not close from its opening snapshot.
+      if (pos) {
+        snap = await this.marketSnapshot(symbol, true);
+        if (this.opts.executor) await this.syncLive();
+      }
       const evidenceFor = (side: 'LONG' | 'SHORT', scenario: EntryScenario | null = selectedScenario, snapshot = snap) => buildDebateEvidence({
         snapshot,
         side,
@@ -1086,31 +1183,47 @@ export class Desk extends EventEmitter {
         whalePolicy: WHALE_OBSERVATION_POLICY,
         jev: jevEvidence,
         nativeExecutionQuote: nativeQuote,
-        contractMultiplier: 1,
-        instrumentSymbol: symbol
+        contractMultiplier: nativeRules?.contractMultiplier,
+        instrumentSymbol: nativeRules?.symbol ?? symbol
       });
       const debateEvidence = evidenceFor(selectedScenario?.side ?? (rule.side === 'SHORT' ? 'SHORT' : 'LONG'));
       const opposingSide = pos?.side === 'LONG' ? 'SHORT' : 'LONG';
-      const conviction = { opposing: !!pos && this.agents.market.stance === opposingSide && this.agents.strategist.stance === opposingSide, verified: !mk.fallback && !st.fallback, evidenceRefs: [`agent:market:${id}`, `agent:strategist:${id}`] };
+      const conviction = { opposing: !!pos && this.agents.market.stance === opposingSide && this.agents.strategist.stance === opposingSide, verified: false, evidenceRefs: [`agent:market:${id}`, `agent:strategist:${id}`] };
       const targetLevel = typeof pos?.decisionEvidence?.target1 === 'number' ? pos.decisionEvidence.target1 : undefined;
       const exitRefs = exitEvidenceRefs(snap, pos?.entryScenarioId);
       const netUnrealizedPnl = pos ? estimatedNetUnrealized({ unrealizedPnl: pos.unrealizedPnl, entry: pos.entry, mark: snap.last, qty: pos.qty, takerFee: this.cfg.risk.takerFee }) ?? undefined : undefined;
       const strategyInvalidated = pos ? this.invalidated(pos.side, rule) : false;
-      const closeInput = pos ? { snapshot: snap, position: pos, mode: this.cfg.tradingMode, executionVenue: this.opts.executor?.adapter.name, invalidationLevel: pos.invalidationLevel, strategyInvalidated, evidence: evidenceFor(pos.side, null), news: newsBriefing, whale: whaleBriefing, whalePolicy: WHALE_OBSERVATION_POLICY, conviction, netUnrealizedPnl, targetLevel, guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } } : null;
+      const closeInput = pos ? { snapshot: snap, position: pos, mode: this.cfg.tradingMode, executionVenue: this.opts.executor?.adapter.name, nativeExecutionQuote: this.venueAccount?.status === 'confirmed' ? pos.mark : undefined, invalidationLevel: pos.invalidationLevel, strategyInvalidated, evidence: evidenceFor(pos.side, null), news: newsBriefing, whale: whaleBriefing, whalePolicy: WHALE_OBSERVATION_POLICY, conviction, netUnrealizedPnl, targetLevel, guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } } : null;
       const specialistExit = st.data.exitSignal ?? mk.data.exitSignal;
       const closeTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, leadClose: specialistExit ? { exitSignal: { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } } : undefined }) : [];
+      this.setPhase('risk gate');
+      const sharedRoleEvidence = { symbol, debateEvidence, closeTriggers, position: pos, opinions: DEBATERS.map(agent => ({ agent, stance: this.agents[agent].stance, confidence: this.agents[agent].confidence, reasoning: this.agents[agent].lastLine })), ownerSettings: entrySettings, allocation: this.book.split(), nativeQuoteEvidence };
+      const [aiRisk, aiExecution] = await Promise.all([
+        timer.measure('riskManager', () => this.run('risk', 'risk_assessment', {
+          instruction: 'Assess the actual debate evidence and position risk. Return APPROVE or REJECT with a specific reason. Missing optional news/whale/JEV is not a veto. Do not impose confidence thresholds or change Owner sizing, leverage or SL/TP. Owner settings are binding. A rejection must identify the risk, not repeat boilerplate.',
+          data: sharedRoleEvidence, context: { ...sharedRoleEvidence, leverage: this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct }
+        })),
+        timer.measure('executionTrader', () => this.run('execution', 'chat', {
+          instruction: 'Review the supplied instrument, native quote, capacity, stop requirements and any position. Give a concise readiness assessment identifying confirmed and UNKNOWN facts. You do not send orders. No teammates or commands.',
+          data: sharedRoleEvidence, context: sharedRoleEvidence
+        }))
+      ]);
+      const aiRiskApproved = !aiRisk.fallback && aiRisk.data.decision === 'APPROVE';
+      await this.say('risk', `${aiRisk.data.decision}. ${aiRisk.data.reason}`, aiRisk.example, 'idle');
+      await this.say('execution', aiExecution.data.reply, aiExecution.example, 'idle');
+      note('Risk Manager', aiRisk.data.reason); note('Execution Trader', aiExecution.data.reply);
       const roleAnalysis = {
         market: { stance: mk.data.stance, momentum: debateEvidence.momentum, exhaustion: tacticalPlan.exhaustion, fallback: mk.fallback },
         research: { vote: researchVote, catalyst: debateEvidence.dimensions.catalyst, news: newsBriefing, whale: whaleBriefing, fallback: rs.fallback },
         strategist: { stance: st.data.stance, scenario: selectedScenario, fallback: st.fallback },
-        risk: { ...applyRiskGate({ leverage: this.cfg.risk.maxLeverage }, this.cfg.risk), ownerSettings: entrySettings, allocation: this.book.split(), closeTriggers },
-        execution: { marketSource: snap.source, venue: this.opts.executor?.adapter.name ?? null, provenance: debateEvidence.provenance, quote: snap.last, fee: this.cfg.risk.takerFee, instrumentRules: 'Read and normalized at submission; no simulated eligibility claim.' },
+        risk: { assessment: aiRisk.data, fallback: aiRisk.fallback, ownerSettings: entrySettings, allocation: this.book.split(), closeTriggers },
+        execution: { assessment: aiExecution.data.reply, fallback: aiExecution.fallback, nativeQuoteEvidence, marketSource: snap.source, venue: this.opts.executor?.adapter.name ?? null, provenance: debateEvidence.provenance, quote: snap.last, fee: this.cfg.risk.takerFee, instrumentRules: nativeRules ?? 'Unavailable; validated at submission.' },
         jev: jevEvidence
       };
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
-        instruction: `Decide the ${symbol} debate from roleAnalysis and structured DebateEvidence. OPEN must select the Strategist's supplied entryScenarioId, entryZone and invalidationLevel exactly. Group structure, tape, verified catalyst and JEV independently; UNKNOWN optional data is neither support nor veto. One VERIFIED_OPPOSING dimension cancels OPEN. Disagreement alone never vetoes. CLOSE needs any one supplied verified closeTrigger; name it explicitly. You may identify EARLY_TAKE_PROFIT via exitSignal only from the supplied exhaustion/target evidenceRefs and known net profit. Holding duration is never an exit reason. Preserve all Owner sizing, leverage, N and margin SL/TP.`,
+        instruction: `Decide the ${symbol} debate from roleAnalysis and structured DebateEvidence. Entry zones are recommendations, not binding price constraints. Use OPEN for an immediate executable entry or explicitly HOLD to wait for a pullback. Preserve valid structural invalidation. Group structure, tape, verified catalyst and JEV independently; UNKNOWN optional data is neither support nor veto. Weigh opposing dimensions with Risk; they are evidence, not independent system vetoes. Disagreement alone never vetoes. CLOSE needs any one supplied verified closeTrigger; name it explicitly. You may identify EARLY_TAKE_PROFIT via exitSignal only from the supplied exhaustion/target evidenceRefs and known net profit. Holding duration is never an exit reason. Preserve all Owner sizing, leverage, N and margin SL/TP.`,
         data: { marketEvidence, symbol, roleAnalysis, debateEvidence, entryScenario: selectedScenario, closeTriggers, exitEvidenceRefs: exitRefs, netUnrealizedPnl, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, openPosition: pos, freeSlots: slots.freeSlots, journal, strategyInvalidated },
         context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, debateEvidence, entryScenario: selectedScenario, closeTriggers, liveFeed: !snap.example, strategyInvalidated }
       }));
@@ -1121,11 +1234,8 @@ export class Desk extends EventEmitter {
       // An opposite signal on an open position closes it. Re-entry the other way waits for the next cycle.
       if ((action === 'OPEN_LONG' && pos?.side === 'SHORT') || (action === 'OPEN_SHORT' && pos?.side === 'LONG')) { action = 'CLOSE'; flipNote = ' Opposite signal, closing first.'; }
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
-      if (researchVote === 'VETO' && action.startsWith('OPEN')) action = 'HOLD';
-      const capacityBlock = !pos && action.startsWith('OPEN') && !slots.canOpenNew
-        ? (slots.reason ?? `Capacity full: ${slots.occupiedSlots}/${this.book.n} slots in use. Limit is N = ${this.book.n}.`)
-        : null;
-      if (capacityBlock) action = 'HOLD';
+      const riskBlock = !aiRiskApproved && (action.startsWith('OPEN') || action === 'CLOSE') ? `Risk ${aiRisk.data.decision}: ${aiRisk.data.reason}` : null;
+      if (riskBlock) action = 'HOLD';
       let exitBlock: string | null = null;
       const leadSignal = ld.data.exitSignal;
       const eligibleCloseTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, strategyInvalidated, leadClose: { closeTrigger: ld.data.closeTrigger, reason: ld.data.reason, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : specialistExit ? { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } : undefined } }) : [];
@@ -1135,21 +1245,13 @@ export class Desk extends EventEmitter {
         flipNote = '';
         exitBlock = 'No verified CLOSE trigger or structural reversal supports the selected exit; keep existing exchange stop and take profit.';
       }
-      let entryBlock: string | null = null;
       let candidateScenario: EntryScenario | undefined;
       if (action === 'OPEN_LONG' || action === 'OPEN_SHORT') {
         const proposedSide = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
         candidateScenario = (selectedScenario && selectedScenario.side === proposedSide)
           ? selectedScenario
           : tacticalPlan.scenarios.find(s => s.side === proposedSide && (!ld.data.entryScenarioId || s.id === ld.data.entryScenarioId || s.kind === ld.data.entryScenarioId));
-        if (!candidateScenario && !snap.example) {
-          entryBlock = 'NO_VALID_ENTRY_SCENARIO';
-        } else if (ld.data.entryScenarioId && candidateScenario?.id && ld.data.entryScenarioId !== candidateScenario.id && ld.data.entryScenarioId !== candidateScenario.kind) {
-          entryBlock = 'Lead and Strategist must select the same supplied entry scenario and structural geometry.';
-        } else if (!snap.example && !debateEvidence.openAllowed) {
-          entryBlock = debateEvidence.openReasons.join('; ');
-        }
-        if (entryBlock) action = 'HOLD';
+        // The Owner has not configured a binding limit-entry price. Risk weighs strategy evidence.
       }
       if (this.jev.settings.effectiveMode !== 'off') {
         this.jev.evaluateBackground(boundedPostState({
@@ -1164,36 +1266,14 @@ export class Desk extends EventEmitter {
       }
       const confidenceBlock = (action.startsWith('OPEN') || ld.data.action.startsWith('OPEN')) ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
       if (confidenceBlock) action = 'HOLD';
-      const decisionReason = confidenceBlock ?? exitBlock ?? entryBlock ?? capacityBlock ?? ld.data.reason;
+      const decisionReason = confidenceBlock ?? riskBlock ?? exitBlock ?? ld.data.reason;
       await this.say('lead', `${action.replace('_', ' ')}. ${decisionReason}${flipNote}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
 
       // 6. Apply Owner profile risk gate on open, or run collaborative Risk and Execution position review on active positions.
       const opening = action === 'OPEN_LONG' || action === 'OPEN_SHORT';
       const gate = applyRiskGate({ leverage: this.cfg.risk.maxLeverage }, this.cfg.risk);
-      if (opening) {
-        this.setPhase('risk gate'); this.setStatus('risk', 'thinking'); this.changed();
-        const profileReason = `Owner profile: SL ${this.cfg.risk.defaultStopPct}% and TP ${this.cfg.risk.takeProfitPct}% of margin; no additional model risk sizing.`;
-        this.scorecard.verdict();
-        this.scorecard.riskDecision(gate.decision);
-        const riskLine = `${gate.decision}. ${profileReason}${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`;
-        await this.say('risk', riskLine, false, 'idle'); note('Risk Manager', riskLine);
-      } else if (pos) {
-        this.setPhase('position risk review'); this.setStatus('risk', 'thinking'); this.changed();
-        const protText = pos.protectionStatus === 'confirmed' ? 'confirmed on exchange' : (pos.protectionStatus ?? 'active');
-        const riskLine = action === 'CLOSE'
-          ? `APPROVE. Risk gate approved close for ${pos.side} ${pos.qty} ${symbol}. Exit authorized.`
-          : `APPROVE. Position exposure: ${pos.side} ${pos.qty} ${symbol} at mark ${snap.last}. Stop ${pos.stop} (${protText}). Unrealized PnL ${pos.unrealizedPnl ?? 0} USDT. Risk limits intact.`;
-        await this.say('risk', riskLine, false, 'idle'); note('Risk Manager', riskLine);
-
-        this.setPhase('execution review'); this.setStatus('execution', 'thinking'); this.changed();
-        const hasPending = this.opts.executor?.hasPending(symbol, pos.side, 'open') || this.opts.executor?.hasPending(symbol, pos.side, 'close');
-        const syncText = this.opts.executor ? 'Venue sync confirmed' : 'Paper book sync confirmed';
-        const pendingText = hasPending ? 'Pending intent in flight' : 'No conflicting pending orders';
-        const execLine = action === 'CLOSE'
-          ? `${syncText}: preparing reduce-only close for ${pos.qty} ${pos.side}. ${pendingText}.`
-          : `${syncText}: ${pos.qty} ${pos.side} active. ${pendingText}. Ready for reduce-only execution if invalidated.`;
-        await this.say('execution', execLine, false, 'idle'); note('Execution Trader', execLine);
-      }
+      this.scorecard.verdict();
+      this.scorecard.riskDecision(aiRiskApproved ? 'APPROVE' : 'REJECT');
 
       if (opening || (action === 'CLOSE' && pos)) {
         this.setPhase('preparation');
@@ -1206,8 +1286,13 @@ export class Desk extends EventEmitter {
       }
 
       // 7. Verdict and paper execution
-      const riskDecision: Verdict['riskDecision'] = opening ? gate.decision : pos && action === 'CLOSE' ? 'APPROVE' : 'N/A';
+      const riskDecision: Verdict['riskDecision'] = aiRiskApproved ? 'APPROVE' : 'REJECT';
       const verdict: Verdict = { id, symbol, action, riskDecision, executed: false, reason: decisionReason, disagreement, camps, example: mk.example || ld.example || snap.example, at: Date.now() };
+      verdict.aiDecision = ld.data.action;
+      verdict.ownerMinConfidencePct = this.cfg.risk.minEntryConfidencePct;
+      verdict.entryPolicy = 'RISK_AND_OWNER_CONFIDENCE';
+      verdict.riskAssessment = { decision: aiRisk.data.decision, reason: aiRisk.data.reason, fallback: aiRisk.fallback };
+      verdict.nativeQuote = nativeQuoteEvidence;
       verdict.debateEvidence = debateEvidence;
       if (action === 'CLOSE') verdict.closeTrigger = selectedCloseTrigger?.reason;
       if (action === 'OPEN_LONG' || action === 'OPEN_SHORT') {
@@ -1221,18 +1306,18 @@ export class Desk extends EventEmitter {
         let nativeExecutionQuote: number | undefined;
         if (this.opts.executor) {
           try {
-            nativeExecutionQuote = await this.opts.executor.adapter.ticker(symbol);
+            nativeExecutionQuote = await timer.measure('quoteRevalidation', () => this.opts.executor!.adapter.ticker(symbol));
           } catch {
             nativeExecutionQuote = undefined;
           }
         }
-        const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap, entryZone: targetScenario?.entryZone ?? undefined, invalidationLevel: targetScenario?.invalidationLevel ?? undefined, executionQuote: nativeExecutionQuote, expectedVenue: this.opts.executor?.adapter.name, tradingMode: this.cfg.tradingMode });
+        const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap, entryZone: targetScenario?.entryZone ?? undefined, invalidationLevel: targetScenario?.invalidationLevel ?? undefined, executionQuote: nativeExecutionQuote, expectedVenue: this.opts.executor?.adapter.name, tradingMode: this.cfg.tradingMode, aiApproved: true });
         if (!reval.ok) {
-          action = 'HOLD';
-          verdict.action = 'HOLD';
+          verdict.executionOutcome = executionFailure(reval.reason ?? '');
           verdict.reason = reval.reason ?? 'Stale signal.';
           this.note('skipped', symbol, `HOLD: ${verdict.reason}`);
         } else {
+          verdict.nativeQuote = { ...nativeQuoteEvidence, last: nativeExecutionQuote ?? null, fetchedAt: Date.now() };
           const price = reval.quote;
           await this.debateBeat(0);
           this.setPhase('execution');
@@ -1240,13 +1325,23 @@ export class Desk extends EventEmitter {
           if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
           verdict.executed = res.ok;
           if (res.order) { verdict.order = res.order; verdict.executionStatus = res.order.status; }
+          verdict.executionOutcome = res.ok ? (res.order?.status === 'partial' ? 'PARTIAL' : 'FILLED') : executionFailure(res.reason);
           if (!res.ok) verdict.reason = res.reason;
           note('Execution Trader', res.line);
         }
       } else if (action === 'CLOSE' && pos) {
         await this.debateBeat(0);
         this.setPhase('execution');
-        const t = await this.executeClose(symbol, snap.last, flipNote ? 'opposite signal' : 'desk verdict CLOSE', true);
+        const fresh = await this.marketSnapshot(symbol, true);
+        if (this.opts.executor) await this.syncLive();
+        const current = this.book.positions.find(p => p.id === pos.id);
+        const freshTriggers = current && closeInput ? evaluateCloseTriggers({ ...closeInput, snapshot: fresh, position: current, nativeExecutionQuote: this.venueAccount?.status === 'confirmed' ? current.mark : undefined, strategyInvalidated: this.invalidated(current.side, strategyVote(fresh.candles)), conviction: undefined, leadClose: { closeTrigger: ld.data.closeTrigger, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : undefined } }) : [];
+        const nativeStateConfirmed = !this.opts.executor || !!this.venueAccount && this.venueAccount.status === 'confirmed' && Date.now() - this.venueAccount.at <= 30_000;
+        const confirmed = nativeStateConfirmed ? freshTriggers.find(t => t.reason === selectedCloseTrigger?.reason) : undefined;
+        const t = confirmed ? await this.executeClose(symbol, current?.mark ?? fresh.last, 'desk verdict CLOSE', true) : [];
+        if (!confirmed) { verdict.executionOutcome = 'EXECUTION_BLOCKED'; verdict.reason = 'Decision-time CLOSE trigger no longer verified, or position already closed.'; }
+        verdict.executionOutcome = t.length ? (t.some(x => x.remainingQty) ? 'PARTIAL' : 'CLOSED') : verdict.executionOutcome ?? 'PENDING';
+        verdict.exitCause = t[0]?.exitCause;
         verdict.executed = t.length > 0; verdict.executionStatus = t.some((x) => x.remainingQty) ? 'partial' : t.length ? 'closed' : undefined;
         note('Execution Trader', t.map((x) => `Closed ${x.side} ${x.symbol} at ${x.exit}, PnL ${x.realizedPnl} USDT.`).join(' ') || 'nothing closed');
       }
@@ -1261,6 +1356,7 @@ export class Desk extends EventEmitter {
         blocked: /daily loss|kill switch|paused|already has an open|veto|confidence|risk rejected/i.test(verdict.reason),
         failed: !verdict.executed && (verdict.action === 'OPEN_LONG' || verdict.action === 'OPEN_SHORT' || verdict.action === 'CLOSE')
       });
+      verdict.finalOperationalStatus = verdict.executed ? 'EXECUTED' : verdict.action === 'HOLD' ? 'HOLD' : 'EXECUTION_BLOCKED';
       verdict.timing = timing;
       this.lastCycle = {
         symbol, durationMs: timing.total, stage: 'done', verdict: verdict.action,
@@ -1296,7 +1392,7 @@ export class Desk extends EventEmitter {
     }
   }
 
-  async runHuddle(message: string, targetAgents?: (AgentId | 'all')[], symbol?: string, conversationId = 'office', signal?: AbortSignal, requestId = randomUUID()): Promise<{ ok: boolean; replies: Array<{ agent: AgentId; reply: string }>; results: HandoffResult[] }> {
+  async runHuddle(message: string, targetAgents?: (AgentId | 'all')[], symbol?: string, conversationId = 'office', signal?: AbortSignal, requestId: string = randomUUID()): Promise<{ ok: boolean; replies: Array<{ agent: AgentId; reply: string }>; results: HandoffResult[] }> {
     const symbols = this.resolveConversation(message, conversationId, symbol);
     const sym = symbols[0];
     const wantsLead = !targetAgents?.length || targetAgents.includes('all') || targetAgents.includes('lead');
@@ -1460,7 +1556,7 @@ export class Desk extends EventEmitter {
         this.needsMarketContext(question) ? Promise.all(symbols.slice(0, 4).map(symbol => this.marketSnapshot(symbol).catch(() => null))) : Promise.resolve([]),
         this.chatResearchContext(question, agent, symbols[0])
       ]);
-      const room = this.roomHistory.filter(item => (item.conversationId ?? 'office') === conversationId).slice(-15);
+      const room = this.roomHistory.filter(item => item.operationalSessionId === this.activeChatSession().id && (item.conversationId ?? 'office') === conversationId && (item.to === agent || item.from === agent || item.to === 'all')).slice(-15);
       const res = await this.run(agent, 'chat', {
         instruction, signal,
         data: {
@@ -1480,10 +1576,8 @@ export class Desk extends EventEmitter {
       const status = res.failureKind === 'cancelled' ? 'cancelled' : res.fallback ? 'failed' : 'completed';
       const reply = res.data.reply;
       const result = { agent, reply, status, requestId, handoffId, durationMs: Date.now() - started, ...(res.fallback ? { error: reply, failureKind: res.failureKind ?? 'provider' } : {}) } satisfies HandoffResult;
-      if (signal?.aborted) return { ...result, requests: [] };
+      if (signal?.aborted || this.accountScope() !== activeScope) return { ...result, status: 'cancelled', reply: 'Consultation cancelled because its request or account changed.', requests: [] };
       const roomMessage = this.addRoomMessage({ from: agent, to: 'all', text: reply, symbol: symbols[0], conversationId, example: res.example });
-      this.chats[agent].push({ from: agent, text: reply, at: Date.now(), conversationId });
-      this.chats[agent] = this.boundByConversation(this.chats[agent], 60);
       this.recordActivity({ kind: 'tool', source: 'collaboration', level: status === 'failed' ? 'error' : 'info', status, text: `${agent} consultation ${status}`, durationMs: result.durationMs });
       await this.say(agent, reply, res.example, 'idle', true, conversationId, roomMessage.id);
       return { ...result, requests: res.fallback ? [] : teammateRequests(res.data, agent) };
@@ -1493,7 +1587,7 @@ export class Desk extends EventEmitter {
     } finally { this.setStatus(agent, 'idle'); }
   }
 
-  private async consult(requests: TeammateRequest[], from: AgentId, symbols: string[], conversationId: string, visited: Set<AgentId>, hop: number, signal?: AbortSignal, requestId = randomUUID()): Promise<HandoffResult[]> {
+  private async consult(requests: TeammateRequest[], from: AgentId, symbols: string[], conversationId: string, visited: Set<AgentId>, hop: number, signal?: AbortSignal, requestId: string = randomUUID()): Promise<HandoffResult[]> {
     if (hop >= 3 || signal?.aborted) return [];
     const eligible = requests.filter(request => request.to !== from && !visited.has(request.to));
     for (const request of eligible) visited.add(request.to);
@@ -1552,10 +1646,8 @@ export class Desk extends EventEmitter {
     }
     const contract = gate.entryContract;
     if (contract) {
-      if (!contract.evidence.openAllowed) return no(contract.evidence.openReasons.join('; '));
-      const geometry = validateEntryGeometry(side, price, contract.scenario);
-      if (!geometry.ok) return no(geometry.reason!);
-      const revalidated = revalidateEntry({ original: contract.snapshot, originalRule: contract.rule, side, fresh: contract.snapshot, executionQuote: price, entryZone: contract.scenario.entryZone ?? undefined, invalidationLevel: contract.scenario.invalidationLevel ?? undefined, expectedVenue: live?.adapter.name, tradingMode: this.cfg.tradingMode });
+      // Strategy recommendations were weighed by Risk and Lead. Only executable validity remains here.
+      const revalidated = revalidateEntry({ original: contract.snapshot, originalRule: contract.rule, side, fresh: contract.snapshot, executionQuote: price, entryZone: contract.scenario.entryZone ?? undefined, invalidationLevel: contract.scenario.invalidationLevel ?? undefined, expectedVenue: live?.adapter.name, tradingMode: this.cfg.tradingMode, aiApproved: gate.autonomous });
       if (!revalidated.ok) return no(revalidated.reason!);
     }
     // Lot step, min qty, tick, min notional and taker fee come from the exchange (LIVE/TESTNET: the adapter, cached 5 min).
@@ -1568,7 +1660,6 @@ export class Desk extends EventEmitter {
     }
     if (live && rules?.status && rules.status !== 'TRADING') return no(`${symbol} is ${rules.status} on the exchange, not TRADING.`);
     const plan = planOrder({
-      entryZone: contract?.scenario.entryZone ?? undefined, invalidationLevel: contract?.scenario.invalidationLevel ?? undefined,
       balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: slots.occupiedSlots, usedMargin: this.book.usedMargin,
       price, side, availableFunds: live ? this.venueAccount?.available : undefined, orderSizePct: gate.orderSizePct ?? this.cfg.risk.orderSizePct, adjustToVenueMinimum: Boolean(live), sizeFactor: 1, leverage: Math.max(1, Math.floor(Math.min(gate.leverage, this.cfg.risk.maxLeverage))),
       stopPct: this.cfg.risk.defaultStopPct,
@@ -1590,7 +1681,7 @@ export class Desk extends EventEmitter {
     }
     const p = this.book.open({ symbol, side, qty, entry, stop: plan.stop, tp: plan.tp, margin: live ? qty * entry / plan.leverage : plan.margin, leverage: plan.leverage });
     const currentScope = this.accountScope();
-    p.decisionEvidence = { ...(gate.evidence ?? {}), decisionId: (gate.evidence as any)?.decisionId ?? (gate.evidence as any)?.id, positionId: p.id, accountScope: currentScope };
+    p.decisionEvidence = { ...(gate.evidence ?? {}), ...(live ? { nativeQuote: { venue: live.adapter.name, symbol, last: price, source: `${live.adapter.name}.ticker`, fetchedAt: Date.now(), certainty: 'confirmed' } } : {}), decisionId: (gate.evidence as any)?.decisionId ?? (gate.evidence as any)?.id, positionId: p.id, accountScope: currentScope };
     p.ownership = 'managed'; p.entryStatus = confirmedPrice ? 'confirmed' : 'estimated';
     if (contract) {
       p.invalidationLevel = contract.scenario.invalidationLevel ?? undefined;
@@ -1598,7 +1689,7 @@ export class Desk extends EventEmitter {
       p.entryScenarioId = contract.scenario.id;
     }
     if (clientId && live) { p.id = clientId; const intent = live.journal.intents.find((i) => i.clientId === clientId); if (intent) intent.positionId = p.id; }
-    this.checkpoint();
+    await this.checkpoint();
     this.executionEvent(qty < plan.qty ? 'partial' : 'filled', symbol, { side, filledQty: qty, requestedQty: plan.qty, clientId, positionId: p.id, decisionId: (gate.evidence as Record<string, unknown> | undefined)?.decisionId });
     this.recordEquity();
     const line = `${tag}: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
@@ -1626,18 +1717,20 @@ export class Desk extends EventEmitter {
       this.executionEvent('closing', symbol, { side: p.side, requestedQty: p.qty, positionId: p.id });
       if (live) {
         if (live.hasPending(symbol, p.side, 'open') || live.hasPending(symbol, p.side, 'close')) { this.addLog({ kind: 'warn', text: `${symbol}: entry or close still being reconciled; no overlapping order sent.` }); continue; }
-        const f = await live.close(symbol, p.side, p.qty, p.id);
+        const cause = /kill/i.test(reason) ? 'OWNER_KILL' : ownedOnly ? 'AI_DEBATE' : /owner/i.test(reason) ? 'OWNER_MANUAL' : 'UNKNOWN';
+        details.exitCause = cause;
+        const f = await live.close(symbol, p.side, p.qty, p.id, cause);
         this.addLog({ kind: 'trade', agent: 'execution', text: `LIVE close ${symbol}: ${f.note}` });
         if (!f.ok) { this.recordError('exchange', `${symbol} close not filled: ${f.note}`); continue; }
         px = f.avgPrice ?? price;
-        details = { qty: f.qty, executionId: `${f.clientId}:${f.qty}`, pnlStatus: f.avgPrice == null || p.entryStatus === 'estimated' ? 'unknown' : 'estimated', exitStatus: f.avgPrice == null ? 'estimated' : 'confirmed' };
+        details = { ...details, qty: f.qty, executionId: `${f.clientId}:${f.qty}`, pnlStatus: f.avgPrice == null || p.entryStatus === 'estimated' ? 'unknown' : 'estimated', exitStatus: f.avgPrice == null ? 'estimated' : 'confirmed' };
         live.account(f.clientId, f.qty, f.avgPrice, Math.max(0, p.qty - f.qty));
       }
       const t = this.book.close(p.id, px, reason, details);
       if (t) this.executionEvent(t.remainingQty ? 'partial' : 'closed', symbol, { side: p.side, filledQty: t.qty, remainingQty: t.remainingQty, positionId: p.id, executionId: t.executionId, realizedPnl: t.realizedPnl, pnlStatus: t.pnlStatus });
       if (t) { out.push(t); this.note('closed', t.symbol, `${t.qty} ${t.side} at ${t.exit}; remaining ${t.remainingQty ?? 0}. PnL ${t.pnlStatus === 'unknown' ? 'unknown' : `${t.realizedPnl} USDT (${t.pnlStatus ?? 'paper'})`} (${reason})`); }
     }
-    this.checkpoint();
+    await this.checkpoint();
     const line = out.map((x) => `Closed ${x.qty} ${x.side} ${x.symbol}; remaining ${x.remainingQty}. ${x.pnlStatus === 'unknown' ? 'PnL unknown.' : `PnL ${x.realizedPnl} USDT (${x.pnlStatus}).`}`).join(' ');
     if (line) { this.addLog({ kind: 'trade', agent: 'execution', text: line }); await this.say('execution', line, false, 'idle', false); }
     this.setStatus('execution', 'idle');
@@ -1650,12 +1743,14 @@ export class Desk extends EventEmitter {
   /** Compatibility entrypoint. Holding duration alone never authorizes an exit. */
   async closeStale(_shouldContinue: () => boolean = () => true): Promise<number> { return 0; }
 
-  /** Kill switch: stop debating, cancel and flatten everything. Persisted: stays on across restarts until `npm run unkill -- --yes`. */
+  /** Kill switch: stop debating, cancel and flatten everything. Persisted: stays on across restarts until the local Owner explicitly releases it. */
   async kill(): Promise<string[]> {
+    if (this.killInFlight) return this.killInFlight;
     this.killed = true; this.paused = true; this.stopFlag = true; this.autoState.on = false;
     if (!this.killedAt) this.killedAt = Date.now();
-    try { writeKill(this.killFilePath, { at: this.killedAt, reason: 'kill switch' }); } catch (e) { this.addLog({ kind: 'warn', text: `Kill switch is on but could not be saved to disk (${safe((e as Error).message)}); it will reset on restart.` }); }
-    const notes = await this.exclusive(async () => {
+    let persistenceWarning = '';
+    try { writeKill(this.killFilePath, { at: this.killedAt, reason: 'kill switch' }); } catch (e) { persistenceWarning = `Kill switch is ON in memory but persistence failed: ${safe((e as Error).message)}. Restart retention is UNKNOWN.`; this.addLog({ kind: 'warn', text: persistenceWarning }); }
+    this.killInFlight = this.exclusive(async () => {
       if (this.opts.executor) {
         const result = await this.opts.executor.killAll(this.book.positions.map((p) => p.symbol));
         await this.syncLiveUnlocked();
@@ -1664,7 +1759,9 @@ export class Desk extends EventEmitter {
       const prices = Object.fromEntries(Object.values(this.tickers).map((t) => [t.symbol, t.last]));
       return this.book.closeAll(prices, 'kill switch').map((c) => `${c.symbol} closed, ${c.realizedPnl} USDT`);
     });
-    this.addLog({ kind: 'warn', text: `KILL SWITCH. ${notes.join('; ') || 'nothing open'}. To trade again: npm run unkill -- --yes on this machine, then restart.` });
+    const notes = await this.killInFlight.finally(() => { this.killInFlight = null; });
+    if (persistenceWarning) notes.unshift(persistenceWarning);
+    this.addLog({ kind: 'warn', text: `KILL SWITCH. ${notes.join('; ') || 'nothing open'}. Release with the local Office OFF button or npm run unkill -- --yes.` });
     void sendToGrokBot(this.cfg, 'command', { command: 'kill', notes }, this.opts.outboxPath);
     this.changed();
     return notes;
@@ -1672,12 +1769,13 @@ export class Desk extends EventEmitter {
 
   /** Release kill switch from the office or command, clearing persisted kill state */
   unkill(): boolean {
+    if (this.killInFlight) throw new Error('Emergency flatten is still running. Wait for its result before release.');
     if (this.killFilePath) clearKill(this.killFilePath);
     this.killed = false;
     this.killedAt = 0;
     this.paused = false;
     this.stopFlag = false;
-    this.addLog({ kind: 'info', text: 'Kill switch released. Trading resumed and buttons re-enabled.' });
+    this.addLog({ kind: 'info', text: 'Kill switch released. Auto Trading selection is unchanged; no order was submitted.' });
     this.changed();
     return true;
   }
@@ -1746,7 +1844,7 @@ export class Desk extends EventEmitter {
     }
     // Persist the outgoing scope before creating another executor. Never checkpoint
     // paper positions into a venue journal or reuse a different venue's book.
-    this.checkpoint();
+    await this.checkpoint();
     if (net && ex.name && ex.creds[net]) {
       const adapter = makeAdapter(ex.name, net, ex.creds[net]!, fetchImpl);
       const verdict = await verifyKey(adapter);
@@ -1940,7 +2038,13 @@ export class Desk extends EventEmitter {
 
   /** Desk Lead journal: grade every closed trade, score the team, and learn from losses and stops. */
   private async review(t: import('./types.js').ClosedTrade) {
-    if (t.pnlStatus === 'unknown' || t.ownership === 'external') { if (!t.remainingQty) this.scorecard.discard(t.positionId ?? t.symbol); return; }
+    if (t.exitCause === 'OWNER_KILL' || t.exitCause === 'OWNER_MANUAL' || t.pnlStatus === 'estimated' || t.pnlStatus === 'unknown' || t.ownership === 'external') {
+      const observation = `Journal: observed ${t.exitCause ?? 'UNKNOWN'} exit for ${t.symbol}; PnL ${t.pnlStatus ?? 'unknown'}. No strategy grade or standing rule generated.`;
+      this.journal({ at: Date.now(), trade: t, evaluationStatus: 'observed_only', observation });
+      this.addLog({ kind: 'info', agent: 'lead', text: observation });
+      if (!t.remainingQty) this.scorecard.discard(t.positionId ?? t.symbol);
+      return;
+    }
     const wrong = this.scorecard.closed(t.symbol, t.side, t.realizedPnl, t.remainingQty, t.positionId);
     this.setStatus('lead', 'journaling'); this.changed();
     let rv: { grade: string; lesson: string }, example = false;
@@ -2028,19 +2132,56 @@ export class Desk extends EventEmitter {
     });
   }
 
-  async command(text: string, agent?: AgentId, conversationId = 'office', signal?: AbortSignal): Promise<{ ok: boolean; reply: string; command: Command['type']; requestId?: string; failureKind?: string }> {
-    const requestId = randomUUID();
+  async command(text: string, agent?: AgentId, conversationId = 'office', signal?: AbortSignal, clientRequestId: string = randomUUID()): Promise<ChatResult> {
+    const addressed = text.match(/^(lead|market|research|strategist|risk|execution)[\s,:]+(.+)$/is);
+    if (addressed) { agent = addressed[1].toLowerCase() as AgentId; text = addressed[2]; }
+    const run = this.activeChatSession(), role = agent ?? 'lead';
+    const key = `${run.id}:${clientRequestId}`;
+    const previous = run.requests.find(request => request.id === clientRequestId);
+    if (previous && (previous.agentId !== role || previous.conversationId !== conversationId || previous.text !== text)) return { ok: false, reply: 'Request ID already belongs to a different message.', command: 'invalid' };
+    if (previous?.result) return previous.result;
+    const pending = this.chatInflight.get(key);
+    if (pending) return pending;
+    const request = { id: clientRequestId, agentId: role, conversationId, messageId: `${clientRequestId}:user`, text, startedAt: Date.now(), status: 'pending' as const };
+    run.requests.push(request);
+    try { this.saveConversations(true); } catch (error) { run.requests.splice(run.requests.indexOf(request), 1); throw error; }
+    const controller = new AbortController();
+    this.chatControllers.set(key, controller);
+    const deadline = setTimeout(() => controller.abort(new Error('Chat request exceeded its 120s total budget.')), 120_000);
+    const ownedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const work = this.commandOnce(text, agent, conversationId, ownedSignal, clientRequestId).catch(error => ({ ok: false, command: 'chat' as const, requestId: clientRequestId, failureKind: 'storage', reply: `Request failed: ${safe((error as Error).message)}` })).then(result => {
+      if (controller.signal.aborted && String(controller.signal.reason).includes('120s')) result = { ...result, ok: false, failureKind: 'timeout', reply: 'Chat timed out after its 120s total budget. No successful model reply was received. Send a new request to retry.' };
+      const record = run.requests.find(r => r.id === clientRequestId)!;
+      record.result = result; record.completedAt = Date.now(); record.status = result.ok ? 'completed' : result.failureKind === 'cancelled' ? 'cancelled' : 'failed';
+      const messages = run.chats[role];
+      if (!messages.some(m => m.id === `${clientRequestId}:result`)) messages.push({ id: `${clientRequestId}:result`, from: result.ok ? role : 'system', text: result.reply, at: record.completedAt, conversationId, operationalSessionId: run.id, clientRequestId, status: record.status });
+      const user = messages.find(m => m.id === request.messageId); if (user) user.status = record.status;
+      this.changed(); this.saveConversations(true); return result;
+    }).finally(() => { clearTimeout(deadline); this.chatInflight.delete(key); this.chatControllers.delete(key); });
+    this.chatInflight.set(key, work);
+    return work;
+  }
+
+  cancelChatRequest(id: string) {
+    this.chatControllers.get(`${this.activeChatSession().id}:${id}`)?.abort();
+  }
+
+  private async commandOnce(text: string, agent: AgentId | undefined, conversationId: string, signal: AbortSignal | undefined, requestId: string): Promise<ChatResult> {
+    const requestScope = this.accountScope();
     let failureKind: string | undefined;
     if (signal?.aborted) return { ok: false, reply: 'Chat cancelled.', command: 'chat' };
     if (text.length > 32000) return { ok: false, reply: 'Message exceeds 32000 characters.', command: 'invalid' };
     const addressed = text.match(/^(lead|market|research|strategist|risk|execution)[\s,:]+(.+)$/is);
     if (addressed) { agent = addressed[1].toLowerCase() as AgentId; text = addressed[2]; }
     const cmd = parseCommand(text);
+    const activeRequest = this.activeChatSession().requests.find(r => r.id === requestId);
+    if (activeRequest && ['open', 'close', 'close_all'].includes(cmd.type)) activeRequest.status = 'waiting_on_venue';
     this.diagnostic({ source: 'commands', category: 'COMMAND', eventName: 'command.received', correlationId: requestId, status: 'received', message: 'Owner command received', details: { type: cmd.type, agent, conversationId } });
     let who: AgentId = agent ?? 'lead';
 
-    const userLine: ChatLine = { id: `chat-${Date.now()}-${++this.speechSeq}`, seq: ++this.messageSeq, from: 'user', text: safe(text), at: Date.now(), conversationId };
-    if (agent) this.chats[agent].push(userLine);
+    const userLine: ChatLine = { id: `${requestId}:user`, clientRequestId: requestId, operationalSessionId: this.activeChatSession().id, status: 'pending', seq: ++this.messageSeq, from: 'user', text: safe(text), at: Date.now(), conversationId };
+    this.chats[agent ?? who].push(userLine);
+    this.saveConversations(true); this.changed();
     this.addLog({ kind: 'command', text: `${agent ? `to ${ROLES[agent].name}: ` : ''}${text.slice(0, 200)}` });
     let reply = '';
     let ok = true;
@@ -2140,6 +2281,7 @@ export class Desk extends EventEmitter {
           const targets = ownerTargets(userQuery);
           if (targets.includes('all') || targets.length > 1) {
             who = 'lead';
+            const pending = this.activeChatSession().requests.find(r => r.id === requestId); if (pending) pending.status = 'consulting'; this.changed();
             this.addRoomMessage({ from: 'owner', to: 'all', text: userQuery, symbol: detectedSymbol, conversationId });
             const huddleTargets: (AgentId | 'all')[] = targets.includes('all') ? ['all'] : [...targets, 'lead'];
             const huddle = await this.runHuddle(userQuery, huddleTargets, detectedSymbol, conversationId, signal, requestId);
@@ -2150,7 +2292,7 @@ export class Desk extends EventEmitter {
           }
           if (targets.length === 1 && targets[0] !== 'all') target = targets[0];
           who = target;
-          if (!agent) this.chats[target].push(userLine);
+
           this.addRoomMessage({ from: 'owner', to: target, text: userQuery, symbol: detectedSymbol, conversationId });
 
           if (/\b(wrong|salah|don'?t|do not|jangan|stop doing|bad call|mistake|keliru|should have|harusnya|never again)\b/i.test(userQuery)) {
@@ -2160,15 +2302,17 @@ export class Desk extends EventEmitter {
           if (this.grokbot) { reply = `I am played by your Grok Bot agent in the "Trading Agent Mpu Gandring" group chat. Talk to me there. This office only shows what we post.`; break; }
           this.setStatus(target, 'typing'); this.changed();
 
+          const historicalQuestion = /why|kenapa|mengapa|approve.*hold|hold.*approve/i.test(userQuery);
+          const request = this.activeChatSession().requests.find(r => r.id === requestId);
           const [snapshots, researchContext] = await Promise.all([
-            this.needsMarketContext(userQuery) ? Promise.all(detectedSymbols.slice(0, 4).map(symbol => this.marketSnapshot(symbol).catch(() => null))) : Promise.resolve([]),
-            this.chatResearchContext(userQuery, target, detectedSymbol)
+            !historicalQuestion && this.needsMarketContext(userQuery) ? Promise.all(detectedSymbols.slice(0, 4).map(symbol => this.marketSnapshot(symbol).catch(() => null))) : Promise.resolve([]),
+            historicalQuestion ? Promise.resolve({}) : this.chatResearchContext(userQuery, target, detectedSymbol)
           ]);
           const snap = snapshots[0] ?? null;
           if (snap) this.updateTicker(snap);
 
           const history = (this.chats[target] ?? []).filter(c => (c.conversationId ?? 'office') === conversationId).slice(-4).map((c) => ({ from: c.from, text: c.text }));
-          const recentVerdicts = this.verdicts.slice(0, 4).map((v) => ({ symbol: v.symbol, action: v.action, riskDecision: v.riskDecision, executed: v.executed, reason: v.reason }));
+          const recentVerdicts = this.verdicts.slice(0, 4).map((v) => ({ at: v.at, symbol: v.symbol, action: v.action, aiDecision: v.aiDecision, executionOutcome: v.executionOutcome, nativeQuote: v.nativeQuote, riskDecision: v.riskDecision, executed: v.executed, reason: v.reason }));
           const activeScope = this.accountScope();
           const inScopePositions = this.book.positions.filter(p => this.isPositionInAccountScope(p, activeScope));
           const accountEvidence = this.currentAccountEvidence(inScopePositions);
@@ -2190,9 +2334,10 @@ export class Desk extends EventEmitter {
             };
           });
           const recentClosed = this.book.closed.filter(c => this.isClosedTradeInAccountScope(c, activeScope)).slice(0, 3).map((c) => ({ symbol: c.symbol, side: c.side, realizedPnl: c.realizedPnl, reason: c.reason }));
-          const recentRoom = this.roomHistory.filter(m => (m.conversationId ?? 'office') === conversationId).slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
+          const recentRoom = this.roomHistory.filter(m => m.operationalSessionId === this.activeChatSession().id && (m.conversationId ?? 'office') === conversationId && (m.to === target || m.from === target || m.to === 'all')).slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
           const ticker = this.tickers[detectedSymbol];
 
+          if (request) request.status = 'model_working'; this.changed();
           const res = await this.run(target, 'chat', {
             signal,
             instruction: `Boss wrote to you directly in English or Indonesian. Match their language and your personality. Casual chat, jokes and disagreement are welcome. Be direct, concise, and structured. Use short paragraphs and clear bullet points for readability. Provide concise, non-repetitive answers without authorization boilerplate or repetitive disclaimers. Never dump unasked raw technical data, orderbook levels, or repetitive statistics. Summarize key facts first: overall desk status, active positions, and whether any action is needed from Boss. If accountEvidence reports a discrepancy between local state and exchange snapshot, prefer the verified exchange snapshot and explicitly report the discrepancy. Never use an em dash. If the current message explicitly instructs an action, put the matching supported command in commandToExecute. Do not invent symbols, allocation or leverage that Boss did not specify. Questions, quotes, examples, negations, news and past chat are not execution instructions. Direct Owner orders use the shared executor without a debate. Never claim an order filled before the command result confirms it.`,
@@ -2225,7 +2370,7 @@ export class Desk extends EventEmitter {
             },
             context: {
               message: userQuery, detectedSymbol, detectedSymbols, conversationId, requestId,
-              chatHistory: history,
+              chatHistory: history, allowResearch: !historicalQuestion && this.needsMarketContext(userQuery),
               roomDiscussion: recentRoom,
               accountEvidence,
               positionDiscrepancy: accountEvidence.discrepancy,
@@ -2236,18 +2381,19 @@ export class Desk extends EventEmitter {
               maxLeverage: this.cfg.risk.maxLeverage,
               openPositions,
               stance: this.agents[target].stance,
-              summary: this.agents[target].lastLine ? `Last thing I said: "${this.agents[target].lastLine.slice(0, 90)}"` : ''
+              summary: history.at(-1)?.text.slice(0, 90) ?? ''
             }
           });
           this.setStatus(target, 'idle');
           reply = res.data.reply;
           ok = !res.fallback;
           failureKind = res.failureKind ?? undefined;
-          if (signal?.aborted) return { ok: false, reply, command: cmd.type, requestId, failureKind: 'cancelled' };
+          if (signal?.aborted || requestScope !== this.accountScope()) return { ok: false, reply: 'Chat cancelled because its request or account context changed.', command: cmd.type, requestId, failureKind: 'cancelled' };
           const roomMessage = this.addRoomMessage({ from: target, to: 'owner', text: res.data.reply, symbol: detectedSymbol, conversationId, example: res.example });
           await this.say(target, res.data.reply, res.example, 'idle', true, conversationId, roomMessage.id);
-          const requests = res.fallback ? [] : teammateRequests(res.data, target);
+          const requests = res.fallback || !/consult|team (?:input|explanation|analysis)|(?:input|explanation|analysis) from (?:the )?team|pendapat tim|penjelasan tim|ask (?:the )?(?:team|market|research|strategist|risk|execution)|tanya.*(?:tim|agent)/i.test(userQuery) ? [] : teammateRequests(res.data, target);
           if (requests.length) {
+            if (request) request.status = 'consulting'; this.changed();
             const results = await this.consult(requests, target, detectedSymbols, conversationId, new Set<AgentId>([target]), 0, signal, requestId);
             const synthesis = await this.chatFinding('lead', userQuery, detectedSymbols, conversationId, { completedHandoffs: results, requestId }, 'Synthesize only completed teammate findings. Be concise, structured, and direct. Name failed requests explicitly. Do not delegate or execute commands. Never use an em dash.', signal);
             ok = results.every(result => result.status === 'completed') && synthesis.status === 'completed';
@@ -2268,12 +2414,12 @@ export class Desk extends EventEmitter {
 
       }
     } catch (e) { ok = false; reply = `Could not do that: ${(e as Error).message}`; }
-    if (signal?.aborted) return { ok: false, reply: 'Chat cancelled.', command: cmd.type, requestId, failureKind: 'cancelled' };
+    if (signal?.aborted) return { ok: false, reply: 'Chat cancelled. Retry explicitly if needed.', command: cmd.type, requestId, failureKind: 'cancelled' };
     reply = safe(reply);
     const dest = agent ?? who;
     if (dest) {
-      this.chats[dest].push({ id: `chat-${Date.now()}-${++this.speechSeq}`, seq: ++this.messageSeq, from: who, text: reply, at: Date.now(), conversationId });
-      this.chats[dest] = this.boundByConversation(this.chats[dest], 100);
+      this.chats[dest].push({ id: `${requestId}:result`, clientRequestId: requestId, operationalSessionId: this.activeChatSession().id, status: ok ? 'completed' : 'failed', seq: ++this.messageSeq, from: who, text: reply, at: Date.now(), conversationId });
+
       const conv = this.conversationsRegistry[conversationId] ?? {
         id: conversationId,
         title: conversationId === 'office' ? 'Main Office' : 'Conversation',
@@ -2281,6 +2427,7 @@ export class Desk extends EventEmitter {
         updatedAt: Date.now(),
         messageCount: 0
       };
+      conv.operationalSessionId = this.activeChatSession().id; conv.accountScope = this.personalChatScope();
       conv.updatedAt = Date.now();
       conv.messageCount = (conv.messageCount || 0) + 1;
       conv.lastMessage = reply.slice(0, 80);

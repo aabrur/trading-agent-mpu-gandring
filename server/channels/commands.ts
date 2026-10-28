@@ -20,7 +20,7 @@ export type Parsed =
 
 const FORBIDDEN: Array<[RegExp, string]> = [
   [/^(live|testnet|paper|mode|go-?live|switch)\b/, 'The trading mode cannot be changed from chat. Use npm run setup on the desk computer.'],
-  [/^(unkill|un-kill|resume|unpause|start|release|restart)\b/, 'The kill switch can only be released on the desk computer: npm run unkill -- --yes, then restart.'],
+  [/^(unkill|un-kill|resume|unpause|start|release|restart)\b/, 'The kill switch can only be released on the desk computer: the local Office OFF button or npm run unkill -- --yes.'],
   [/^(key|keys|secret|api|token|env|set|config|wallet|withdraw|transfer)\b/, 'Keys and wallet permissions are configured locally.']
 ];
 
@@ -162,10 +162,10 @@ export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void, con
       return safe(res.reply);
     }
     case 'kill': {
-      if (!p.confirm) return 'This flattens every position and stops the desk until someone runs npm run unkill -- --yes on the desk computer. Send "kill confirm" to do it.';
+      if (!p.confirm) return 'This flattens every position and stops the desk until the local Owner releases it with the Office OFF button or npm run unkill -- --yes. Send "kill confirm" to do it.';
       onKill?.();
       const notes = await desk.kill();
-      return safe(`KILL SWITCH ON. ${notes.join('; ') || 'nothing was open'}. Release only on the desk computer: npm run unkill -- --yes, then restart.`);
+      return safe(`KILL SWITCH ON. ${notes.join('; ') || 'nothing was open'}. Release only on the desk computer: the local Office OFF button or npm run unkill -- --yes.`);
     }
   }
 }

@@ -51,6 +51,7 @@ export function useDesk() {
   }, [selectConversation]);
   useEffect(installDiagnostics, []);
   const [state, setState] = useState<DeskState | null>(null);
+  useEffect(() => { if (state?.operationalChat && !state.conversations?.some(conversation => conversation.id === conversationId.current)) selectConversation('office'); }, [state?.operationalChat?.id, selectConversation]);
   const [connected, setConnected] = useState(false);
   const [speech, setSpeech] = useState<Partial<Record<AgentId, Speech>>>({});
   const [fights, setFights] = useState<Fight[]>([]);
@@ -198,8 +199,10 @@ export function useDesk() {
     return () => window.clearInterval(t);
   }, []);
 
-  const command = useCallback(async (text: string, agent?: AgentId) => {
-    const res = await officeFetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent, conversationId: conversationId.current }) }, 150_000);
+  const sessionId = useRef<string | undefined>(undefined);
+  sessionId.current = state?.operationalChat?.id;
+  const command = useCallback(async (text: string, agent?: AgentId, clientRequestId: string = crypto.randomUUID()) => {
+    const res = await officeFetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, agent, conversationId: conversationId.current, clientRequestId, operationalSessionId: sessionId.current }) }, 130_000);
     const result = await res.json() as { ok: boolean; reply?: string; error?: string; command?: string; failureKind?: string; requestId?: string };
     return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid', failureKind: result.failureKind, requestId: result.requestId };
   }, []);

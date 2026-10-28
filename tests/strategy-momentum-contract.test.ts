@@ -55,6 +55,6 @@ describe('binding entry revalidation', () => {
 
   it('rejects an entry into confirmed tactical exhaustion in its direction', () => {
     const fresh = snapshot({ tacticalTradePlan: { symbol: 'BTCUSDT', timestamp: Date.now(), marketRegime: 'UNKNOWN', scenarios: [], exhaustion: { present: true, direction: 'BUYER', evidence: ['confirmed closed-candle and flow exhaustion'] } } });
-    expect(evaluate({ fresh }).reason).toMatch(/exhaustion/i);
+    expect(evaluate({ fresh, executionQuote: 116 }).reason).toMatch(/exhaustion/i);
   });
 });

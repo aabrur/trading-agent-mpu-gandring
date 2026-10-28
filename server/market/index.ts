@@ -1,3 +1,5 @@
+import { asterBase } from '../exchange/rules.js';
+import type { Network } from '../exchange/types.js';
 import type { Candle, MarketSnapshot, NewsItem, OrderbookSummary, OrderflowSummary, DerivativesSummary, TechnicalSummary } from '../types.js';
 import { sampleSnapshot } from './sample.js';
 import { closedOnly, buildTechnicalSummary } from '../strategy.js';
@@ -79,10 +81,10 @@ const TF_MS_ALL: Record<string, number> = { '1m': 60_000, '5m': 300_000, '15m': 
 const coinOf = (symbol: string) => symbol.replace(/USDT?$|USDC$/, '');
 const fix = (c: Candle): Candle => ({ ...c, h: Math.max(c.o, c.h, c.l, c.c), l: Math.min(c.o, c.h, c.l, c.c) });
 
-async function dexCandles(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: string, tf: string, n: number): Promise<Candle[]> {
+async function dexCandles(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: string, tf: string, n: number, network: Network = 'mainnet'): Promise<Candle[]> {
   const coin = coinOf(symbol), end = Date.now(), start = end - (n + 1) * TF_MS_ALL[tf];
   if (src === 'aster') {
-    const kl = await getJson(`${process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com'}/fapi/v3/klines?symbol=${coin}USDT&interval=${tf}&limit=${Math.min(1500, n + 1)}`);
+    const kl = await getJson(`${asterBase(network)}/fapi/v3/klines?symbol=${coin}USDT&interval=${tf}&limit=${Math.min(1500, n + 1)}`);
     return kl.map((r: any[]) => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }));
   }
   if (src === 'dydx') {
@@ -98,11 +100,11 @@ async function dexCandles(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol:
   return (kl.t as number[]).map((t, i) => ({ t: t * 1000, o: +kl.o[i], h: +kl.h[i], l: +kl.l[i], c: +kl.c[i], v: +kl.v[i] }));
 }
 
-async function fromDex(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: string): Promise<MarketSnapshot> {
+async function fromDex(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: string, network: Network = 'mainnet'): Promise<MarketSnapshot> {
   const coin = coinOf(symbol);
   let last = 0, change = 0, funding: number | null = null, bid: number | null = null, ask: number | null = null;
   if (src === 'aster') {
-    const base = process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com';
+    const base = asterBase(network);
     const tk = await getJson(`${base}/fapi/v3/ticker/24hr?symbol=${coin}USDT`);
     last = +tk.lastPrice; change = +tk.priceChangePercent;
     try { funding = +(await getJson(`${base}/fapi/v3/premiumIndex?symbol=${coin}USDT`)).lastFundingRate; } catch { funding = null; }
@@ -120,16 +122,16 @@ async function fromDex(src: 'aster' | 'dydx' | 'paradex' | 'orderly', symbol: st
     last = +d.mark_price; change = d['24h_open'] ? ((+d['24h_close'] - +d['24h_open']) / +d['24h_open']) * 100 : 0; funding = +d.est_funding_rate;
   }
   if (!(last > 0)) throw new Error(`${src}: no price`);
-  const candles = await dexCandles(src, symbol, '15m', 301);
+  const candles = await dexCandles(src, symbol, '15m', 301, network);
   return { symbol, source: src, example: false, last, change24hPct: change, fundingRate: Number.isFinite(funding) ? funding : null, bid, ask, candles: closedOnly(candles), fetchedAt: Date.now() };
 }
 
-export async function fetchL2Orderbook(symbol: string, source: Source, requestedVenue: Source = source): Promise<OrderbookSummary | null> {
+export async function fetchL2Orderbook(symbol: string, source: Source, requestedVenue: Source = source, network: Network = 'mainnet'): Promise<OrderbookSummary | null> {
   const coin = coinOf(symbol);
   try {
     let bids: [number, number][] = [];
     let asks: [number, number][] = [];
-    const base = process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com';
+    const base = asterBase(network);
 
     if (source === 'bybit') {
       const ob = await getJson(`https://api.bybit.com/v5/market/orderbook?category=linear&symbol=${symbol}&limit=200`, undefined, 3000);
@@ -206,7 +208,7 @@ export async function fetchL2Orderbook(symbol: string, source: Source, requested
   }
 }
 
-export async function fetchRecentTrades(symbol: string, source: Source, requestedVenue: Source = source): Promise<OrderflowSummary | null> {
+export async function fetchRecentTrades(symbol: string, source: Source, requestedVenue: Source = source, network: Network = 'mainnet'): Promise<OrderflowSummary | null> {
   try {
     const coin = coinOf(symbol);
     let rows: any[] = [], endpoint = '', actualVenue = source;
@@ -217,7 +219,7 @@ export async function fetchRecentTrades(symbol: string, source: Source, requeste
       const res = await getJson(`${endpoint}?category=linear&symbol=${symbol}&limit=${limit}`, undefined, 3000);
       rows = res?.result?.list ?? [];
     } else if (source === 'aster') {
-      endpoint = `${process.env.ASTER_BASE_URL || 'https://fapi.asterdex.com'}/fapi/v3/aggTrades`;
+      endpoint = `${asterBase(network)}/fapi/v3/aggTrades`;
       rows = await getJson(`${endpoint}?symbol=${coin}USDT&limit=${limit}`, undefined, 3000);
     } else if (source === 'binance') {
       endpoint = 'https://fapi.binance.com/fapi/v1/aggTrades';
@@ -239,14 +241,14 @@ export async function fetchRecentTrades(symbol: string, source: Source, requeste
   }
 }
 
-export async function fetchDerivatives(symbol: string, source: Source, lastPrice: number): Promise<DerivativesSummary | null> {
+export async function fetchDerivatives(symbol: string, source: Source, lastPrice: number, nativeFundingRate?: number | null): Promise<DerivativesSummary | null> {
   const coin = coinOf(symbol);
   try {
     let fundingRate: number | null = null;
     let predictedFunding: number | null = null;
     let openInterest: number | null = null;
     let spotPerpBasisBps: number | null = null;
-    let fundingVenue = 'bybit';
+    let fundingVenue = 'bybit', oiVenue = 'bybit';
     const multiVenueFunding: Record<string, { fundingRate: number | null; openInterest?: number | null }> = {};
 
     const [bybitRes, binanceRes, hlRes, oiChanges, positioning] = await Promise.all([
@@ -284,13 +286,14 @@ export async function fetchDerivatives(symbol: string, source: Source, lastPrice
         const oi = measuredNumber(c.openInterest);
         multiVenueFunding.hyperliquid = { fundingRate: fr, openInterest: oi };
         if (source === 'hyperliquid') {
-          fundingVenue = 'hyperliquid';
+          fundingVenue = 'hyperliquid'; oiVenue = 'hyperliquid';
           fundingRate = fr;
           openInterest = oi;
         }
       }
     }
 
+    if (source !== 'bybit' && nativeFundingRate != null && Number.isFinite(nativeFundingRate)) { fundingRate = nativeFundingRate; fundingVenue = source; multiVenueFunding[source] = { ...multiVenueFunding[source], fundingRate }; }
     const evidence = { ...oiChanges.evidence };
     const currentOiValue = measuredNumber(bybitRes?.result?.list?.[0]?.openInterestValue);
     if (currentOiValue !== null) {
@@ -301,7 +304,7 @@ export async function fetchDerivatives(symbol: string, source: Source, lastPrice
     }
     for (const [name, value, venue] of [
       ['fundingRate', fundingRate, fundingVenue], ['predictedFunding', predictedFunding, 'bybit'],
-      ['openInterest', openInterest, fundingVenue], ['spotPerpBasisBps', spotPerpBasisBps, 'binance']
+      ['openInterest', openInterest, oiVenue], ['spotPerpBasisBps', spotPerpBasisBps, 'binance']
     ] as const) evidence[name] = { source: venue, observedAt: Date.now(), status: value === null ? 'unavailable' : 'live',
       ...(value === null ? { reason: 'The provider did not return this observation' } : {}) };
     return {
@@ -324,23 +327,23 @@ const FETCHERS: Record<Exclude<Source, 'sample'>, (s: string) => Promise<MarketS
   aster: (s) => fromDex('aster', s), dydx: (s) => fromDex('dydx', s), paradex: (s) => fromDex('paradex', s), orderly: (s) => fromDex('orderly', s)
 };
 
-export async function getSnapshot(symbol: string, preferred: Source, liveOnly = false): Promise<MarketSnapshot & { errors: string[] }> {
+export async function getSnapshot(symbol: string, preferred: Source, liveOnly = false, network: Network = 'mainnet'): Promise<MarketSnapshot & { errors: string[] }> {
   const errors: string[] = [];
   if (preferred !== 'sample') {
     const chain = [preferred, ...ORDER.filter((s) => s !== preferred)] as Exclude<Source, 'sample'>[];
     for (const src of chain) {
       try {
-        const snap = await FETCHERS[src](symbol);
+        const snap = await (src === 'aster' ? fromDex('aster', symbol, network) : FETCHERS[src](symbol));
         snap.candles = closedLiveCandles(snap.candles, 15 * 60_000);
         if (Number.isFinite(snap.last) && snap.last > 0 && snap.candles.length >= 55) {
           const [orderbook, orderflow, derivatives, whaleOnChain, mtf5m, mtf1h, mtf4h, coinMarketCap] = await Promise.all([
-            fetchL2Orderbook(symbol, src, preferred).catch(() => null),
-            fetchRecentTrades(symbol, src, preferred).catch(() => null),
-            fetchDerivatives(symbol, src, snap.last).catch(() => null),
+            fetchL2Orderbook(symbol, preferred, preferred, network).then(native => native ?? (preferred !== 'bybit' ? fetchL2Orderbook(symbol, 'bybit', preferred, network) : null)).catch(() => null),
+            fetchRecentTrades(symbol, preferred, preferred, network).then(native => native ?? (preferred !== 'bybit' ? fetchRecentTrades(symbol, 'bybit', preferred, network) : null)).catch(() => null),
+            fetchDerivatives(symbol, src, snap.last, snap.fundingRate).catch(() => null),
             getWhaleOnChainSummary(symbol).catch(() => null),
-            getCandles(symbol, '5m', src, 250, true).catch(() => null),
-            getCandles(symbol, '1h', src, 250, true).catch(() => null),
-            getCandles(symbol, '4h', src, 250, true).catch(() => null),
+            getCandles(symbol, '5m', src, 250, true, network).catch(() => null),
+            getCandles(symbol, '1h', src, 250, true, network).catch(() => null),
+            getCandles(symbol, '4h', src, 250, true, network).catch(() => null),
             getCoinMarketCapSummary(symbol).catch(() => null)
           ]);
 
@@ -354,6 +357,7 @@ export async function getSnapshot(symbol: string, preferred: Source, liveOnly = 
           return {
             ...snap,
             snapshotId: `${symbol}:${snap.source}:${snap.fetchedAt}`,
+            dataProvenance: { requestedVenue: preferred, actualVenue: snap.source, dataType: snap.source === preferred ? 'native' : 'reference', symbolMapping: { requested: symbol, actual: symbol, transformed: false }, executionCompatible: snap.source === preferred, fetchedAt: snap.fetchedAt },
             cmcMomentum: cmcMomentum(symbol, coinMarketCap?.quote ?? null),
             evidence: Object.fromEntries([
               ['market', { source: snap.source, observedAt: snap.fetchedAt, status: 'live' as const }],
@@ -450,7 +454,7 @@ const TF_MS: Record<Timeframe, number> = { '1m': 60_000, '5m': 300_000, '15m': 9
 const BYBIT_TF: Record<Timeframe, string> = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' };
 
 /** Closed candles for one timeframe. Public data only. Falls back to sample data (15m sample bars are aggregated). */
-export async function getCandles(symbol: string, tf: Timeframe, preferred: Source, limit = 100, liveOnly = false): Promise<{ symbol: string; tf: Timeframe; source: Source; example: boolean; candles: Candle[]; errors: string[] }> {
+export async function getCandles(symbol: string, tf: Timeframe, preferred: Source, limit = 100, liveOnly = false, network: Network = 'mainnet'): Promise<{ symbol: string; tf: Timeframe; source: Source; example: boolean; candles: Candle[]; errors: string[] }> {
   const n = Math.min(500, Math.max(10, limit));
   const errors: string[] = [];
   if (preferred !== 'sample') {
@@ -465,7 +469,7 @@ export async function getCandles(symbol: string, tf: Timeframe, preferred: Sourc
           const kl = await getJson(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${n + 1}`);
           candles = kl.map((r: any[]) => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }));
         } else if (src !== 'hyperliquid') {
-          candles = await dexCandles(src, symbol, tf, n);
+          candles = await dexCandles(src, symbol, tf, n, network);
         } else {
           const coin = symbol.replace(/USDT?$/, ''), end = Date.now();
           const kl = await getJson('https://api.hyperliquid.xyz/info', { method: 'POST', body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval: tf, startTime: end - (n + 1) * TF_MS[tf], endTime: end } }) });

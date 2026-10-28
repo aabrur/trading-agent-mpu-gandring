@@ -4,7 +4,8 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
-    // Limit concurrent Windows forks after observed native worker startup crashes.
+    // Windows fork workers timed out during S5; keep file isolation and use the thread runner.
+    pool: process.platform === 'win32' ? 'threads' : 'forks',
     fileParallelism: process.platform === 'win32' ? false : true,
     maxWorkers: process.platform === 'win32' ? 2 : undefined,
     testTimeout: 20000,

@@ -40,7 +40,7 @@ Everything can be done in the terminal or in the office, through the same code (
 | Chat channel for the Desk Lead (Telegram, Discord, Slack, WhatsApp) | `mpu channels setup <channel>` | Setup, section 7 |
 | Test a chat channel | `mpu channels test <channel>` | Setup, section 7 **Send test message** |
 | Chat channel status (secrets masked) | `mpu channels status` | Setup, section 7 status line |
-| Release the kill switch | `mpu unkill --yes`, then restart | Not in the UI on purpose; the command is shown |
+| Release the kill switch | `mpu unkill --yes` | Local Owner Office OFF button; does not enable Auto Trading or submit an order |
 
 
 ## Head supervisor: the Desk Lead, or your own AI agent

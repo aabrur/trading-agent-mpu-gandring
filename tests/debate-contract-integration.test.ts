@@ -41,6 +41,7 @@ function fixture(options: { closeTrigger?: CloseTriggerReason; shortConviction?:
       if (options.moveQuoteAfterVerdict !== undefined) ticker.mockResolvedValue(options.moveQuoteAfterVerdict);
       return JSON.stringify({ action: 'OPEN_LONG', confidence: 0.8, reason: 'The supplied dimensions align.', entryScenarioId: scenario.id, entryZone: scenario.entryZone, invalidationLevel: scenario.invalidationLevel });
     }
+    if (request.task === 'risk_assessment') return JSON.stringify({ decision: 'APPROVE', sizeFactor: 1, leverage: cfg.risk.maxLeverage, stopPct: cfg.risk.defaultStopPct, reason: 'Fixture risk assessment accepts the supplied evidence and Owner exposure.' });
     if (request.task === 'review') return '{"lesson":"Fixture outcome recorded.","grade":"B"}';
     return '{"reply":"Fixture response."}';
   });
@@ -69,25 +70,27 @@ describe('Desk binding debate contract with a mocked exchange', () => {
     expect(verdict.debateEvidence?.dimensions.jev.status).toBe('UNKNOWN');
   });
 
-  it('rejects a venue quote that moved outside the zone after the Lead verdict', async () => {
+  it('blocks material cross-venue quote divergence without rewriting the AI OPEN', async () => {
     const { desk, adapter } = fixture({ moveQuoteAfterVerdict: 120 });
+    Object.defineProperty(adapter, 'name', { value: 'aster' });
     const verdict = await desk.runDebate('BTCUSDT');
     expect(verdict.executed).toBe(false);
-    expect(verdict.reason).toMatch(/outside.*entry zone/i);
+    expect(verdict.reason).toMatch(/diverges/i);
+    expect(verdict.action).toBe('OPEN_LONG');
     expect(adapter.placed).toHaveLength(0);
     expect(desk.book.positions).toHaveLength(0);
   });
 
-  it('cannot approve OPEN over verified opposing flow even when Lead and analysts vote LONG', async () => {
+  it('lets Risk weigh opposing flow without a separate silent system HOLD', async () => {
     const { desk, adapter, snapshot } = fixture();
     snapshot.orderflow = { cvdDelta: -10, buySellRatio: 0.8, takerBuyVol: 80, takerSellVol: 100, deltaDivergence: false, dataType: 'native', actualDataVenue: 'bybit', coveragePct: 100, tradesCount: 20, evidence: { source: 'bybit', observedAt: Date.now(), status: 'live' } };
     const verdict = await desk.runDebate('BTCUSDT');
-    expect(verdict).toMatchObject({ action: 'HOLD', executed: false });
+    expect(verdict).toMatchObject({ action: 'OPEN_LONG', executed: true });
     expect(verdict.debateEvidence?.dimensions.tape.status).toBe('VERIFIED_OPPOSING');
-    expect(adapter.placed).toHaveLength(0);
+    expect(adapter.placed).toHaveLength(1);
   });
 
-  it.each<CloseTriggerReason>(['INVALIDATION_HIT', 'SENTIMENT_REVERSAL', 'GUARD_THREATENED'])('executes CLOSE on the single selected %s trigger without parsing Lead prose', async trigger => {
+  it.each<CloseTriggerReason>(['INVALIDATION_HIT', 'GUARD_THREATENED'])('executes CLOSE on the single selected %s trigger without parsing Lead prose', async trigger => {
     const { desk, adapter, snapshot } = fixture({ closeTrigger: trigger, shortConviction: trigger === 'SENTIMENT_REVERSAL' });
     const position = desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 1, entry: 108, stop: 60, tp: 200, leverage: 4, margin: 27 });
     position.ownership = 'managed'; position.protectionStatus = 'confirmed';

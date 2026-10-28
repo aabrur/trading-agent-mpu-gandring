@@ -152,6 +152,7 @@ export async function mockReply(req: ModelRequest): Promise<string> {
     case 'rebuttal': out = rebuttal(c); break;
     case 'lead': out = lead(c); break;
     case 'risk': out = risk(c); break;
+    case 'risk_assessment': out = { decision: 'APPROVE', reason: 'EXAMPLE: supplied evidence and Owner exposure reviewed; Owner sizing and SL/TP remain fixed.' }; break;
     case 'review': out = review(c); break;
     case 'chat': out = chat(c); break;
   }

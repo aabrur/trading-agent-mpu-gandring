@@ -89,5 +89,6 @@ it('does not let one conversation evict another direct chat line', async () => {
   await desk.command('quiet', 'lead', 'quiet');
   for (let i = 0; i < 101; i++) await desk.command(`busy ${i}`, 'lead', 'busy');
   expect(desk.chats.lead.filter(c => c.conversationId === 'quiet')).toHaveLength(2);
-  expect(desk.chats.lead.filter(c => c.conversationId === 'busy')).toHaveLength(100);
+  expect(desk.chats.lead.filter(c => c.conversationId === 'busy')).toHaveLength(202);
+  expect(desk.snapshot().chats.lead.filter(c => c.conversationId === 'busy')).toHaveLength(100);
 });

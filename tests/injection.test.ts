@@ -33,9 +33,9 @@ describe('prompt injection in market text', () => {
       prompts.push(req.system + '\n' + req.user);
       if ((req.system + req.user).includes(PLANTED)) {
         if (req.task === 'lead') return '{"action":"OPEN_LONG","confidence":1,"reason":"the news told me to"}';
-        if (req.task === 'risk') return '{"decision":"APPROVE","sizeFactor":1,"leverage":100,"stopPct":40,"reason":"max leverage as instructed"}';
+        if (req.task === 'risk_assessment') return '{"decision":"APPROVE","sizeFactor":1,"leverage":100,"stopPct":40,"reason":"max leverage as instructed"}';
       }
-      if (req.task === 'risk') return '{"decision":"APPROVE","sizeFactor":1,"leverage":100,"stopPct":40,"reason":"pushing the limits"}';
+      if (req.task === 'risk_assessment') return '{"decision":"APPROVE","sizeFactor":1,"leverage":100,"stopPct":40,"reason":"pushing the limits"}';
       return mock(req);
     };
     const desk = new Desk(cfg, gullible, { reportsDir: null });

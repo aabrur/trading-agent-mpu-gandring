@@ -8,15 +8,15 @@ import { buildReport } from '../server/reports.js';
 
 const config = () => loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', AUTO_SYMBOLS: 'BTCUSDT,ETHUSDT', AUTO_TRADING: 'off' });
 describe('scheduler and decision payload', () => {
-  it('records VETO and execution failure while ignoring a second Risk model rejection', async () => {
+  it('records meaningful Risk veto separately from an approved OPEN execution failure', async () => {
     for (const kind of ['veto', 'risk-reject', 'execution-failed'] as const) {
       const cfg = config(), caller = makeCaller(cfg);
       const d = new Desk(cfg, (r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'OPEN_LONG', confidence: 0.8, reason: 'Supported setup' })) :
         r.task === 'research' ? Promise.resolve(JSON.stringify({ vote: kind === 'veto' ? 'VETO' : 'ABSTAIN', confidence: 0.8, argument: 'Sourced event concern', sources: [] })) :
-        r.task === 'risk' ? Promise.resolve(JSON.stringify({ decision: kind === 'risk-reject' ? 'REJECT' : 'APPROVE', sizeFactor: 1, leverage: 1, stopPct: 1.5, reason: 'Existing calculation' })) : caller(r));
+        r.task === 'risk_assessment' ? Promise.resolve(JSON.stringify({ decision: kind === 'execution-failed' ? 'APPROVE' : 'REJECT', sizeFactor: 1, leverage: 1, stopPct: 1.5, reason: 'Existing calculation' })) : caller(r));
       vi.spyOn(d, 'executeOpen').mockResolvedValue({ ok: false, line: 'Venue timeout', reason: 'Venue timeout' });
       await d.runDebate('BTCUSDT');
-      expect(d.opportunityReviews.since(-1)[0].reasonKind).toBe(kind === 'risk-reject' ? 'execution-failed' : kind);
+      expect(d.opportunityReviews.since(-1)[0].reasonKind).toBe(kind === 'risk-reject' ? 'hold' : kind);
       expect(d.book.positions).toHaveLength(0);
       const before = { risk: structuredClone(cfg.risk), lessons: structuredClone(d.learnings.items), scores: d.scorecard.rows() };
       buildReport(d, -1);
@@ -45,11 +45,12 @@ describe('scheduler and decision payload', () => {
     expect(d.autoState.on).toBe(false);
     expect(d.autoState.running).toBe(false);
   });
-  it('HOLD skips the Risk model and includes strategy invalidation in the real payload', async () => {
+  it('HOLD includes the actual Risk judgment and strategy invalidation without model sizing', async () => {
     const cfg = config(); const calls: ModelRequest[] = []; const caller = makeCaller(cfg);
     const d = new Desk(cfg, async (r) => { calls.push(r); return r.task === 'lead' ? JSON.stringify({ action: 'HOLD', confidence: 0.7, reason: 'No setup' }) : caller(r); });
     await d.runDebate('BTCUSDT');
     expect(calls.some((r) => r.task === 'risk')).toBe(false);
+    expect(calls.some((r) => r.task === 'risk_assessment')).toBe(true);
     expect(calls.find((r) => r.task === 'lead')?.user).toContain('strategyInvalidated');
     const research = calls.find((r) => r.task === 'research')!.user;
     expect(research).not.toContain('largeWalletNetflow');

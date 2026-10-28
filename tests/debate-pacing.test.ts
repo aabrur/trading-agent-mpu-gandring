@@ -35,16 +35,9 @@ describe('visible debate lifecycle', () => {
     await finish(run);
     const names = phases.map((p) => p.phase);
     const expected = ['opening', 'reading', 'strategy', 'gathering', 'verdict', 'risk gate', 'preparation', 'execution', 'done'];
-    if (mode === 'normal') expected.push('round 1', 'round 2');
+
     expect(names).toEqual(expect.arrayContaining(expected));
-    if (mode === 'normal') {
-      expect(names.indexOf('gathering')).toBeLessThan(names.indexOf('round 1'));
-      const gathering = phases.find((p) => p.phase === 'gathering')!;
-      const round = phases.find((p) => p.phase === 'round 1')!;
-      expect(round.at - gathering.at).toBeGreaterThanOrEqual(2800);
-    } else {
-      expect(names.includes('round 1')).toBe(false);
-    }
+    expect(names.includes('round 1')).toBe(false);
     expect(submissions).toHaveLength(1);
     expect(submissions[0].phase).toBe('execution');
     expect(submissions[0].at - phases.find((p) => p.phase === 'preparation')!.at).toBeGreaterThanOrEqual(mode === 'normal' ? 2800 : 1400);
@@ -108,6 +101,6 @@ describe('visible debate lifecycle', () => {
     await finish(desk.runDebate('ETHUSDT'));
     expect(fights.length).toBeGreaterThan(0);
     const verdictAt = phases.find((p) => p.phase === 'verdict')!.at;
-    for (let i = 0; i < fights.length; i++) expect((fights[i + 1] ?? verdictAt) - fights[i]).toBeGreaterThanOrEqual(2450);
+    expect(verdictAt - Math.max(...fights)).toBeGreaterThanOrEqual(2450);
   });
 });

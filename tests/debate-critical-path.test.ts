@@ -1,0 +1,27 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { Desk } from '../server/desk.js';
+import { loadConfig } from '../server/config.js';
+import { sampleSnapshot } from '../server/market/sample.js';
+import type { ModelCaller } from '../server/providers/index.js';
+
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+it('measures independent phases and uses max(rebuttals), not their sum', async () => {
+  vi.useFakeTimers();
+  const call: ModelCaller = async req => {
+    const delay = req.task === 'lead' ? 100 : req.agent === 'risk' ? 150 : req.agent === 'execution' ? 250 : req.agent === 'market' ? 100 : req.agent === 'research' ? 200 : 300;
+    await new Promise(resolve => setTimeout(resolve, delay));
+    const stance = req.agent === 'research' ? 'SHORT' : 'LONG';
+    if (req.task === 'research') return JSON.stringify({ vote: stance, confidence: .8, argument: 'Conflicting observed evidence.', sources: [] });
+    if (req.task === 'opinion') return JSON.stringify({ stance, confidence: .8, argument: 'Role observation.' });
+    if (req.task === 'rebuttal') return JSON.stringify({ stance, confidence: .8, target: 'none', rebuttal: 'Targeted evidence challenge.' });
+    if (req.task === 'risk_assessment') return '{"decision":"APPROVE","sizeFactor":1,"leverage":1,"stopPct":10,"reason":"Reviewed all actual rebuttals."}';
+    if (req.task === 'lead') return '{"action":"HOLD","confidence":0.7,"reason":"Explicitly waiting for the setup."}';
+    return '{"reply":"Actual instrument readiness reviewed."}';
+  };
+  const d = new Desk(loadConfig({ TRADING_MODE: 'PAPER', DEFAULT_PROVIDER: 'mock', MARKET_SOURCE: 'sample', DEBATE_MODE: 'fast', DEBATE_PACE_MS: '0', JEV_ENABLED: 'false' }), call, { reportsDir: null, conversationsPath: null, learningsPath: null, killFile: null, opportunityReviewsPath: null, jevEnv: {} });
+  vi.spyOn(d, 'collectResearchData').mockResolvedValue({ market: sampleSnapshot('BTCUSDT'), news: [], whale: { symbol: 'BTCUSDT', providerStatus: 'UNAVAILABLE', providerName: 'fixture', summary: 'Unavailable', observedAt: Date.now(), events: [], disclaimer: 'Fixture' }, trace: { symbol: 'BTCUSDT', route: 'PARALLEL', routedBy: 'default', routing: { status: 'not_requested', latencyMs: null, reason: 'fixture' }, startedAt: Date.now(), completedAt: Date.now(), feeds: {} } });
+  const run = d.runDebate('BTCUSDT');
+  await vi.runAllTimersAsync();
+  const result = await run;
+  expect(result.timing).toMatchObject({ marketAnalyst: 100, researchAnalyst: 200, strategist: 300, rebuttals: 300, riskManager: 150, executionTrader: 250, deskLead: 100, total: 950 });
+});

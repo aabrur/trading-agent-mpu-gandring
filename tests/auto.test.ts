@@ -55,7 +55,7 @@ describe('AUTO scheduler (fake exchange, no approval step)', () => {
     expect(a.closes).toBe(1);
     expect(desk.book.positions).toHaveLength(0);
     // the Desk Lead keeps the journal (no separate reviewer agent)
-    const journaled = () => desk.logs.some((l) => l.kind === 'speech' && l.agent === 'lead' && /Journal: grade/.test(l.text));
+    const journaled = () => desk.logs.some((l) => l.kind === 'info' && l.agent === 'lead' && /Journal: observed OWNER_MANUAL/.test(l.text));
     for (let i = 0; i < 40 && !journaled(); i++) await new Promise((r) => setTimeout(r, 25));
     expect(journaled()).toBe(true);
   });

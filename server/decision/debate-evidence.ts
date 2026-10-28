@@ -174,7 +174,7 @@ export function buildDebateEvidence(input: DebateEvidenceInput): DebateEvidence 
     conflicts.push(`Market price source ${snapshot.source} does not match execution venue ${venue}.`);
   }
   if (input.contractMultiplier !== undefined && input.contractMultiplier !== null && !(input.contractMultiplier > 0)) conflicts.push('Invalid contract multiplier for execution venue.');
-  if (input.instrumentSymbol && !input.instrumentSymbol.toUpperCase().includes(snapshot.symbol.replace(/USDT?$|USDC$/i, '').toUpperCase())) conflicts.push(`Execution instrument ${input.instrumentSymbol} incompatible with market symbol ${snapshot.symbol}.`);
+  if (input.instrumentSymbol && input.instrumentSymbol.toUpperCase() !== snapshot.symbol.toUpperCase()) conflicts.push(`Execution instrument ${input.instrumentSymbol} incompatible with market symbol ${snapshot.symbol}.`);
   if (input.nativeExecutionQuote !== undefined && input.nativeExecutionQuote !== null) {
     if (!(input.nativeExecutionQuote > 0) || !Number.isFinite(input.nativeExecutionQuote)) conflicts.push('Execution-native quote is unavailable or invalid.');
     else if (positive(snapshot.last)) {
@@ -253,7 +253,7 @@ export function evaluateCloseTriggers(input: CloseEvaluationInput): VerifiedClos
   const { snapshot, position } = input;
   const triggers: VerifiedCloseTrigger[] = [];
   const add = (reason: CloseTriggerReason, basis: string, evidenceRefs: string[]) => triggers.push({ reason, verified: true, basis, evidenceRefs });
-  const price = snapshot.last;
+  const price = positive(input.nativeExecutionQuote) ? input.nativeExecutionQuote : snapshot.last;
   const sign = direction(position.side);
   const now = input.now ?? Date.now();
   const live = input.mode === 'LIVE' || input.mode === 'TESTNET';
@@ -274,7 +274,7 @@ export function evaluateCloseTriggers(input: CloseEvaluationInput): VerifiedClos
   } else if (marketVerified && flowReversed) {
     add('MOMENTUM_REVERSAL', 'Authenticated directional order flow strongly opposes the position.', ['market.orderflow']);
   }
-  if (input.conviction?.opposing && input.conviction.verified && input.conviction.evidenceRefs.length) add('SENTIMENT_REVERSAL', 'Completed specialist conviction has flipped against the position thesis.', input.conviction.evidenceRefs);
+  if (marketVerified && (priceReversed || flowReversed || breach || opposingChoch) && input.conviction?.opposing && input.conviction.verified && input.conviction.evidenceRefs.length) add('SENTIMENT_REVERSAL', 'Completed specialist conviction has flipped against the position thesis.', input.conviction.evidenceRefs);
   const adverseNews = verifiedNews(input).filter(event => event.sentiment === 'severe' || (position.side === 'LONG' ? event.sentiment === 'bearish' : event.sentiment === 'bullish'));
   if (adverseNews.length) add('OPPOSING_NEWS', 'Fresh verified symbol-relevant adverse news contradicts the position.', adverseNews.map(event => `news:${event.id}`));
   const adverseWhale = significantWhales(input).filter(event => position.side === 'LONG' ? event.classification === 'EXCHANGE_INFLOW' : event.classification === 'EXCHANGE_OUTFLOW');

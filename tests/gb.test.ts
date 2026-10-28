@@ -105,8 +105,8 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     await built.desk.command('hello there', 'risk');
     built.auto.start(); // stays off in Grok Bot mode
     expect(built.desk.autoState.on).toBe(false);
-    for (let i = 0; i < 20 && !built.desk.logs.some((l) => /Journal: grade/.test(l.text)); i++) await new Promise((r) => setTimeout(r, 25));
-    expect(built.desk.logs.some((l) => /Journal: grade/.test(l.text))).toBe(true); // journal without a model
+    for (let i = 0; i < 20 && !built.desk.logs.some((l) => /Journal: observed/.test(l.text)); i++) await new Promise((r) => setTimeout(r, 25));
+    expect(built.desk.logs.some((l) => /Journal: observed/.test(l.text))).toBe(true); // observed exit without a model or fabricated strategy grade
     expect(modelCalls).toBe(0);
     expect(built.desk.snapshot().agents.lead.provider).toBe('grokbot');
   });

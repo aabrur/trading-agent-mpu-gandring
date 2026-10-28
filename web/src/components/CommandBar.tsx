@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { applyAndRestartOffice } from '../officeApi';
+import { applyAndRestartOffice, officeFetch } from '../officeApi';
 import type { DeskState } from '../types';
 import { POPULAR_SYMBOLS } from '../types';
 import { useI18n } from '../i18n';
@@ -9,6 +9,7 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
   const [text, setText] = useState('');
   const [symbol, setSymbol] = useState(state.watchlist[0] ?? 'BTCUSDT');
   const [reply, setReply] = useState<{ ok: boolean; reply: string } | null>(null);
+  const [killBusy, setKillBusy] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const run = async (cmd: string) => { if (!cmd.trim()) return; setReply(await command(cmd)); };
   return (
@@ -44,15 +45,17 @@ export function CommandBar({ state, command }: { state: DeskState; command: (t: 
             type="button"
             className={`kill ${state.killed ? 'is-released' : ''} ${state.mode !== 'PAPER' ? 'is-live' : ''}`}
             title={state.killed ? t('cbKillReleaseTitle') : t('cbKillEngageTitle')}
+            disabled={killBusy}
+            aria-busy={killBusy}
             onClick={async () => {
-              if (state.killed) {
-                const r = await fetch('/api/ops/kill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: false }) }).then((x) => x.json()).catch(() => null);
-                setReply({ ok: !!r?.ok, reply: r?.ok ? t('cbKillReleasedMsg') : (r?.detail || t('cbKillFailedMsg')) });
-              } else {
-                if (!window.confirm(t('cbKillConfirmPrompt'))) return;
-                const r = await fetch('/api/ops/kill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: true }) }).then((x) => x.json()).catch(() => null);
-                setReply({ ok: !!r?.ok, reply: r?.ok ? t('cbKillOnMsg') : (r?.detail || t('cbKillFailedMsg')) });
-              }
+              if (killBusy) return;
+              setKillBusy(true);
+              try {
+                const response = await officeFetch('/api/ops/kill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: !state.killed }) });
+                const result = await response.json();
+                setReply({ ok: response.ok && !!result.ok, reply: result.ok ? `${result.killed ? t('cbKillOnMsg') : t('cbKillReleasedMsg')}${result.notes?.length ? ` ${result.notes.join('; ')}` : ''}` : (result.error || t('cbKillFailedMsg')) });
+              } catch (error) { setReply({ ok: false, reply: (error as Error).message }); }
+              finally { setKillBusy(false); }
             }}
           >
             {state.killed ? t('releaseKillSwitch') : t('killSwitch')}

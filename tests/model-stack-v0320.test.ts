@@ -184,7 +184,7 @@ describe('Frontier Model Stack & Capabilities (v0.0.0.3.20)', () => {
       if (req.task === 'opinion') return JSON.stringify({ stance: 'SHORT', confidence: 0.9, argument: 'Bearish divergence.' });
       if (req.task === 'research') return JSON.stringify({ vote: 'SHORT', confidence: 0.85, argument: 'Heavy distribution.', sources: ['whales'] });
       if (req.task === 'lead') return JSON.stringify({ action: 'OPEN_SHORT', confidence: 0.9, reason: 'Trend reversal.' });
-      if (req.task === 'risk') return JSON.stringify({ decision: 'APPROVE', sizeFactor: 1, leverage: 5, stopPct: 2, reason: 'Controlled risk.' });
+      if (req.task === 'risk_assessment') return JSON.stringify({ decision: 'APPROVE', sizeFactor: 1, leverage: 5, stopPct: 2, reason: 'Controlled risk.' });
       return JSON.stringify({ reply: 'Short bias noted.' });
     };
 

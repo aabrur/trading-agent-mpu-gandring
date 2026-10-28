@@ -16,8 +16,8 @@ import { strategyVote } from '../server/strategy.js';
 import { sampleCandles } from '../server/market/sample.js';
 
 describe('decision pace', () => {
-  it('keeps NORMAL rounds and skips ceremonial FAST rebuttal when directional analysts agree without conflict', () => {
-    expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(2);
+  it('skips ceremonial rebuttals in both modes when directional analysts agree without conflict', () => {
+    expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(0);
     expect(rebuttalRounds('normal', 2, { market: 'LONG', research: 'SHORT', strategist: 'LONG', researchVote: 'SHORT' })).toBe(2);
     expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG' })).toBe(0);
     expect(rebuttalRounds('fast', 2, { market: 'LONG', research: 'LONG', strategist: 'LONG', researchVote: 'LONG', hasEvidenceConflict: true })).toBe(1);
@@ -84,7 +84,7 @@ describe('profile draft selection', () => {
 });
 
 describe('FAST debate and SHADOW Jev', () => {
-  it('skips ceremonial FAST rebuttal when aligned and runs configured NORMAL rounds', async () => {
+  it('skips ceremonial rebuttals in both modes when aligned', async () => {
     const env = { TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', DEBATE_MODE: 'fast' };
     const c = loadConfig(env);
     expect(c.debate.mode).toBe('fast');
@@ -101,7 +101,7 @@ describe('FAST debate and SHADOW Jev', () => {
     await nDesk.runDebate('ETHUSDT');
     const normalRebuttals = nCaller.mock.calls.filter(([r]) => r.task === 'rebuttal').length;
     expect(rebuttals).toBe(0);
-    expect(normalRebuttals).toBe(3 * normal.debate.rounds);
+    expect(normalRebuttals).toBe(0);
   });
 
   it('does not block SHADOW Jev on verdict generation', async () => {

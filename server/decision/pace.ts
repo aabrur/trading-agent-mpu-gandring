@@ -23,10 +23,9 @@ export function rebuttalRounds(mode: DebateMode, configuredRounds: number, input
   const longs = stances.filter((s) => s === 'LONG').length;
   const shorts = stances.filter((s) => s === 'SHORT').length;
 
-  if (mode !== 'fast') return rounds;
   if (longs === 0 && shorts === 0) return 0;
 
-  const allAgree = (longs === 3 || shorts === 3) || (stances.length > 0 && (longs === stances.length || shorts === stances.length));
+  const allAgree = !(longs > 0 && shorts > 0);
   const disagreement = input.disagreement ?? 0;
   const hasConflict = input.hasEvidenceConflict === true;
   if (allAgree && disagreement <= 0.05 && !hasConflict) {
@@ -34,5 +33,5 @@ export function rebuttalRounds(mode: DebateMode, configuredRounds: number, input
   }
 
   // FAST keeps one targeted evidence challenge when material disagreement or evidence conflict exists.
-  return 1;
+  return mode === 'fast' ? 1 : rounds;
 }

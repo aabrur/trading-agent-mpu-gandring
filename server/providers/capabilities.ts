@@ -78,6 +78,8 @@ export function getTaskJsonSchema(task: TaskKind): Record<string, unknown> {
       return z.toJSONSchema(RebuttalSchema);
     case 'lead':
       return z.toJSONSchema(StrictLeadJsonSchema);
+    case 'risk_assessment':
+      return { type: 'object', additionalProperties: false, properties: { decision: { type: 'string', enum: ['APPROVE', 'REJECT'] }, reason: { type: 'string', minLength: 1, maxLength: 1500 } }, required: ['decision', 'reason'] };
     case 'risk':
       return z.toJSONSchema(StrictRiskJsonSchema);
     case 'review':

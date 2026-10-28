@@ -56,7 +56,7 @@ export class DeskLead {
   async tick(now = Date.now()): Promise<string[]> {
     this.desk.diagnostic({ source: 'supervisor', category: 'SUPERVISOR', eventName: 'supervisor.check', status: 'started', message: 'Supervisor check started' });
     const out: string[] = [];
-    if (this.desk.killed && !this.wasKilled) out.push('KILL SWITCH IS ON. The desk flattened and stopped. Release only on the desk computer: npm run unkill -- --yes, then restart.');
+    if (this.desk.killed && !this.wasKilled) out.push('KILL SWITCH IS ON. Emergency stop latched. Check the actual exchange cancel and flatten acknowledgements. Release only on the desk computer: the local Office OFF button or npm run unkill -- --yes.');
     this.wasKilled = this.desk.killed;
     const cool = this.cfg.supervisor.cooldownMin * 60_000;
     for (const f of proactiveScan(this.desk, now)) {

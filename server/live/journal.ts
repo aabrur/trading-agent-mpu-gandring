@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Position, ClosedTrade } from '../types.js';
@@ -7,7 +7,7 @@ import { recordDiagnostic } from '../session-log.js';
 
 export interface ExecutionIntent {
   clientId: string; symbol: string; side: Side; kind: 'open' | 'close'; requestedQty: number;
-  stop?: number; tp?: number | null; leverage?: number; positionId?: string;
+  stop?: number; tp?: number | null; leverage?: number; positionId?: string; exitCause?: ClosedTrade['exitCause'];
   awaitingQty?: number;
   awaitingObservedQty?: number;
   accountedQty: number; accountedValue: number | null; record: OrderRecord | null; at: number;
@@ -15,17 +15,12 @@ export interface ExecutionIntent {
 
 export interface DailyLossState { key: string; startEquity: number; lossHit: boolean }
 
-const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
-export function sleepSync(ms: number): void {
-  if (ms <= 0) return;
-  Atomics.wait(sleepBuffer, 0, 0, ms);
-}
-
 const inProcessLocks = new Set<string>();
 
-function acquireLock(lockPath: string, maxAttempts = 6): () => void {
+function acquireLock(lockPath: string, maxAttempts = 2): () => void {
   const norm = path.resolve(lockPath);
   let acquired = false;
+  const token = randomUUID();
   let lastErr: unknown = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -33,7 +28,7 @@ function acquireLock(lockPath: string, maxAttempts = 6): () => void {
       try {
         const fd = openSync(lockPath, 'wx');
         try {
-          writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now() }));
+          writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token }));
         } finally {
           closeSync(fd);
         }
@@ -46,35 +41,18 @@ function acquireLock(lockPath: string, maxAttempts = 6): () => void {
           try {
             const raw = readFileSync(lockPath, 'utf8');
             const data = JSON.parse(raw);
-            const staleAgeMs = Date.now() - (data.at || 0);
-            let ownerAlive = false;
-            if (typeof data.pid === 'number' && data.pid > 0) {
-              try {
-                process.kill(data.pid, 0);
-                ownerAlive = true;
-              } catch (killErr: any) {
-                if (killErr?.code === 'ESRCH') ownerAlive = false;
-              }
+            let definitelyDead = false;
+            if (Number.isSafeInteger(data.pid) && data.pid > 0) {
+              try { process.kill(data.pid, 0); }
+              catch (error) { definitelyDead = (error as NodeJS.ErrnoException).code === 'ESRCH'; }
             }
-            if (!ownerAlive || staleAgeMs > 10000) {
-              try { unlinkSync(lockPath); } catch {}
-              continue;
-            }
-          } catch {
-            try {
-              const st = statSync(lockPath);
-              if (Date.now() - st.mtimeMs > 10000) {
-                try { unlinkSync(lockPath); } catch {}
-                continue;
-              }
-            } catch {}
-          }
+            // Age and EPERM never establish death. Only a positively dead PID is recoverable.
+            if (definitelyDead && readFileSync(lockPath, 'utf8') === raw) { unlinkSync(lockPath); continue; }
+          } catch { /* Unknown ownership fails closed. */ }
         }
       }
     }
-    if (attempt < maxAttempts - 1) {
-      sleepSync((attempt + 1) * 25);
-    }
+
   }
 
   if (!acquired) {
@@ -86,7 +64,7 @@ function acquireLock(lockPath: string, maxAttempts = 6): () => void {
   return () => {
     inProcessLocks.delete(norm);
     try {
-      if (existsSync(lockPath)) unlinkSync(lockPath);
+      if (existsSync(lockPath) && JSON.parse(readFileSync(lockPath, 'utf8')).token === token) unlinkSync(lockPath);
     } catch {}
   };
 }
@@ -134,7 +112,7 @@ export class ExecutionJournal {
       }
     }
   }
-  save() {
+  save(renameAttempts = 5) {
     if (!this.file) return;
     mkdirSync(path.dirname(this.file), { recursive: true });
     const lockPath = `${this.file}.lock`;
@@ -153,15 +131,15 @@ export class ExecutionJournal {
 
       let renamed = false;
       let lastErr: unknown = null;
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < renameAttempts; attempt++) {
         try {
           this.renameFn(tmp, this.file);
           renamed = true;
           break;
         } catch (e: any) {
           lastErr = e;
-          if (['EPERM', 'EBUSY', 'EEXIST', 'EACCES'].includes(e?.code) && attempt < 4) {
-            sleepSync((attempt + 1) * 25);
+          if (['EPERM', 'EBUSY', 'EEXIST', 'EACCES'].includes(e?.code) && attempt < renameAttempts - 1) {
+            // Synchronous compatibility calls never sleep. Production retries use saveAsync().
           } else {
             break;
           }
@@ -202,14 +180,30 @@ export class ExecutionJournal {
       releaseLock();
     }
   }
-  checkpoint(positions: Position[], closed: ClosedTrade[]) {
+  private writes: Promise<void> = Promise.resolve();
+  saveAsync(): Promise<void> {
+    const write = this.writes.then(async () => {
+      for (let attempt = 0; ; attempt++) {
+        try { this.save(1); return; }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (attempt >= 4 || !(['EPERM', 'EBUSY', 'EEXIST', 'EACCES'].includes(code ?? '') || /Conflicting journal lock/.test(String(error)))) throw error;
+          await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 25));
+        }
+      }
+    });
+    this.writes = write.catch(() => {});
+    return write;
+  }
+
+  checkpoint(positions: Position[], closed: ClosedTrade[], asynchronous = false) {
     this.positions = structuredClone(positions.filter((p) => p.ownership !== 'external'));
     this.closed = structuredClone(closed.slice(0, 100));
     // Keep unresolved orders regardless of age; retain recent terminal evidence.
     const terminal = this.intents.filter((i) => this.settled(i));
     const keep = new Set(terminal.slice(-200).map((i) => i.clientId));
     this.intents = this.intents.filter((i) => !this.settled(i) || keep.has(i.clientId));
-    this.save();
+    return asynchronous ? this.saveAsync() : this.save();
   }
   settled(i: ExecutionIntent) {
     return !!i.record && ['filled', 'cancelled', 'rejected'].includes(i.record.status) && i.accountedQty >= i.record.filledQty;

@@ -23,6 +23,10 @@ data/kill-switch.json
 # Execution ownership and cumulative-fill checkpoints
 data/execution-*.json
 data/execution-*.json.tmp
+data/execution-*.json.bak
+data/execution-*.json.bak.tmp
+data/execution-*.json.*.tmp
+data/execution-*.json.lock
 .superpowers/
 data/opportunity-reviews.json
 data/opportunity-reviews.json.tmp
@@ -31,6 +35,7 @@ data/execution-*.json.financial.json.tmp
 
 data/conversations.json
 data/conversations.json.tmp
+data/conversations.json.*.tmp
 
 # Local agent locks and operational audits. Never publish these.
 .taskplane/

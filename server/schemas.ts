@@ -52,6 +52,8 @@ const RiskSizing = z.object({
   reason: text
 });
 
+export const RiskAssessmentSchema = z.object({ decision: z.enum(['APPROVE', 'REJECT', 'VETO']).transform(value => value === 'VETO' ? 'REJECT' as const : value), reason: text });
+
 export const RiskSchema = z.discriminatedUnion('decision', [
   RiskSizing,
   z.object({
@@ -99,18 +101,20 @@ export type Schemas = {
   research: typeof ResearchSchema;
   rebuttal: typeof RebuttalSchema;
   lead: typeof LeadSchema;
+  risk_assessment: typeof RiskAssessmentSchema;
   risk: typeof RiskSchema;
   review: typeof ReviewSchema;
   chat: typeof ChatSchema;
 };
-export const SCHEMAS: Schemas = { opinion: OpinionSchema, research: ResearchSchema, rebuttal: RebuttalSchema, lead: LeadSchema, risk: RiskSchema, review: ReviewSchema, chat: ChatSchema };
+export const SCHEMAS: Schemas = { opinion: OpinionSchema, research: ResearchSchema, rebuttal: RebuttalSchema, lead: LeadSchema, risk: RiskSchema, risk_assessment: RiskAssessmentSchema, review: ReviewSchema, chat: ChatSchema };
 export type TaskKind = keyof Schemas;
 
 export const SCHEMA_HINTS: Record<TaskKind, string> = {
   opinion: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"argument":"max 2 sentences","entryScenarioId":"Strategist: supplied scenario id","entryZone":{"low":number,"high":number,"basis":"verified structure"},"invalidationLevel":number,"exitSignal":{"kind":"MOMENTUM_EXHAUSTION|TARGET_COMPLETE","evidenceRefs":["supplied evidence id"]}}. Entry fields are required for a Strategist directional setup. Market/Strategist may supply exitSignal only from observed evidence.',
   research: '{"vote":"LONG|SHORT|ABSTAIN|VETO","confidence":0..1,"argument":"max 2 sentences","sources":["id or source name"]}',
   rebuttal: '{"stance":"LONG|SHORT|NEUTRAL","confidence":0..1,"target":"agent id you answer or none","rebuttal":"max 2 sentences, direct and in character"}',
-  lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences","entryScenarioId":"selected supplied scenario id","entryZone":{"low":number,"high":number,"basis":"supplied setup"},"invalidationLevel":number,"closeTrigger":"one supplied verified CloseTriggerReason","exitSignal":{"kind":"MOMENTUM_EXHAUSTION|TARGET_COMPLETE","evidenceRefs":["supplied evidence id"]}}. OPEN must select the Strategist scenario and its geometry. CLOSE must identify one supplied verified trigger; free-text reasoning alone cannot authorize a close.',
+  lead: '{"action":"OPEN_LONG|OPEN_SHORT|CLOSE|HOLD","confidence":0..1,"reason":"max 2 sentences","entryScenarioId":"selected supplied scenario id","entryZone":{"low":number,"high":number,"basis":"supplied setup"},"invalidationLevel":number,"closeTrigger":"one supplied verified CloseTriggerReason","exitSignal":{"kind":"MOMENTUM_EXHAUSTION|TARGET_COMPLETE","evidenceRefs":["supplied evidence id"]}}. Entry zones are recommendations unless explicitly binding in the Owner settings. A final OPEN means execute now; use HOLD explicitly to wait for a pullback. Preserve valid structural invalidation. CLOSE must identify one supplied verified trigger; free-text reasoning alone cannot authorize a close.',
+  risk_assessment: '{"decision":"APPROVE|REJECT","reason":"specific risk assessment from the supplied evidence"}. Owner sizing, leverage and SL/TP are fixed inputs, not model outputs.',
   risk: '{"decision":"APPROVE|REDUCE|REJECT","sizeFactor":0..1,"leverage":1..125,"stopPct":positive percentage points up to 50 (2 means 2%),"reason":"1..1500 characters"}. APPROVE/REDUCE require all numeric fields as JSON numbers. REJECT may omit sizing. Never substitute null or strings for numbers.',
   review: '{"lesson":"one sentence","grade":"A|B|C|D|F"}',
   chat: '{"reply":"answer in character, up to 64000 characters","commandToExecute":"optional exact supported command explicitly requested by Boss","askTeammates":[{"to":"lead|market|research|strategist|risk|execution","question":"one assigned question","symbol":"optional symbol"}],"askTeammate":"legacy single request object or null"}. Use structured askTeammates for real consultation. Never claim completed handoffs before receiving their results.'
