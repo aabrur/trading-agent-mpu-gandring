@@ -223,7 +223,7 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     let operation = connecting.get(agent.id);
     if (!operation) {
       operation = (async () => {
-        const connectionSignal = AbortSignal.timeout(40_000);
+        const connectionSignal = AbortSignal.timeout(Number(process.env.LOCAL_AGENT_TEST_TIMEOUT_MS) || 40_000);
         const auth = await localLoginStatus(agent.id);
         if (auth.state === 'missing') return { ok: false, state: 'NOT INSTALLED', detail: 'Install the CLI first.' };
         if (!auth.connected && auth.state !== 'unknown' && req.body?.continue !== true) {
@@ -241,7 +241,7 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
         const selectedReasoning = reasoningStatus('local', model, requestedReasoning).effective || undefined;
         // This read-only probe, rather than process existence or cached auth, establishes model readiness.
         try {
-          const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', connectionSignal, undefined, { timeoutMs: 30_000 });
+          const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', connectionSignal, undefined, { timeoutMs: Number(process.env.LOCAL_AGENT_TEST_TIMEOUT_MS) || 30_000 });
           const parsed = SCHEMAS.chat.safeParse(extractJson(reply));
           if (!parsed.success || parsed.data.reply !== 'connected') throw new Error();
         } catch (error) {
@@ -299,7 +299,7 @@ export function mountSetupRoutes(app: express.Express, c: RouteCtx) {
     const model = String(req.body?.model ?? '');
     try { localSelection(model); } catch { return res.status(400).json({ ok: false, detail: 'Choose a local agent first.' }); }
     try {
-      const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', undefined, undefined, { timeoutMs: 30_000 });
+      const reply = await runLocalAgent(model, 'Reply with exactly this JSON object: {"reply":"connected"}. Use no tools.', undefined, undefined, { timeoutMs: Number(process.env.LOCAL_AGENT_TEST_TIMEOUT_MS) || 30_000 });
       const result = SCHEMAS.chat.safeParse(extractJson(reply));
       const ok = result.success && result.data.reply === 'connected';
       res.json({ ok, detail: ok ? 'Connection verified: the agent returned a valid model reply.' : 'The agent ran, but its reply did not match the expected JSON. Check its model settings.' });

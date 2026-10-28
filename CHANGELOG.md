@@ -2,6 +2,15 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.6] - 2026-10-28
+
+### Fixed
+- Zod schema null tolerance: added nullToUndefined preprocessor to entryScenarioId, entryZone, invalidationLevel, closeTrigger, and exitSignal so nullish values from LLMs do not trigger validation rejections on HOLD and NEUTRAL stances.
+- Provider output token ceiling: raised base token limit across all providers from 2048 to 20,000 tokens to ensure reasoning models complete JSON responses without truncation; raised OpenRouter output limit retry cap to 65,536 tokens.
+- Provider and local agent timeouts: relaxed remote HTTP provider timeout from 60s to 180s (configurable via PROVIDER_TIMEOUT_MS); relaxed local agent CLI discovery timeout to 25s and execution timeout from 120s to 300s (configurable via LOCAL_AGENT_TIMEOUT_MS); extended Cline timeout to 300s.
+- Local agent CLI execution fixes: added --dangerously-skip-permissions to Antigravity CLI to prevent interactive prompts from blocking headless runs; closed stdin immediately for file-prompt CLIs (grok, hermes, openclaw, muse) to prevent OS pipe deadlocks.
+- Error classification: refined quota detection to catch usage limit and credit exhaustion diagnostics cleanly.
+
 ## [v0.0.0.4.5] - 2026-10-28
 
 ### Fixed

@@ -4,7 +4,7 @@
   <img src="web/public/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring" width="240" />
 </p>
 
-**App v0.0.0.4.5 · Node.js 24 recommended · MIT**
+**App v0.0.0.4.6 · Node.js 24 recommended · MIT**
 
 A local trading desk with six agent roles: Desk Lead, Market Analyst, Research Analyst, Strategist, Risk Manager, and Execution Trader. The Office brings together market analysis, debates, positions, reports, and persistent diagnostic logs.
 

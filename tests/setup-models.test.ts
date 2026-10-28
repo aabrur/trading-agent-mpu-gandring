@@ -72,10 +72,10 @@ describe('curated provider and model setup', () => {
         if (/^(gpt-6|gpt-5|o1|o3|o4)/.test(model)) {
           expect(body).not.toHaveProperty('temperature');
           expect(body).not.toHaveProperty('max_tokens');
-          expect(body.max_completion_tokens).toBe(2048);
+          expect(body.max_completion_tokens).toBe(20000);
         } else {
           expect(body.temperature).toBe(0.6);
-          expect(body.max_tokens).toBe(2048);
+          expect(body.max_tokens).toBe(20000);
         }
       }
     } finally { request.mockRestore(); }

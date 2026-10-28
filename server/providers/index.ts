@@ -79,7 +79,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
         } : {};
         const params = getGenerationParams(req.agent, req.task, provider, model);
         const isOpenAiReasoning = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model);
-        const maxTokens = provider === 'openrouter' && req.attempt > 1 && req.retryReason === 'output_limit' ? Math.min(32768, params.maxTokens * 4) : params.maxTokens;
+        const maxTokens = provider === 'openrouter' && req.attempt > 1 && req.retryReason === 'output_limit' ? Math.min(65536, params.maxTokens * 2) : params.maxTokens;
         const tokenField = isOpenAiReasoning ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
         const body: Record<string, unknown> = {
           model,
@@ -100,8 +100,9 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
           }
         }
 
+        const providerTimeoutMs = Number(process.env.PROVIDER_TIMEOUT_MS) || 180000;
         try {
-          const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
+          const data = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, providerTimeoutMs, req.signal);
           return completionText(data);
         } catch (err) {
           if (body.response_format && String((err as Error).message).includes('400')) {
@@ -109,7 +110,7 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
             if (typeof body.response_format === 'object' && 'type' in body.response_format && body.response_format.type === 'json_schema') {
               body.response_format = { type: 'json_object' };
               try {
-                const retryJson = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
+                const retryJson = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, providerTimeoutMs, req.signal);
                 return completionText(retryJson);
               } catch (fallbackError) {
                 if ((fallbackError as Error).message !== 'provider HTTP 400') throw fallbackError;
@@ -120,25 +121,27 @@ export function makeCaller(cfg: AppConfig): ModelCaller {
             if (body.provider && typeof body.provider === 'object') {
               delete (body.provider as Record<string, unknown>).require_parameters;
             }
-            const retry = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, 60000, req.signal);
+            const retry = await post(`${base}/chat/completions`, { authorization: `Bearer ${cfg.keys[provider]}`, ...extra }, body, providerTimeoutMs, req.signal);
             return completionText(retry);
           }
           throw err;
         }
       }
       case 'anthropic': {
+        const providerTimeoutMs = Number(process.env.PROVIDER_TIMEOUT_MS) || 180000;
         const data = await post('https://api.anthropic.com/v1/messages', { 'x-api-key': cfg.keys.anthropic, 'anthropic-version': '2023-06-01' }, {
-          model, ...(effort ? { output_config: { effort } } : {}), max_tokens: task === 'chat' ? 8192 : 1500, system, messages: [{ role: 'user', content: user }]
-        }, 60000, req.signal);
+          model, ...(effort ? { output_config: { effort } } : {}), max_tokens: 20000, system, messages: [{ role: 'user', content: user }]
+        }, providerTimeoutMs, req.signal);
         return String((data?.content ?? []).map((c: any) => c?.text ?? '').join(''));
       }
       case 'gemini': {
+        const providerTimeoutMs = Number(process.env.PROVIDER_TIMEOUT_MS) || 180000;
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
         const data = await post(url, { 'x-goog-api-key': cfg.keys.gemini }, {
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text: user }] }],
-          generationConfig: { temperature: 0.6, maxOutputTokens: task === 'chat' ? 8192 : 1500, responseMimeType: 'application/json' }
-        }, 60000, req.signal);
+          generationConfig: { temperature: 0.6, maxOutputTokens: 20000, responseMimeType: 'application/json' }
+        }, providerTimeoutMs, req.signal);
         return String(data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text ?? '').join('') ?? '');
       }
       default:

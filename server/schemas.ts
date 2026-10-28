@@ -3,13 +3,15 @@ import { z } from 'zod';
 const conf = z.number().min(0).max(1).default(0.65);
 const boundedText = (limit: number) => z.string().transform((s) => s.slice(0, limit)).pipe(z.string().min(1).max(limit));
 const text = boundedText(1500);
+const nullToUndefined = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((val) => (val === null ? undefined : val), schema.optional());
+
 const entryFields = {
-  entryScenarioId: z.string().min(1).max(120).optional(),
-  entryZone: z.object({ low: z.number().finite().positive(), high: z.number().finite().positive(), basis: z.string().min(1).max(500) }).optional(),
-  invalidationLevel: z.number().finite().positive().optional(),
+  entryScenarioId: nullToUndefined(z.string().min(1).max(120)),
+  entryZone: nullToUndefined(z.object({ low: z.number().finite().positive(), high: z.number().finite().positive(), basis: z.string().min(1).max(500) })),
+  invalidationLevel: nullToUndefined(z.number().finite().positive()),
 };
 export const CloseTriggerSchema = z.enum(['INVALIDATION_HIT', 'MOMENTUM_REVERSAL', 'SENTIMENT_REVERSAL', 'OPPOSING_NEWS', 'WHALE_EXIT', 'EXCHANGE_STOP_OR_TP', 'EARLY_TAKE_PROFIT', 'DATA_ANOMALY_OR_CONFLICT', 'GUARD_THREATENED']);
-const exitSignal = z.object({ kind: z.enum(['MOMENTUM_EXHAUSTION', 'TARGET_COMPLETE']), evidenceRefs: z.array(z.string().min(1).max(160)).min(1).max(10) }).optional();
+const exitSignal = nullToUndefined(z.object({ kind: z.enum(['MOMENTUM_EXHAUSTION', 'TARGET_COMPLETE']), evidenceRefs: z.array(z.string().min(1).max(160)).min(1).max(10) }));
 
 export const OpinionSchema = z.object({
   stance: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
@@ -38,7 +40,7 @@ export const LeadSchema = z.object({
   confidence: conf,
   reason: text,
   ...entryFields,
-  closeTrigger: CloseTriggerSchema.optional(),
+  closeTrigger: nullToUndefined(CloseTriggerSchema),
   exitSignal
 });
 

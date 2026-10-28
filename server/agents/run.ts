@@ -66,7 +66,7 @@ export async function runAgent<K extends TaskKind>(
       if (input.signal?.aborted || (e instanceof Error && e.name === 'AbortError') || /\bcancelled\b|\bcanceled\b/i.test(msg)) lastFailureKind = 'cancelled';
       else if (parsing) lastFailureKind = 'parse';
       else if (/timeout|timed out/i.test(msg)) lastFailureKind = 'timeout';
-      else if (/quota|insufficient_quota|insufficient credits|credit balance|billing limit/i.test(msg)) lastFailureKind = 'quota';
+      else if (/quota|insufficient_quota|insufficient credits|credit balance|billing limit|usage limit|hit your usage limit/i.test(msg)) lastFailureKind = 'quota';
       else if (/\b429\b|rate[ _-]?limit/i.test(msg)) lastFailureKind = 'rate_limit';
       else if (/\b401\b|\b403\b|unauthori[sz]ed|authentication|invalid api[ _-]?key|not (?:logged|signed) in|access denied/i.test(msg)) lastFailureKind = 'auth';
       else lastFailureKind = 'provider';

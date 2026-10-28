@@ -130,7 +130,7 @@ export interface GenerationParams {
 }
 
 export function getGenerationParams(agent: AgentId, task: TaskKind, provider: ProviderName, model: string): GenerationParams {
-  const maxTokens = task === 'chat' ? 8192 : 2048;
+  const maxTokens = 20000;
 
   const isOpenAiReasoning = provider === 'openai' && /^(gpt-6|gpt-5|o1|o3|o4)/.test(model);
   const isOpenRouterReasoning = provider === 'openrouter' && /^(anthropic\/claude-(opus|sonnet|haiku)-5|openai\/gpt-6)/.test(model);

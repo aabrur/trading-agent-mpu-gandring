@@ -137,7 +137,7 @@ function effortArgs(id: LocalAgentId, effort?: string): string[] {
 }
 
 /** Bounded metadata commands only. Only help may read stderr; credential files are never returned. */
-async function discoveryCommand(id: LocalAgentId, args: string[], timeoutMs = 10_000): Promise<string> {
+async function discoveryCommand(id: LocalAgentId, args: string[], timeoutMs = 25_000): Promise<string> {
   const executable = localExecutable(id);
   if (!executable) throw new Error('CLI not installed');
   return new Promise((resolve, reject) => {
@@ -476,10 +476,10 @@ export function localArgs(id: LocalAgentId, model: string, folder: string, promp
     case 'pi': args = ['--print', '--mode', 'text', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-session']; break;
     case 'kimi': args = ['--agent-file', path.join(folder, 'reasoner.md'), '--output-format', 'text', '-p', 'Respond to the input provided on stdin with JSON only.']; break;
     case 'kilo': args = ['--pure', 'run', '--format', 'json']; env = { KILO_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'deny' }, plugin: [] }) }; break;
-    case 'cline': args = ['--json', '--plan', '--auto-approve', 'false', '--timeout', '110']; break;
+    case 'cline': args = ['--json', '--plan', '--auto-approve', 'false', '--timeout', '300']; break;
     case 'grok': args = ['--prompt-file', path.join(folder, 'prompt.txt'), '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain']; break;
     case 'antigravity':
-      args = ['--print=', '--sandbox', '--mode', 'plan', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json', ...effort];
+      args = ['--print=', '--sandbox', '--mode', 'plan', '--disable-slash-commands', '--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions', ...effort];
       if (model !== 'default') args.push('--model', model);
       return { args, env };
     case 'hermes':
@@ -544,13 +544,14 @@ export function localReply(output: string): string {
 }
 
 function processFailure(id: LocalAgentId, diagnostic: string): string {
+  if (/usage limit|hit your usage limit|insufficient credits|quota exhausted/i.test(diagnostic)) return `${id} quota exhausted. Usage limit reached for this account.`;
   if (/not logged in|not authenticated|authentication required|please (?:run )?\/login|\b401\b|user not found/i.test(diagnostic)) return `${id} needs native CLI sign-in. Environment-only model tokens are not forwarded to the desk subprocess.`;
   if (/unknown (?:option|argument)|unrecognized (?:option|argument)|unexpected argument/i.test(diagnostic)) return `${id} rejected a CLI option. Refresh its installed version and model metadata in Setup.`;
   if (/unsupported.*(?:effort|thinking|reasoning)|invalid.*(?:effort|thinking|reasoning)/i.test(diagnostic)) return `${id} rejected the reasoning level for this model. Select a supported native level.`;
   return `${id} did not return a reply. Sign in and test it from Setup.`;
 }
 
-const workQueue = new AgentWorkQueue(3);
+const workQueue = new AgentWorkQueue(Number(process.env.LOCAL_AGENT_MAX_CONCURRENCY) || 3);
 const researchActivity: { server: string; tool: string; status: string; at: number }[] = [];
 export const localResearchActivity = () => researchActivity.slice(-20);
 export function recordResearchActivity(output: string) {
@@ -575,7 +576,7 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
   const { id, model } = localSelection(selection);
   const executable = localExecutable(id);
   if (!executable) throw new Error(`${id} is not installed on PATH. Open Setup to connect it.`);
-  const timeoutMs = options.timeoutMs ?? 120_000;
+  const timeoutMs = options.timeoutMs ?? (Number(process.env.LOCAL_AGENT_TIMEOUT_MS) || 300_000);
   const deadline = AbortSignal.timeout(timeoutMs);
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let release: () => void;
@@ -619,7 +620,10 @@ export async function runLocalAgent(selection: string, prompt: string, signal?: 
       } };
       child.stdout.on('data', (v: Buffer) => collect(v, true)); child.stderr.on('data', (v: Buffer) => { if (diagnostic.length < 4000) diagnostic += v.toString().slice(0, 4000 - diagnostic.length); collect(v, false); });
       child.stdin.on('error', () => {});
-      if (id === 'antigravity') {
+      const usesPromptFile = ['grok', 'hermes', 'openclaw', 'muse'].includes(id);
+      if (usesPromptFile) {
+        child.stdin.end();
+      } else if (id === 'antigravity') {
         child.stdin.end(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
       } else {
         child.stdin.end(prompt);

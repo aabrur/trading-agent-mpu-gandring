@@ -113,7 +113,7 @@ describe('OpenRouter response recovery', () => {
     const result = await runAgent(cfg, makeCaller(cfg), 'lead', 'lead', { instruction: 'Decide', data: {}, context: {} });
     expect(result).toMatchObject({ fallback: false, attempts: 2, data: { action: 'HOLD' } });
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect((JSON.parse(String(fetcher.mock.calls[1][1]?.body)) as { max_tokens: number }).max_tokens).toBe(8192);
+    expect((JSON.parse(String(fetcher.mock.calls[1][1]?.body)) as { max_tokens: number }).max_tokens).toBe(40000);
   });
 
   it('labels a provider deadline as a timeout instead of a generic abort', async () => {
@@ -123,7 +123,7 @@ describe('OpenRouter response recovery', () => {
     }));
     try {
       const pending = call()(request).then(() => null, (error: unknown) => error);
-      await vi.advanceTimersByTimeAsync(60_001);
+      await vi.advanceTimersByTimeAsync(180_001);
       expect(await pending).toBeInstanceOf(Error);
       expect(String(await pending)).toMatch(/provider timed out/i);
     } finally { vi.useRealTimers(); }
