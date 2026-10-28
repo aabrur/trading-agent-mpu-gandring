@@ -105,17 +105,25 @@ export async function setTradingMode(envFile: string, mode: string, o: { confirm
 /** process.env (platform secrets, e.g. Grok Bot secret cards) plus the .env file; non-empty file values win. Empty values in .env explicitly delete from process.env. */
 export function setupEnv(envFile: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const fromFile = readEnv(envFile);
+  const baseCopy = { ...base };
+  if (envFile !== '.env') {
+    for (const k of Object.keys(baseCopy)) {
+      if (k.startsWith('TESTNET_DESK_') || k.startsWith('MAINNET_DESK_')) {
+        delete baseCopy[k];
+      }
+    }
+  }
   for (const [k, v] of Object.entries(fromFile)) {
     if (v === '') {
-      delete base[k];
+      delete baseCopy[k];
       if (base === process.env) delete process.env[k];
     } else {
-      base[k] = v;
+      baseCopy[k] = v;
       if (base === process.env) process.env[k] = v;
     }
   }
   const file = Object.fromEntries(Object.entries(fromFile).filter(([, v]) => v !== ''));
-  return { ...base, ...file };
+  return { ...baseCopy, ...file };
 }
 
 const short = (v: string) => (v.length > 14 ? `${v.slice(0, 6)}...${v.slice(-4)}` : v);

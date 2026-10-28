@@ -76,12 +76,13 @@ export async function runAgent<K extends TaskKind>(
     if (['timeout', 'rate_limit', 'quota', 'auth', 'cancelled'].includes(lastFailureKind)) break;
   }
   const reason = failureMessages[lastFailureKind];
+  const validationDetail = lastErr && lastFailureKind === 'schema' ? ` Validation: ${lastErr}.` : '';
   const fallbacks: { [T in TaskKind]: Out<T> } = {
     opinion: { ...FALLBACK.opinion, argument: `${reason} Counting this opinion as neutral.` },
     research: { ...FALLBACK.research, argument: `${reason} Abstaining.` },
     rebuttal: { ...FALLBACK.rebuttal, rebuttal: `${reason} Counting this rebuttal as neutral.` },
     lead: { ...FALLBACK.lead, reason: `${reason} Safe default: HOLD.` },
-    risk: { ...FALLBACK.risk, reason: `${reason} Safe default: REJECT.` },
+    risk: { ...FALLBACK.risk, reason: `${reason}${validationDetail} Safe default: REJECT.` },
     review: { ...FALLBACK.review, lesson: `${reason} No model review completed.` },
     chat: { reply: reason },
   };

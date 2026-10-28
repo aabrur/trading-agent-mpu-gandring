@@ -2,16 +2,47 @@ import { z } from 'zod';
 import type { AgentId } from '../types.js';
 import type { TaskKind } from '../schemas.js';
 import {
-  OpinionSchema,
   ResearchSchema,
   RebuttalSchema,
-  LeadSchema,
   ReviewSchema,
-  ChatSchema
+  CloseTriggerSchema
 } from '../schemas.js';
 import type { ProviderName } from '../config.js';
 
 const text = z.string().min(1).max(1500);
+
+const StrictEntryZone = z.object({
+  low: z.number().finite().positive(),
+  high: z.number().finite().positive(),
+  basis: z.string().min(1).max(500)
+});
+
+const StrictExitSignal = z.object({
+  kind: z.enum(['MOMENTUM_EXHAUSTION', 'TARGET_COMPLETE']),
+  evidenceRefs: z.array(z.string().min(1).max(160)).min(1).max(10)
+});
+
+const StrictOpinionJsonSchema = z.object({
+  stance: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
+  confidence: z.number().min(0).max(1),
+  argument: text,
+  entryScenarioId: z.string().min(1).max(120).nullable(),
+  entryZone: StrictEntryZone.nullable(),
+  invalidationLevel: z.number().finite().positive().nullable(),
+  exitSignal: StrictExitSignal.nullable()
+});
+
+const StrictLeadJsonSchema = z.object({
+  action: z.enum(['OPEN_LONG', 'OPEN_SHORT', 'CLOSE', 'HOLD']),
+  confidence: z.number().min(0).max(1),
+  reason: text,
+  entryScenarioId: z.string().min(1).max(120).nullable(),
+  entryZone: StrictEntryZone.nullable(),
+  invalidationLevel: z.number().finite().positive().nullable(),
+  closeTrigger: CloseTriggerSchema.nullable(),
+  exitSignal: StrictExitSignal.nullable()
+});
+
 // Root object schema for Risk in strict mode (OpenAI and OpenRouter strict structured outputs require root type: object).
 const StrictRiskJsonSchema = z.object({
   decision: z.enum(['APPROVE', 'REDUCE', 'REJECT']),
@@ -40,13 +71,13 @@ const StrictChatJsonSchema = z.object({
 export function getTaskJsonSchema(task: TaskKind): Record<string, unknown> {
   switch (task) {
     case 'opinion':
-      return z.toJSONSchema(OpinionSchema);
+      return z.toJSONSchema(StrictOpinionJsonSchema);
     case 'research':
       return z.toJSONSchema(ResearchSchema);
     case 'rebuttal':
       return z.toJSONSchema(RebuttalSchema);
     case 'lead':
-      return z.toJSONSchema(LeadSchema);
+      return z.toJSONSchema(StrictLeadJsonSchema);
     case 'risk':
       return z.toJSONSchema(StrictRiskJsonSchema);
     case 'review':

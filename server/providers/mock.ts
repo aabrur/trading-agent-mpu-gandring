@@ -55,7 +55,9 @@ function strategist(c: Ctx) {
   const txt = side === 'NEUTRAL'
     ? `Rule says ABSTAIN. ${v.reason ?? ''} I do not vote on feelings.`
     : `Closed bars say ${side}. ${v.reason} Invalidation at EMA9 ${inv}. Below that I am out.`.replace('Below', side === 'SHORT' ? 'Above' : 'Below');
-  const scenario = c.tacticalTradePlan?.scenarios?.find((item: { side: string; entryZone?: unknown; invalidationLevel?: number }) => item.side === side && item.entryZone && item.invalidationLevel);
+  const lastPrice = Number(c.market?.last ?? c.rule?.close ?? 0);
+  const matching = (c.tacticalTradePlan?.scenarios ?? []).filter((item: { side: string; entryZone?: { low: number; high: number }; invalidationLevel?: number }) => item.side === side && item.entryZone && item.invalidationLevel);
+  const scenario = matching.find((item: any) => lastPrice >= item.entryZone.low && lastPrice <= item.entryZone.high) ?? matching[0];
   return { stance: side, confidence: r2(conf), argument: txt.trim(), ...(scenario ? { entryScenarioId: scenario.id ?? scenario.kind, entryZone: scenario.entryZone, invalidationLevel: scenario.invalidationLevel } : {}) };
 }
 

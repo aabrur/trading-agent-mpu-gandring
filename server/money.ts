@@ -195,7 +195,7 @@ export function planOrder(p: PlanInput): Plan {
   if (!(p.price > 0) || !Number.isFinite(p.price)) return { ok: false, reason: 'No valid price.', split };
   if (p.entryZone || p.invalidationLevel !== undefined) {
     const zone = p.entryZone, invalidation = p.invalidationLevel;
-    if (!zone || ![zone.low, zone.high, invalidation].every(value => typeof value === 'number' && Number.isFinite(value) && value > 0) || zone.low > zone.high || p.price < zone.low || p.price > zone.high) return { ok: false, reason: 'Execution quote is outside the binding entry zone or setup geometry is invalid.', split };
+    if (!zone || ![zone.low, zone.high, invalidation].every(value => typeof value === 'number' && Number.isFinite(value) && value > 0) || zone.low > zone.high || p.price < zone.low * 0.998 || p.price > zone.high * 1.002) return { ok: false, reason: 'Execution quote is outside the binding entry zone or setup geometry is invalid.', split };
     if (invalidation === undefined || (p.side === 'LONG' ? invalidation >= p.price || invalidation >= zone.low : invalidation <= p.price || invalidation <= zone.high)) return { ok: false, reason: 'Structural invalidation is not beyond the entry zone on the correct side.', split };
   }
   if (!(p.leverage >= 1) || !Number.isFinite(p.leverage)) return { ok: false, reason: 'No valid leverage.', split };

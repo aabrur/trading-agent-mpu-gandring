@@ -25,7 +25,10 @@ export function sampleCandles(symbol: string, count = 300, endTime = Date.UTC(20
   const out: Candle[] = [];
   for (let i = 0; i < count; i++) {
     const t = endTime - (count - i) * bar;
-    const shock = (r() - 0.5) * 0.006 + drift + Math.sin(i / 17) * 0.0007;
+    const noise = (r() - 0.5) * 0.006;
+    const shock = (i >= count - 8 && drift !== 0)
+      ? (drift > 0 ? Math.abs(noise * 0.3) + drift : -Math.abs(noise * 0.3) + drift)
+      : noise + drift + Math.sin(i / 17) * 0.0007;
     const o = price;
     const c = Math.max(o * (1 + shock), 0.00001);
     const h = Math.max(o, c) * (1 + r() * 0.002);
@@ -42,6 +45,8 @@ export function sampleSnapshot(symbol: string, now = Date.now()): MarketSnapshot
   const dayAgo = candles.at(-97)!.c;
   // small wobble on the live price so the office ticker moves; candles stay fixed
   const wobble = 1 + Math.sin(now / 45_000 + (hashStr(symbol) % 7)) * 0.0012;
+  const drift = DRIFT[symbol] ?? 0;
+  const isBearish = drift < 0;
   const px = last * wobble;
   return {
     symbol, source: 'sample', example: true, last: px,
@@ -57,10 +62,10 @@ export function sampleSnapshot(symbol: string, now = Date.now()): MarketSnapshot
       topAskWall: { price: Math.round(px * 1.005 * 100) / 100, size: 52.8 }
     },
     orderflow: {
-      takerBuyVol: 1250,
-      takerSellVol: 1180,
-      cvdDelta: 70,
-      buySellRatio: 1.06,
+      takerBuyVol: isBearish ? 1180 : 1250,
+      takerSellVol: isBearish ? 1250 : 1180,
+      cvdDelta: isBearish ? -70 : 70,
+      buySellRatio: isBearish ? 0.94 : 1.06,
       deltaDivergence: false,
       tradesCount: 48
     },

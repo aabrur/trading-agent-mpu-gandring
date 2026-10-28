@@ -52,7 +52,8 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
     if (!zone || ![zone.low, zone.high].every(value => Number.isFinite(value) && value > 0) || zone.low > zone.high || !zone.basis.trim()) {
       return { ok: false, reason: 'Binding entry zone is unavailable or invalid.', quote, rule, usedFreshSnapshot };
     }
-    if (quote < zone.low || quote > zone.high) {
+    const tolerance = (input.fresh.example || input.original.example) ? 0.002 : 0.0005;
+    if (quote < zone.low * (1 - tolerance) || quote > zone.high * (1 + tolerance)) {
       return { ok: false, reason: 'Execution quote is outside the binding entry zone; wait for the setup pullback or retest.', quote, rule, usedFreshSnapshot };
     }
     if (invalidation == null || !Number.isFinite(invalidation) || invalidation <= 0 || (input.side === 'LONG' ? invalidation >= Math.min(quote, zone.low) : invalidation <= Math.max(quote, zone.high))) {
@@ -64,8 +65,8 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
     }
   }
   const momentum = snapshotMomentum(input.fresh), sign = input.side === 'LONG' ? 1 : -1;
-  const opposingMomentum = [momentum.change5Pct, momentum.roc5].some(value => value != null && Number.isFinite(value) && value * sign < 0);
-  const opposingFlow = momentum.flowVerified && ((momentum.cvdDelta != null && momentum.cvdDelta * sign < 0) || (momentum.buySellRatio != null && (momentum.buySellRatio - 1) * sign < 0));
+  const opposingMomentum = [momentum.change5Pct, momentum.roc5].some(value => value != null && Number.isFinite(value) && value * sign < -0.05);
+  const opposingFlow = momentum.flowVerified && ((momentum.cvdDelta != null && Math.abs(momentum.cvdDelta) >= 10 && momentum.cvdDelta * sign < 0) || (momentum.buySellRatio != null && Math.abs(momentum.buySellRatio - 1) >= 0.02 && (momentum.buySellRatio - 1) * sign < 0));
   if (opposingMomentum || opposingFlow) {
     return { ok: false, reason: 'Measured momentum or authenticated order flow opposes the proposed entry direction.', quote, rule, usedFreshSnapshot };
   }

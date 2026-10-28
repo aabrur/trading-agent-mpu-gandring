@@ -56,7 +56,7 @@ describe('Position-First Autonomous Trading Lifecycle (v0.0.0.3.20)', () => {
     const { desk, auto } = setupDesk();
     desk.book.n = 2;
     desk.book.open({ symbol: 'ETHUSDT', side: 'SHORT', qty: 1, entry: 3100, stop: 3400, tp: 2600, margin: 100, leverage: 5 });
-    desk.book.open({ symbol: 'BTCUSDT', side: 'SHORT', qty: 0.1, entry: 67000, stop: 75000, tp: 60000, margin: 100, leverage: 5 });
+    desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 0.1, entry: 67000, stop: 60000, tp: 75000, margin: 100, leverage: 5 });
     expect(desk.book.positions).toHaveLength(2);
 
     const result = await auto.cycle();
@@ -70,7 +70,7 @@ describe('Position-First Autonomous Trading Lifecycle (v0.0.0.3.20)', () => {
     const { desk, auto } = setupDesk();
     desk.book.n = 2;
     desk.book.open({ symbol: 'ETHUSDT', side: 'SHORT', qty: 1, entry: 3100, stop: 3400, tp: 2600, margin: 100, leverage: 5 });
-    desk.book.open({ symbol: 'BTCUSDT', side: 'SHORT', qty: 0.1, entry: 67000, stop: 75000, tp: 60000, margin: 100, leverage: 5 });
+    desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 0.1, entry: 67000, stop: 60000, tp: 75000, margin: 100, leverage: 5 });
 
     await auto.cycle();
     expect(desk.book.positions).toHaveLength(2);
@@ -237,21 +237,21 @@ describe('Position-First Autonomous Trading Lifecycle (v0.0.0.3.20)', () => {
   it('9. Favorable momentum while position thesis remains valid: HOLD is not converted to CLOSE merely to free capacity', async () => {
     const { desk } = setupDesk();
     desk.book.n = 2;
-    desk.book.open({ symbol: 'BTCUSDT', side: 'SHORT', qty: 0.1, entry: 67000, stop: 75000, tp: 60000, margin: 100, leverage: 5 });
+    desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 0.1, entry: 67000, stop: 60000, tp: 75000, margin: 100, leverage: 5 });
 
-    // Favorable price below EMA21 with negative momentum for a short position
+    // Favorable price above EMA21 with positive momentum for a long position
     const rule = {
-      side: 'SHORT' as const,
-      close: 66000,
+      side: 'LONG' as const,
+      close: 69000,
       ema21: 67500,
-      change5Pct: -2.1,
+      change5Pct: 2.1,
       barTime: Date.now(),
-      ema9: 66500,
+      ema9: 68500,
       adx: 30,
-      regime: 'STRONG_DOWNTREND'
+      regime: 'STRONG_UPTREND'
     };
 
-    const isInvalid = (desk as any).invalidated('SHORT', rule);
+    const isInvalid = (desk as any).invalidated('LONG', rule);
     expect(isInvalid).toBe(false);
 
     // Run debate: position thesis remains valid, produces HOLD

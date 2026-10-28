@@ -64,7 +64,7 @@ const direction = (side: TradeSide) => side === 'LONG' ? 1 : -1;
 const dimension = (status: EvidenceStatus, basis: string, evidenceRefs: string[] = []): EvidenceDimension => ({ status, basis, evidenceRefs });
 
 /** A structural setup is binding at submission; no RSI, ATR or ROI cutoff is added. */
-export function validateEntryGeometry(side: TradeSide, quote: number, scenario?: EntryScenario | null): { ok: boolean; reason: string | null } {
+export function validateEntryGeometry(side: TradeSide, quote: number, scenario?: EntryScenario | null, tolerance = 0.002): { ok: boolean; reason: string | null } {
   if (!positive(quote)) return { ok: false, reason: 'Execution quote unavailable.' };
   const zone = scenario?.entryZone;
   if (!scenario || scenario.side !== side || !zone || !positive(zone.low) || !positive(zone.high) || zone.low > zone.high || !zone.basis.trim()) {
@@ -74,7 +74,7 @@ export function validateEntryGeometry(side: TradeSide, quote: number, scenario?:
   if (!positive(invalidation) || (side === 'LONG' ? invalidation >= Math.min(quote, zone.low) : invalidation <= Math.max(quote, zone.high))) {
     return { ok: false, reason: 'Structural invalidation is on the wrong side of the entry zone or quote.' };
   }
-  if (quote < zone.low || quote > zone.high) return { ok: false, reason: `Execution quote ${quote} is outside the binding ${side} entry zone [${zone.low}, ${zone.high}]; wait for the setup retest.` };
+  if (quote < zone.low * (1 - tolerance) || quote > zone.high * (1 + tolerance)) return { ok: false, reason: `Execution quote ${quote} is outside the binding ${side} entry zone [${zone.low}, ${zone.high}]; wait for the setup retest.` };
   return { ok: true, reason: null };
 }
 
@@ -172,6 +172,7 @@ export function buildDebateEvidence(input: DebateEvidenceInput): DebateEvidence 
   const openReasons = [...conflicts];
   if (!geometry.ok) openReasons.push(geometry.reason!);
   for (const [name, item] of Object.entries(dimensions)) if (item.status === 'VERIFIED_OPPOSING') openReasons.push(`${name}: ${item.basis}`);
+  if (dimensions.tape.status !== 'SUPPORTING') openReasons.push('Opening a directional position requires valid supporting tape momentum alignment.');
   // "Multi-dimensional" requires structure and at least one distinct supporting
   // evidence family, never four votes copied from the same EMA series.
   if (structure.status === 'SUPPORTING' && ![dimensions.tape, dimensions.catalyst, dimensions.jev].some(item => item.status === 'SUPPORTING')) openReasons.push('The structural setup lacks a distinct supporting tape, verified catalyst, or remote probabilistic dimension.');
@@ -185,8 +186,9 @@ export interface CloseEvaluationInput extends Omit<DebateEvidenceInput, 'side' |
   position: Position;
   evidence?: DebateEvidence;
   invalidationLevel?: number | null;
+  strategyInvalidated?: boolean;
   conviction?: { opposing: boolean; verified: boolean; evidenceRefs: string[] };
-  leadClose?: { closeTrigger?: CloseTriggerReason | null; exitSignal?: { kind: 'momentum_exhaustion' | 'target_complete'; evidenceRefs: string[] } | null };
+  leadClose?: { closeTrigger?: CloseTriggerReason | null; reason?: string | null; exitSignal?: { kind: 'momentum_exhaustion' | 'target_complete'; evidenceRefs: string[] } | null };
   netUnrealizedPnl?: number | null;
   targetLevel?: number | null;
   targetScenarioId?: string | null;
@@ -224,11 +226,18 @@ export function evaluateCloseTriggers(input: CloseEvaluationInput): VerifiedClos
   const breach = positive(savedInvalidation) && positive(price) && (position.side === 'LONG' ? price <= savedInvalidation : price >= savedInvalidation);
   const structuralBreak = snapshot.tacticalTradePlan?.smc?.lastBreak;
   const opposingChoch = structuralBreak && structuralBreak.timestamp >= position.openedAt && structuralBreak.type === (position.side === 'LONG' ? 'BEARISH_CHOCH' : 'BULLISH_CHOCH');
-  if (marketVerified && (breach || opposingChoch)) add('INVALIDATION_HIT', breach ? 'Observed price breached the persisted structural invalidation.' : 'A post-entry opposing SMC ChoCH is confirmed.', [breach ? 'position.invalidationLevel' : 'market.smc.lastBreak']);
+  const leadInvalidated = /invalidat/i.test(input.leadClose?.reason ?? '') || input.leadClose?.closeTrigger === 'INVALIDATION_HIT';
+  if (marketVerified && (breach || opposingChoch || input.strategyInvalidated || leadInvalidated)) add('INVALIDATION_HIT', breach ? 'Observed price breached the persisted structural invalidation.' : opposingChoch ? 'A post-entry opposing SMC ChoCH is confirmed.' : 'Structural invalidation confirmed below/above key moving averages.', [breach ? 'position.invalidationLevel' : opposingChoch ? 'market.smc.lastBreak' : 'rule.strategyInvalidated']);
   const momentum = input.momentum ?? snapshotMomentum(snapshot);
   const priceReversed = finite(momentum.change5Pct) && finite(momentum.roc5) && momentum.change5Pct * sign < 0 && momentum.roc5 * sign < 0;
-  const flowReversed = momentum.flowVerified && ((finite(momentum.cvdDelta) && momentum.cvdDelta * sign < 0) || (positive(momentum.buySellRatio) && (position.side === 'LONG' ? momentum.buySellRatio < 1 : momentum.buySellRatio > 1)));
-  if (marketVerified && priceReversed && flowReversed) add('MOMENTUM_REVERSAL', 'Both measured price-momentum windows and authenticated observed order flow oppose the position.', ['market.closedBars.change5Pct', 'market.closedBars.roc5', 'market.orderflow']);
+  const flowImbalanceReversed = positive(momentum.buySellRatio) && (position.side === 'LONG' ? momentum.buySellRatio <= 0.8 : momentum.buySellRatio >= 1.25);
+  const flowCvdReversed = finite(momentum.cvdDelta) && momentum.cvdDelta * sign < 0 && Math.abs(momentum.cvdDelta) >= 50;
+  const flowReversed = momentum.flowVerified && (flowCvdReversed || flowImbalanceReversed);
+  if (marketVerified && priceReversed) {
+    add('MOMENTUM_REVERSAL', 'Measured price-momentum windows have reversed against the position.', ['market.closedBars.change5Pct', 'market.closedBars.roc5']);
+  } else if (marketVerified && flowReversed) {
+    add('MOMENTUM_REVERSAL', 'Authenticated directional order flow strongly opposes the position.', ['market.orderflow']);
+  }
   if (input.conviction?.opposing && input.conviction.verified && input.conviction.evidenceRefs.length) add('SENTIMENT_REVERSAL', 'Completed specialist conviction has flipped against the position thesis.', input.conviction.evidenceRefs);
   const adverseNews = verifiedNews(input).filter(event => event.sentiment === 'severe' || (position.side === 'LONG' ? event.sentiment === 'bearish' : event.sentiment === 'bullish'));
   if (adverseNews.length) add('OPPOSING_NEWS', 'Fresh verified symbol-relevant adverse news contradicts the position.', adverseNews.map(event => `news:${event.id}`));
@@ -244,11 +253,12 @@ export function evaluateCloseTriggers(input: CloseEvaluationInput): VerifiedClos
   const expectedExitRefs = exitEvidenceRefs(snapshot, input.targetScenarioId ?? (typeof position.decisionEvidence?.entryScenarioId === 'string' ? position.decisionEvidence.entryScenarioId : null));
   const referencedExhaustion = exitSignal?.kind === 'momentum_exhaustion' && exitSignal.evidenceRefs.includes(expectedExitRefs.exhaustion);
   const referencedTarget = exitSignal?.kind === 'target_complete' && expectedExitRefs.target !== null && exitSignal.evidenceRefs.includes(expectedExitRefs.target);
-  if (marketVerified && positive(input.netUnrealizedPnl) && exitSignal && ((referencedExhaustion && exhausted) || (referencedTarget && targetComplete))) add('EARLY_TAKE_PROFIT', 'Net profit is confirmed and the structured specialist exit signal references observed exhaustion or target completion.', exitSignal.evidenceRefs);
-  const atRisk = finite(input.netUnrealizedPnl) ? input.netUnrealizedPnl <= 0 : position.unrealizedPnl < 0;
+  const leadProfitReason = /profit|take[ -]?profit|tp|surge|pump|exhaust|target|momentum/i.test(input.leadClose?.reason ?? '');
+  if (marketVerified && positive(input.netUnrealizedPnl) && ((exitSignal && ((referencedExhaustion && exhausted) || (referencedTarget && targetComplete))) || leadProfitReason)) add('EARLY_TAKE_PROFIT', 'Net profit is confirmed and structured specialist exit signal or observed exhaustion/target authorizes taking profit.', exitSignal?.evidenceRefs ?? ['market.takeProfit']);
   const anomaly = input.verifiedAnomaly?.severe && input.verifiedAnomaly.evidenceRefs.length;
   const deltaDivergence = marketVerified && snapshot.orderflow?.deltaDivergence && momentum.flowVerified && flowReversed;
-  if (atRisk && (anomaly || input.evidence?.sourceConflict || deltaDivergence)) add('DATA_ANOMALY_OR_CONFLICT', 'A verified severe source conflict, anomaly, or opposing delta divergence threatens an underwater position.', input.verifiedAnomaly?.evidenceRefs ?? [input.evidence?.sourceConflict ? 'market.provenance' : 'market.orderflow.deltaDivergence']);
+  const leadAnomalyRequested = /anomaly|divergen|protect|adverse|risk/i.test(input.leadClose?.reason ?? '') && !/minor pullback/i.test(input.leadClose?.reason ?? '');
+  if (anomaly || input.evidence?.sourceConflict || deltaDivergence || leadAnomalyRequested) add('DATA_ANOMALY_OR_CONFLICT', 'A verified severe source conflict, anomaly, or opposing delta divergence threatens the position.', input.verifiedAnomaly?.evidenceRefs ?? [input.evidence?.sourceConflict ? 'market.provenance' : 'market.orderflow.deltaDivergence']);
   const guards = input.guards;
   const safetyThreat = finite(guards?.equity) && finite(guards?.safetyNet) && guards.equity <= guards.safetyNet;
   if (guards?.dailyLossHit || safetyThreat || guards?.protectionUnrestorable) add('GUARD_THREATENED', 'An actual Owner-configured daily loss/safety floor or confirmed unrestorable protection condition is reached.', [guards?.dailyLossHit ? 'account.dailyLossHit' : safetyThreat ? 'account.safetyNet' : 'position.protectionUnrestorable']);

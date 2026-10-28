@@ -48,7 +48,7 @@ export function strategyVote(candles: Candle[], observed: { roc5?: number | null
       ...(sign * change5Pct < 0 ? ['five-bar price change'] : []),
       ...(sign * roc5 < 0 ? ['ROC5'] : []),
       ...(flow && Number.isFinite(flow.cvdDelta) && sign * flow.cvdDelta < 0 ? ['observed CVD'] : []),
-      ...(flow && flow.buySellRatio !== null && Number.isFinite(flow.buySellRatio) && sign * (flow.buySellRatio - 1) < 0 ? ['observed taker-flow ratio'] : []),
+      ...(flow && flow.buySellRatio !== null && Number.isFinite(flow.buySellRatio) && (sign > 0 ? flow.buySellRatio < 1 : flow.buySellRatio > 1) ? ['observed taker-flow ratio'] : []),
     ];
     if (opposing.length) return { ...base, momentumConflict: true, reason: `${candidate} price structure conflicts with ${opposing.join(', ')}. Abstaining.` };
     return { ...base, side: candidate, invalidation: e9, reason: `${candidate} price structure with no opposing observed short-term momentum.` };

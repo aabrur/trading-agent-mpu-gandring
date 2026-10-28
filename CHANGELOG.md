@@ -2,6 +2,16 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.5] - 2026-10-28
+
+### Fixed
+- OPEN momentum alignment (Bug A): required supporting tape momentum and verified directional price and orderflow alignment for OPEN_LONG and OPEN_SHORT; JEV and catalysts cannot substitute for missing or opposing momentum.
+- CLOSE trigger decoupling (Bug B): decoupled price momentum reversal and authenticated orderflow reversal in close triggers, authorizing exit on either condition independently.
+- Unconditioned anomaly exits (Bug C): removed negative unrealized PnL gating from data anomaly exits, allowing verified data anomalies and severe source conflicts to authorize defense on profitable positions.
+- Strategist to Lead execution contract: restored canonical tactical scenario propagation, added bid/ask spread tolerance to entry zone checks, and strictly enforced scenario geometry during execution.
+- OpenAI structured outputs: added strict JSON schemas with nullable properties and complete required fields for reliable provider parsing.
+- Test suite and CI stability: repaired all 25 historical CI failures across 8 test suites, restored desk.invalidated(), sanitized ambient test environment variables, and verified independent S5 stage-gate.
+
 ## [v0.0.0.4.4] - 2026-10-27
 
 ### Changed

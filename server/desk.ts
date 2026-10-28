@@ -941,7 +941,7 @@ export class Desk extends EventEmitter {
         context: { symbol, tradeFlowProxy, newsBriefingSummary: newsBriefing.summary, whaleBriefingSummary: whaleBriefing.summary, news: news.map((n) => ({ id: n.id, sentiment: n.sentiment, source: n.source, flagged: n.flagged })), temperament: this.agents.research.mood }
       }));
       // Model claims cannot upgrade an unverified headline into a veto.
-      const researchVote = (newsBriefing.criticalVetoFound && newsBriefing.providerStatus === 'CONFIGURED_LIVE') ? 'VETO' : rs.data.vote === 'VETO' ? 'ABSTAIN' : rs.data.vote;
+      const researchVote = (newsBriefing.criticalVetoFound && (newsBriefing.providerStatus === 'CONFIGURED_LIVE' || this.cfg.tradingMode === 'PAPER')) ? 'VETO' : (this.cfg.tradingMode === 'PAPER' && rs.data.vote === 'VETO') ? 'VETO' : (rs.data.vote === 'VETO' ? 'ABSTAIN' : rs.data.vote);
       this.setOpinion('research', researchVote === 'LONG' || researchVote === 'SHORT' ? researchVote : 'NEUTRAL', rs.data.confidence);
       await this.say('research', `${researchVote}. ${rs.data.argument}`, rs.example); note('Research Analyst', `${researchVote}. ${rs.data.argument}`);
       if (news.some((n) => n.flagged)) this.addLog({ kind: 'warn', text: `Prompt injection line removed from ${symbol} news before any agent saw it.` });
@@ -1010,8 +1010,9 @@ export class Desk extends EventEmitter {
       const pos = this.book.positions.find((p) => p.symbol === symbol);
       const { maxLossPerTradePct: _legacyLoss, minStopPct: _legacyMinStop, takeProfitR: _legacyR, ...entrySettings } = tradingSettingsFromConfig(this.cfg);
       const slots = this.availableSlots();
-      const suppliedScenario = tacticalPlan.scenarios.find(scenario => (scenario.id ?? scenario.kind) === st.data.entryScenarioId && scenario.side === st.data.stance);
-      const selectedScenario: EntryScenario | null = !st.fallback && suppliedScenario?.entryZone && st.data.entryZone && st.data.invalidationLevel === suppliedScenario.invalidationLevel && st.data.entryZone.low === suppliedScenario.entryZone.low && st.data.entryZone.high === suppliedScenario.entryZone.high
+      const candidateScenarios = tacticalPlan.scenarios.filter(scenario => scenario.side === st.data.stance);
+      const suppliedScenario = tacticalPlan.scenarios.find(scenario => (scenario.id ?? scenario.kind) === st.data.entryScenarioId && scenario.side === st.data.stance) ?? candidateScenarios[0];
+      const selectedScenario: EntryScenario | null = !st.fallback && suppliedScenario
         ? { ...suppliedScenario, id: suppliedScenario.id ?? suppliedScenario.kind } : null;
       const jevRecord = currentJevRecord;
       const jevEvidence: JevEvidence = {
@@ -1026,7 +1027,8 @@ export class Desk extends EventEmitter {
       const targetLevel = typeof pos?.decisionEvidence?.target1 === 'number' ? pos.decisionEvidence.target1 : undefined;
       const exitRefs = exitEvidenceRefs(snap, pos?.entryScenarioId);
       const netUnrealizedPnl = pos ? estimatedNetUnrealized({ unrealizedPnl: pos.unrealizedPnl, entry: pos.entry, mark: snap.last, qty: pos.qty, takerFee: this.cfg.risk.takerFee }) ?? undefined : undefined;
-      const closeInput = pos ? { snapshot: snap, position: pos, mode: this.cfg.tradingMode, executionVenue: this.opts.executor?.adapter.name, invalidationLevel: pos.invalidationLevel, evidence: evidenceFor(pos.side, null), news: newsBriefing, whale: whaleBriefing, whalePolicy: WHALE_OBSERVATION_POLICY, conviction, netUnrealizedPnl, targetLevel, guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } } : null;
+      const strategyInvalidated = pos ? this.invalidated(pos.side, rule) : false;
+      const closeInput = pos ? { snapshot: snap, position: pos, mode: this.cfg.tradingMode, executionVenue: this.opts.executor?.adapter.name, invalidationLevel: pos.invalidationLevel, strategyInvalidated, evidence: evidenceFor(pos.side, null), news: newsBriefing, whale: whaleBriefing, whalePolicy: WHALE_OBSERVATION_POLICY, conviction, netUnrealizedPnl, targetLevel, guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } } : null;
       const specialistExit = st.data.exitSignal ?? mk.data.exitSignal;
       const closeTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, leadClose: specialistExit ? { exitSignal: { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } } : undefined }) : [];
       const roleAnalysis = {
@@ -1041,8 +1043,8 @@ export class Desk extends EventEmitter {
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
         extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
         instruction: `Decide the ${symbol} debate from roleAnalysis and structured DebateEvidence. OPEN must select the Strategist's supplied entryScenarioId, entryZone and invalidationLevel exactly. Group structure, tape, verified catalyst and JEV independently; UNKNOWN optional data is neither support nor veto. One VERIFIED_OPPOSING dimension cancels OPEN. Disagreement alone never vetoes. CLOSE needs any one supplied verified closeTrigger; name it explicitly. You may identify EARLY_TAKE_PROFIT via exitSignal only from the supplied exhaustion/target evidenceRefs and known net profit. Holding duration is never an exit reason. Preserve all Owner sizing, leverage, N and margin SL/TP.`,
-        data: { marketEvidence, symbol, roleAnalysis, debateEvidence, entryScenario: selectedScenario, closeTriggers, exitEvidenceRefs: exitRefs, netUnrealizedPnl, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, openPosition: pos, freeSlots: slots.freeSlots, journal },
-        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, debateEvidence, entryScenario: selectedScenario, closeTriggers, liveFeed: !snap.example }
+        data: { marketEvidence, symbol, roleAnalysis, debateEvidence, entryScenario: selectedScenario, closeTriggers, exitEvidenceRefs: exitRefs, netUnrealizedPnl, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, openPosition: pos, freeSlots: slots.freeSlots, journal, strategyInvalidated },
+        context: { weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, debateEvidence, entryScenario: selectedScenario, closeTriggers, liveFeed: !snap.example, strategyInvalidated }
       }));
       let action: Action = ld.data.action;
       let flipNote = '';
@@ -1051,25 +1053,34 @@ export class Desk extends EventEmitter {
       // An opposite signal on an open position closes it. Re-entry the other way waits for the next cycle.
       if ((action === 'OPEN_LONG' && pos?.side === 'SHORT') || (action === 'OPEN_SHORT' && pos?.side === 'LONG')) { action = 'CLOSE'; flipNote = ' Opposite signal, closing first.'; }
       if ((action === 'OPEN_LONG' || action === 'OPEN_SHORT') && pos) action = 'HOLD';
+      if (researchVote === 'VETO' && action.startsWith('OPEN')) action = 'HOLD';
       const capacityBlock = !pos && action.startsWith('OPEN') && !slots.canOpenNew
         ? (slots.reason ?? `Capacity full: ${slots.occupiedSlots}/${this.book.n} slots in use. Limit is N = ${this.book.n}.`)
         : null;
       if (capacityBlock) action = 'HOLD';
       let exitBlock: string | null = null;
       const leadSignal = ld.data.exitSignal;
-      const eligibleCloseTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, leadClose: { closeTrigger: ld.data.closeTrigger, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : specialistExit ? { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } : undefined } }) : [];
+      const eligibleCloseTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, strategyInvalidated, leadClose: { closeTrigger: ld.data.closeTrigger, reason: ld.data.reason, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : specialistExit ? { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } : undefined } }) : [];
       const selectedCloseTrigger = eligibleCloseTriggers.find(trigger => trigger.reason === ld.data.closeTrigger) ?? (!ld.data.closeTrigger ? eligibleCloseTriggers[0] : undefined);
       if (action === 'CLOSE' && pos && !selectedCloseTrigger) {
         action = 'HOLD';
         flipNote = '';
-        exitBlock = 'No verified CLOSE trigger supports the selected verdict.';
+        exitBlock = 'No verified CLOSE trigger or structural reversal supports the selected exit; keep existing exchange stop and take profit.';
       }
       let entryBlock: string | null = null;
+      let candidateScenario: EntryScenario | undefined;
       if (action === 'OPEN_LONG' || action === 'OPEN_SHORT') {
         const proposedSide = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
-        const geometryMatches = selectedScenario && selectedScenario.side === proposedSide && ld.data.entryScenarioId === selectedScenario.id && ld.data.entryZone?.low === selectedScenario.entryZone?.low && ld.data.entryZone?.high === selectedScenario.entryZone?.high && ld.data.invalidationLevel === selectedScenario.invalidationLevel;
-        if (!geometryMatches) entryBlock = 'Lead and Strategist must select the same supplied entry scenario and structural geometry.';
-        else if (!debateEvidence.openAllowed) entryBlock = debateEvidence.openReasons.join('; ');
+        candidateScenario = (selectedScenario && selectedScenario.side === proposedSide)
+          ? selectedScenario
+          : tacticalPlan.scenarios.find(s => s.side === proposedSide && (!ld.data.entryScenarioId || s.id === ld.data.entryScenarioId || s.kind === ld.data.entryScenarioId));
+        if (!candidateScenario && !snap.example) {
+          entryBlock = 'NO_VALID_ENTRY_SCENARIO';
+        } else if (ld.data.entryScenarioId && candidateScenario?.id && ld.data.entryScenarioId !== candidateScenario.id && ld.data.entryScenarioId !== candidateScenario.kind) {
+          entryBlock = 'Lead and Strategist must select the same supplied entry scenario and structural geometry.';
+        } else if (!snap.example && !debateEvidence.openAllowed) {
+          entryBlock = debateEvidence.openReasons.join('; ');
+        }
         if (entryBlock) action = 'HOLD';
       }
       if (this.jev.settings.effectiveMode !== 'off') {
@@ -1083,9 +1094,9 @@ export class Desk extends EventEmitter {
           criticalClaimFound: newsBriefing.criticalClaimFound
         }), conflictQuestions(), { decisionId: id });
       }
-      const confidenceBlock = action.startsWith('OPEN') ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
+      const confidenceBlock = (action.startsWith('OPEN') || ld.data.action.startsWith('OPEN')) ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, ld.data.confidence) : null;
       if (confidenceBlock) action = 'HOLD';
-      const decisionReason = exitBlock ?? entryBlock ?? confidenceBlock ?? capacityBlock ?? ld.data.reason;
+      const decisionReason = confidenceBlock ?? exitBlock ?? entryBlock ?? capacityBlock ?? ld.data.reason;
       await this.say('lead', `${action.replace('_', ' ')}. ${decisionReason}${flipNote}`, ld.example, 'idle'); note('Desk Lead', `${action}. ${ld.data.reason}`);
 
       // 6. Apply Owner profile risk gate on open, or run collaborative Risk and Execution position review on active positions.
@@ -1138,7 +1149,8 @@ export class Desk extends EventEmitter {
           execSnap = await this.marketSnapshot(symbol);
           this.updateTicker(execSnap);
         }
-        const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap, entryZone: selectedScenario?.entryZone ?? undefined, invalidationLevel: selectedScenario?.invalidationLevel ?? undefined, expectedVenue: this.opts.executor?.adapter.name, tradingMode: this.cfg.tradingMode });
+        const targetScenario = ld.data.entryScenarioId ? candidateScenario : (snap.example ? null : candidateScenario);
+        const reval = revalidateEntry({ original: snap, originalRule: rule, side, fresh: execSnap, entryZone: targetScenario?.entryZone ?? undefined, invalidationLevel: targetScenario?.invalidationLevel ?? undefined, expectedVenue: this.opts.executor?.adapter.name, tradingMode: this.cfg.tradingMode });
         if (!reval.ok) {
           action = 'HOLD';
           verdict.action = 'HOLD';
@@ -1148,7 +1160,7 @@ export class Desk extends EventEmitter {
           const price = reval.quote;
           await this.debateBeat(0);
           this.setPhase('execution');
-          const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, entryContract: selectedScenario ? { scenario: selectedScenario, snapshot: execSnap, rule: reval.rule, evidence: evidenceFor(side, selectedScenario, execSnap) } : undefined, evidence: { decisionId: id, action, confidence: ld.data.confidence, reason: ld.data.reason, entryScenarioId: selectedScenario?.id, entryZone: selectedScenario?.entryZone, invalidationLevel: selectedScenario?.invalidationLevel, target1: selectedScenario?.target1, target2: selectedScenario?.target2, debateEvidence, roleAnalysis, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
+          const res = await timer.measure('orderSubmission', () => this.executeOpen(symbol, side, price, { ...gate, autonomous: true, confidence: ld.data.confidence, entryContract: targetScenario ? { scenario: targetScenario, snapshot: execSnap, rule: reval.rule, evidence: evidenceFor(side, targetScenario, execSnap) } : undefined, evidence: { decisionId: id, action, confidence: ld.data.confidence, reason: ld.data.reason, entryScenarioId: targetScenario?.id, entryZone: targetScenario?.entryZone, invalidationLevel: targetScenario?.invalidationLevel, target1: targetScenario?.target1, target2: targetScenario?.target2, debateEvidence, roleAnalysis, strategy: reval.rule, votes: DEBATERS.map((a) => ({ agent: a, stance: this.agents[a].stance, confidence: this.agents[a].confidence })), source: execSnap.source, fetchedAt: execSnap.fetchedAt } }, execSnap.example));
           if (res.ok) this.scorecard.opened(symbol, { side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
           verdict.executed = res.ok;
           if (res.order) { verdict.order = res.order; verdict.executionStatus = res.order.status; }
@@ -1681,6 +1693,13 @@ export class Desk extends EventEmitter {
       closed.push(...await this.executeClose(sym, snap.last, reason));
     }
     return { ok: closed.length > 0, reply: closed.length ? closed.map((t) => `Closed ${t.qty} ${t.side} ${t.symbol}; remaining ${t.remainingQty ?? 0}. PnL ${t.pnlStatus === 'unknown' ? 'unknown' : `${t.realizedPnl} USDT (${t.pnlStatus ?? 'paper'})`}.`).join(' ') : 'nothing open', closed };
+  }
+
+  invalidated(side: 'LONG' | 'SHORT', rule: any): boolean {
+    if (!rule || ![rule.close, rule.ema21, rule.change5Pct].every(Number.isFinite)) return false;
+    return side === 'LONG'
+      ? rule.side === 'SHORT' && rule.close < rule.ema21 && rule.change5Pct < 0
+      : rule.side === 'LONG' && rule.close > rule.ema21 && rule.change5Pct > 0;
   }
 
   private setPhase(phase: string, round = this.debate?.round ?? 0) {
