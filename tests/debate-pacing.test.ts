@@ -34,15 +34,42 @@ describe('visible debate lifecycle', () => {
     const run = desk.runDebate('ETHUSDT');
     await finish(run);
     const names = phases.map((p) => p.phase);
-    expect(names).toEqual(expect.arrayContaining(['opening', 'reading', 'strategy', 'gathering', 'round 1', 'verdict', 'risk gate', 'preparation', 'execution', 'done']));
-    expect(names.indexOf('gathering')).toBeLessThan(names.indexOf('round 1'));
-    expect(names.includes('round 2')).toBe(mode === 'normal');
-    const gathering = phases.find((p) => p.phase === 'gathering')!;
-    const round = phases.find((p) => p.phase === 'round 1')!;
-    expect(round.at - gathering.at).toBeGreaterThanOrEqual(mode === 'normal' ? 2800 : 1400);
+    const expected = ['opening', 'reading', 'strategy', 'gathering', 'verdict', 'risk gate', 'preparation', 'execution', 'done'];
+    if (mode === 'normal') expected.push('round 1', 'round 2');
+    expect(names).toEqual(expect.arrayContaining(expected));
+    if (mode === 'normal') {
+      expect(names.indexOf('gathering')).toBeLessThan(names.indexOf('round 1'));
+      const gathering = phases.find((p) => p.phase === 'gathering')!;
+      const round = phases.find((p) => p.phase === 'round 1')!;
+      expect(round.at - gathering.at).toBeGreaterThanOrEqual(2800);
+    } else {
+      expect(names.includes('round 1')).toBe(false);
+    }
     expect(submissions).toHaveLength(1);
     expect(submissions[0].phase).toBe('execution');
     expect(submissions[0].at - phases.find((p) => p.phase === 'preparation')!.at).toBeGreaterThanOrEqual(mode === 'normal' ? 2800 : 1400);
+  });
+
+  it('runs round 1 in fast mode when analysts disagree', async () => {
+    vi.useFakeTimers();
+    const base = makeCaller(loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_PROVIDER: 'mock' }));
+    const disagreeCaller: ModelCaller = async (req) => {
+      if (req.agent === 'market' && req.task === 'opinion') {
+        return JSON.stringify({ stance: 'LONG', confidence: 0.9, argument: 'Tape is bullish' });
+      }
+      if (req.agent === 'research' && req.task === 'research') {
+        return JSON.stringify({ vote: 'SHORT', confidence: 0.9, argument: 'Opposing thesis', sources: [] });
+      }
+      if (req.agent === 'strategist' && req.task === 'opinion') {
+        return JSON.stringify({ stance: 'LONG', confidence: 0.9, argument: 'Trend is long' });
+      }
+      return base(req);
+    };
+    const { desk, phases } = fixture('fast', disagreeCaller);
+    const run = desk.runDebate('ETHUSDT');
+    await finish(run);
+    const names = phases.map((p) => p.phase);
+    expect(names).toEqual(expect.arrayContaining(['gathering', 'round 1', 'verdict']));
   });
 
   it.each(['manual', 'scheduled'] as const)('%s cycles use the same paced lifecycle', async (trigger) => {
@@ -51,7 +78,7 @@ describe('visible debate lifecycle', () => {
     const auto = new AutoTrader(desk);
     const run = auto.cycle(trigger);
     expect((await finish(run, desk)).ran).toEqual(['ETHUSDT']);
-    expect(phases.map((p) => p.phase)).toEqual(expect.arrayContaining(['gathering', 'round 1', 'preparation', 'execution']));
+    expect(phases.map((p) => p.phase)).toEqual(expect.arrayContaining(['gathering', 'preparation', 'execution']));
     expect(desk.autoState.running).toBe(false);
   });
 

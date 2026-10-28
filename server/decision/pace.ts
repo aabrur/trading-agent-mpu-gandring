@@ -14,6 +14,7 @@ export function rebuttalRounds(mode: DebateMode, configuredRounds: number, input
   strategist: Stance | null;
   researchVote: string;
   disagreement?: number;
+  hasEvidenceConflict?: boolean;
 }): number {
   const rounds = Math.max(1, configuredRounds);
   if (input.researchVote === 'VETO') return 0;
@@ -24,6 +25,14 @@ export function rebuttalRounds(mode: DebateMode, configuredRounds: number, input
 
   if (mode !== 'fast') return rounds;
   if (longs === 0 && shorts === 0) return 0;
-  // FAST keeps one evidence challenge, including aligned directional opinions.
+
+  const allAgree = (longs === 3 || shorts === 3) || (stances.length > 0 && (longs === stances.length || shorts === stances.length));
+  const disagreement = input.disagreement ?? 0;
+  const hasConflict = input.hasEvidenceConflict === true;
+  if (allAgree && disagreement <= 0.05 && !hasConflict) {
+    return 0;
+  }
+
+  // FAST keeps one targeted evidence challenge when material disagreement or evidence conflict exists.
   return 1;
 }

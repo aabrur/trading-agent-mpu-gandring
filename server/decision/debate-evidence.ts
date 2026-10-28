@@ -88,9 +88,9 @@ export function snapshotMomentum(snapshot: MarketSnapshot): MomentumEvidence {
   const flow = snapshot.orderflow;
   const flowWindow = flow?.rollingWindows?.['15m'] ?? flow?.rollingWindows?.['5m'];
   const partial = flowWindow ? flowWindow.partial : (flow as { partial?: boolean })?.partial === true;
-  const coveragePct = flowWindow?.coveragePct ?? (flow as { coveragePct?: number })?.coveragePct ?? (flow?.evidence?.status === 'live' ? 100 : 0);
+  const coveragePct = flowWindow?.coveragePct ?? (flow as { coveragePct?: number })?.coveragePct;
   const tradesCount = flowWindow?.tradesCount ?? flow?.tradesCount;
-  const adequateCoverage = coveragePct >= 80 && !partial && (tradesCount === undefined ? (positive((flow as any)?.takerBuyVol) || positive((flow as any)?.takerSellVol)) : tradesCount >= 5);
+  const adequateCoverage = typeof coveragePct === 'number' && Number.isFinite(coveragePct) && coveragePct >= 80 && !partial && typeof tradesCount === 'number' && Number.isFinite(tradesCount) && tradesCount >= 5;
   const flowVerified = !!flow && (snapshot.example || flow.evidence?.status === 'live') && flow.dataType !== 'external_proxy' && (!flow.actualDataVenue || flow.actualDataVenue === snapshot.source) && adequateCoverage;
   return {
     change5Pct: positive(last) && positive(fourBack) ? (last - fourBack) / fourBack * 100 : null,
@@ -201,7 +201,10 @@ export function buildDebateEvidence(input: DebateEvidenceInput): DebateEvidence 
       : dimension('SUPPORTING', 'The execution quote respects the side-specific structural entry zone and invalidation.', [`scenario:${scenario?.id ?? scenario?.kind ?? 'selected'}`]);
   const momentum = input.momentum ?? snapshotMomentum(snapshot);
   const dimensions = { structure, tape: tapeDimension(input, momentum), catalyst: catalystDimension(input), jev: jevDimension(input) };
+  const isCrossVenue = Boolean(live && venue && snapshot.source.toLowerCase() !== venue.toLowerCase());
+  const nativeQuoteMissing = isCrossVenue && !positive(input.nativeExecutionQuote);
   const openReasons = [...conflicts];
+  if (nativeQuoteMissing) openReasons.push(`Execution-native quote is required to authorize OPEN on execution venue ${venue}.`);
   if (!geometry.ok) openReasons.push(geometry.reason!);
   for (const [name, item] of Object.entries(dimensions)) if (item.status === 'VERIFIED_OPPOSING') openReasons.push(`${name}: ${item.basis}`);
   if (dimensions.tape.status !== 'SUPPORTING') openReasons.push('Opening a directional position requires valid supporting tape momentum alignment.');
@@ -252,8 +255,10 @@ export function evaluateCloseTriggers(input: CloseEvaluationInput): VerifiedClos
   const add = (reason: CloseTriggerReason, basis: string, evidenceRefs: string[]) => triggers.push({ reason, verified: true, basis, evidenceRefs });
   const price = snapshot.last;
   const sign = direction(position.side);
+  const now = input.now ?? Date.now();
   const live = input.mode === 'LIVE' || input.mode === 'TESTNET';
-  const marketVerified = !live || (!snapshot.example && snapshot.source !== 'sample' && isRecognizedReferenceMarket(snapshot.source, input.executionVenue));
+  const isFresh = Number.isFinite(snapshot.fetchedAt) && (now - snapshot.fetchedAt <= 30_000) && (snapshot.fetchedAt <= now + 5000);
+  const marketVerified = !live || (!snapshot.example && snapshot.source !== 'sample' && isRecognizedReferenceMarket(snapshot.source, input.executionVenue) && isFresh);
   const savedInvalidation = input.invalidationLevel ?? (typeof position.decisionEvidence?.invalidationLevel === 'number' ? position.decisionEvidence.invalidationLevel : null);
   const breach = positive(savedInvalidation) && positive(price) && (position.side === 'LONG' ? price <= savedInvalidation : price >= savedInvalidation);
   const structuralBreak = snapshot.tacticalTradePlan?.smc?.lastBreak;

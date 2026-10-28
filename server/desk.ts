@@ -982,12 +982,14 @@ export class Desk extends EventEmitter {
       const journal = this.book.closed.slice(0, 5).map((t) => ({ symbol: t.symbol, side: t.side, pnl: t.pnlStatus === 'unknown' ? null : t.realizedPnl, pnlStatus: t.pnlStatus, exitStatus: t.exitStatus, entryStatus: t.entryStatus, remainingQty: t.remainingQty, ownership: t.ownership, reason: t.reason }));
 
       const { disagreement: initDisagreement } = this.score();
+      const hasConflict = tacticalPlan.exhaustion?.present === true || jevInterp?.materialConflict === 1;
       const rounds = rebuttalRounds(mode, this.cfg.debate.rounds, {
         market: this.agents.market.stance,
         research: this.agents.research.stance,
         strategist: this.agents.strategist.stance,
         researchVote,
-        disagreement: initDisagreement
+        disagreement: initDisagreement,
+        hasEvidenceConflict: hasConflict
       });
       this.setPhase('gathering');
       this.setAll('idle');
@@ -1044,7 +1046,10 @@ export class Desk extends EventEmitter {
         regime: jevInterp?.marketRegime ?? null, materialConflict: jevInterp?.materialConflict === 1, evidenceRefs: [`jev:${id}`]
       };
       const executionVenue = this.opts.executor?.adapter.name ?? this.cfg.live?.exchange;
-      const nativeQuote = this.tickers[symbol]?.last ?? (snap.source === executionVenue ? snap.last : undefined);
+      const cachedTicker = this.tickers[symbol];
+      const tickerIsNative = cachedTicker && executionVenue && cachedTicker.source?.toLowerCase() === executionVenue.toLowerCase();
+      const snapshotIsNative = executionVenue && snap.source?.toLowerCase() === executionVenue.toLowerCase();
+      const nativeQuote = tickerIsNative ? cachedTicker.last : (snapshotIsNative ? snap.last : undefined);
       const evidenceFor = (side: 'LONG' | 'SHORT', scenario: EntryScenario | null = selectedScenario, snapshot = snap) => buildDebateEvidence({
         snapshot,
         side,

@@ -28,11 +28,31 @@ export function snapshotIsFresh(snap: MarketSnapshot, now = Date.now(), maxAgeMs
 }
 
 export function revalidateEntry(input: RevalidateInput): RevalidateResult {
+  const now = input.now ?? Date.now();
+  const rule = strategyVote(input.fresh.candles, { orderflow: snapshotMomentum(input.fresh).flowVerified ? input.fresh.orderflow : undefined });
+  const usedFreshSnapshot = input.fresh.fetchedAt !== input.original.fetchedAt;
+
+  if (!snapshotIsFresh(input.fresh, now)) {
+    return {
+      ok: false,
+      reason: `Fresh market snapshot is stale (${Math.max(0, Math.round((now - input.fresh.fetchedAt) / 1000))}s old; max 30s).`,
+      quote: 0,
+      rule,
+      usedFreshSnapshot
+    };
+  }
+
+  const isCrossVenue = Boolean(input.expectedVenue && input.tradingMode !== 'PAPER' && input.fresh.source.toLowerCase() !== input.expectedVenue.toLowerCase());
+  if (isCrossVenue && !isRecognizedReferenceMarket(input.fresh.source, input.expectedVenue)) {
+    return { ok: false, reason: `Market source conflict: reference source ${input.fresh.source} does not match execution venue ${input.expectedVenue}.`, quote: 0, rule, usedFreshSnapshot };
+  }
+  if (isCrossVenue && (input.executionQuote == null || !(input.executionQuote > 0) || !Number.isFinite(input.executionQuote))) {
+    return { ok: false, reason: `Execution-native quote is required for cross-venue execution on ${input.expectedVenue}.`, quote: 0, rule, usedFreshSnapshot };
+  }
+
   const quote = input.executionQuote ?? (input.side === 'LONG'
     ? (input.fresh.ask ?? input.fresh.last)
     : (input.fresh.bid ?? input.fresh.last));
-  const rule = strategyVote(input.fresh.candles, { orderflow: snapshotMomentum(input.fresh).flowVerified ? input.fresh.orderflow : undefined });
-  const usedFreshSnapshot = input.fresh.fetchedAt !== input.original.fetchedAt;
 
   if (!(quote > 0) || !Number.isFinite(quote)) {
     return { ok: false, reason: 'Execution quote unavailable after revalidation.', quote: 0, rule, usedFreshSnapshot };
@@ -70,9 +90,6 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
       if (divergence > 0.05) {
         return { ok: false, reason: `Execution quote ${quote} diverges by ${(divergence * 100).toFixed(1)}% from reference market price ${input.fresh.last}.`, quote, rule, usedFreshSnapshot };
       }
-    }
-    if (input.fresh.source !== input.expectedVenue && !isRecognizedReferenceMarket(input.fresh.source, input.expectedVenue)) {
-      return { ok: false, reason: `Market source conflict: reference source ${input.fresh.source} does not match execution venue ${input.expectedVenue}.`, quote, rule, usedFreshSnapshot };
     }
   }
   const momentum = snapshotMomentum(input.fresh), sign = input.side === 'LONG' ? 1 : -1;

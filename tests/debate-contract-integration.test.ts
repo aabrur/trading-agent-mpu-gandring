@@ -80,7 +80,7 @@ describe('Desk binding debate contract with a mocked exchange', () => {
 
   it('cannot approve OPEN over verified opposing flow even when Lead and analysts vote LONG', async () => {
     const { desk, adapter, snapshot } = fixture();
-    snapshot.orderflow = { cvdDelta: -10, buySellRatio: 0.8, takerBuyVol: 80, takerSellVol: 100, deltaDivergence: false, dataType: 'native', actualDataVenue: 'bybit', evidence: { source: 'bybit', observedAt: Date.now(), status: 'live' } };
+    snapshot.orderflow = { cvdDelta: -10, buySellRatio: 0.8, takerBuyVol: 80, takerSellVol: 100, deltaDivergence: false, dataType: 'native', actualDataVenue: 'bybit', coveragePct: 100, tradesCount: 20, evidence: { source: 'bybit', observedAt: Date.now(), status: 'live' } };
     const verdict = await desk.runDebate('BTCUSDT');
     expect(verdict).toMatchObject({ action: 'HOLD', executed: false });
     expect(verdict.debateEvidence?.dimensions.tape.status).toBe('VERIFIED_OPPOSING');

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildDebateEvidence, evaluateCloseTriggers, snapshotMomentum, type CloseEvaluationInput, type EntryScenario } from '../server/decision/debate-evidence.js';
 import { revalidateEntry } from '../server/decision/stale.js';
+import { rebuttalRounds } from '../server/decision/pace.js';
 import { lessonInScope, Learnings } from '../server/learnings.js';
 import { ExecutionJournal } from '../server/live/journal.js';
 import { Desk } from '../server/desk.js';
@@ -556,5 +557,155 @@ describe('Case G: Office Chat status, scope filtering and concise guidance', () 
 
     await desk.command('Give me an update', 'lead');
     expect(capturedUser).toContain('Provide concise, non-repetitive answers without authorization boilerplate');
+  });
+});
+
+describe('Post-Remediation Six Target Reproductions (A1, A2, B1, C1, D1, D2)', () => {
+  it('A1: No exchange-native quote at evidence authorization must NOT allow OPEN', () => {
+    const snap = defaultSnapshot({ source: 'bybit', last: 100 });
+    const evidence = buildDebateEvidence({
+      snapshot: snap,
+      side: 'LONG',
+      scenario: defaultScenario,
+      mode: 'LIVE',
+      executionVenue: 'aster',
+      nativeExecutionQuote: undefined,
+      contractMultiplier: 1,
+      instrumentSymbol: 'BTCUSDT'
+    });
+
+    expect(evidence.provenance.referenceMarket).toBe(true);
+    // Must NOT authorize OPEN without native execution quote when cross-venue
+    expect(evidence.openAllowed).toBe(false);
+    expect(evidence.openReasons.some(r => /native.*quote/i.test(r))).toBe(true);
+  });
+
+  it('A2: No exchange-native quote during final cross-venue OPEN revalidation must fail', () => {
+    const snap = defaultSnapshot({ source: 'bybit', last: 100 });
+    const reval = revalidateEntry({
+      original: snap,
+      originalRule: strategyVote(snap.candles),
+      side: 'LONG',
+      fresh: snap,
+      entryZone: defaultScenario.entryZone,
+      invalidationLevel: defaultScenario.invalidationLevel,
+      executionQuote: undefined,
+      expectedVenue: 'aster',
+      tradingMode: 'LIVE'
+    });
+
+    // Must NOT silently substitute Bybit price into Aster execution
+    expect(reval.ok).toBe(false);
+    expect(reval.reason).toMatch(/native.*quote.*required/i);
+  });
+
+  it('B1: 1-hour-old stale reference snapshot does NOT authorize market-derived CLOSE', () => {
+    const now = Date.now();
+    const staleSnap = defaultSnapshot({
+      source: 'bybit',
+      last: 94,
+      fetchedAt: now - 3_600_000
+    });
+    const pos = defaultPosition({ side: 'LONG', entry: 100, invalidationLevel: 96 });
+    const triggers = evaluateCloseTriggers({
+      snapshot: staleSnap,
+      position: pos,
+      mode: 'LIVE',
+      executionVenue: 'aster',
+      invalidationLevel: 96,
+      strategyInvalidated: false,
+      now
+    });
+
+    // Stale snapshot must not authorize INVALIDATION_HIT
+    expect(triggers.some(t => t.reason === 'INVALIDATION_HIT')).toBe(false);
+  });
+
+  it('C1: Missing orderflow coverage or trade count is NOT classified as verified momentum', () => {
+    const now = Date.now();
+    // Missing coveragePct
+    const missingCoverage = defaultSnapshot({
+      orderflow: {
+        status: 'live',
+        dataType: 'realtime_trades',
+        cvdDelta: 50,
+        buySellRatio: 1.5,
+        tradesCount: 20,
+        evidence: { status: 'live', source: 'bybit trades', observedAt: now }
+      }
+    });
+    expect(snapshotMomentum(missingCoverage).flowVerified).toBe(false);
+
+    // Missing tradesCount with positive volume
+    const missingTrades = defaultSnapshot({
+      orderflow: {
+        status: 'live',
+        dataType: 'realtime_trades',
+        cvdDelta: 50,
+        buySellRatio: 1.5,
+        takerBuyVol: 100,
+        takerSellVol: 20,
+        coveragePct: 95,
+        evidence: { status: 'live', source: 'bybit trades', observedAt: now }
+      }
+    });
+    expect(snapshotMomentum(missingTrades).flowVerified).toBe(false);
+  });
+
+  it('D1: Unanimous agreement with no evidence conflict skips ceremonial FAST rebuttal', () => {
+    const rounds = rebuttalRounds('fast', 1, {
+      market: 'LONG',
+      research: 'LONG',
+      strategist: 'LONG',
+      researchVote: 'LONG',
+      disagreement: 0,
+      hasEvidenceConflict: false
+    });
+    expect(rounds).toBe(0);
+
+    // But disagreement preserves targeted rebuttal
+    const roundsDisagreement = rebuttalRounds('fast', 1, {
+      market: 'LONG',
+      research: 'SHORT',
+      strategist: 'LONG',
+      researchVote: 'SHORT',
+      disagreement: 0.3
+    });
+    expect(roundsDisagreement).toBe(1);
+
+    // And evidence conflict preserves targeted rebuttal even if stances agree
+    const roundsConflict = rebuttalRounds('fast', 1, {
+      market: 'LONG',
+      research: 'LONG',
+      strategist: 'LONG',
+      researchVote: 'LONG',
+      disagreement: 0,
+      hasEvidenceConflict: true
+    });
+    expect(roundsConflict).toBe(1);
+  });
+
+  it('D2: 1-hour-old stale snapshot fails revalidation at validator boundary', () => {
+    const now = Date.now();
+    const staleSnap = defaultSnapshot({
+      source: 'bybit',
+      last: 100,
+      fetchedAt: now - 3_600_000
+    });
+    const reval = revalidateEntry({
+      original: staleSnap,
+      originalRule: strategyVote(staleSnap.candles),
+      side: 'LONG',
+      fresh: staleSnap,
+      now,
+      entryZone: defaultScenario.entryZone,
+      invalidationLevel: defaultScenario.invalidationLevel,
+      executionQuote: 100,
+      expectedVenue: 'bybit',
+      tradingMode: 'LIVE'
+    });
+
+    expect(reval.ok).toBe(false);
+    expect(reval.reason).toMatch(/stale/i);
   });
 });
