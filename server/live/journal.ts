@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Position, ClosedTrade } from '../types.js';
 import type { OrderRecord, Side } from '../exchange/types.js';
@@ -21,6 +22,7 @@ export class ExecutionJournal {
   closed: ClosedTrade[] = [];
   dailyLoss: DailyLossState | null = null;
   protectionClients: { symbol: string; clientId: string }[] = [];
+  renameFn = renameSync;
   constructor(private file: string | null = null, private venue = '') {
     if (file && existsSync(file)) {
       const saved = JSON.parse(readFileSync(file, 'utf8')) as { venue: string; intents: ExecutionIntent[]; positions: Position[]; closed: ClosedTrade[]; protectionClients?: { symbol: string; clientId: string }[]; dailyLoss?: DailyLossState };
@@ -35,14 +37,63 @@ export class ExecutionJournal {
   }
   save() {
     if (!this.file) return;
+    mkdirSync(path.dirname(this.file), { recursive: true });
+    const tmp = `${this.file}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 6)}.tmp`;
     try {
-      mkdirSync(path.dirname(this.file), { recursive: true });
-      const tmp = `${this.file}.tmp`;
-      writeFileSync(tmp, JSON.stringify({ venue: this.venue, intents: this.intents, positions: this.positions, closed: this.closed, protectionClients: this.protectionClients, dailyLoss: this.dailyLoss }));
-      renameSync(tmp, this.file);
-      recordDiagnostic({ source: 'journal', category: 'JOURNAL', eventName: 'journal.persisted', status: 'persisted', message: 'Execution journal persisted', correlationId: this.intents.at(-1)?.clientId, details: { venue: this.venue, intents: this.intents.length, positions: this.positions.length, closed: this.closed.length } });
+      const payload = JSON.stringify({
+        venue: this.venue,
+        intents: this.intents,
+        positions: this.positions,
+        closed: this.closed,
+        protectionClients: this.protectionClients,
+        dailyLoss: this.dailyLoss
+      });
+      writeFileSync(tmp, payload);
+
+      let renamed = false;
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          this.renameFn(tmp, this.file);
+          renamed = true;
+          break;
+        } catch (e: any) {
+          lastErr = e;
+          if (['EPERM', 'EBUSY', 'EEXIST', 'EACCES'].includes(e?.code) && attempt < 4) {
+            const waitMs = (attempt + 1) * 25;
+            const end = Date.now() + waitMs;
+            while (Date.now() < end) { /* sync spin backoff for Windows handle contention */ }
+          } else {
+            break;
+          }
+        }
+      }
+
+      if (!renamed) {
+        try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* ignore tmp cleanup error */ }
+        throw lastErr ?? new Error('Failed to rename journal temp file');
+      }
+
+      recordDiagnostic({
+        source: 'journal',
+        category: 'JOURNAL',
+        eventName: 'journal.persisted',
+        status: 'persisted',
+        message: 'Execution journal persisted',
+        correlationId: this.intents.at(-1)?.clientId,
+        details: { venue: this.venue, intents: this.intents.length, positions: this.positions.length, closed: this.closed.length }
+      });
     } catch (error) {
-      recordDiagnostic({ source: 'journal', category: 'JOURNAL', eventName: 'journal.failed', level: 'ERROR', status: 'failed', message: 'Execution journal persistence failed', details: { error } });
+      try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* ignore tmp cleanup error */ }
+      recordDiagnostic({
+        source: 'journal',
+        category: 'JOURNAL',
+        eventName: 'journal.failed',
+        level: 'ERROR',
+        status: 'failed',
+        message: 'Execution journal persistence failed',
+        details: { error }
+      });
       throw error;
     }
   }

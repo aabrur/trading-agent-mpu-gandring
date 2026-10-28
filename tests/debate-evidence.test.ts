@@ -107,10 +107,16 @@ describe('Owner OPEN evidence contract', () => {
     expect(fallback.dimensions.jev.status).toBe('UNKNOWN');
   });
 
-  it('rejects example LIVE data and a different venue price basis while surfacing optional proxy provenance', () => {
+  it('rejects example LIVE data and genuine source conflicts while allowing recognized reference markets', () => {
     const sample = snapshot(); sample.example = true;
     expect(open({ snapshot: sample }).sourceConflict).toBe(true);
-    expect(open({ executionVenue: 'aster' }).sourceConflict).toBe(true);
+    // Case A: Aster execution with Bybit reference data does NOT trigger false source conflict
+    const asterWithBybitRef = open({ executionVenue: 'aster' });
+    expect(asterWithBybitRef.sourceConflict).toBe(false);
+    expect(asterWithBybitRef.provenance.referenceMarket).toBe(true);
+    // Unrecognized venue or severe price divergence triggers genuine source conflict
+    expect(open({ executionVenue: 'kraken' }).sourceConflict).toBe(true);
+    expect(open({ executionVenue: 'aster', nativeExecutionQuote: 120, snapshot: { ...snapshot(), last: 100 } }).sourceConflict).toBe(true);
     const proxy = snapshot(); proxy.orderflow!.dataType = 'external_proxy'; proxy.orderflow!.actualDataVenue = 'binance';
     const evidence = open({ snapshot: proxy });
     expect(evidence.provenance.proxySources).toEqual(['bybit <- binance (external_proxy)']);

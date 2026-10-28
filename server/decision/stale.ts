@@ -1,6 +1,6 @@
 import type { MarketSnapshot } from '../types.js';
 import { strategyVote, type RuleVote } from '../strategy.js';
-import { snapshotMomentum } from './debate-evidence.js';
+import { snapshotMomentum, isRecognizedReferenceMarket } from './debate-evidence.js';
 
 export interface RevalidateInput {
   original: MarketSnapshot;
@@ -43,9 +43,6 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
   if (input.tradingMode && input.tradingMode !== 'PAPER' && input.fresh.example) {
     return { ok: false, reason: 'Sample market data cannot authorize an exchange entry.', quote, rule, usedFreshSnapshot };
   }
-  if (input.expectedVenue && input.tradingMode !== 'PAPER' && input.fresh.source !== input.expectedVenue) {
-    return { ok: false, reason: `Market source conflict: ${input.fresh.source} data differs from execution venue ${input.expectedVenue}.`, quote, rule, usedFreshSnapshot };
-  }
   if (input.entryZone !== undefined) {
     const zone = input.entryZone;
     const invalidation = input.invalidationLevel;
@@ -62,6 +59,20 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
     const exhaustion = input.fresh.tacticalTradePlan?.exhaustion;
     if (exhaustion?.present && exhaustion.direction === (input.side === 'LONG' ? 'BUYER' : 'SELLER')) {
       return { ok: false, reason: 'Confirmed tactical exhaustion opposes entry at the current quote.', quote, rule, usedFreshSnapshot };
+    }
+  }
+  if (input.expectedVenue && input.tradingMode !== 'PAPER') {
+    if (input.executionQuote !== undefined && (!(input.executionQuote > 0) || !Number.isFinite(input.executionQuote))) {
+      return { ok: false, reason: 'Execution-native quote unavailable for execution venue.', quote: 0, rule, usedFreshSnapshot };
+    }
+    if (input.fresh.source !== input.expectedVenue && input.fresh.last > 0 && quote > 0) {
+      const divergence = Math.abs(quote - input.fresh.last) / input.fresh.last;
+      if (divergence > 0.05) {
+        return { ok: false, reason: `Execution quote ${quote} diverges by ${(divergence * 100).toFixed(1)}% from reference market price ${input.fresh.last}.`, quote, rule, usedFreshSnapshot };
+      }
+    }
+    if (input.fresh.source !== input.expectedVenue && !isRecognizedReferenceMarket(input.fresh.source, input.expectedVenue)) {
+      return { ok: false, reason: `Market source conflict: reference source ${input.fresh.source} does not match execution venue ${input.expectedVenue}.`, quote, rule, usedFreshSnapshot };
     }
   }
   const momentum = snapshotMomentum(input.fresh), sign = input.side === 'LONG' ? 1 : -1;

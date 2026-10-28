@@ -49,9 +49,11 @@ export function loosensGuard(_text: string): boolean { return false; }
 
 const clean = (s: string, n: number) => safe(sanitizeUntrusted(String(s ?? ''), n).text).replace(/\s+/g, ' ').trim();
 
-/** Unscoped legacy advice stays visible. A stored scope must match the requested account exactly. */
+/** Legacy unscoped advice stays visible for PAPER/dev, but never contaminates LIVE account scopes. */
 export function lessonInScope(itemScope: string | undefined, requested?: string): boolean {
-  if (!requested || !itemScope) return true;
+  if (!requested) return true;
+  if (requested.startsWith('LIVE:') && !itemScope) return false;
+  if (!itemScope) return true;
   return itemScope === requested;
 }
 export const lessonKey = (role: string, kind: string, lesson: string) => `${role}|${kind}|${lesson.toLowerCase().replace(/[0-9.,%$-]+/g, '#').replace(/[^a-z#]+/g, ' ').trim().slice(0, 120)}`;

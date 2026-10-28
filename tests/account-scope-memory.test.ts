@@ -16,7 +16,8 @@ describe('account-scope memory isolation', () => {
     learnings.add({ role: 'market', kind: 'note', happened: 'live draft', rootCause: 'venue', lesson: 'Live draft', accountScope: 'LIVE:bybit:mainnet', evaluationStatus: 'disputed' });
 
     const liveRules = learnings.standingRules('market', 'LIVE:bybit:mainnet').map((l) => l.lesson);
-    expect(liveRules).toEqual(['Live tape rule', 'Unscoped tape rule']);
+    expect(liveRules).toEqual(['Live tape rule']);
+    expect(liveRules).not.toContain('Unscoped tape rule');
     expect(learnings.queryRelevant({ role: 'market', accountScope: 'LIVE:bybit:mainnet' }).some((l) => l.accountScope === 'PAPER:paper:mainnet')).toBe(false);
     const liveDrafts = learnings.forRole('market', 5, 'LIVE:bybit:mainnet').join('\n');
     expect(liveDrafts).toContain('Live draft');

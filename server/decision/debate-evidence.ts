@@ -38,7 +38,7 @@ export interface DebateEvidence {
   snapshotId: string | null;
   dimensions: Record<'structure' | 'tape' | 'catalyst' | 'jev', EvidenceDimension>;
   sourceConflict: boolean;
-  provenance: { marketSource: string; executionVenue: string | null; example: boolean; proxySources: string[]; conflicts: string[] };
+  provenance: { marketSource: string; executionVenue: string | null; example: boolean; proxySources: string[]; conflicts: string[]; referenceMarket?: boolean };
   momentum: MomentumEvidence;
   scenario: EntryScenario | null;
   openAllowed: boolean;
@@ -50,6 +50,9 @@ export interface DebateEvidenceInput {
   scenario?: EntryScenario | null;
   mode?: 'PAPER' | 'TESTNET' | 'LIVE';
   executionVenue?: string | null;
+  nativeExecutionQuote?: number | null;
+  contractMultiplier?: number | null;
+  instrumentSymbol?: string | null;
   news?: NewsBriefing | null;
   whale?: WhaleBriefing | null;
   whalePolicy?: WhalePolicy;
@@ -83,7 +86,12 @@ export function snapshotMomentum(snapshot: MarketSnapshot): MomentumEvidence {
   const closes = snapshot.candles.map(candle => candle.c);
   const last = closes.at(-1), fourBack = closes.at(-5), fiveBack = closes.at(-6);
   const flow = snapshot.orderflow;
-  const flowVerified = !!flow && (snapshot.example || flow.evidence?.status === 'live') && flow.dataType !== 'external_proxy' && (!flow.actualDataVenue || flow.actualDataVenue === snapshot.source);
+  const flowWindow = flow?.rollingWindows?.['15m'] ?? flow?.rollingWindows?.['5m'];
+  const partial = flowWindow ? flowWindow.partial : (flow as { partial?: boolean })?.partial === true;
+  const coveragePct = flowWindow?.coveragePct ?? (flow as { coveragePct?: number })?.coveragePct ?? (flow?.evidence?.status === 'live' ? 100 : 0);
+  const tradesCount = flowWindow?.tradesCount ?? flow?.tradesCount;
+  const adequateCoverage = coveragePct >= 80 && !partial && (tradesCount === undefined ? (positive((flow as any)?.takerBuyVol) || positive((flow as any)?.takerSellVol)) : tradesCount >= 5);
+  const flowVerified = !!flow && (snapshot.example || flow.evidence?.status === 'live') && flow.dataType !== 'external_proxy' && (!flow.actualDataVenue || flow.actualDataVenue === snapshot.source) && adequateCoverage;
   return {
     change5Pct: positive(last) && positive(fourBack) ? (last - fourBack) / fourBack * 100 : null,
     roc5: positive(last) && positive(fiveBack) ? (last - fiveBack) / fiveBack * 100 : null,
@@ -144,21 +152,45 @@ function jevDimension(input: DebateEvidenceInput): EvidenceDimension {
   return dimension('NEUTRAL', 'JEV is available but does not supply directional support.', refs);
 }
 
+export function isRecognizedReferenceMarket(source: string, executionVenue?: string | null): boolean {
+  if (!executionVenue || source.toLowerCase() === executionVenue.toLowerCase()) return true;
+  const s = source.toLowerCase(), e = executionVenue.toLowerCase();
+  if (e === 'aster' && (s === 'bybit' || s === 'binance')) return true;
+  if (e === 'hyperliquid' && (s === 'bybit' || s === 'binance')) return true;
+  if (e === 'dydx' && (s === 'bybit' || s === 'binance')) return true;
+  if (e === 'paradex' && (s === 'bybit' || s === 'binance')) return true;
+  if (e === 'orderly' && (s === 'bybit' || s === 'binance')) return true;
+  return false;
+}
+
 export function buildDebateEvidence(input: DebateEvidenceInput): DebateEvidence {
   const { snapshot, side } = input;
   const venue = input.executionVenue ?? null;
   const live = input.mode === 'LIVE' || input.mode === 'TESTNET';
   const conflicts: string[] = [];
   if (live && (snapshot.example || snapshot.source === 'sample')) conflicts.push('Sample/example data cannot authorize TESTNET or LIVE entry.');
-  if (live && venue && snapshot.source !== venue) conflicts.push(`Market price source ${snapshot.source} differs from execution venue ${venue}.`);
+  if (live && !['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly'].includes(snapshot.source)) conflicts.push(`Market price source ${snapshot.source} is unverified for ${live ? 'live' : 'testnet'} trading.`);
+  if (live && venue && snapshot.source !== venue && !isRecognizedReferenceMarket(snapshot.source, venue)) {
+    conflicts.push(`Market price source ${snapshot.source} does not match execution venue ${venue}.`);
+  }
+  if (input.contractMultiplier !== undefined && input.contractMultiplier !== null && !(input.contractMultiplier > 0)) conflicts.push('Invalid contract multiplier for execution venue.');
+  if (input.instrumentSymbol && !input.instrumentSymbol.toUpperCase().includes(snapshot.symbol.replace(/USDT?$|USDC$/i, '').toUpperCase())) conflicts.push(`Execution instrument ${input.instrumentSymbol} incompatible with market symbol ${snapshot.symbol}.`);
+  if (input.nativeExecutionQuote !== undefined && input.nativeExecutionQuote !== null) {
+    if (!(input.nativeExecutionQuote > 0) || !Number.isFinite(input.nativeExecutionQuote)) conflicts.push('Execution-native quote is unavailable or invalid.');
+    else if (positive(snapshot.last)) {
+      const divergence = Math.abs(input.nativeExecutionQuote - snapshot.last) / snapshot.last;
+      if (divergence > 0.05) conflicts.push(`Execution quote ${input.nativeExecutionQuote} diverges by ${(divergence * 100).toFixed(1)}% from reference market price ${snapshot.last}.`);
+    }
+  }
   const proxySources = [snapshot.orderbook, snapshot.orderflow].filter(item => item?.dataType === 'external_proxy').map(item => `${item!.requestedVenue ?? snapshot.source} <- ${item!.actualDataVenue ?? 'unknown'} (external_proxy)`);
   if (live && snapshot.evidence) {
     for (const [key, evidence] of Object.entries(snapshot.evidence)) {
-      if ((key === 'market' || key.startsWith('candles_')) && evidence.status === 'live' && ['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly', 'sample'].includes(evidence.source) && venue && evidence.source !== venue) conflicts.push(`${key} price basis ${evidence.source} differs from execution venue ${venue}.`);
+      if ((key === 'market' || key.startsWith('candles_')) && evidence.status === 'live' && !['bybit', 'binance', 'hyperliquid', 'aster', 'dydx', 'paradex', 'orderly', 'sample'].includes(evidence.source)) conflicts.push(`${key} price basis ${evidence.source} is unrecognized.`);
     }
   }
   const scenario = input.scenario ?? null;
-  const quote = side === 'LONG' ? snapshot.ask ?? snapshot.last : snapshot.bid ?? snapshot.last;
+  const refQuote = side === 'LONG' ? snapshot.ask ?? snapshot.last : snapshot.bid ?? snapshot.last;
+  const quote = positive(input.nativeExecutionQuote) ? input.nativeExecutionQuote : refQuote;
   const geometry = validateEntryGeometry(side, quote, scenario);
   const exhaustion = snapshot.tacticalTradePlan?.exhaustion;
   const opposingExhaustion = !!exhaustion?.present && (side === 'LONG' ? exhaustion.direction === 'BUYER' : exhaustion.direction === 'SELLER');
@@ -176,7 +208,7 @@ export function buildDebateEvidence(input: DebateEvidenceInput): DebateEvidence 
   // "Multi-dimensional" requires structure and at least one distinct supporting
   // evidence family, never four votes copied from the same EMA series.
   if (structure.status === 'SUPPORTING' && ![dimensions.tape, dimensions.catalyst, dimensions.jev].some(item => item.status === 'SUPPORTING')) openReasons.push('The structural setup lacks a distinct supporting tape, verified catalyst, or remote probabilistic dimension.');
-  return { side, symbol: snapshot.symbol, observedAt: snapshot.fetchedAt, snapshotId: snapshot.snapshotId ?? null, dimensions, sourceConflict: conflicts.length > 0, provenance: { marketSource: snapshot.source, executionVenue: venue, example: snapshot.example, proxySources, conflicts }, momentum, scenario, openAllowed: openReasons.length === 0, openReasons };
+  return { side, symbol: snapshot.symbol, observedAt: snapshot.fetchedAt, snapshotId: snapshot.snapshotId ?? null, dimensions, sourceConflict: conflicts.length > 0, provenance: { marketSource: snapshot.source, executionVenue: venue, referenceMarket: !!venue && snapshot.source !== venue, example: snapshot.example, proxySources, conflicts }, momentum, scenario, openAllowed: openReasons.length === 0, openReasons };
 }
 
 export const CLOSE_TRIGGER_REASONS = ['INVALIDATION_HIT', 'MOMENTUM_REVERSAL', 'SENTIMENT_REVERSAL', 'OPPOSING_NEWS', 'WHALE_EXIT', 'EXCHANGE_STOP_OR_TP', 'EARLY_TAKE_PROFIT', 'DATA_ANOMALY_OR_CONFLICT', 'GUARD_THREATENED'] as const;
@@ -221,13 +253,12 @@ export function evaluateCloseTriggers(input: CloseEvaluationInput): VerifiedClos
   const price = snapshot.last;
   const sign = direction(position.side);
   const live = input.mode === 'LIVE' || input.mode === 'TESTNET';
-  const marketVerified = !live || (!snapshot.example && snapshot.source !== 'sample' && (!input.executionVenue || snapshot.source === input.executionVenue));
+  const marketVerified = !live || (!snapshot.example && snapshot.source !== 'sample' && isRecognizedReferenceMarket(snapshot.source, input.executionVenue));
   const savedInvalidation = input.invalidationLevel ?? (typeof position.decisionEvidence?.invalidationLevel === 'number' ? position.decisionEvidence.invalidationLevel : null);
   const breach = positive(savedInvalidation) && positive(price) && (position.side === 'LONG' ? price <= savedInvalidation : price >= savedInvalidation);
   const structuralBreak = snapshot.tacticalTradePlan?.smc?.lastBreak;
   const opposingChoch = structuralBreak && structuralBreak.timestamp >= position.openedAt && structuralBreak.type === (position.side === 'LONG' ? 'BEARISH_CHOCH' : 'BULLISH_CHOCH');
-  const leadInvalidated = /invalidat/i.test(input.leadClose?.reason ?? '') || input.leadClose?.closeTrigger === 'INVALIDATION_HIT';
-  if (marketVerified && (breach || opposingChoch || input.strategyInvalidated || leadInvalidated)) add('INVALIDATION_HIT', breach ? 'Observed price breached the persisted structural invalidation.' : opposingChoch ? 'A post-entry opposing SMC ChoCH is confirmed.' : 'Structural invalidation confirmed below/above key moving averages.', [breach ? 'position.invalidationLevel' : opposingChoch ? 'market.smc.lastBreak' : 'rule.strategyInvalidated']);
+  if (marketVerified && (breach || opposingChoch || input.strategyInvalidated)) add('INVALIDATION_HIT', breach ? 'Observed price breached the persisted structural invalidation.' : opposingChoch ? 'A post-entry opposing SMC ChoCH is confirmed.' : 'Structural invalidation confirmed below/above key moving averages.', [breach ? 'position.invalidationLevel' : opposingChoch ? 'market.smc.lastBreak' : 'rule.strategyInvalidated']);
   const momentum = input.momentum ?? snapshotMomentum(snapshot);
   const priceReversed = finite(momentum.change5Pct) && finite(momentum.roc5) && momentum.change5Pct * sign < 0 && momentum.roc5 * sign < 0;
   const flowImbalanceReversed = positive(momentum.buySellRatio) && (position.side === 'LONG' ? momentum.buySellRatio <= 0.8 : momentum.buySellRatio >= 1.25);
@@ -253,12 +284,15 @@ export function evaluateCloseTriggers(input: CloseEvaluationInput): VerifiedClos
   const expectedExitRefs = exitEvidenceRefs(snapshot, input.targetScenarioId ?? (typeof position.decisionEvidence?.entryScenarioId === 'string' ? position.decisionEvidence.entryScenarioId : null));
   const referencedExhaustion = exitSignal?.kind === 'momentum_exhaustion' && exitSignal.evidenceRefs.includes(expectedExitRefs.exhaustion);
   const referencedTarget = exitSignal?.kind === 'target_complete' && expectedExitRefs.target !== null && exitSignal.evidenceRefs.includes(expectedExitRefs.target);
-  const leadProfitReason = /profit|take[ -]?profit|tp|surge|pump|exhaust|target|momentum/i.test(input.leadClose?.reason ?? '');
-  if (marketVerified && positive(input.netUnrealizedPnl) && ((exitSignal && ((referencedExhaustion && exhausted) || (referencedTarget && targetComplete))) || leadProfitReason)) add('EARLY_TAKE_PROFIT', 'Net profit is confirmed and structured specialist exit signal or observed exhaustion/target authorizes taking profit.', exitSignal?.evidenceRefs ?? ['market.takeProfit']);
+  const leadRequestedTp = input.leadClose?.closeTrigger === 'EARLY_TAKE_PROFIT';
+  const specialistExitVerified = exitSignal && ((referencedExhaustion && exhausted) || (referencedTarget && targetComplete));
+  const leadTpVerified = leadRequestedTp && (exhausted || targetComplete);
+  if (marketVerified && positive(input.netUnrealizedPnl) && (specialistExitVerified || leadTpVerified)) add('EARLY_TAKE_PROFIT', 'Net profit is confirmed and structured specialist exit signal or observed exhaustion/target authorizes taking profit.', exitSignal?.evidenceRefs ?? ['market.takeProfit']);
   const anomaly = input.verifiedAnomaly?.severe && input.verifiedAnomaly.evidenceRefs.length;
   const deltaDivergence = marketVerified && snapshot.orderflow?.deltaDivergence && momentum.flowVerified && flowReversed;
-  const leadAnomalyRequested = /anomaly|divergen|protect|adverse|risk/i.test(input.leadClose?.reason ?? '') && !/minor pullback/i.test(input.leadClose?.reason ?? '');
-  if (anomaly || input.evidence?.sourceConflict || deltaDivergence || leadAnomalyRequested) add('DATA_ANOMALY_OR_CONFLICT', 'A verified severe source conflict, anomaly, or opposing delta divergence threatens the position.', input.verifiedAnomaly?.evidenceRefs ?? [input.evidence?.sourceConflict ? 'market.provenance' : 'market.orderflow.deltaDivergence']);
+  const leadRequestedAnomaly = input.leadClose?.closeTrigger === 'DATA_ANOMALY_OR_CONFLICT';
+  const genuineConflict = !!input.evidence?.sourceConflict;
+  if (anomaly || deltaDivergence || genuineConflict || (leadRequestedAnomaly && (anomaly || deltaDivergence || genuineConflict))) add('DATA_ANOMALY_OR_CONFLICT', 'A verified severe source conflict, anomaly, or opposing delta divergence threatens the position.', input.verifiedAnomaly?.evidenceRefs ?? [genuineConflict ? 'market.provenance' : 'market.orderflow.deltaDivergence']);
   const guards = input.guards;
   const safetyThreat = finite(guards?.equity) && finite(guards?.safetyNet) && guards.equity <= guards.safetyNet;
   if (guards?.dailyLossHit || safetyThreat || guards?.protectionUnrestorable) add('GUARD_THREATENED', 'An actual Owner-configured daily loss/safety floor or confirmed unrestorable protection condition is reached.', [guards?.dailyLossHit ? 'account.dailyLossHit' : safetyThreat ? 'account.safetyNet' : 'position.protectionUnrestorable']);

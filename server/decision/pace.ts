@@ -13,6 +13,7 @@ export function rebuttalRounds(mode: DebateMode, configuredRounds: number, input
   research: Stance | null;
   strategist: Stance | null;
   researchVote: string;
+  disagreement?: number;
 }): number {
   const rounds = Math.max(1, configuredRounds);
   if (input.researchVote === 'VETO') return 0;

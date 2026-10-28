@@ -18,14 +18,17 @@ describe('Autonomous Exits and Trading Freedom', () => {
     snap.bid = 2344;
     snap.ask = 2346;
     snap.fetchedAt = Date.now();
+    snap.tacticalTradePlan = { exhaustion: { present: true, direction: 'BUYER' } } as any;
     const spy = vi.spyOn(market, 'getSnapshot').mockResolvedValue(snap);
     const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', DEBATE_ROUNDS: '1' });
     const base = makeCaller(cfg);
     const d = new Desk(cfg, (r) => r.task === 'lead'
-      ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.9, reason: 'Take profit on surging momentum and target reached.' }))
+      ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.9, closeTrigger: 'EARLY_TAKE_PROFIT', reason: 'Take profit on surging momentum and target reached.' }))
       : base(r), { reportsDir: null, killFile: null, jevEnv: { JEV_ENABLED: 'false' } });
 
-    d.book.open({ symbol: 'ETHUSDT', side: 'LONG', qty: 1, entry: 2100, stop: 2000, tp: 2500, margin: 210, leverage: 10 });
+    const pos = d.book.open({ symbol: 'ETHUSDT', side: 'LONG', qty: 1, entry: 2100, stop: 2000, tp: 2500, margin: 210, leverage: 10 });
+    pos.unrealizedPnl = 245;
+    pos.decisionEvidence = { target1: 2300 };
     try {
       const verdict = await d.runDebate('ETHUSDT');
       expect(verdict.action).toBe('CLOSE');
@@ -47,11 +50,23 @@ describe('Autonomous Exits and Trading Freedom', () => {
     snap.bid = 151.9;
     snap.ask = 152.1;
     snap.fetchedAt = Date.now();
+    snap.orderflow = {
+      deltaDivergence: true,
+      cvdDelta: -60,
+      buySellRatio: 0.6,
+      tradesCount: 15,
+      actualDataVenue: snap.source,
+      dataType: 'native',
+      evidence: { status: 'live', source: 'trades', observedAt: Date.now() },
+      rollingWindows: {
+        '15m': { cvd: -60, buyVolume: 40, sellVolume: 100, tradesCount: 15, coveragePct: 100, partial: false }
+      }
+    } as any;
     const spy = vi.spyOn(market, 'getSnapshot').mockResolvedValue(snap);
     const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', DEBATE_ROUNDS: '1' });
     const base = makeCaller(cfg);
     const d = new Desk(cfg, (r) => r.task === 'lead'
-      ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.85, reason: 'Market anomaly detected with adverse divergence; exit to protect capital.' }))
+      ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.85, closeTrigger: 'DATA_ANOMALY_OR_CONFLICT', reason: 'Market anomaly detected with adverse divergence; exit to protect capital.' }))
       : base(r), { reportsDir: null, killFile: null, jevEnv: { JEV_ENABLED: 'false' } });
 
     d.book.open({ symbol: 'SOLUSDT', side: 'LONG', qty: 10, entry: 151, stop: 140, tp: 170, margin: 151, leverage: 10 });

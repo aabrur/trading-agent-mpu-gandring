@@ -48,7 +48,8 @@ describe('network trading settings', () => {
     expect(caller.mock.calls.some(([r]) => r.task === 'risk')).toBe(false);
     expect(caller.mock.calls.find(([r]) => r.task === 'lead')?.[0].user).toContain('minEntryConfidencePct');
     const p = d.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 0.001, entry: 60000, stop: 59400, tp: null, margin: 30, leverage: 2 });
-    caller.mockImplementation((r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.1, reason: 'invalidated' })) : base(r));
+    p.invalidationLevel = 100000;
+    caller.mockImplementation((r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.1, reason: 'invalidated', closeTrigger: 'INVALIDATION_HIT' })) : base(r));
     expect((await d.runDebate('BTCUSDT')).action).toBe('CLOSE');
     expect(d.book.positions.some((row) => row.id === p.id)).toBe(false);
   });
