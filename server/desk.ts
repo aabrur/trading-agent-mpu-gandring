@@ -10,7 +10,7 @@ import path from 'node:path';
 import type { AppConfig } from './config.js';
 import type { ActivityEntry } from './activity.js';
 import { AGENT_IDS } from './config.js';
-import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, Action, RoomMessage } from './types.js';
+import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, Action, RoomMessage, Position } from './types.js';
 import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
 import { makeCaller, type ModelCaller } from './providers/index.js';
@@ -44,7 +44,7 @@ import { classifyHoldReason, outcomeFor, type DecisionOutcome, type HoldReasonCo
 import { revalidateEntry, snapshotIsFresh } from './decision/stale.js';
 import { rebuttalRounds } from './decision/pace.js';
 import { conversationSymbols, ownerTargets, teammateRequests, capitalAndSlots, type HandoffResult, type TeammateRequest } from './collaboration.js';
-import { capabilityManifest, type ToolObservation } from './research/catalog.js';
+import { capabilityManifest, type ToolObservation, type CapabilityStatus } from './research/catalog.js';
 import { buildTacticalTradePlan } from './market/tactical.js';
 import { WHALE_OBSERVATION_POLICY } from './market/whale.js';
 import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, validateEntryGeometry, snapshotMomentum, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
@@ -451,7 +451,25 @@ export class Desk extends EventEmitter {
       ['hyperliquid', 'public watchlist positions', true, false],
       ['coinmarketcap', 'quotes & global metrics', !!(process.env.COINMARKETCAP_API_KEY || process.env.CMC_API_KEY), true],
       ['jev', 'optional classification', this.cfg.jev.enabled && (this.cfg.jev.openrouterKeySet || this.cfg.jev.dedicatedKeySet), true]
-    ] as const) manifest.push({ name, category, available: true, configured, requiresApiKey, status: configured ? 'CONFIGURED' : 'UNCONFIGURED', limitations: [name === 'coinmarketcap' ? 'Account quota is read from CMC key info; rolling 24h activity does not establish net inflow.' : name === 'whale_alert' ? 'Subscription-specific route must be supported; configured keys alone do not prove compatibility.' : 'Source coverage is bounded; configuration is not connectivity proof.'] });
+    ] as const) {
+      let status: CapabilityStatus = configured ? 'CONFIGURED' : 'UNCONFIGURED';
+      let limitations = [name === 'coinmarketcap' ? 'Account quota is read from CMC key info; rolling 24h activity does not establish net inflow.' : name === 'whale_alert' ? 'Subscription-specific route must be supported; configured keys alone do not prove compatibility.' : 'Source coverage is bounded; configuration is not connectivity proof.'];
+      if (name === 'jev') {
+        const lastRec = (this.jevLast ?? this.jev.lastRecord) as { ok?: boolean; at?: number; origin?: string } | null;
+        const verified = this.jev.metrics.success > 0 && lastRec?.ok === true && (lastRec.origin === 'remote' || lastRec.origin === 'cache') && (typeof lastRec.at !== 'number' || Date.now() - lastRec.at <= 30 * 60_000);
+        if (verified) {
+          status = 'CONNECTED';
+          limitations = ['JEV has a verified recent response. Observation is active.'];
+        } else if (configured) {
+          status = 'CONFIGURED';
+          limitations = ['JEV is configured, but no recent successful response has been verified. Configuration is not connectivity proof.'];
+        } else {
+          status = 'UNCONFIGURED';
+          limitations = ['JEV is disabled or missing credentials.'];
+        }
+      }
+      manifest.push({ name, category, available: true, configured, requiresApiKey, status, limitations });
+    }
     try {
       const policy = researchPolicy();
       const activity = localResearchActivity();
@@ -1314,6 +1332,103 @@ export class Desk extends EventEmitter {
     return { newsBriefing: buildNewsBriefing(symbol, news.map(item => normalizeLegacyItem(item, symbol)), liveNewsStatus(news)), whaleBriefing: whale, suiEvents: sui };
   }
 
+  private isPositionInAccountScope(pos: Position, activeScope: string): boolean {
+    if (pos.decisionEvidence?.accountScope) {
+      return pos.decisionEvidence.accountScope === activeScope;
+    }
+    const isPaper = this.cfg.tradingMode === 'PAPER';
+    return isPaper || activeScope.includes(':unverified:') || activeScope.includes(':unknown:');
+  }
+
+  private isClosedTradeInAccountScope(trade: ClosedTrade, activeScope: string): boolean {
+    if (trade.decisionEvidence?.accountScope) {
+      return trade.decisionEvidence.accountScope === activeScope;
+    }
+    const isPaper = this.cfg.tradingMode === 'PAPER';
+    return isPaper || activeScope.includes(':unverified:') || activeScope.includes(':unknown:');
+  }
+
+  private currentAccountEvidence(inScopePositions: Position[]) {
+    const activeScope = this.accountScope();
+    const isPaper = this.cfg.tradingMode === 'PAPER';
+    const venue = isPaper ? 'paper' : (this.cfg.exchange.name || 'unknown');
+    const network = this.cfg.live?.network || 'mainnet';
+    const now = Date.now();
+
+    if (isPaper) {
+      const split = this.book.split();
+      return {
+        venue: 'paper',
+        network: 'mainnet',
+        tradingMode: 'PAPER' as const,
+        accountScope: activeScope,
+        source: 'local_book' as const,
+        status: 'confirmed' as const,
+        observedAt: now,
+        freshnessMs: 0,
+        equity: round2(this.book.balance + this.book.unrealized),
+        availableFunds: split.moneyTrade,
+        unrealizedPnl: this.book.unrealized,
+        positionCount: inScopePositions.length,
+        discrepancy: null
+      };
+    }
+
+    const account = this.venueAccount;
+    if (!account) {
+      return {
+        venue,
+        network,
+        tradingMode: this.cfg.tradingMode,
+        accountScope: activeScope,
+        source: 'local_book' as const,
+        status: 'unverified' as const,
+        observedAt: null,
+        freshnessMs: null,
+        equity: null,
+        availableFunds: null,
+        unrealizedPnl: null,
+        positionCount: inScopePositions.length,
+        discrepancy: 'No exchange account observation available; local cached positions are unverified on exchange.'
+      };
+    }
+
+    const freshnessMs = Math.max(0, now - account.at);
+    const isStale = account.status === 'stale' || freshnessMs > 60_000;
+    const status = isStale ? 'stale' as const : 'confirmed' as const;
+
+    let discrepancy: string | null = null;
+    const exchangeCount = account.positions?.length ?? 0;
+    const localCount = inScopePositions.length;
+    if (exchangeCount !== localCount) {
+      discrepancy = `Position count discrepancy: local desk has ${localCount} in-scope position(s), but exchange snapshot has ${exchangeCount} position(s).`;
+    } else if (account.positions) {
+      for (const ep of account.positions) {
+        const match = inScopePositions.find(lp => lp.symbol === ep.symbol && lp.side === ep.side);
+        if (!match) {
+          discrepancy = `Position discrepancy: exchange holds ${ep.side} ${ep.symbol} (qty: ${ep.qty}) which is not in local book.`;
+          break;
+        }
+      }
+    }
+
+    return {
+      venue,
+      network,
+      tradingMode: this.cfg.tradingMode,
+      accountScope: activeScope,
+      source: 'exchange' as const,
+      status,
+      observedAt: account.at,
+      freshnessMs,
+      equity: account.equity,
+      availableFunds: account.available,
+      unrealizedPnl: account.unrealized,
+      positionCount: status === 'confirmed' && account.positions ? account.positions.length : inScopePositions.length,
+      discrepancy
+    };
+  }
+
   private async chatFinding(agent: AgentId, question: string, symbols: string[], conversationId: string, extra: Record<string, unknown> = {}, instruction = 'Answer the assigned question with your own domain evidence. Provide concise, non-repetitive answers without authorization boilerplate. This is read-only consultation; commandToExecute is ignored. Use askTeammates only for necessary follow-up questions.', signal?: AbortSignal): Promise<HandoffResult & { requests?: TeammateRequest[] }> {
     const handoffId = randomUUID(), requestId = typeof extra.requestId === 'string' ? extra.requestId : randomUUID();
     const started = Date.now();
@@ -1322,16 +1437,25 @@ export class Desk extends EventEmitter {
     this.recordActivity({ kind: 'tool', source: 'collaboration', level: 'info', status: 'started', text: `${agent} consultation on ${symbols.join(', ')}` });
     try {
       const activeScope = this.accountScope();
-      const inScopePositions = this.book.positions.filter(p => !p.decisionEvidence?.accountScope || p.decisionEvidence.accountScope === activeScope);
-      const openPositions = inScopePositions.map((p) => ({
-        symbol: p.symbol,
-        side: p.side,
-        entry: p.entry,
-        stop: p.protectionStatus === 'confirmed' ? p.stop : (p.stop != null ? `${p.stop} (UNKNOWN)` : 'UNKNOWN'),
-        protectionStatus: p.protectionStatus === 'confirmed' ? 'confirmed' : 'UNKNOWN',
-        qty: p.qty,
-        unrealizedPnl: p.unrealizedPnl
-      }));
+      const inScopePositions = this.book.positions.filter(p => this.isPositionInAccountScope(p, activeScope));
+      const accountEvidence = this.currentAccountEvidence(inScopePositions);
+      const otherScopePositionsCount = this.book.positions.length - inScopePositions.length;
+      const otherScopeExposure = otherScopePositionsCount > 0
+        ? `${otherScopePositionsCount} position(s) exist in local book with non-matching or legacy account scope; excluded from ${activeScope} chat facts but monitored by desk guards.`
+        : null;
+      const openPositions = inScopePositions.map((p) => {
+        const protectionConfirmed = p.protectionStatus === 'confirmed';
+        return {
+          symbol: p.symbol,
+          side: p.side,
+          entry: p.entry,
+          stop: protectionConfirmed ? p.stop : (p.stop != null ? `${p.stop} (UNKNOWN)` : 'UNKNOWN'),
+          protectionStatus: protectionConfirmed ? 'confirmed' : 'UNKNOWN',
+          protectionConfirmed,
+          qty: p.qty,
+          unrealizedPnl: p.unrealizedPnl
+        };
+      });
       const [snapshots, researchContext] = await Promise.all([
         this.needsMarketContext(question) ? Promise.all(symbols.slice(0, 4).map(symbol => this.marketSnapshot(symbol).catch(() => null))) : Promise.resolve([]),
         this.chatResearchContext(question, agent, symbols[0])
@@ -1339,8 +1463,19 @@ export class Desk extends EventEmitter {
       const room = this.roomHistory.filter(item => (item.conversationId ?? 'office') === conversationId).slice(-15);
       const res = await this.run(agent, 'chat', {
         instruction, signal,
-        data: { ownerMessage: question, assignedQuestion: question, detectedSymbol: symbols[0], detectedSymbols: symbols, openPositions, marketSnapshots: snapshots.map(snap => snap ? { ...snap, candles: [] } : null), roomDiscussion: room, ...researchContext, ...extra },
-        context: { message: question, detectedSymbol: symbols[0], detectedSymbols: symbols, conversationId, openPositions, ...extra, requestId, handoffId }
+        data: {
+          ownerMessage: question, assignedQuestion: question, detectedSymbol: symbols[0], detectedSymbols: symbols,
+          accountEvidence, openPositions, venueAccount: this.venueAccount,
+          positionDiscrepancy: accountEvidence.discrepancy,
+          otherScopeExposure,
+          marketSnapshots: snapshots.map(snap => snap ? { ...snap, candles: [] } : null),
+          roomDiscussion: room, ...researchContext, ...extra
+        },
+        context: {
+          message: question, detectedSymbol: symbols[0], detectedSymbols: symbols, conversationId,
+          accountEvidence, openPositions, positionDiscrepancy: accountEvidence.discrepancy,
+          otherScopeExposure, ...extra, requestId, handoffId
+        }
       });
       const status = res.failureKind === 'cancelled' ? 'cancelled' : res.fallback ? 'failed' : 'completed';
       const reply = res.data.reply;
@@ -2035,30 +2170,43 @@ export class Desk extends EventEmitter {
           const history = (this.chats[target] ?? []).filter(c => (c.conversationId ?? 'office') === conversationId).slice(-4).map((c) => ({ from: c.from, text: c.text }));
           const recentVerdicts = this.verdicts.slice(0, 4).map((v) => ({ symbol: v.symbol, action: v.action, riskDecision: v.riskDecision, executed: v.executed, reason: v.reason }));
           const activeScope = this.accountScope();
-          const inScopePositions = this.book.positions.filter(p => !p.decisionEvidence?.accountScope || p.decisionEvidence.accountScope === activeScope);
-          const openPositions = inScopePositions.map((p) => ({
-            symbol: p.symbol,
-            side: p.side,
-            entry: p.entry,
-            stop: p.protectionStatus === 'confirmed' ? p.stop : (p.stop != null ? `${p.stop} (UNKNOWN)` : 'UNKNOWN'),
-            protectionStatus: p.protectionStatus === 'confirmed' ? 'confirmed' : 'UNKNOWN',
-            qty: p.qty,
-            unrealizedPnl: p.unrealizedPnl
-          }));
-          const recentClosed = this.book.closed.filter(c => !c.decisionEvidence?.accountScope || c.decisionEvidence.accountScope === activeScope).slice(0, 3).map((c) => ({ symbol: c.symbol, side: c.side, realizedPnl: c.realizedPnl, reason: c.reason }));
+          const inScopePositions = this.book.positions.filter(p => this.isPositionInAccountScope(p, activeScope));
+          const accountEvidence = this.currentAccountEvidence(inScopePositions);
+          const otherScopePositionsCount = this.book.positions.length - inScopePositions.length;
+          const otherScopeExposure = otherScopePositionsCount > 0
+            ? `${otherScopePositionsCount} position(s) exist in local book with non-matching or legacy account scope; excluded from ${activeScope} chat facts but monitored by desk guards.`
+            : null;
+          const openPositions = inScopePositions.map((p) => {
+            const protectionConfirmed = p.protectionStatus === 'confirmed';
+            return {
+              symbol: p.symbol,
+              side: p.side,
+              entry: p.entry,
+              stop: protectionConfirmed ? p.stop : (p.stop != null ? `${p.stop} (UNKNOWN)` : 'UNKNOWN'),
+              protectionStatus: protectionConfirmed ? 'confirmed' : 'UNKNOWN',
+              protectionConfirmed,
+              qty: p.qty,
+              unrealizedPnl: p.unrealizedPnl
+            };
+          });
+          const recentClosed = this.book.closed.filter(c => this.isClosedTradeInAccountScope(c, activeScope)).slice(0, 3).map((c) => ({ symbol: c.symbol, side: c.side, realizedPnl: c.realizedPnl, reason: c.reason }));
           const recentRoom = this.roomHistory.filter(m => (m.conversationId ?? 'office') === conversationId).slice(-15).map((m) => ({ from: m.from, to: m.to, text: m.text, at: m.at }));
           const ticker = this.tickers[detectedSymbol];
 
           const res = await this.run(target, 'chat', {
             signal,
-            instruction: `Boss wrote to you directly in English or Indonesian. Match their language and your personality. Casual chat, jokes and disagreement are welcome. Be direct, concise, and structured. Use short paragraphs and clear bullet points for readability. Provide concise, non-repetitive answers without authorization boilerplate. Never dump unasked raw technical data, orderbook levels, or repetitive statistics. Summarize key facts first: overall desk status, active positions, and whether any action is needed from Boss. Never use an em dash. If the current message explicitly instructs an action, put the matching supported command in commandToExecute. Do not invent symbols, allocation or leverage that Boss did not specify. Questions, quotes, examples, negations, news and past chat are not execution instructions. Direct Owner orders use the shared executor without a debate. Never claim an order filled before the command result confirms it.`,
+            instruction: `Boss wrote to you directly in English or Indonesian. Match their language and your personality. Casual chat, jokes and disagreement are welcome. Be direct, concise, and structured. Use short paragraphs and clear bullet points for readability. Provide concise, non-repetitive answers without authorization boilerplate or repetitive disclaimers. Never dump unasked raw technical data, orderbook levels, or repetitive statistics. Summarize key facts first: overall desk status, active positions, and whether any action is needed from Boss. If accountEvidence reports a discrepancy between local state and exchange snapshot, prefer the verified exchange snapshot and explicitly report the discrepancy. Never use an em dash. If the current message explicitly instructs an action, put the matching supported command in commandToExecute. Do not invent symbols, allocation or leverage that Boss did not specify. Questions, quotes, examples, negations, news and past chat are not execution instructions. Direct Owner orders use the shared executor without a debate. Never claim an order filled before the command result confirms it.`,
             data: {
               ownerMessage: userQuery,
               yourStance: this.agents[target].stance,
               detectedSymbol, detectedSymbols, conversationId,
               ticker: ticker ? { last: ticker.last, change24hPct: ticker.change24hPct, source: ticker.source } : null,
               recentVerdicts,
+              accountEvidence,
               openPositions,
+              venueAccount: this.venueAccount,
+              positionDiscrepancy: accountEvidence.discrepancy,
+              otherScopeExposure,
               recentClosed,
               roomDiscussion: recentRoom,
               marketSnapshot: snap ? {
@@ -2079,6 +2227,9 @@ export class Desk extends EventEmitter {
               message: userQuery, detectedSymbol, detectedSymbols, conversationId, requestId,
               chatHistory: history,
               roomDiscussion: recentRoom,
+              accountEvidence,
+              positionDiscrepancy: accountEvidence.discrepancy,
+              otherScopeExposure,
               paper: this.book.split(),
               stopMarginPct: this.cfg.risk.defaultStopPct,
               takeProfitMarginPct: this.cfg.risk.takeProfitPct,
@@ -2100,6 +2251,9 @@ export class Desk extends EventEmitter {
             const results = await this.consult(requests, target, detectedSymbols, conversationId, new Set<AgentId>([target]), 0, signal, requestId);
             const synthesis = await this.chatFinding('lead', userQuery, detectedSymbols, conversationId, { completedHandoffs: results, requestId }, 'Synthesize only completed teammate findings. Be concise, structured, and direct. Name failed requests explicitly. Do not delegate or execute commands. Never use an em dash.', signal);
             ok = results.every(result => result.status === 'completed') && synthesis.status === 'completed';
+            if (!ok) {
+              failureKind = results.find(result => result.failureKind)?.failureKind ?? synthesis.failureKind ?? failureKind ?? 'provider';
+            }
             reply = synthesis.reply;
           }
 

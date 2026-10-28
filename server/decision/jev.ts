@@ -264,9 +264,13 @@ export class JevService {
   status() {
     this.settings = loadJevSettings(this.env, this.tradingMode);
     if (this.settings.enabled && this.settings.keySource !== 'none' && this.observedHealth) this.settings.health = this.observedHealth;
+    const lastRec = (this.lastRecord as { ok?: boolean; at?: number; origin?: string } | null);
+    const verified = this.metrics.success > 0 && lastRec?.ok === true && (lastRec.origin === 'remote' || lastRec.origin === 'cache');
     return publicJevStatus(this.settings, this.metrics, {
       lastDecision: this.lastRecord,
-      affectedContext: this.settings.effectiveMode === 'assist'
+      affectedContext: this.settings.effectiveMode === 'assist',
+      verified,
+      verificationStatus: !this.settings.enabled ? 'DISABLED' : !verified ? 'CONFIGURED_UNVERIFIED' : 'VERIFIED'
     });
   }
   private remember(result: JevCallResult) {

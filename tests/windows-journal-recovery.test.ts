@@ -76,8 +76,18 @@ describe('Case F: Windows native journal recovery and persistence integrity', ()
 
     const goodRaw = readFileSync(journalPath, 'utf8');
 
-    // Hold handle open on Windows without delete share - triggers real native EPERM from OS kernel
-    const fd = openSync(journalPath, 'r');
+    // On Windows, holding handle open without delete share triggers real native EPERM from OS kernel.
+    // On POSIX (Linux/macOS in CI), file handles do not block rename, so simulate the OS EPERM via renameFn.
+    let fd: number | null = null;
+    if (process.platform === 'win32') {
+      fd = openSync(journalPath, 'r');
+    } else {
+      journal.renameFn = () => {
+        const err: any = new Error('EPERM: operation not permitted, rename');
+        err.code = 'EPERM';
+        throw err;
+      };
+    }
     try {
       journal.intents.push({
         clientId: 'mg-failing-order',
@@ -93,7 +103,7 @@ describe('Case F: Windows native journal recovery and persistence integrity', ()
 
       expect(() => journal.save()).toThrow(/EPERM/);
     } finally {
-      closeSync(fd);
+      if (fd !== null) closeSync(fd);
     }
 
     // Check last-good file was preserved untouched
