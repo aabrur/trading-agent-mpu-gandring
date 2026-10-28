@@ -48,7 +48,7 @@ import { conversationSymbols, ownerTargets, teammateRequests, capitalAndSlots, t
 import { capabilityManifest, type ToolObservation, type CapabilityStatus } from './research/catalog.js';
 import { buildTacticalTradePlan } from './market/tactical.js';
 import { WHALE_OBSERVATION_POLICY } from './market/whale.js';
-import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, snapshotMomentum, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
+import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, snapshotMomentum, type CloseEvaluationInput, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
 import { researchPolicy } from './providers/research-policy.js';
 import { localResearchActivity } from './providers/local.js';
 import { getSuiEventBriefing } from './market/sui.js';
@@ -1176,7 +1176,7 @@ export class Desk extends EventEmitter {
       pos = this.book.positions.find(p => p.symbol === symbol);
       pos = pos ? structuredClone(pos) : undefined;
       const slots = this.availableSlots();
-      const evidenceFor = (side: 'LONG' | 'SHORT', scenario: EntryScenario | null = selectedScenario, snapshot = snap, executionQuote = nativeQuote) => buildDebateEvidence({
+      const evidenceFor = (side: 'LONG' | 'SHORT', scenario: EntryScenario | null = selectedScenario, snapshot = snap, executionQuote: number | null | undefined = nativeQuote) => buildDebateEvidence({
         snapshot,
         side,
         scenario,
@@ -1193,11 +1193,21 @@ export class Desk extends EventEmitter {
       const debateEvidence = evidenceFor(selectedScenario?.side ?? (rule.side === 'SHORT' ? 'SHORT' : 'LONG'));
       const opposingSide = pos?.side === 'LONG' ? 'SHORT' : 'LONG';
       const conviction = { opposing: !!pos && this.agents.market.stance === opposingSide && this.agents.strategist.stance === opposingSide, verified: false, evidenceRefs: [`agent:market:${id}`, `agent:strategist:${id}`] };
-      const targetLevel = typeof pos?.decisionEvidence?.target1 === 'number' ? pos.decisionEvidence.target1 : undefined;
       const exitRefs = exitEvidenceRefs(snap, pos?.entryScenarioId);
-      const netUnrealizedPnl = pos ? estimatedNetUnrealized({ unrealizedPnl: pos.unrealizedPnl, entry: pos.entry, mark: snap.last, qty: pos.qty, takerFee: this.cfg.risk.takerFee }) ?? undefined : undefined;
-      const strategyInvalidated = pos ? this.invalidated(pos.side, rule) : false;
-      const closeInput = pos ? { snapshot: snap, position: pos, mode: this.cfg.tradingMode, executionVenue: this.opts.executor?.adapter.name, nativeExecutionQuote: this.venueAccount?.status === 'confirmed' ? pos.mark : undefined, invalidationLevel: pos.invalidationLevel, strategyInvalidated, evidence: evidenceFor(pos.side, null), news: newsBriefing, whale: whaleBriefing, whalePolicy: WHALE_OBSERVATION_POLICY, conviction, netUnrealizedPnl, targetLevel, guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } } : null;
+      const closeInputFor = (snapshot: MarketSnapshot, position: Position): CloseEvaluationInput => {
+        const momentum = snapshotMomentum(snapshot);
+        const quote = this.venueAccount?.status === 'confirmed' ? position.mark : undefined;
+        return { snapshot, position, momentum, mode: this.cfg.tradingMode, executionVenue, nativeExecutionQuote: quote,
+          invalidationLevel: position.invalidationLevel,
+          strategyInvalidated: this.invalidated(position.side, strategyVote(snapshot.candles, { roc5: momentum.roc5, orderflow: momentum.flowVerified ? snapshot.orderflow : undefined })),
+          evidence: evidenceFor(position.side, null, snapshot, quote ?? null), news: newsBriefing, whale: whaleBriefing, whalePolicy: WHALE_OBSERVATION_POLICY,
+          netUnrealizedPnl: estimatedNetUnrealized({ unrealizedPnl: position.unrealizedPnl, entry: position.entry, mark: quote ?? snapshot.last, qty: position.qty, takerFee: this.cfg.risk.takerFee }),
+          targetLevel: typeof position.decisionEvidence?.target1 === 'number' ? position.decisionEvidence.target1 : undefined,
+          guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } };
+      };
+      const closeInput = pos ? { ...closeInputFor(snap, pos), conviction } : null;
+      const netUnrealizedPnl = closeInput?.netUnrealizedPnl ?? undefined;
+      const strategyInvalidated = closeInput?.strategyInvalidated ?? false;
       const specialistExit = st.data.exitSignal ?? mk.data.exitSignal;
       const closeTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, leadClose: specialistExit ? { exitSignal: { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } } : undefined }) : [];
       this.setPhase('risk gate');
@@ -1252,12 +1262,23 @@ export class Desk extends EventEmitter {
       const riskBlock = !aiRiskApproved && action.startsWith('OPEN') ? `Risk ${aiRisk.data.decision}: ${aiRisk.data.reason}` : null;
       if (riskBlock) action = 'HOLD';
       const leadSignal = ld.data.exitSignal;
-      const eligibleCloseTriggers = closeInput ? evaluateCloseTriggers({ ...closeInput, strategyInvalidated, leadClose: { closeTrigger: ld.data.closeTrigger, reason: ld.data.reason, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : specialistExit ? { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } : undefined } }) : [];
-      const selectedCloseTrigger = eligibleCloseTriggers.find(trigger => trigger.reason === ld.data.closeTrigger) ?? (!ld.data.closeTrigger ? eligibleCloseTriggers[0] : undefined);
+      const leadClose: CloseEvaluationInput['leadClose'] = { closeTrigger: ld.data.closeTrigger, reason: ld.data.reason, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : specialistExit ? { kind: specialistExit.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: specialistExit.evidenceRefs } : undefined };
+      const matchesClosePosition = (current: Position | undefined): current is Position => !!pos && !!current && current.id === pos.id && current.ownership !== 'external' && current.side === pos.side && current.qty === pos.qty && current.entry === pos.entry && current.openedAt === pos.openedAt;
+      let eligibleCloseTriggers: ReturnType<typeof evaluateCloseTriggers> = [];
+      if (action === 'CLOSE' && pos) {
+        // Risk and Lead may take longer than the exit evidence freshness window.
+        const latest = await this.marketSnapshot(symbol, true);
+        if (this.opts.executor) await this.syncLive();
+        const current = this.book.positions.find(p => p.id === pos.id);
+        if (!matchesClosePosition(current)) exitBlock = 'Decision-time CLOSE position changed or position already closed.';
+        else if (!snapshotIsFresh(latest)) exitBlock = 'Latest CLOSE snapshot exceeds the 30-second freshness limit.';
+        else eligibleCloseTriggers = evaluateCloseTriggers({ ...closeInputFor(latest, current), leadClose });
+      }
+      const selectedCloseTrigger = eligibleCloseTriggers.find(trigger => trigger.reason === ld.data.closeTrigger);
       if (action === 'CLOSE' && pos && !selectedCloseTrigger) {
         action = 'HOLD';
         flipNote = '';
-        exitBlock = 'No verified CLOSE trigger or structural reversal supports the selected exit; keep existing exchange stop and take profit.';
+        exitBlock ??= 'No verified CLOSE trigger or structural reversal supports the selected exit; keep existing exchange stop and take profit.';
       }
       let candidateScenario: EntryScenario | undefined;
       if (action === 'OPEN_LONG' || action === 'OPEN_SHORT') {
@@ -1344,20 +1365,14 @@ export class Desk extends EventEmitter {
           note('Execution Trader', res.line);
         }
       } else if (action === 'CLOSE' && pos) {
-        const decisionPosition = pos;
         await this.debateBeat(0);
         this.setPhase('execution');
-        const fresh = await this.marketSnapshot(symbol, true);
         const t = await this.exclusive(async () => {
+          const fresh = await this.marketSnapshot(symbol, true);
           if (this.opts.executor) await this.syncLiveUnlocked();
-          const current = this.book.positions.find(p => p.id === decisionPosition.id);
-          const unchanged = current && current.ownership !== 'external' && current.side === decisionPosition.side && current.qty === decisionPosition.qty && current.entry === decisionPosition.entry && current.openedAt === decisionPosition.openedAt;
-          const closeQuote = this.venueAccount?.status === 'confirmed' ? current?.mark : undefined;
-          const freshTriggers = unchanged && closeInput ? evaluateCloseTriggers({ ...closeInput, snapshot: fresh, position: current, nativeExecutionQuote: closeQuote, evidence: evidenceFor(current.side, null, fresh, closeQuote),
-            netUnrealizedPnl: estimatedNetUnrealized({ unrealizedPnl: current.unrealizedPnl, entry: current.entry, mark: closeQuote ?? fresh.last, qty: current.qty, takerFee: this.cfg.risk.takerFee }),
-            guards: { ...closeInput.guards, dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null },
-            strategyInvalidated: this.invalidated(current.side, strategyVote(fresh.candles)), conviction: undefined, leadClose: { closeTrigger: ld.data.closeTrigger, exitSignal: leadSignal ? { kind: leadSignal.kind === 'MOMENTUM_EXHAUSTION' ? 'momentum_exhaustion' : 'target_complete', evidenceRefs: leadSignal.evidenceRefs } : undefined } }) : [];
-          const nativeStateConfirmed = !this.opts.executor || !!this.venueAccount && this.venueAccount.status === 'confirmed' && Date.now() - this.venueAccount.at <= 30_000;
+          const current = this.book.positions.find(p => p.id === pos.id);
+          const freshTriggers = matchesClosePosition(current) && snapshotIsFresh(fresh) ? evaluateCloseTriggers({ ...closeInputFor(fresh, current), leadClose }) : [];
+          const nativeStateConfirmed = !this.opts.executor || !!this.venueAccount && this.venueAccount.status === 'confirmed' && Date.now() >= this.venueAccount.at && Date.now() - this.venueAccount.at <= 30_000;
           const confirmed = nativeStateConfirmed ? freshTriggers.find(t => t.reason === selectedCloseTrigger?.reason) : undefined;
           if (!confirmed) {
             verdict.executionOutcome = 'EXECUTION_BLOCKED'; verdict.reason = 'Decision-time CLOSE trigger no longer verified, position changed, or position already closed.';

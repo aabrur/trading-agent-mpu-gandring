@@ -7,7 +7,7 @@ import { MemoryAdapter } from './fakes.js';
 import type { ModelCaller } from '../server/providers/index.js';
 import type { MarketSnapshot } from '../server/types.js';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 function fixture(min = 60, confidence = .7, veto = false) {
   const cfg = loadConfig({ TRADING_MODE: 'PAPER', DEFAULT_PROVIDER: 'mock', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', LEARNING: 'off', JEV_ENABLED: 'false' });
@@ -141,6 +141,54 @@ describe('Final mission decision integrity', () => {
     if (!valid) expect(result.reason).toMatch(/No verified CLOSE trigger/);
   });
 
+  it.each([true, false])('refreshes CLOSE evidence after a 45-second Risk/Lead debate, trigger still valid=%s', async valid => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const startedAt = Date.now();
+    const { desk, adapter, cfg, call, snapshot } = fixture(70, .2, true);
+    desk.book.n = 2;
+    const falling = snapshot.candles.map((bar, i) => ({ ...bar, o: 116 - i * .1, c: 116 - i * .1, h: 117 - i * .1, l: 115 - i * .1 }));
+    const rising = snapshot.candles;
+    snapshot.candles = falling;
+    const pos = desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 1, entry: 108, stop: 90, tp: 130, margin: 108, leverage: 1 });
+    pos.ownership = 'managed'; pos.invalidationLevel = 90;
+    adapter.pos = [{ ...pos, mark: 108, unrealizedPnl: 0 }];
+    adapter.closeAt = () => 108;
+    const settings = structuredClone({ risk: cfg.risk, agents: cfg.agents, n: desk.book.n });
+    let leadCompleted = false;
+    const refreshes: number[] = [];
+    vi.mocked(desk as unknown as { marketSnapshot(symbol: string, force?: boolean): Promise<MarketSnapshot> }).marketSnapshot.mockImplementation(async (_symbol, force) => {
+      expect(force).toBe(true);
+      refreshes.push(Date.now());
+      return { ...snapshot, snapshotId: `fixture:${refreshes.length}`, fetchedAt: Date.now(), candles: leadCompleted && !valid ? rising : falling };
+    });
+    const original = vi.mocked(call).getMockImplementation()!;
+    vi.mocked(call).mockImplementation(async req => {
+      if (req.task === 'risk_assessment') {
+        expect(req.context.closeTriggers).toEqual(expect.arrayContaining([expect.objectContaining({ reason: 'MOMENTUM_REVERSAL', verified: true })]));
+        vi.setSystemTime(startedAt + 25_000);
+      }
+      if (req.task === 'lead') {
+        vi.setSystemTime(startedAt + 45_000);
+        leadCompleted = true;
+        return JSON.stringify({ action: 'CLOSE', confidence: .2, closeTrigger: 'MOMENTUM_REVERSAL', reason: 'Measured momentum opposes the existing position.' });
+      }
+      return original(req);
+    });
+    const result = await desk.runDebate('BTCUSDT');
+    expect(Date.now() - startedAt).toBe(45_000);
+    expect(result, result.reason).toMatchObject({ aiDecision: 'CLOSE', action: valid ? 'CLOSE' : 'HOLD', executed: valid });
+    expect(refreshes.filter(at => at >= startedAt + 45_000)).toHaveLength(valid ? 2 : 1);
+    if (valid) expect(result.closeTrigger).toBe('MOMENTUM_REVERSAL');
+    else expect(result.reason).toMatch(/No verified CLOSE trigger/);
+    expect(adapter.closes).toBe(valid ? 1 : 0);
+    expect(adapter.placed).toHaveLength(0);
+    if (!valid) expect(adapter.pos[0]).toMatchObject({ stop: 90, tp: 130 });
+    expect(vi.mocked(call).mock.calls.filter(([req]) => req.task === 'lead')).toHaveLength(1);
+    expect(vi.mocked(call).mock.calls.filter(([req]) => req.task === 'risk_assessment')).toHaveLength(1);
+    expect(new Set(vi.mocked(call).mock.calls.map(([req]) => req.agent)).size).toBe(6);
+    expect({ risk: cfg.risk, agents: cfg.agents, n: desk.book.n }).toEqual(settings);
+  });
+
   it('scopes a protected full-capacity position without exit evidence to MANAGE_EXISTING', async () => {
     const { desk, adapter, call } = fixture(70, .2, true);
     desk.book.n = 2;
@@ -197,7 +245,7 @@ describe('Final mission decision integrity', () => {
     expect(adapter.closes).toBe(0);
   });
 
-  it('revalidates net profit before an EARLY_TAKE_PROFIT close', async () => {
+  it('revalidates net profit before final EARLY_TAKE_PROFIT eligibility', async () => {
     const { desk, adapter, call, snapshot } = fixture(70, .2);
     snapshot.tacticalTradePlan!.exhaustion = { present: true, direction: 'BUYER', evidence: ['observed exhaustion'] };
     const pos = desk.book.open({ symbol: 'BTCUSDT', side: 'LONG', qty: 1, entry: 100, stop: 90, tp: 130, margin: 100, leverage: 1 });
@@ -210,7 +258,7 @@ describe('Final mission decision integrity', () => {
       return JSON.stringify({ action: 'CLOSE', confidence: .2, closeTrigger: 'EARLY_TAKE_PROFIT', reason: 'Observed exhaustion in profit.' });
     });
     const result = await desk.runDebate('BTCUSDT');
-    expect(result).toMatchObject({ action: 'CLOSE', executed: false, executionOutcome: 'EXECUTION_BLOCKED' });
+    expect(result).toMatchObject({ aiDecision: 'CLOSE', action: 'HOLD', executed: false, reason: expect.stringMatching(/No verified CLOSE trigger/) });
     expect(adapter.closes).toBe(0);
     expect(adapter.pos[0]).toMatchObject({ stop: 90, tp: 130 });
   });
