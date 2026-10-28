@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Position, ClosedTrade } from '../types.js';
@@ -15,6 +15,82 @@ export interface ExecutionIntent {
 
 export interface DailyLossState { key: string; startEquity: number; lossHit: boolean }
 
+const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+export function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(sleepBuffer, 0, 0, ms);
+}
+
+const inProcessLocks = new Set<string>();
+
+function acquireLock(lockPath: string, maxAttempts = 6): () => void {
+  const norm = path.resolve(lockPath);
+  let acquired = false;
+  let lastErr: unknown = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (!inProcessLocks.has(norm)) {
+      try {
+        const fd = openSync(lockPath, 'wx');
+        try {
+          writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now() }));
+        } finally {
+          closeSync(fd);
+        }
+        inProcessLocks.add(norm);
+        acquired = true;
+        break;
+      } catch (e: any) {
+        lastErr = e;
+        if (e?.code === 'EEXIST') {
+          try {
+            const raw = readFileSync(lockPath, 'utf8');
+            const data = JSON.parse(raw);
+            const staleAgeMs = Date.now() - (data.at || 0);
+            let ownerAlive = false;
+            if (typeof data.pid === 'number' && data.pid > 0) {
+              try {
+                process.kill(data.pid, 0);
+                ownerAlive = true;
+              } catch (killErr: any) {
+                if (killErr?.code === 'ESRCH') ownerAlive = false;
+              }
+            }
+            if (!ownerAlive || staleAgeMs > 10000) {
+              try { unlinkSync(lockPath); } catch {}
+              continue;
+            }
+          } catch {
+            try {
+              const st = statSync(lockPath);
+              if (Date.now() - st.mtimeMs > 10000) {
+                try { unlinkSync(lockPath); } catch {}
+                continue;
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+    if (attempt < maxAttempts - 1) {
+      sleepSync((attempt + 1) * 25);
+    }
+  }
+
+  if (!acquired) {
+    const conflictErr = new Error(`Conflicting journal lock: write in progress for ${path.basename(lockPath, '.lock')}`);
+    if (lastErr) (conflictErr as any).cause = lastErr;
+    throw conflictErr;
+  }
+
+  return () => {
+    inProcessLocks.delete(norm);
+    try {
+      if (existsSync(lockPath)) unlinkSync(lockPath);
+    } catch {}
+  };
+}
+
 /** Local ownership evidence and cumulative fill checkpoints. Contains no credentials. */
 export class ExecutionJournal {
   intents: ExecutionIntent[] = [];
@@ -25,7 +101,30 @@ export class ExecutionJournal {
   renameFn = renameSync;
   constructor(private file: string | null = null, private venue = '') {
     if (file && existsSync(file)) {
-      const saved = JSON.parse(readFileSync(file, 'utf8')) as { venue: string; intents: ExecutionIntent[]; positions: Position[]; closed: ClosedTrade[]; protectionClients?: { symbol: string; clientId: string }[]; dailyLoss?: DailyLossState };
+      let saved: { venue: string; intents: ExecutionIntent[]; positions: Position[]; closed: ClosedTrade[]; protectionClients?: { symbol: string; clientId: string }[]; dailyLoss?: DailyLossState } | null = null;
+      try {
+        const raw = readFileSync(file, 'utf8');
+        saved = JSON.parse(raw);
+      } catch (readErr) {
+        const bak = `${file}.bak`;
+        if (existsSync(bak)) {
+          try {
+            const bakRaw = readFileSync(bak, 'utf8');
+            saved = JSON.parse(bakRaw);
+            try { writeFileSync(file, bakRaw); } catch {}
+            recordDiagnostic({
+              source: 'journal',
+              category: 'JOURNAL',
+              eventName: 'journal.recovered',
+              status: 'recovered',
+              message: 'Primary journal corrupted; recovered from last-good backup',
+              details: { file, backup: bak }
+            });
+          } catch {}
+        }
+        if (!saved) throw readErr;
+      }
+      if (!saved) throw new Error('Execution journal is unreadable and no valid backup exists.');
       if (saved.venue !== venue || !Array.isArray(saved.intents) || !Array.isArray(saved.positions) || !Array.isArray(saved.closed)) throw new Error('Execution journal does not match this venue/network; inspect the local journal before starting.');
       this.intents = saved.intents; this.positions = saved.positions; this.closed = saved.closed; this.protectionClients = saved.protectionClients ?? [];
       if (saved.dailyLoss) {
@@ -38,6 +137,8 @@ export class ExecutionJournal {
   save() {
     if (!this.file) return;
     mkdirSync(path.dirname(this.file), { recursive: true });
+    const lockPath = `${this.file}.lock`;
+    const releaseLock = acquireLock(lockPath);
     const tmp = `${this.file}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 6)}.tmp`;
     try {
       const payload = JSON.stringify({
@@ -60,9 +161,7 @@ export class ExecutionJournal {
         } catch (e: any) {
           lastErr = e;
           if (['EPERM', 'EBUSY', 'EEXIST', 'EACCES'].includes(e?.code) && attempt < 4) {
-            const waitMs = (attempt + 1) * 25;
-            const end = Date.now() + waitMs;
-            while (Date.now() < end) { /* sync spin backoff for Windows handle contention */ }
+            sleepSync((attempt + 1) * 25);
           } else {
             break;
           }
@@ -70,9 +169,13 @@ export class ExecutionJournal {
       }
 
       if (!renamed) {
-        try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* ignore tmp cleanup error */ }
+        try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
         throw lastErr ?? new Error('Failed to rename journal temp file');
       }
+
+      try {
+        writeFileSync(`${this.file}.bak`, payload);
+      } catch {}
 
       recordDiagnostic({
         source: 'journal',
@@ -84,7 +187,7 @@ export class ExecutionJournal {
         details: { venue: this.venue, intents: this.intents.length, positions: this.positions.length, closed: this.closed.length }
       });
     } catch (error) {
-      try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* ignore tmp cleanup error */ }
+      try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
       recordDiagnostic({
         source: 'journal',
         category: 'JOURNAL',
@@ -95,6 +198,8 @@ export class ExecutionJournal {
         details: { error }
       });
       throw error;
+    } finally {
+      releaseLock();
     }
   }
   checkpoint(positions: Position[], closed: ClosedTrade[]) {
