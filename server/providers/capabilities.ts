@@ -22,6 +22,10 @@ const StrictExitSignal = z.object({
   evidenceRefs: z.array(z.string().min(1).max(160)).min(1).max(10)
 });
 
+const StrictResearchJsonSchema = ResearchSchema.extend({
+  sourceDetails: ResearchSchema.shape.sourceDetails.unwrap()
+});
+
 const StrictOpinionJsonSchema = z.object({
   stance: z.enum(['LONG', 'SHORT', 'NEUTRAL']),
   confidence: z.number().min(0).max(1),
@@ -73,7 +77,7 @@ export function getTaskJsonSchema(task: TaskKind): Record<string, unknown> {
     case 'opinion':
       return z.toJSONSchema(StrictOpinionJsonSchema);
     case 'research':
-      return z.toJSONSchema(ResearchSchema);
+      return z.toJSONSchema(StrictResearchJsonSchema);
     case 'rebuttal':
       return z.toJSONSchema(RebuttalSchema);
     case 'lead':

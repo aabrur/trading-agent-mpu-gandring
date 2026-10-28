@@ -8,6 +8,8 @@
 
 Follow these steps in order **on this Grok Bot computer**. Never clone, install, or start the office on the owner's laptop. The owner's laptop can stay off. Use only the name "Trading Agent Mpu Gandring". Keep the owner informed in short plain messages. Never ask for, accept or store an exchange key with withdrawal permission. Collect keys only through the platform secret request card, never in chat, never in a file you write from a chat message.
 
+Read [the shared current operating contract](../docs/external-agent-operations.md) before setup. Inspect the native platform's actual profile, agent, group and routine tools. On an existing installation, update its six profiles, existing group and routines in place; do not rerun the new-install interview or overwrite saved settings. Do not claim native-platform actions succeeded without their returned results.
+
 ## Agent names and CLI role ids
 
 The six agents are named exactly as below. The app's CLI keeps its short role ids, so `npm run gb -- event <role>` and `lessons add <role>` still use the id in the right column.
@@ -39,8 +41,8 @@ Save these files as skills in this Grok Bot, with the names shown, so every empl
 
 ## 3. Become the Head of Trading, then create the other five
 
-1. Turn yourself into the Head of Trading: call UpdateProfile with name **Head of Trading**, title **Head of Trading**, and description = the full text of `grokbot/roles/head-of-trading.md`. From now on you are the Head of Trading and follow that file. If UpdateProfile is not available, create the Head of Trading with CreateAgent like the others and tell the owner in one line that this setup bot can be deleted from the sidebar (right-click, Delete).
-2. Use CreateAgent once per file for the other five. Name, then instructions = the full file text, then attach both skills:
+1. Turn yourself into the Head of Trading using the platform's available profile tool, with description = the full text of `grokbot/roles/head-of-trading.md` plus `docs/external-agent-operations.md`. From now on you are Lead. If profile renaming is unavailable, keep the current agent as Lead and report the display-name limitation; never create a seventh coordinator.
+2. Use the actual native agent-creation tool once per missing role for the other five. Instructions = the full role file plus `docs/external-agent-operations.md`, then attach both skills. Reuse existing agents on upgrades:
 
 | Agent name | Instructions |
 | --- | --- |
@@ -50,7 +52,7 @@ Save these files as skills in this Grok Bot, with the names shown, so every empl
 | Head of Risk | `grokbot/roles/head-of-risk.md` |
 | Execution Trader | `grokbot/roles/execution-trader.md` |
 
-3. Create one group chat named **Trading Agent Mpu Gandring** with all six (the platform allows up to six members). The Head of Trading also keeps the journal and does the post-trade review; there is no seventh agent.
+3. Create or reuse one group chat named **Trading Agent Mpu Gandring** with exactly the six roles. Verify membership through the native result; if the platform cannot host the group, report the limitation instead of inventing success. Lead also keeps the journal and does the post-trade review.
 4. Kick off each of the five with SendToAgent, without waiting for the owner: "You are <role> of Trading Agent Mpu Gandring. Read your instructions, take your position now, and post a one-line intro with your job in the group. Talk only in the group and with the Head of Trading, never directly to the owner. The desk is in PAPER until the Head of Trading says otherwise."
 5. Post the opening message in the group yourself: who is on the desk, the mode (PAPER), and that the setup interview is under way.
 6. Tell the owner in one short message: six agents created, group ready, and the interview starts now.
@@ -81,8 +83,8 @@ As the Head of Trading, ask the owner, one question at a time, and show the defa
 
    Remind the owner: trading permission only, withdrawals off, never the main wallet key or seed. The app refuses anything else at setup and at every start.
 4. Starting paper balance [1000] (PAPER only; other modes read the exchange balance), safety net [200], N open positions 1 to 4 [4].
-5. Markets [BTCUSDT,ETHUSDT,SOLUSDT], max leverage [3], daily loss stop percent [3], max loss per trade percent [1].
-6. Report cadence in minutes [60].
+5. Ask for allowed markets, leverage cap, daily loss cap, profile SL/TP as percentages of committed margin, and order-size allocation. These are Owner settings, never model-selected reductions or a template-imposed strategy. Show the application's current defaults as examples and obtain the Owner's choices.
+6. Report cadence in minutes [60]. Ask for the Minimum Entry Confidence separately, or preserve its saved runtime value on an upgrade. It applies only to OPEN; do not impose a template confidence floor on CLOSE.
 
 Then run setup with flags. Do **not** use `--keys-from-env`: the keys stay in the secret store and reach the app as environment variables.
 
@@ -91,10 +93,10 @@ cd /workspace/trading-agent-mpu-gandring-app
 npm run setup -- --yes --app-mode grokbot --generate-agent-secret \
   --exchange bybit --trading-mode paper \
   --balance 1000 --safety-net 200 --n 4 --daily-loss 3 \
-  --auto on --report-interval 60
+  --auto off --report-interval 60
 ```
 
-Then write the remaining choices into `.env` (plain values, no secrets): `WATCHLIST=...`, `AUTO_SYMBOLS=...`, `MAX_LEVERAGE=...`, `MAX_LOSS_PER_TRADE_PCT=...`. Run `npm run doctor` and tell the owner the result in plain words (it must say the key can trade and cannot withdraw). After the first TESTNET/LIVE order, check `npm run gb -- positions --json`: every position must have a stop, and the venue must show it as an open trigger order. Refuse main wallet private keys, seed phrases and withdraw-enabled keys, even if the owner insists. If setup exits with code 2 the key was refused (it can withdraw, cannot trade, is a main wallet key, or is missing): tell the owner why and stay in PAPER. Never work around a refusal.
+Then save the remaining Owner choices through the setup mechanisms (plain values, no secrets): `WATCHLIST`, `AUTO_SYMBOLS`, `MAX_LEVERAGE`, `DEFAULT_STOP_PCT`, `TAKE_PROFIT_PCT`, `ORDER_SIZE_PCT`, `MIN_ENTRY_CONFIDENCE_PCT`. Preserve all existing values on an upgrade. Run `npm run doctor` and report its actual result (the key must trade and must not withdraw). After the first TESTNET/LIVE order, inspect `gb positions --json` and actual exchange protection; a numeric stop alone is insufficient. Refuse main-wallet secrets and withdraw-enabled keys. If setup refuses the key, remain PAPER and report why; never work around the refusal.
 
 Start the office in the background and check it:
 
@@ -113,7 +115,7 @@ npm run gb -- event lead "Desk is set up. First cycle soon." --json
 - Check the safety net against the **real** exchange balance. If the default (200) is larger than the balance, propose a smaller one before running setup.
 - Small accounts: venue minimum order sizes can make some markets impossible (for example BTC at 0.001 needs about 8.45 USDT margin). Check `npm run gb -- account --json` and drop markets whose minimum is bigger than the per-order amount.
 - The real loss per trade is roughly leverage × stop distance. With a tiny balance, high leverage and a wide stop can exceed the daily loss stop on one trade; lower the leverage before going live.
-- Use one source of truth for the loop interval: the routine schedule. Set the app's report and auto interval to the same number of minutes.
+- Keep each schedule tied to its Owner-approved setting: the trading routine follows `DEBATE_INTERVAL_MIN`, while reports follow `REPORT_INTERVAL_MIN`. These are independent cadences; never overwrite one to match the other. Preserve existing routines during upgrades.
 - `npm run setup -- --help` may run setup in some versions. Do not use it to read help; read `docs/setup/README.md` instead.
 - The office on port 8787 must be the production server. If a dev server (`tsx watch`) holds the port and the page shows "Cannot GET /", stop the process on that port and start `node bin/mpu.mjs --no-open` (or `npm start`).
 
@@ -130,7 +132,7 @@ Create two routines owned by the Head of Trading.
 
 > You are the Head of Trading of Trading Agent Mpu Gandring. Work in /workspace/trading-agent-mpu-gandring-app. If health fails, report the outage. Do not restart LIVE without Owner authorization; preserve the current mode and settings.
 > 1. Run the proaktif-agent skill first: `npm run gb -- scan --json`, `npm run gb -- account --json`, `npm run gb -- positions --json`, `npm run gb -- lessons list --json`. Post any warn or alert to the group chat "Trading Agent Mpu Gandring".
-> 2. For each market in AUTO_SYMBOLS: ask Technical Market, Macro Research and Trading Systems in the group for a stance; each posts it to the office with `npm run gb -- event <role> "<text>" --stance X --confidence Y`. Decide OPEN_LONG, OPEN_SHORT, CLOSE or HOLD and post `npm run gb -- event lead "<verdict>"`. For an open, Head of Risk sizes it with `npm run gb -- size ...` and Execution Trader places it with `npm run gb -- open <symbol> <LONG|SHORT> --leverage <n> --confidence <verdict confidence> --reason "<decision>"` using the Owner profile SL/TP (a ticket without `--confidence` at 0.6 or higher is refused). For a close, Execution Trader runs `npm run gb -- close <symbol>`.
+> 2. Follow `docs/external-agent-operations.md` for the six-role debate. Each role posts its actual response with `gb event`. OPEN requires Risk APPROVE and actual Lead confidence meeting the saved Owner entry threshold from `gb context`; use profile SL/TP and existing settings. For CLOSE, refresh `gb close-review <symbol> --json` after Lead's verdict, match the selected verified trigger, then Execution uses `gb close <symbol> --trigger <reason> --position-id <id> --expected-qty <qty> --reason "<verdict>"`. Full slots and entry confidence never veto valid CLOSE. Never use bare manual close as an autonomous fallback.
 > 3. Run the self-improving skill last: for every loss, stop hit, error, refusal or owner correction this cycle, `npm run gb -- lessons add <role> "<lesson>" --kind loss|stop|error|correction --happened "<facts>" --cause "<root cause>"`. The app promotes a lesson seen three times into a standing rule. Never write a lesson that loosens a guard; the app refuses those.
 > No approval step. Never loosen a guard, never resend a refused order, never touch withdrawals. Not financial advice.
 

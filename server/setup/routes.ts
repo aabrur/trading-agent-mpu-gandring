@@ -24,7 +24,7 @@ import { setEnv } from '../../cli/envfile.js';
 import { discoverLocalModels, LOCAL_AGENTS, localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection, localMcpInventory, localResearchActivity, validateResearchConnections, localAgentSettings, localAgentSettingsUpdate } from '../providers/local.js';
 import { ResearchPolicyBody, researchPolicy } from '../providers/research-policy.js';
 import { preferencesInfo, savePreferences } from './preferences.js';
-import { extractJson, SCHEMAS } from '../schemas.js';
+import { AgentCloseSchema, AgentOpenSchema, extractJson, SCHEMAS } from '../schemas.js';
 import { saveTradingLimits, TradingLimitsBody, saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
 import { tradingSettingsFromConfig } from '../trading-settings.js';
 import { JevSetupBody, jevSetupInfo, saveJevSetup } from './jev.js';
@@ -428,6 +428,18 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     if (!gate(req, res)) return;
     const target = String(req.body?.symbol ?? '').slice(0, 20); if (!target) return res.status(400).json({ ok: false, reply: 'symbol or all' });
     res.json(await c.desk.gbClose(target, 'owner command: closed from the office'));
+  });
+  app.post('/api/ops/agent-close', async (req, res) => {
+    if (!gate(req, res)) return;
+    const parsed = AgentCloseSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ ok: false, error: 'A typed CLOSE trigger, positionId, expectedQty and reason are required.' });
+    res.json(await c.desk.agentClose(parsed.data));
+  });
+  app.post('/api/ops/agent-open', async (req, res) => {
+    if (!gate(req, res)) return;
+    const parsed = AgentOpenSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ ok: false, error: 'Agent OPEN requires Risk APPROVE, actual Lead confidence and a reason.' });
+    res.json(await c.desk.gbOpen({ ...parsed.data, agent: 'execution' }, true));
   });
   app.post('/api/ops/scan', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, findings: c.desk.scan() }); });
   app.get('/api/ops/lessons', (req, res) => { if (!gate(req, res)) return; res.json({ ok: true, lessons: c.desk.learnings.recent(30, c.desk.accountScope()), standingRules: c.desk.learnings.standingRules(undefined, c.desk.accountScope()), refused: c.desk.learnings.refused }); });

@@ -14,8 +14,10 @@ npm run gb -- candles ETHUSDT 1h --json
 npm run gb -- account --json               # mode, balance, daily loss stop
 npm run gb -- split --json                 # Money Trade and allocation per order
 npm run gb -- size ETHUSDT SHORT 3100 --leverage 3 --json
-npm run gb -- open ETHUSDT SHORT --leverage 3 --confidence 0.8 --json   # authorized ticket; profile SL/TP and shared guards
-npm run gb -- close all --json
+npm run gb -- open ETHUSDT SHORT --risk-approval APPROVE --confidence 0.8 --reason "Lead verdict and Risk approval" --json  # saved Owner leverage/SL/TP
+npm run gb -- close-review ETHUSDT --json  # select a fresh verified trigger for an autonomous exit
+# gb close ETHUSDT --trigger <reason> --position-id <id> --expected-qty <qty> --reason "<verdict>" --json
+# Bare gb close all is reserved for an explicit manual Owner CLOSE command.
 npm run gb -- event market "Tape is heavy" --stance SHORT --confidence 0.6   # shows in the office
 npm run gb -- scan --json                  # proaktif-agent scan
 npm run gb -- lessons list --json          # self-improving lessons and standing rules

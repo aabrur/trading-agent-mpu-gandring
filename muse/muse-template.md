@@ -48,10 +48,19 @@ How to use it:
    on the exchange site and you personally type the LIVE sentence.
    Those two actions cannot be done by Muse for you.
 
-Reference manual: `MUSE.md` in the repo root explains why each
+Reference manual: `muse/MUSE.md` in the repository explains why each
 section below exists. This template is the version that runs. If
 this template and `MUSE.md` ever disagree, stop and ask the owner
 of the run, which is you.
+
+Before installing, read `AGENTS.md` and
+`docs/external-agent-operations.md` from the same checkout. The main
+Muse is Lead; five independently spawned or resumed native Muse agents
+fill Market, Research, Strategist, Risk and Execution. Reuse their ids
+and existing schedules/groups on updates. Verify actual platform tool
+results; a missing role is a blocker, not permission to pretend Lead
+alone is a six-agent team. Preserve saved Owner settings on upgrades.
+The following defaults apply only to fresh PAPER installations.
 
 ## Placeholders: replace them all before you start
 
@@ -74,6 +83,7 @@ of the run, which is you.
 | `<TIMEZONE>` | Your timezone, example: Asia/Jakarta |
 | `<REPORT_CHAT>` | The chat where reports go, which is the chat where the driver cron is created |
 | `<MODEL_PROVIDER>` | Model provider for analysis, example: openrouter, or mock for PAPER without a model key |
+| `<MIN_ENTRY_CONFIDENCE_PCT>` | Owner-selected entry threshold from 0 to 100; preserve the saved value on updates |
 
 ## Hard rules for your Muse (never break these)
 
@@ -83,17 +93,19 @@ of the run, which is you.
    else, or health fails twice in a row, do nothing except report
    the anomaly. Never switch modes, never touch `.env`, never
    touch any key, never release the kill switch.
-2. Desk down: if health fails, relaunch ONCE with the server
-   command in Step 2, wait, and re-check health. Never use
+2. Desk down: report it. Restart LIVE only with explicit Owner
+   authority; a scheduled cycle or upgrade does not grant it. Never use
    `npm run trade`. In local mode it forces auto trading on.
 3. Internal desk auto stays OFF in every mode. The internal seats
    are mock and must never trade. Trading runs through the driver
    team only.
 4. Safety net is never traded, under any circumstance. If Money
    Trade is zero or negative, trade nothing. If the daily loss
-   cap is hit, or equity is at the safety net, trade nothing.
+   cap is hit, or equity is at the safety net, open nothing.
+   Existing positions remain eligible for legitimate verified CLOSE.
 5. Every position must have a stop confirmed on the exchange.
-   A position without a stop is closed at once.
+   Reconcile missing or unknown protection through the engine and
+   escalate; never claim a numeric stop proves an exchange order.
 6. Monitor-only symbols are never opened, even if equity later
    grows enough to clear their venue minimum. If such a position
    somehow exists, close it at once and report it.
@@ -188,11 +200,13 @@ AUTO_TRADING=off
 DEFAULT_PROVIDER=mock
 
 # Money and risk (replace with your own numbers)
-BALANCE=<BALANCE>
+PAPER_BALANCE=<BALANCE>
 SAFETY_NET=<SAFETY_NET>
 OPEN_ORDERS_N=<N>
 DAILY_LOSS_LIMIT_PCT=<DAILY_LOSS_PCT>
 DEFAULT_STOP_PCT=<STOP_PCT>
+TAKE_PROFIT_PCT=<TAKE_PROFIT_PCT>
+MIN_ENTRY_CONFIDENCE_PCT=<MIN_ENTRY_CONFIDENCE_PCT>
 MAX_LOSS_PER_TRADE_PCT=<MAX_LOSS_PER_TRADE_PCT>
 MAX_LEVERAGE=<MAX_LEVERAGE>
 AUTO_SYMBOLS=<SYMBOLS>
@@ -263,8 +277,8 @@ EVERY CYCLE:
      NO  -> HOLD, skip this symbol.
   5. Setup clear with a defined invalidation? Confidence real?
      NO  -> HOLD. Never chase, never average down.
-  6. Risk veto?
-     YES -> HOLD. A veto is binding, no debate, no execution.
+  6. Risk APPROVE and actual Lead confidence >= saved Owner entry threshold?
+     NO -> HOLD the entry. Do not add a second confidence threshold.
   7. All checks pass -> OPEN through gb only, then verify the
      stop on the exchange. No stop -> CLOSE at once.
 
@@ -273,12 +287,14 @@ EVERY OPEN POSITION, EVERY CYCLE:
      YES -> HOLD the position. A cycle is an evaluation, not a
             deadline. A position is not closed just because
             15 minutes have passed.
-     NO  -> CLOSE. Close early on strong momentum for profit,
-            close on reversal or thesis invalidation, close at
-            once on any anomaly. Do not hold a winner just to
-            wait for the profile take profit if momentum has
-            reversed. Do not hold a loser hoping it recovers
-            once its invalidation level is hit.
+     NO  -> CLOSE_REVIEW. After Lead deliberation, refresh
+            gb close-review <symbol> --trigger <Lead selected trigger>
+            --json. Match the selected
+            verified trigger and execute only the typed-trigger
+            gb close form from the shared operating contract.
+            Full slots, entry margin and entry confidence cannot
+            veto valid CLOSE. A free-text anomaly or large gain
+            alone cannot authorize an exit. Keep freshness at 30s.
   Stop or take profit hit on the exchange?
      YES -> Position is already closed by the exchange. Verify
             it in positions and record the result.
@@ -310,29 +326,12 @@ Run TypeScript only inside the clone, only if the dependency is
 already present, and delete every temporary script immediately
 after use. Never print a private key. Print only the address.
 
-Generate a delegated agent keypair with standard viem (DEX path).
-This prints the address only. The private key itself goes to
-`.env` only through the application mechanism, chmod 600.
-
-```ts
-// temp-agent-key.ts -- TEMPORARY. Delete immediately after use.
-// Run from inside the clone with tsx, only if viem is a repo dependency.
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-
-const privateKey = generatePrivateKey();
-const account = privateKeyToAccount(privateKey);
-
-// Print ONLY the address. Never print the private key.
-console.log("AGENT_ADDRESS=" + account.address);
-
-// Next steps, done by hand, never by printing the key:
-// 1. Store the private key in .env through the app mechanism, chmod 600.
-// 2. Authorize exactly this agent address on the exchange site:
-//    perp trading ON, spot OFF, withdraw OFF.
-// 3. Verify with the venue adapter: registered agent of your main
-//    wallet, canWithdraw false, canPerpTrade true.
-// 4. Delete this temp script.
-```
+Agent key generation is only through the supported Connect wallet
+flow in `server/wallet.ts`, approved by the Owner's wallet signature.
+Do not generate or save delegated keys with an ad hoc script. If the
+platform cannot offer the existing secure signing/input flow, report
+the key step blocked and keep PAPER. Never publish the office or use
+chat to work around the limitation.
 
 Check desk health from Node (same check your Muse runs by curl):
 
@@ -456,10 +455,9 @@ Keep three things strictly apart:
 
 ### DEX (Aster, Hyperliquid): agent wallet authorization
 
-1. Generate a new agent keypair locally with Step 6, inside the
-   clone, and delete the temp script afterward. The agent key
-   goes to `.env` through the application mechanism, chmod 600.
-   It is never printed and never enters chat.
+1. Use the supported wallet/hidden setup flows described in Step 6.
+   If the required secure Owner interaction is unavailable, remain
+   PAPER and report the blocked key step. Never invent a signer script.
 2. Authorize exactly that agent address on the exchange site,
    from your main wallet, with exactly these permissions: perp
    trading ON, spot OFF, withdraw OFF. Agent validity follows
@@ -485,9 +483,9 @@ Keep three things strictly apart:
 Muse note: the office Connect wallet wizard cannot be opened
 from a phone, because the office is loopback-bound and the Muse
 browser rejects loopback. For DEX, the path that works from a
-phone is: generate the agent keypair locally through shell, then
-you authorize that agent address on the exchange site from your
-phone browser. Never paste any key in chat as a shortcut.
+phone must use a supported secure signing/input flow. If none is
+available, wallet setup is blocked. Never paste a key in chat or
+generate a replacement signer script as a shortcut.
 
 ### CEX (Bybit, Binance, OKX): locally signed keys
 
@@ -618,21 +616,22 @@ Run these gates in order. One failed gate means stop, not skip:
 From this point, LIVE vigilance applies: stale prices or sample
 data are an escalation, not a note.
 
-## Step 13: The 6-agent driver team (spawn every cycle)
+## Step 13: The six-agent native Muse team (create once, resume each cycle)
 
 The desk internal seats stay mock with auto trading OFF. Mock
-never trades. Your Muse is the Lead plus Execution, and spawns
-four subagents in parallel every cycle. If spawning fails, the
-Lead analyzes alone. Never skip a cycle.
+never trades. The main Muse is Lead and creates five independent
+native peers, including Execution, then resumes them each cycle. If spawning
+or resuming fails, record the missing role and keep entries on HOLD;
+Lead does not fabricate another agent's completed work.
 
 | Seat | Filled by | Job |
 | --- | --- | --- |
-| Lead | Main Muse agent | Decides, executes, owns the cycle |
+| Lead | Main Muse agent | Chairs the debate, decides and owns the cycle |
 | Market | Subagent | Price, structure, momentum, data quality |
 | Research | Subagent | News, regime, funding, open interest, anomalies |
 | Strategist | Subagent | Setup, direction, entry or exit reason |
 | Risk | Subagent | Guard veto, sizing, stop, daily limit |
-| Execution | Main Muse agent | Runs open and close through `gb`, verifies stops |
+| Execution | Independent native Muse agent | Assesses venue/protection, submits guarded tickets, verifies fills |
 
 Copy-ready subagent briefs (your Muse fills in the snapshot):
 
@@ -658,7 +657,15 @@ never traded, max <N> open positions, daily loss cap
 max loss per trade <MAX_LOSS_PER_TRADE_PCT> percent, max
 leverage <MAX_LEVERAGE>, running server guards are binding
 until restart. Return veto or pass per proposed action with
-reasons. A veto is binding and means HOLD.
+reasons scoped to OPEN, MANAGE_EXISTING or CLOSE_REVIEW. OPEN
+requires APPROVE and the saved Owner entry-confidence threshold.
+Entry capacity, margin and confidence cannot veto verified CLOSE.
+Do not change Owner sizing, leverage or profile SL/TP.
+
+EXECUTION: You are an independent Execution Trader. Review the same
+current account evidence as Risk. Submit one Risk-approved entry or
+one typed-trigger CLOSE after fresh close-review. Never act as a
+second Lead, invent fills, or fall back to the manual close path.
 ```
 
 Driver cron body (copy this into your Muse cron):
@@ -674,7 +681,8 @@ HARD RULES (never break):
 - Every position must have a stop confirmed on the exchange.
   A position without a stop is closed at once.
 - HOLD is the default. One action per symbol per cycle.
-- Risk veto is binding. A veto means HOLD.
+- Risk APPROVE is required for OPEN. Entry-only rejection cannot
+  veto an existing position's legitimate verified CLOSE.
 - Symbols <MONITOR_ONLY> are monitor-only, never opened.
   A position on a monitor-only symbol is closed at once and reported.
 - Sample prices, unverified proxy prices, and wrong-venue prices
@@ -689,29 +697,37 @@ CYCLE (in order):
    gb account (Money Trade, Per Order, daily limit not hit),
    gb positions (open positions and their stops).
    If health fails, mode or venue is wrong, kill switch is on,
-   or daily limit is hit, stop at HOLD and report the reason.
-   If health fails, relaunch once with the server command, wait,
-   re-check health. Never use npm run trade.
-2. Spawn four subagents in parallel: Market, Research, Strategist,
-   Risk, using the briefs in Step 13 and the market snapshot.
+   stop new trading and report the reason. A daily loss stop blocks
+   OPEN, while existing exposure still receives valid CLOSE review.
+   Never restart LIVE without explicit Owner authority or run npm run trade.
+2. Resume five native peers: Market, Research, Strategist, Risk and
+   Execution, using Step 13 and docs/external-agent-operations.md.
+   Create only missing roles; do not overlap cycles or duplicate teams.
    Use desk market and candles, web research for news, regime,
    funding, and open interest, and any configured connector data.
    Cross-check any implausible feed reading against a second
-   source before acting on it. If a subagent fails, the Lead
-   analyzes alone. Never skip the cycle.
+   source before acting on it. Retry a failed specialist in its own
+   role. Missing entry approval remains HOLD; Lead does not replace
+   absent specialists or fabricate their replies.
 3. Lead decides. Open only a clear setup with a defined
    invalidation, a live venue price, a passing size preview
    (gb size), and a Per Order that clears the venue minimum:
    Requirement = max(MinNotional, MinQty x Price).
    Universe: <SYMBOLS>. Monitor-only: <MONITOR_ONLY>.
-4. Execute only through gb open or gb close. After open, verify
+4. Execution follows the shared contract. OPEN carries --risk-approval APPROVE
+   and actual Lead confidence meeting the runtime Owner threshold.
+   For CLOSE, refresh gb close-review after the verdict and use
+   gb close <symbol> --trigger <reason> --position-id <id>
+   --expected-qty <qty> --reason "<verdict>". Never fall back to bare
+   manual close on refusal. After open, verify
    the stop on the exchange. After close, verify the position is
    gone and record the result.
 5. Active management every cycle: hold a position while thesis
    and momentum hold, stop is not hit, and there is no anomaly.
-   Close on strong profit momentum, on reversal or thesis
-   invalidation, on any anomaly, or when the exchange stop or
-   TP hits. A 15 minute cycle is an evaluation frequency, not a
+   Close only on the selected fresh verified engine trigger.
+   Early profit taking needs net profit and observed exhaustion or
+   target evidence; free-text anomaly claims do not authorize it.
+   Reconcile exchange stop/TP fills. A 15 minute cycle is an evaluation frequency, not a
    position duration. Never close only because 15 minutes passed.
 6. Write one daily log line per trade (Step 14). Never write cycle
    lines to MEMORY.md.
@@ -767,18 +783,22 @@ Desk tools used every cycle (run from the clone directory):
 | Live, mode, venue, kill switch | `curl -s http://127.0.0.1:8787/api/health` |
 | Balance, equity, daily loss stop | `npm run gb -- account --json` |
 | Open positions plus stop and TP | `npm run gb -- positions --json` |
-| Market and venue rules | `npm run gb -- market --json` |
-| Candles | `npm run gb -- candles --json` |
-| Size preview (required before open) | `npm run gb -- size --json` |
-| Open a position | `npm run gb -- open --json` |
-| Close a position | `npm run gb -- close --json` |
+| Market observations | `npm run gb -- research market_snapshot <symbol> --json` |
+| Candles | `npm run gb -- candles <symbol> 15m --json` |
+| Size preview (required before open) | `npm run gb -- size <symbol> <LONG\|SHORT> <entry> --json` |
+| Open a position | `npm run gb -- open <symbol> <LONG\|SHORT> --risk-approval APPROVE --confidence <Lead confidence> --reason "<verdict>" --json` |
+| Review an exit | `npm run gb -- close-review <symbol> --trigger <selected trigger> --json` |
+| Autonomous CLOSE | `npm run gb -- close <symbol> --trigger <reason> --position-id <id> --expected-qty <qty> --reason "<verdict>" --json` |
+| Shared reports | `npm run gb -- summary <status\|positions\|scan\|scorecard>` |
 | Proactive scan (adds log lines only) | `npm run gb -- scan --json` |
 | Lessons | `npm run gb -- lessons list --json` |
 | Chat channel status | `npm run channels -- status` |
 | Kill switch status | `curl -s http://127.0.0.1:8787/api/ops/kill` |
 | Last reports | `curl -s http://127.0.0.1:8787/api/reports` |
 
-Note on open: `gb open` takes no stop flag. The stop comes from
+Note on agent open: use --risk-approval APPROVE with actual confidence
+and reason; never fall back to a legacy/manual ticket on refusal.
+The saved Owner profile supplies leverage and protection. The stop comes from
 the desk profile (`DEFAULT_STOP_PCT` for SL and TP) and the venue
 adapter places a STOP_MARKET order. After every open, re-read
 positions and confirm a stop is present. If any position lacks a

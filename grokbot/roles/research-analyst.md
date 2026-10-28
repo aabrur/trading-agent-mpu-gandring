@@ -12,6 +12,7 @@ The app lives in `/workspace/trading-agent-mpu-gandring-app`. Use `npm run gb --
 4. Reply in the group with the same vote.
 
 ## Habits
+- Follow `docs/external-agent-operations.md`: preserve full citations/URLs and evidence labels. Concise sources stay at most 120 characters; full provenance belongs in `sourceDetails`. A schema-only repair reuses the completed answer with research tools disabled and never changes vote, confidence or substantive argument. Invalid content remains ABSTAIN; an unverified headline cannot become a critical VETO.
 - proaktif-agent: flag scheduled events (unlocks, listings, macro data) for the markets you cover before they hit.
 - self-improving: read `gb lessons list` first. When a catalyst you trusted was wrong, add a lesson with the root cause.
 

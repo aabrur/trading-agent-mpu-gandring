@@ -14,6 +14,7 @@ import { AGENT_IDS } from './config.js';
 import type { AgentId, AgentStatus, ChatLine, MarketSnapshot, Stance, Verdict, Action, RoomMessage, Position } from './types.js';
 import { ROLES } from './agents/roles.js';
 import { runAgent, type Out } from './agents/run.js';
+import { AgentCloseSchema } from './schemas.js';
 import { makeCaller, type ModelCaller } from './providers/index.js';
 import { MARKET_SOURCES, getSnapshot, getNews, getNewsFor, getWhaleBriefing, buildNewsBriefing, normalizeLegacyItem, liveNewsStatus } from './market/index.js';
 import { strategyVote, rsi, volumeDelta, atr } from './strategy.js';
@@ -47,8 +48,9 @@ import { rebuttalRounds } from './decision/pace.js';
 import { conversationSymbols, ownerTargets, teammateRequests, capitalAndSlots, type HandoffResult, type TeammateRequest } from './collaboration.js';
 import { capabilityManifest, type ToolObservation, type CapabilityStatus } from './research/catalog.js';
 import { buildTacticalTradePlan } from './market/tactical.js';
-import { WHALE_OBSERVATION_POLICY } from './market/whale.js';
-import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, snapshotMomentum, type CloseEvaluationInput, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
+import { WHALE_OBSERVATION_POLICY, type WhaleBriefing } from './market/whale.js';
+import type { NewsBriefing } from './market/news.js';
+import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, snapshotMomentum, type CloseEvaluationInput, type CloseTriggerReason, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
 import { researchPolicy } from './providers/research-policy.js';
 import { localResearchActivity } from './providers/local.js';
 import { getSuiEventBriefing } from './market/sui.js';
@@ -739,9 +741,63 @@ export class Desk extends EventEmitter {
   }
 
   // ---------- market ----------
-  async collectResearchData(symbol: string, objective = 'Collect complete live context for the next trading analysis') {
+  private closeEvidenceInput(snapshot: MarketSnapshot, position: Position, news: NewsBriefing, whale: WhaleBriefing, jev?: JevEvidence, rules?: InstrumentRules): CloseEvaluationInput {
+    const momentum = snapshotMomentum(snapshot);
+    const quote = this.venueAccount?.status === 'confirmed' ? position.mark : undefined;
+    const executionVenue = this.opts.executor?.adapter.name ?? this.cfg.live?.exchange;
+    return { snapshot, position, momentum, mode: this.cfg.tradingMode, executionVenue, nativeExecutionQuote: quote,
+      invalidationLevel: position.invalidationLevel,
+      strategyInvalidated: this.invalidated(position.side, strategyVote(snapshot.candles, { roc5: momentum.roc5, orderflow: momentum.flowVerified ? snapshot.orderflow : undefined })),
+      evidence: buildDebateEvidence({ snapshot, side: position.side, scenario: null, mode: this.cfg.tradingMode, executionVenue, nativeExecutionQuote: quote ?? null, news, whale, whalePolicy: WHALE_OBSERVATION_POLICY, jev, contractMultiplier: rules?.contractMultiplier, instrumentSymbol: rules?.symbol ?? snapshot.symbol }),
+      news, whale, whalePolicy: WHALE_OBSERVATION_POLICY,
+      netUnrealizedPnl: estimatedNetUnrealized({ unrealizedPnl: position.unrealizedPnl, entry: position.entry, mark: quote ?? snapshot.last, qty: position.qty, takerFee: this.cfg.risk.takerFee }),
+      targetLevel: typeof position.decisionEvidence?.target1 === 'number' ? position.decisionEvidence.target1 : undefined,
+      guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } };
+  }
+
+  private async closeReviewUnlocked(symbol: string, requested?: CloseTriggerReason) {
+    const collected = await this.collectResearchData(symbol, 'Review current evidence for an existing position', true);
+    const snapshot = snapshotIsFresh(collected.market) ? collected.market : await this.marketSnapshot(symbol, true);
+    if (this.opts.executor) await this.syncLiveUnlocked();
+    const position = this.book.positions.find(p => p.symbol === symbol);
+    const rules = this.opts.executor ? await adapterRules(this.opts.executor.adapter, symbol) : undefined;
+    const accountConfirmed = this.cfg.tradingMode === 'PAPER' || !!this.opts.executor && !!this.venueAccount && this.venueAccount.status === 'confirmed' && Date.now() >= this.venueAccount.at && Date.now() - this.venueAccount.at <= 30_000;
+    const fresh = snapshotIsFresh(snapshot);
+    const news = buildNewsBriefing(symbol, collected.news.map(item => normalizeLegacyItem(item, symbol)), liveNewsStatus(collected.news));
+    const input = position ? this.closeEvidenceInput(snapshot, position, news, collected.whale, undefined, rules) : null;
+    const closeTriggers = input && fresh && accountConfirmed && position?.ownership !== 'external'
+      ? evaluateCloseTriggers({ ...input, leadClose: requested ? { closeTrigger: requested } : undefined }) : [];
+    return { ok: true, intent: position ? closeTriggers.length ? 'CLOSE_REVIEW' : 'MANAGE_EXISTING' : 'OPEN', symbol,
+      observedAt: Date.now(), snapshotAt: snapshot.fetchedAt, fresh, accountConfirmed,
+      position: position ? structuredClone(position) : null, closeTriggers, executionQuote: position && this.venueAccount?.status === 'confirmed' ? position.mark : snapshot.last,
+      strategyInvalidated: input?.strategyInvalidated ?? false, momentum: input?.momentum ?? snapshotMomentum(snapshot),
+      newEntryCapacity: this.availableSlots(), ownerMinEntryConfidencePct: this.cfg.risk.minEntryConfidencePct };
+  }
+
+  /** External six-agent teams use the same typed exit evaluator as the local debate. */
+  async closeReview(symbolIn: string, requested?: CloseTriggerReason) {
+    const symbol = normSymbol(symbolIn);
+    if (!symbol) throw new Error('A symbol is required for CLOSE review');
+    return this.exclusive(() => this.closeReviewUnlocked(symbol, requested));
+  }
+
+  async agentClose(ticket: unknown): Promise<{ ok: boolean; reply: string; closed: ClosedTrade[] }> {
+    const parsed = AgentCloseSchema.safeParse(ticket);
+    if (!parsed.success) return { ok: false, reply: 'CLOSE needs a typed trigger, positionId, expectedQty and reason.', closed: [] };
+    return this.exclusive(async () => {
+      const request = parsed.data;
+      const review = await this.closeReviewUnlocked(request.symbol, request.closeTrigger);
+      if (this.killed || this.paused || !review.position || review.position.id !== request.positionId || review.position.qty !== request.expectedQty || !review.closeTriggers.some(trigger => trigger.reason === request.closeTrigger)) {
+        return { ok: false, reply: 'CLOSE blocked: position changed, desk stopped, or selected trigger is not verified on fresh evidence.', closed: [] };
+      }
+      const closed = await this.executeCloseUnlocked(request.symbol, review.executionQuote, request.reason, true);
+      return { ok: closed.length > 0, reply: closed.length ? `Verified reduce-only CLOSE: ${request.symbol} (${request.closeTrigger}).` : 'No confirmed close fill; reconcile before retrying.', closed };
+    });
+  }
+
+  async collectResearchData(symbol: string, objective = 'Collect complete live context for the next trading analysis', forceMarket = false) {
     const collected = await collectTradingData({ symbol, objective, jev: this.jev, live: this.cfg.tradingMode !== 'PAPER',
-      market: () => this.marketSnapshot(symbol), news: () => getNewsFor(symbol, this.cfg), whale: () => getWhaleBriefing(symbol) });
+      market: () => this.marketSnapshot(symbol, forceMarket), news: () => getNewsFor(symbol, this.cfg), whale: () => getWhaleBriefing(symbol) });
     this.collectionLast = collected.trace;
     return collected;
   }
@@ -1194,17 +1250,7 @@ export class Desk extends EventEmitter {
       const opposingSide = pos?.side === 'LONG' ? 'SHORT' : 'LONG';
       const conviction = { opposing: !!pos && this.agents.market.stance === opposingSide && this.agents.strategist.stance === opposingSide, verified: false, evidenceRefs: [`agent:market:${id}`, `agent:strategist:${id}`] };
       const exitRefs = exitEvidenceRefs(snap, pos?.entryScenarioId);
-      const closeInputFor = (snapshot: MarketSnapshot, position: Position): CloseEvaluationInput => {
-        const momentum = snapshotMomentum(snapshot);
-        const quote = this.venueAccount?.status === 'confirmed' ? position.mark : undefined;
-        return { snapshot, position, momentum, mode: this.cfg.tradingMode, executionVenue, nativeExecutionQuote: quote,
-          invalidationLevel: position.invalidationLevel,
-          strategyInvalidated: this.invalidated(position.side, strategyVote(snapshot.candles, { roc5: momentum.roc5, orderflow: momentum.flowVerified ? snapshot.orderflow : undefined })),
-          evidence: evidenceFor(position.side, null, snapshot, quote ?? null), news: newsBriefing, whale: whaleBriefing, whalePolicy: WHALE_OBSERVATION_POLICY,
-          netUnrealizedPnl: estimatedNetUnrealized({ unrealizedPnl: position.unrealizedPnl, entry: position.entry, mark: quote ?? snapshot.last, qty: position.qty, takerFee: this.cfg.risk.takerFee }),
-          targetLevel: typeof position.decisionEvidence?.target1 === 'number' ? position.decisionEvidence.target1 : undefined,
-          guards: { dailyLossHit: this.day.lossHit, equity: this.venueAccount?.status === 'confirmed' ? this.venueAccount.equity : this.cfg.tradingMode === 'PAPER' ? this.book.balance + this.book.unrealized : null, safetyNet: this.book.safetyNet } };
-      };
+      const closeInputFor = (snapshot: MarketSnapshot, position: Position) => this.closeEvidenceInput(snapshot, position, newsBriefing, whaleBriefing, jevEvidence, nativeRules ?? undefined);
       const closeInput = pos ? { ...closeInputFor(snap, pos), conviction } : null;
       const netUnrealizedPnl = closeInput?.netUnrealizedPnl ?? undefined;
       const strategyInvalidated = closeInput?.strategyInvalidated ?? false;
@@ -1757,7 +1803,7 @@ export class Desk extends EventEmitter {
       this.executionEvent('closing', symbol, { side: p.side, requestedQty: p.qty, positionId: p.id });
       if (live) {
         if (live.hasPending(symbol, p.side, 'open') || live.hasPending(symbol, p.side, 'close')) { this.addLog({ kind: 'warn', text: `${symbol}: entry or close still being reconciled; no overlapping order sent.` }); continue; }
-        const cause = /kill/i.test(reason) ? 'OWNER_KILL' : ownedOnly ? 'AI_DEBATE' : /owner/i.test(reason) ? 'OWNER_MANUAL' : 'UNKNOWN';
+        const cause = ownedOnly ? 'AI_DEBATE' : /kill/i.test(reason) ? 'OWNER_KILL' : /owner/i.test(reason) ? 'OWNER_MANUAL' : 'UNKNOWN';
         details.exitCause = cause;
         const f = await live.close(symbol, p.side, p.qty, p.id, cause);
         this.addLog({ kind: 'trade', agent: 'execution', text: `LIVE close ${symbol}: ${f.note}` });
@@ -2001,7 +2047,7 @@ export class Desk extends EventEmitter {
   }
 
   /** Agent and manual tickets use the same profile SL/TP and allocation as internal debates. */
-  async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId; confidence?: number }, autonomous = true): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
+  async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId; confidence?: number; riskApproval?: 'APPROVE'; reason?: string }, autonomous = true): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
     const symbol = normSymbol(o.symbol);
     const agentEntry = autonomous || o.confidence != null;
     const confidenceBlock = agentEntry ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, o.confidence) : null;
@@ -2018,7 +2064,7 @@ export class Desk extends EventEmitter {
     const gate = applyRiskGate({ leverage: o.leverage ?? this.cfg.risk.maxLeverage }, this.cfg.risk);
     this.scorecard.verdict(); this.scorecard.riskDecision(gate.decision);
     await this.say('risk', `${gate.decision}. Ticket ${o.side} ${symbol} checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
-    const res = await this.executeOpen(symbol, o.side, price, { ...gate, autonomous: agentEntry, confidence: o.confidence, tp: o.tp ?? null, stop: o.stop ?? null, evidence: { action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', reason: 'Direct ticket', stop: o.stop, tp: o.tp, source: snap.source } }, snap.example);
+    const res = await this.executeOpen(symbol, o.side, price, { ...gate, autonomous: agentEntry, confidence: o.confidence, tp: o.tp ?? null, stop: o.stop ?? null, evidence: { action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', reason: o.reason ?? 'Direct ticket', confidence: o.confidence, riskApproval: o.riskApproval, stop: o.stop, tp: o.tp, source: snap.source } }, snap.example);
     if (res.ok) this.scorecard.opened(symbol, { side: o.side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
     this.verdicts.unshift({ id: `gb-${Date.now().toString(36)}`, symbol, action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', riskDecision: gate.decision, executed: res.ok, reason: res.ok ? 'Grok Bot ticket' : res.reason, disagreement: this.score().disagreement, camps: this.score().camps, example: snap.example, at: Date.now(), ...(res.order ? { order: res.order } : {}) });
     this.verdicts = this.verdicts.slice(0, 50);

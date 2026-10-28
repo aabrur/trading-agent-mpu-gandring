@@ -30,6 +30,7 @@ import { mountSetupRoutes, mountOpsRoutes, localClient } from './setup/routes.js
 import { DeskLead } from './channels/supervisor.js';
 import { createInboundApp, mountChannelSetupRoutes } from './channels/routes.js';
 import { APP_VERSION, checkUpdate, applyUpdate } from './updater.js';
+import { AgentCloseSchema, AgentOpenSchema } from './schemas.js';
 
 const sameSecret = (given: string, want: string) => {
   const a = Buffer.from(given), b = Buffer.from(want);
@@ -389,6 +390,18 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const target = String(req.body?.symbol ?? '').slice(0, 20);
     if (!target) return res.status(400).json({ ok: false, error: 'symbol or all' });
     res.json(await desk.gbClose(target, String(req.body?.reason ?? 'Grok Bot close').slice(0, 120)));
+  });
+  app.post('/api/gb/agent-close', async (req, res) => {
+    if (!gbAuth(req, res)) return;
+    const parsed = AgentCloseSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ ok: false, error: 'A typed CLOSE trigger, positionId, expectedQty and reason are required.' });
+    res.json(await desk.agentClose(parsed.data));
+  });
+  app.post('/api/gb/agent-open', async (req, res) => {
+    if (!gbAuth(req, res)) return;
+    const parsed = AgentOpenSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ ok: false, error: 'Agent OPEN requires Risk APPROVE, actual Lead confidence and a reason.' });
+    res.json(await desk.gbOpen({ ...parsed.data, agent: 'execution' }, true));
   });
   app.post('/api/gb/scan', (req, res) => { if (!gbAuth(req, res)) return; res.json({ ok: true, findings: desk.scan() }); });
   app.get('/api/gb/lessons', (req, res) => {

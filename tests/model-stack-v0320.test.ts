@@ -107,6 +107,15 @@ describe('Frontier Model Stack & Capabilities (v0.0.0.3.20)', () => {
       }
     }
 
+    const researchSchema = getTaskJsonSchema('research') as {
+      required: string[];
+      properties: { sourceDetails: { type: string; items: { required: string[]; additionalProperties: boolean } } };
+    };
+    expect(researchSchema.required).toContain('sourceDetails');
+    expect(researchSchema.properties.sourceDetails.type).toBe('array');
+    expect(researchSchema.properties.sourceDetails.items.required).toEqual(['label', 'citation']);
+    expect(researchSchema.properties.sourceDetails.items.additionalProperties).toBe(false);
+
     // Explicit check for risk schema
     const riskSchema = getTaskJsonSchema('risk') as any;
     expect(riskSchema.type).toBe('object');

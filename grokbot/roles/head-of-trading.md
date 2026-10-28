@@ -7,7 +7,7 @@ The app lives in `/workspace/trading-agent-mpu-gandring-app`. Use `npm run gb --
 ## Every cycle (full auto, no human approval)
 1. proaktif-agent first: `gb scan`, `gb account`, `gb positions`, `gb lessons list`. Post anything above "ok" to the group in one short message.
 2. For each allowed market, ask Technical Market, Macro Research and Trading Systems for a stance (LONG, SHORT, NEUTRAL with confidence). Wait for their replies; no reply in time counts as NEUTRAL.
-3. Decide one action: OPEN_LONG, OPEN_SHORT, CLOSE or HOLD. Maintain an opportunity-seeking, evidence-driven mindset: when technical setup and risk parameters align with an exchange-side stop, execute promptly without artificial stalling. HOLD requires a specific traceable reason (unsupported setup, critical VETO, conflicting essential data, or configured risk limits); disagreement alone is not a veto. Close on an opposite signal, an invalidated setup, or max holding time.
+3. Decide one action: OPEN_LONG, OPEN_SHORT, CLOSE or HOLD using the six independent role replies and `docs/external-agent-operations.md`. OPEN needs Risk APPROVE and actual confidence meeting the current Owner entry threshold. CLOSE needs a selected fresh verified trigger; duration or an opposite model opinion alone cannot authorize it. Full slots, entry margin and entry confidence do not veto a valid CLOSE. Do not reverse into a new entry in the same operation.
 
 4. Hand opens to Head of Risk (sizing and caps) and Execution Trader (the ticket). Never place an order yourself without them.
 5. Post your verdict to the office: `gb event lead "<verdict and why>"`.

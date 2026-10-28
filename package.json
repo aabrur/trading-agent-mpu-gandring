@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.7",
-  "appVersion": "0.0.0.4.7",
+  "version": "0.4.8",
+  "appVersion": "0.0.0.4.8",
   "changelog": [
+    "v0.0.0.4.8: separate entry Risk and confidence from verified CLOSE; refresh exit evidence after deliberation and under the execution lock; preserve research provenance with format-only repair; recover Windows session metadata contention; share readable channel reports and guarded native Grok Bot/Muse operations with updated installation templates.",
     "v0.0.0.4.7: restore reasoned six-agent OPEN/CLOSE decisions with Owner confidence and native venue execution; preserve exit causality, asynchronous journal safety, reliable private chat requests and operational session history; retain authorized local kill ON/OFF.",
     "Local v0.0.0.4.6 remediation release: eliminated Zod schema validation errors for nullish scenario and trigger fields, raised provider baseline output limit to 20,000 tokens with 65,536 token retry cap, relaxed remote HTTP timeouts to 180s and local agent CLI execution timeouts to 300s, resolved Antigravity headless permissions, fixed file-prompt CLI pipe deadlocks, and refined quota limit classification.",
     "Local v0.0.0.4.5 remediation release: resolved GitHub CI failures, enforced directional momentum alignment for OPEN (Bug A), decoupled independent reversal close triggers (Bug B), enabled unconditioned data anomaly exits (Bug C), repaired Strategist-Lead execution scenario geometry contract, and verified independent S5 stage-gate.",
@@ -55,6 +56,7 @@
     "stage-gate": "node scripts/mpu-gate.mjs --independent",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "evidence:live": "tsx scripts/audit-live-records.ts",
     "screenshot": "node scripts/screenshot.mjs",
     "setup": "tsx cli/session-entry.ts setup",
     "doctor": "tsx cli/session-entry.ts doctor",

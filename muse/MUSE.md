@@ -13,10 +13,10 @@ Mode in Muse is always **local** (`APP_MODE=local`). Do not follow
 `grokbot/BOOTSTRAP.md` here; the Grok Bot mode runs on the Grok Bot
 computer, not on the Muse computer.
 
-This file is written against repo version 0.4.3. Commands and flags
-change between versions, so verify commands against your installed
-version (`npm run gb -- help`, `npm run doctor`) before relying on
-them. This file is not financial advice. LIVE trading uses real
+Read [the shared current operating contract](../docs/external-agent-operations.md)
+with this manual. Verify the installed checkout with `git rev-parse HEAD`,
+`npm run gb -- help` and masked runtime context before relying on commands.
+This file is not financial advice. LIVE trading uses real
 money, can lose it, and profit is never guaranteed.
 
 ## 0. Template first: how this file relates to the Muse template
@@ -41,7 +41,11 @@ runs.
   file later. Until then, the separate template file is the
   authoritative template.
 
-## 1. Environment facts in Muse (verified, do not retest from scratch)
+## 1. Recorded Muse environment observations (verify on each new computer)
+
+These are observations from an earlier deployment, not guarantees about
+every Muse account or VM. Discover the current platform's native agent,
+scheduling, secure-input and browser capabilities before installation.
 
 - The Muse computer is a Linux VM (root, systemd PID 1). The home
   directory persists across restarts and VM replacements. Running
@@ -337,11 +341,11 @@ common source of accidents:
 
 ### DEX (Aster, Hyperliquid): agent wallet authorization
 
-1. Generate a new agent keypair locally with the repo's own
-   method (for example through viem), inside the clone, and
-   delete any temporary script afterward. The agent key is
-   written to `.env` by the application's mechanism, chmod 600.
-   It is never printed and never enters chat.
+1. Use the supported Connect wallet flow in `server/wallet.ts`,
+   approved by the Owner's wallet signature, or the existing hidden
+   delegated-key setup flow. Never generate a keypair in an ad hoc
+   script. If the required secure Owner interaction is unavailable,
+   keep PAPER and report the blocked key step.
 2. Authorize exactly that agent address on the exchange site,
    from the owner's main wallet, with exactly these permissions:
    perp trading ON, spot OFF, withdraw OFF. Agent validity
@@ -364,13 +368,10 @@ common source of accidents:
    revokes them personally on the venue's wallet API page. Remind
    once. Never revoke on their behalf.
 
-Muse note: the office Connect wallet wizard cannot be opened
-from a phone, because the office is loopback-bound and the Muse
-browser rejects loopback. For DEX, the path that works from a
-phone is: generate the agent keypair locally through shell, then
-the owner authorizes that agent address on the exchange site
-from the phone browser. Never ask the owner to paste any key in
-chat as a shortcut.
+Muse note: if the platform cannot open the loopback wallet wizard
+and no supported secure signing/input flow exists, wallet setup is
+blocked. Never publish the office, invent a signer script, or ask
+for a key in chat to work around that limitation.
 
 ### CEX (Bybit, Binance, OKX): locally signed keys
 
@@ -479,16 +480,21 @@ data are an escalation, not a note.
 
 | Seat | Filled by in Muse | Job |
 | --- | --- | --- |
-| Lead | Main Muse agent | Decides, executes, and owns the cycle |
+| Lead | Main Muse agent | Chairs the debate, decides and owns the cycle |
 | Market | Subagent | Price, structure, momentum, and data quality |
 | Research | Subagent | News, regime, funding, open interest, and anomalies |
 | Strategist | Subagent | Setup, direction, and entry or exit reason |
 | Risk | Subagent | Guard veto, sizing, stop, and daily limit |
-| Execution | Main Muse agent | Runs open and close through `gb`, verifies stops |
+| Execution | Independent native Muse agent | Reviews venue/protection, submits guarded tickets and verifies fills |
 
 The desk's internal seats stay mock with auto trading OFF.
-Mock never trades. Real decisions and real execution come from
-the driver above.
+Create or resume five independent native role agents, with main Muse
+as Lead. Exactly six roles participate; no seventh coordinator and no
+Lead silently filling missing specialist seats. Reuse role ids across
+cycles. If native spawning/resuming is unavailable, report the blocker.
+Load the shared operating contract and each canonical role file in
+`grokbot/roles/`, adapting only the Muse workspace path. The platform's
+own agents supply reasoning; mock seats never supply driver decisions.
 
 ### Desk tools used every cycle
 
@@ -499,18 +505,21 @@ Run all commands from the clone directory:
 | Live, mode, venue, kill switch | `curl -s http://127.0.0.1:8787/api/health` |
 | Balance, equity, daily loss stop | `npm run gb -- account --json` |
 | Open positions plus stop and TP | `npm run gb -- positions --json` |
-| Market and venue rules | `npm run gb -- market --json` |
-| Candles | `npm run gb -- candles --json` |
-| Size preview (required before open) | `npm run gb -- size --json` |
-| Open a position | `npm run gb -- open --json` |
-| Close a position | `npm run gb -- close --json` |
+| Market observations | `npm run gb -- research market_snapshot <symbol> --json` |
+| Candles | `npm run gb -- candles <symbol> 15m --json` |
+| Size preview (required before open) | `npm run gb -- size <symbol> <LONG\|SHORT> <entry> --json` |
+| Open a position | `npm run gb -- open <symbol> <LONG\|SHORT> --risk-approval APPROVE --confidence <Lead confidence> --reason "<verdict>" --json` |
+| Fresh exit evidence | `npm run gb -- close-review <symbol> --trigger <selected trigger> --json` |
+| Verified autonomous CLOSE | `npm run gb -- close <symbol> --trigger <reason> --position-id <id> --expected-qty <qty> --reason "<verdict>" --json` |
+| Current settings and tools | `npm run gb -- context --json`, `npm run gb -- capabilities --json` |
+| Shared formatted reports | `npm run gb -- summary <status\|positions\|scan\|scorecard>` |
 | Proactive scan (adds log lines only) | `npm run gb -- scan --json` |
 | Lessons | `npm run gb -- lessons list --json` |
 | Chat channel status | `npm run channels -- status` |
 | Kill switch status | `curl -s http://127.0.0.1:8787/api/ops/kill` |
 | Last reports | `curl -s http://127.0.0.1:8787/api/reports` |
 
-Note on open: `gb open` takes no stop flag. The stop comes
+Note on open: legacy stop flags do not override the profile. Protection comes
 from the desk profile (`DEFAULT_STOP_PCT` for SL and TP) and the
 venue adapter places a STOP_MARKET order. After every open,
 re-read positions and confirm a stop is present. If any position
@@ -528,28 +537,31 @@ The cycle:
 1. Verify first: health (mode, venue, kill switch off), account
    (Money Trade, Per Order, daily limit not hit), and open
    positions. If health fails, the mode or venue is wrong, the
-   kill switch is on, or the daily limit is hit, the cycle stops
-   at HOLD and reports the reason. If health fails, relaunch
-   once with the Section 7 server command, wait, and re-check
-   health. Never use `npm run trade` for the relaunch.
-2. Spawn the four role subagents in parallel: Market, Research,
-   Strategist, Risk. Give each a short task, verified data, and
+   kill switch is on, stop new trading and report the reason.
+   A daily loss stop blocks OPEN; existing positions still receive
+   legitimate CLOSE review. Never restart LIVE without explicit Owner
+   authority or use `npm run trade` for a driver relaunch.
+2. Resume five independent peers: Market, Research, Strategist,
+   Risk and Execution. Give each a short task, verified data, and
    clear limits. Use every available data source: desk market
    and candles, web research for news, regime, funding, and open
    interest context, and any configured connector data.
    Cross-check any implausible feed reading against a second
-   source before acting on it. If one subagent fails, the Lead
-   analyzes alone. Never skip a cycle just because a subagent
-   failed.
+   source before acting on it. Retry a failed specialist in its own
+   role; record missing replies honestly. Incomplete entry approval
+   remains HOLD. Lead never replaces all specialist seats.
 3. The Lead decides. HOLD is the default. At most one action per
    tradeable symbol per cycle: OPEN_LONG, OPEN_SHORT, CLOSE, or
    HOLD. Open only a clear setup with a defined invalidation,
    a live venue price, a passing size preview, and a Per Order
    that clears the venue minimum. Never chase, never average
    down, never open without a confirmed stop, never open a
-   monitor-only symbol. A Risk veto, or subagent disagreement
-   without a clear edge, means HOLD.
-4. Execute only through `gb open` or `gb close`, then re-read
+   monitor-only symbol. OPEN requires Risk APPROVE and the saved
+   Owner entry-confidence threshold; disagreement alone is not a veto.
+   CLOSE does not require entry confidence, margin or free slots.
+4. Execution follows the shared contract: approved `gb open`, or
+   fresh `gb close-review` followed by typed-trigger `gb close`. Never
+   fall back to the manual close route on autonomous refusal. Re-read
    positions to confirm the new state (symbol, side, quantity,
    entry, stop, TP).
 5. If a trade opened or closed, append one line to the daily log
@@ -565,10 +577,12 @@ passed. A position stays open across many cycles while the
 thesis and momentum still hold, the stop is not hit, and there
 is no anomaly. Close only when one of these is true:
 
-- Momentum has run strongly and early profit taking is justified.
-- The market has reversed or the thesis is invalidated.
-- There is an anomaly (data, venue, or market behavior that is
-  not normal).
+- The selected typed engine trigger is verified on fresh evidence,
+  including measured reversal or structural invalidation. Early take
+  profit requires known net profit and observed exhaustion/target
+  evidence. Free-text anomalies and large gains alone cannot authorize
+  an exit. Refresh after Lead deliberation and again through guarded
+  execution, retaining the 30-second freshness limit.
 - The stop or take profit on the exchange is hit (this can
   happen at any time, not only during a cycle, because the stop
   and TP rest on the exchange).

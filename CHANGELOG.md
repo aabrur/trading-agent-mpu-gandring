@@ -2,6 +2,28 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.8] - 2026-10-29
+
+### Fixed
+- Apply entry Risk approval and the saved Owner confidence threshold only to OPEN. Verified CLOSE remains possible when every position slot is occupied or entry margin is exhausted.
+- Refresh CLOSE evidence after Risk and Lead deliberation, recompute structure and momentum from the current snapshot, match the selected typed trigger, and repeat position/trigger validation under the reduce-only execution lock with a 30-second freshness limit.
+- Preserve full Research citations while abbreviating bounded source labels. Schema-only repairs reuse completed answers without new web research or changes to vote, confidence, argument or source identity.
+- Retry recoverable Windows session-metadata replacement failures asynchronously with bounded backoff. Preserve last-good data and terminal metadata, and report persistence failures accurately.
+
+### Added
+- Guarded native-agent OPEN with explicit Risk APPROVE and actual Lead confidence; verified agent CLOSE bound to a position id, quantity and fresh typed trigger. Existing manual Owner commands retain their own paths.
+- Shared CLI CLOSE review and formatted status, positions, scan and scorecard summaries for Grok Bot and Muse teams on their own computers.
+- A privacy-preserving, offline audit of owner-retained mainnet records. Positive matched realized-PnL records are distinguished from complete net profitability and independent exchange attestation.
+
+### Changed
+- Updated Grok Bot installation/group setup and native Muse six-agent templates. Preserve saved settings on upgrades, reuse existing agents/routines, and keep Execution independent from Lead.
+- Rewrote the README around installation, the current six-role workflow, Jev's optional role, verifiable evidence and credential privacy. Historical changelog entries below describe their release at that time, not the current execution contract.
+
+## [v0.0.0.4.7] - 2026-10-28
+
+- Restored the reasoned six-agent decision flow, saved Owner confidence policy and native venue execution.
+- Preserved exit causality, asynchronous execution-journal safety, operational chat history and authorized local kill-switch ON/OFF behavior.
+
 ## [v0.0.0.4.6] - 2026-10-28
 
 ### Fixed

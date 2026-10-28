@@ -4,7 +4,11 @@ Muse Code is Meta's terminal coding agent. The command is `muse`. It runs on **t
 
 Do not follow [grokbot/BOOTSTRAP.md](../grokbot/BOOTSTRAP.md). Grok Bot clones and trades on Grok Bot's computer. Muse Code sets up and runs the desk on this machine.
 
-The consumer app at https://muse.ai/ is a personal agent. For this repo use **Muse Code**.
+This page covers the **Muse Code CLI**. For the native Muse personal-agent
+team on Muse's own computer, use [the Muse operating manual](../muse/MUSE.md)
+and [the Muse installation template](../muse/muse-template.md). That pattern
+uses main Muse plus five native peers and the shared external-agent contract;
+it does not require installing the Muse Code CLI or exposing the Office.
 
 Official product page: https://dev.meta.ai/
 

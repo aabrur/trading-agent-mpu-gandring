@@ -11,6 +11,16 @@ const entryFields = {
   invalidationLevel: nullToUndefined(z.number().finite().positive()),
 };
 export const CloseTriggerSchema = z.enum(['INVALIDATION_HIT', 'MOMENTUM_REVERSAL', 'SENTIMENT_REVERSAL', 'OPPOSING_NEWS', 'WHALE_EXIT', 'EXCHANGE_STOP_OR_TP', 'EARLY_TAKE_PROFIT', 'DATA_ANOMALY_OR_CONFLICT', 'GUARD_THREATENED']);
+export const AgentCloseSchema = z.object({
+  symbol: z.string().regex(/^[A-Z0-9]{3,24}$/), closeTrigger: CloseTriggerSchema,
+  positionId: z.string().min(1).max(160), expectedQty: z.number().finite().positive(),
+  reason: z.string().min(1).max(300)
+}).strict();
+export const AgentOpenSchema = z.object({
+  symbol: z.string().regex(/^[A-Z0-9]{3,24}$/), side: z.enum(['LONG', 'SHORT']),
+  confidence: z.number().finite().min(0).max(1), riskApproval: z.literal('APPROVE'),
+  reason: z.string().min(1).max(300)
+}).strict();
 const exitSignal = nullToUndefined(z.object({ kind: z.enum(['MOMENTUM_EXHAUSTION', 'TARGET_COMPLETE']), evidenceRefs: z.array(z.string().min(1).max(160)).min(1).max(10) }));
 
 export const OpinionSchema = z.object({

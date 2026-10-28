@@ -1,0 +1,12 @@
+{
+  "release": "v0.0.0.4.8",
+  "auditDate": "2026-10-29",
+  "timezone": "Asia/Jakarta",
+  "provenance": "owner-retained local mainnet records",
+  "independentExchangeAttestation": false,
+  "mainnetRecordsObserved": true,
+  "positiveMatchedClosePnlObserved": true,
+  "completeNetRealizedProfitVerified": false,
+  "unreadableEvidence": false,
+  "privacy": "No credentials, account identifiers, balances, amounts, positions or raw records included."
+}

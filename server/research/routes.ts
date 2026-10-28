@@ -10,6 +10,8 @@ import { getSuiEventBriefing } from '../market/sui.js';
 import type { CapabilityStatus } from './catalog.js';
 import { PerpBacktestEngine, type StrategyFn } from './backtest.js';
 import type { PITCandle } from './pit.js';
+import { runCommand } from '../channels/commands.js';
+import { CloseTriggerSchema } from '../schemas.js';
 
 const Input = z.object({ name: z.enum(RESEARCH_TOOLS.map(tool => tool.name) as [string, ...string[]]), symbol: z.string().regex(/^[A-Z0-9]{3,24}$/), objective: z.string().max(500).optional() }).strict();
 
@@ -30,6 +32,21 @@ const BacktestInput = z.object({
   })).min(3).optional()
 }).strict();
 export function mountResearchRoutes(app: express.Express, desk: Desk) {
+  app.get('/api/research/close-review', async (req, res) => {
+    const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
+    if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });
+    const input = z.object({ symbol: z.string().regex(/^[A-Z0-9]{3,24}$/), trigger: CloseTriggerSchema.optional() }).strict().safeParse(req.query);
+    if (!input.success) return res.status(400).json({ ok: false, error: 'A supported symbol and optional typed trigger are required.' });
+    try { res.json(await desk.closeReview(input.data.symbol, input.data.trigger)); }
+    catch { res.status(503).json({ ok: false, error: 'CLOSE evidence unavailable; no authorization inferred.' }); }
+  });
+  app.get('/api/research/summary', async (req, res) => {
+    const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
+    if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });
+    const command = z.enum(['status', 'positions', 'scan', 'scorecard']).safeParse(req.query.command);
+    if (!command.success) return res.status(400).json({ ok: false, error: 'Choose status, positions, scan or scorecard.' });
+    res.json({ ok: true, text: await runCommand(desk, { ok: true, cmd: command.data, confirm: false }) });
+  });
   app.get('/api/research/capabilities', (req, res) => {
     const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
     if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });

@@ -15,6 +15,7 @@ import { normSymbol } from '../server/commands.js';
 import { safe } from '../server/redact.js';
 import { sizeTicket, type SizeBook } from '../server/sizing.js';
 import { RESEARCH_TOOLS } from '../server/research/catalog.js';
+import { CloseTriggerSchema } from '../server/schemas.js';
 
 export interface GbResult { ok: boolean; data: unknown; text: string }
 interface Deps { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; baseUrl?: string }
@@ -26,6 +27,8 @@ const HELP = `Trading Agent Mpu Gandring agent CLI (no model keys needed)
   npm run gb -- research <tool> <symbol> [--objective "..."]   shared backend research; tools: ${RESEARCH_TOOLS.map(t => t.name).join(', ')}
   npm run gb -- backtest <symbol> [--strategy simple_momentum|buy_and_hold] [--capital 1000 --slippage-bps 5 --leverage 3]   simulation only
   npm run gb -- reports                             recent reports without generating a new report
+  npm run gb -- summary <status|positions|scan|scorecard>   same formatted reports as chat channels
+  npm run gb -- close-review <symbol> [--trigger <reason>]   fresh verified exit triggers and current position identity
   npm run gb -- market <symbol> [--source venue]     price, 24h change, funding
   npm run gb -- candles <symbol> [tf] [--limit 100] [--source venue]  closed candles, tf: ${TIMEFRAMES.join(' ')}
   npm run gb -- venues                               venues (CEX and DEX), key type, env names, status
@@ -33,8 +36,9 @@ const HELP = `Trading Agent Mpu Gandring agent CLI (no model keys needed)
   npm run gb -- positions                            open positions with entry, stop, take profit, PnL
   npm run gb -- split [--balance B --safety S --n N] Money Trade = balance - safety net, per order = Money Trade / N
   npm run gb -- size <symbol> <LONG|SHORT> <entry> [--leverage L]   preview profile SL/TP (read only)
-  npm run gb -- open <symbol> <LONG|SHORT> [--leverage L] [--confidence 0..1] [--reason "..."]   uses profile SL/TP
-  npm run gb -- close <symbol|all>
+  npm run gb -- open <symbol> <LONG|SHORT> --risk-approval APPROVE --confidence <Lead confidence> --reason "..."   agent entry, uses Owner profile
+  npm run gb -- close <symbol> --trigger <reason> --position-id <id> --expected-qty <qty> --reason "..."   verified agent exit
+  npm run gb -- close <symbol|all>                    explicit Owner manual close only
   npm run gb -- report                               write a report now
   npm run gb -- event <agent> <text> [--stance LONG|SHORT|NEUTRAL --confidence 0.6 --target risk]
   npm run gb -- scan                                 proaktif-agent scan (loss cap, stops, errors, stale data, safety net)
@@ -81,6 +85,19 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
 
   switch (cmd) {
     case undefined: case 'help': case '--help': return ok({ help: HELP }, HELP);
+    case 'summary': {
+      if (!['status', 'positions', 'scan', 'scorecard'].includes(args[0])) return fail('usage: summary <status|positions|scan|scorecard>');
+      const r = await call('GET', `/api/research/summary?command=${args[0]}`);
+      return r.ok ? ok(r, r.text) : fail(r.error ?? 'Summary unavailable', r);
+    }
+    case 'close-review': {
+      const symbol = normSymbol(args[0] ?? '');
+      if (!symbol) return fail('usage: close-review <symbol>');
+      if (flags.trigger && !CloseTriggerSchema.safeParse(flags.trigger).success) return fail('Choose a supported typed CLOSE trigger.');
+      const query = new URLSearchParams({ symbol, ...(flags.trigger ? { trigger: flags.trigger } : {}) });
+      const r = await call('GET', `/api/research/close-review?${query}`);
+      return r.ok ? ok(r, JSON.stringify(r, null, 2)) : fail(r.error ?? 'CLOSE review unavailable', r);
+    }
     case 'health': case 'context': case 'capabilities': case 'reports': {
       const paths = { health: '/api/health', context: '/api/state', capabilities: '/api/research/capabilities', reports: '/api/reports' };
       const r = await call('GET', paths[cmd]);
@@ -170,6 +187,14 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     case 'open': {
       const s = normSymbol(args[0] ?? ''); const side = String(args[1] ?? '').toUpperCase();
       if (!s || (side !== 'LONG' && side !== 'SHORT')) return fail('usage: open <symbol> <LONG|SHORT> [--leverage L] [--confidence 0..1]');
+      if (flags['risk-approval'] !== undefined) {
+        const confidence = num(flags.confidence);
+        if (flags['risk-approval'] !== 'APPROVE' || confidence == null || !Number.isFinite(confidence) || confidence < 0 || confidence > 1 || !flags.reason) return fail('Agent OPEN requires --risk-approval APPROVE, actual --confidence 0..1 and --reason.');
+        if (flags.leverage || flags.stop || flags.tp) return fail('Agent OPEN uses the saved Owner leverage and profile SL/TP; remove ticket overrides.');
+        const body = { symbol: s, side, confidence, riskApproval: 'APPROVE', reason: flags.reason };
+        const r = viaOps ? await call('POST', '/api/ops/agent-open', body) : await call('POST', '/api/gb/agent-open', body, true);
+        return { ok: !!r.ok, data: r, text: r.ok ? r.reply : `not opened: ${r.reply ?? r.error}` };
+      }
       const body: Record<string, unknown> = { symbol: s, side };
       if (viaOps) body.autonomous = true;
       for (const k of ['stop', 'tp', 'leverage', 'confidence'] as const) if (num(flags[k]) !== undefined) body[k] = num(flags[k]);
@@ -180,6 +205,15 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     }
     case 'close': {
       if (!args[0]) return fail('usage: close <symbol|all>');
+      if (flags.trigger || flags['position-id'] || flags['expected-qty']) {
+        const trigger = CloseTriggerSchema.safeParse(flags.trigger);
+        const symbol = normSymbol(args[0]);
+        const expectedQty = num(flags['expected-qty']);
+        if (!symbol || args[0].toLowerCase() === 'all' || !trigger.success || !flags['position-id'] || !expectedQty || !Number.isFinite(expectedQty) || !flags.reason) return fail('Agent CLOSE requires one symbol, --trigger, --position-id, --expected-qty and --reason.');
+        const body = { symbol, closeTrigger: trigger.data, positionId: flags['position-id'], expectedQty, reason: flags.reason };
+        const r = viaOps ? await call('POST', '/api/ops/agent-close', body) : await call('POST', '/api/gb/agent-close', body, true);
+        return { ok: !!r.ok, data: r, text: r.reply ?? r.error };
+      }
       const r = viaOps ? await call('POST', '/api/ops/close', { symbol: args[0] }) : await call('POST', '/api/gb/close', { symbol: args[0], reason: flags.reason }, true);
       return { ok: !!r.ok, data: r, text: r.reply ?? r.error };
     }

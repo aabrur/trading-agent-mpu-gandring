@@ -149,7 +149,7 @@ describe('autonomous exits', () => {
     const spy = vi.spyOn(market, 'getSnapshot').mockResolvedValue(snap);
     const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', MIN_ENTRY_CONFIDENCE_PCT: '90' });
     const base = makeCaller(cfg);
-    const d = new Desk(cfg, (r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'CLOSE', confidence: 0.1, reason: 'Confirmed reversal.' })) : base(r), { reportsDir: null, killFile: null, jevEnv: { JEV_ENABLED: 'false' } });
+    const d = new Desk(cfg, (r) => r.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'CLOSE', closeTrigger: 'MOMENTUM_REVERSAL', confidence: 0.1, reason: 'Confirmed reversal.' })) : base(r), { reportsDir: null, killFile: null, jevEnv: { JEV_ENABLED: 'false' } });
     d.book.open({ symbol: 'BTCUSDT', side, qty: 1, entry: 150, stop: side === 'LONG' ? 100 : 200, tp: null, margin: 75, leverage: 2 });
     try {
       const verdict = await d.runDebate('BTCUSDT');
