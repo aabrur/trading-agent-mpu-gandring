@@ -2,6 +2,19 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.9] - 2026-10-29
+
+### Fixed
+- Preserve completed candles at exact close boundaries and normalize duplicate timestamps before the existing consecutive-history filter. Keep native candle volume precision in CLI JSON.
+- Expose requested and actual venue, endpoint, network, instrument, unit and availability separately for candles, ticker, depth and tape. Distinguish Aster symbol listing failures from missing candle observations.
+- Preserve the first kill-switch activation origin and append sanitized local forensic records. Surface audit failures and avoid duplicate emergency closes.
+
+### Added
+- Prior-20 median relative volume as a diagnostic alongside the unchanged mean-based ranking, and separate publication/event/window provenance for macro metrics.
+- Read-only checkout/process identity, canonical profile hashes, saved/active threshold provenance and native routine phase limits. Routine instructions follow the Owner's existing cadence.
+- Explicit opt-in Aster LIMIT GTC entry with durable pending-order state, idempotent reconciliation, cancellation, optional Owner-selected expiration, partial-fill protection and recovery of late fills after protective closes. MARKET remains the default.
+- Audit, compatibility, test evidence and a private Grok Bot host read-only checklist. Offline checks do not establish live fills, installed native profiles or trading performance.
+
 ## [v0.0.0.4.8] - 2026-10-29
 
 ### Fixed

@@ -125,8 +125,8 @@ describe('mpu version CLI', () => {
   it('retrieves structured version information', async () => {
     const info = await getVersionInfo();
     expect(info.app).toBe('trading-agent-mpu-gandring');
-    expect(info.appVersion).toBe('0.0.0.4.8');
-    expect(info.version).toBe('0.4.8');
+    expect(info.appVersion).toBe('0.0.0.4.9');
+    expect(info.version).toBe('0.4.9');
     expect(info.node).toMatch(/^v\d+/);
     expect(['win32', 'linux', 'darwin']).toContain(info.platform);
     expect(typeof info.tradingMode).toBe('string');
@@ -137,7 +137,7 @@ describe('mpu version CLI', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation((msg) => { logs.push(String(msg)); });
     try {
       await runVersionCli(['--short']);
-      expect(logs.some(l => l.trim() === '0.0.0.4.8')).toBe(true);
+      expect(logs.some(l => l.trim() === '0.0.0.4.9')).toBe(true);
     } finally {
       spy.mockRestore();
     }
@@ -150,8 +150,8 @@ describe('mpu version CLI', () => {
       await runVersionCli(['--json']);
       const output = logs.join('\n');
       const parsed = JSON.parse(output);
-      expect(parsed.appVersion).toBe('0.0.0.4.8');
-      expect(parsed.version).toBe('0.4.8');
+      expect(parsed.appVersion).toBe('0.0.0.4.9');
+      expect(parsed.version).toBe('0.4.9');
       expect(parsed.app).toBe('trading-agent-mpu-gandring');
     } finally {
       spy.mockRestore();
