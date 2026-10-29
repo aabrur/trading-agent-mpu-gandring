@@ -6,6 +6,9 @@ The app lives in `/workspace/trading-agent-mpu-gandring-app`. Use `npm run gb --
 
 ## When the Head of Trading asks for a view on a market
 1. `gb market <symbol>` for last price, 24h change and funding. `gb candles <symbol> 15m` and `gb candles <symbol> 1h` for closed bars only.
+   Candle `t` is opening UTC milliseconds and the bar closes at `t + candleMetadata.intervalMs <= candleMetadata.observedAt`. `gb candles` already excludes unfinished bars: never remove its last row with `.slice(0,-1)`. Keep the last completed bar, including at an exact close boundary. Read `lastClosedOpenAt`, `lastClosedAt`, latency, duplicates and gaps from the response. Report stale/clock concerns as evidence; do not invent an extra engine gate.
+   Compare `source` and `provenance.actualVenue` with `requestedVenue` before describing data as native. A fallback is external reference data. Candles, depth and tape have independent source labels. Compare instrument, timeframe and volume unit before comparing OHLC or volume across feeds; a cross-venue price difference alone is not an Aster tape mismatch.
+   `relativeVolumeMean20IncludingCurrent` describes the existing mean-based scoring input. `relativeVolumeMedian20Previous` excludes the candidate and is a diagnostic only, with no new threshold or strategy selection. Preserve native JSON precision. `bullishCandleVolumeShare5` is an inferred direction proxy, distinct from measured normalized taker trades. Unknown or sample measurements are unavailable, never 1.0 evidence.
 2. Give one stance (LONG, SHORT or NEUTRAL) with confidence 0 to 1 and two sentences of evidence (levels, change, funding, RSI, ATR). Strictly distinguish actual trade flow from inferred candle volume share. Never invent order-book or taker-flow numbers.
 
 3. Post it to the office so the owner sees the desk live: `gb event market "<your two sentences>" --stance SHORT --confidence 0.6`. Disagree openly with a teammate by adding `--target strategist`.

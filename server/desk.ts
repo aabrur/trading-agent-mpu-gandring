@@ -1,6 +1,6 @@
 import { emptyChats, newChatRun, recoverChatRun, type ChatRun, type ChatResult } from './personal-chat.js';
-import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS } from './exchange/types.js';
-import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE } from './killswitch.js';
+import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS, roundEntryLimit, type EntryOrder } from './exchange/types.js';
+import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE, appendKillAudit, killContext, type KillContext } from './killswitch.js';
 import { adapterRules, publicRules, type InstrumentRules } from './exchange/rules.js';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -55,6 +55,8 @@ import { researchPolicy } from './providers/research-policy.js';
 import { localResearchActivity } from './providers/local.js';
 import { getSuiEventBriefing } from './market/sui.js';
 import { recordDiagnostic, withDiagnosticContext, type DiagnosticInput } from './session-log.js';
+import { captureRuntimeIdentity, runtimeEvidence } from './runtime-evidence.js';
+import { readEnv } from '../cli/envfile.js';
 
 const executionFailure = (reason: string) => /unknown symbol|invalid.symbol|unsupported.*instrument/i.test(reason) ? 'REJECTED_INVALID_SYMBOL' : /min.*notional|minimum.*(?:size|order)|under.*minimum/i.test(reason) ? 'REJECTED_MIN_NOTIONAL' : /quote|price unavailable|stale/i.test(reason) ? 'PRICE_UNAVAILABLE' : /reconcil|pending|no record|unknown/i.test(reason) ? 'PENDING' : /cancel/i.test(reason) ? 'CANCELLED' : 'EXECUTION_BLOCKED';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -74,8 +76,10 @@ export interface DeskOptions { operationalSessionId?: string; settingsFile?: str
 export interface Activity { at: number; kind: 'opened' | 'closed' | 'skipped'; symbol: string; detail: string }
 export interface ExternalSignal { source: 'tradingview'; symbol: string; action: string; price: number | null; note: string; at: number }
 export interface AgentEvent { agent: AgentId; kind: 'say' | 'status' | 'proposal'; text?: string; stance?: Stance; confidence?: number; status?: AgentStatus; target?: AgentId; symbol?: string; action?: Action; stop?: number; tp?: number }
+interface PendingEntryResult { clientId: string; state: string; filledQty: number; remainingQty: number }
 
 export class Desk extends EventEmitter {
+  private readonly runtimeIdentity = captureRuntimeIdentity();
   agents: Record<AgentId, AgentView>;
   tickers: Record<string, Ticker> = {};
   opportunities: Record<string, { score: number; reasons: string[]; at: number; source: string }> = {};
@@ -101,6 +105,7 @@ export class Desk extends EventEmitter {
   paused = false;
   killed = false;
   killedAt = 0;
+  killAuditConfirmed: boolean | null = null;
   /** Everything the desk opened, closed or skipped, with the reason. Feeds the periodic reports. */
   activity: Activity[] = [];
   autoState = { on: false, intervalMin: 0, nextAt: 0, cycles: 0, lastCycleAt: 0, running: false, stopping: false, trigger: null as 'manual' | 'scheduled' | null, completedAt: 0 };
@@ -481,9 +486,11 @@ export class Desk extends EventEmitter {
     const split = this.book.split();
     return {
       app: 'Trading Agent Mpu Gandring', version: APP_VERSION, mode: this.cfg.tradingMode, appMode: this.cfg.appMode,
+      runtime: this.runtimeDiagnostics(),
+      executionCapabilities: this.executionCapabilities(), pendingEntries: this.pendingEntries(),
       conversations: this.listConversations(),
       operationalChat: { id: this.activeChatSession().id, startedAt: this.activeChatSession().startedAt, recovered: !!this.activeChatSession().recovered },
-      live: this.cfg.live, killed: this.killed,
+      live: this.cfg.live, killed: this.killed, killAuditConfirmed: this.killAuditConfirmed,
       venue: this.cfg.exchange.name ? { name: this.cfg.exchange.name, label: VENUE_LABEL[this.cfg.exchange.name], kind: VENUE_KIND[this.cfg.exchange.name], experimental: ADAPTER_STATUS[this.cfg.exchange.name] === 'experimental' } : null,
       dailyLoss: { limitPct: this.cfg.risk.dailyLossLimitPct, startEquity: this.day.startEquity, hit: this.day.lossHit },
       trading: { network: this.cfg.live?.network ?? null, profile: this.cfg.tradingProfile, values: tradingSettingsFromConfig(this.cfg) },
@@ -548,6 +555,47 @@ export class Desk extends EventEmitter {
       for (const item of manifest.filter(item => item.category === 'read-only research')) item.limitations.push(`Native Codex research policy: ${policy.enabled ? 'enabled' : 'disabled'}.`);
     } catch { manifest.push({ name: 'native_research_policy', category: 'configuration', available: false, configured: false, status: 'ERROR', requiresApiKey: false, limitations: ['Research policy is invalid.'] }); }
     return manifest;
+  }
+  runtimeDiagnostics() {
+    let saved: Record<string, string> | undefined;
+    try { if (this.opts.settingsFile) saved = readEnv(this.opts.settingsFile); } catch { /* Saved state is unavailable; active cfg remains authoritative. */ }
+    return runtimeEvidence(this.cfg, this.runtimeIdentity, saved);
+  }
+  executionCapabilities() {
+    const adapter = this.opts.executor?.adapter;
+    const venue = adapter?.name ?? this.cfg.exchange.name;
+    const gtc = venue === 'aster' && (!adapter || adapter.restingLimitGtcEntry === true && !!adapter.cancelOrder);
+    const feature = (implemented: boolean) => ({ implementation: implemented ? 'IMPLEMENTED' as const : 'UNAVAILABLE' as const, liveVerification: 'UNVERIFIED_LIVE' as const });
+    return {
+      venue, network: adapter?.network ?? this.cfg.live?.network ?? null,
+      executorAttached: !!adapter, credentialsConfigured: this.cfg.exchange.hasMainnetKeys || this.cfg.exchange.hasTestnetKeys,
+      permissionObservation: 'NOT_OBSERVED_BY_THIS_READ' as const,
+      marketEntry: feature(!!venue), restingLimitGtcEntry: feature(gtc),
+      exchangeRestingStop: feature(adapter ? adapter.exchangeStops === true : !!venue), exchangeTakeProfit: feature(adapter ? adapter.exchangeStops === true : !!venue),
+      getOrder: feature(!!venue), cancelEntry: feature(gtc), partialFillHandling: feature(gtc),
+      defaultEntry: 'MARKET' as const,
+      limitation: 'Implementation and configured credentials do not attest a live fill, permissions, or exchange-side protection.'
+    };
+  }
+  pendingEntries() {
+    return (this.opts.executor?.journal.intents ?? []).filter(i => i.kind === 'open' && i.entry?.type === 'LIMIT_GTC').map(i => ({
+      clientId: i.clientId, orderId: i.orderId ?? i.record?.orderId ?? null, symbol: i.symbol, side: i.side,
+      state: i.entryState ?? 'UNKNOWN', requestedQty: i.requestedQty, filledQty: i.record?.filledQty ?? 0,
+      remainingQty: Math.max(0, i.requestedQty - (i.record?.filledQty ?? 0)), limitPrice: i.limitPrice ?? null,
+      venue: i.venue, network: i.network, createdAt: i.at, updatedAt: i.updatedAt ?? i.at,
+      expireAt: i.entry?.type === 'LIMIT_GTC' ? i.entry.expireAt ?? null : null, stop: i.stop, tp: i.tp ?? null,
+      protectionStatus: i.protectionStatus ?? 'unknown'
+    }));
+  }
+  async cancelEntry(clientId: string) {
+    return this.exclusive(async () => {
+      if (!this.opts.executor) return { ok: false, reply: 'No execution venue is attached.' };
+      try {
+        const result = await this.opts.executor.cancelEntry(clientId);
+        await this.syncLiveUnlocked(); this.changed();
+        return { ok: !result.pending, reply: result.note, entry: this.pendingEntries().find(i => i.clientId === clientId) };
+      } catch (error) { return { ok: false, reply: safe((error as Error).message) }; }
+    });
   }
   capabilitiesSummary(): Array<{ name: string; status: string; category: string }> {
     return this.capabilities().map((c) => ({ name: c.name, status: c.status, category: c.category }));
@@ -829,7 +877,7 @@ export class Desk extends EventEmitter {
     const symbols = [...new Set([...this.cfg.watchlist, ...this.cfg.auto.symbols])];
     await Promise.all(symbols.map(async (s) => {
       let snap;
-      try { snap = await getSnapshot(s, live, this.cfg.tradingMode !== 'PAPER'); }
+      try { snap = await getSnapshot(s, live, this.cfg.tradingMode !== 'PAPER', this.cfg.live?.network ?? 'mainnet'); }
       catch { this.recordError('market', `${s}: live market data unavailable`); return; }
       if (snap.source !== 'sample') allSample = false;
       else if (live !== 'sample' && snap.errors.length) this.recordError('market', `${s}: ${snap.errors.join('; ')}`);
@@ -958,7 +1006,8 @@ export class Desk extends EventEmitter {
         p.unrealizedPnl = v.unrealizedPnl;
         p.mark = v.mark ?? (v.entry + (v.side === 'LONG' ? 1 : -1) * v.unrealizedPnl / v.qty);
         try {
-          let protection = await ex.adapter.protection(v.symbol, v.side);
+          const gtc = evidence?.entry?.type === 'LIMIT_GTC';
+          let protection = await ex.adapter.protection(v.symbol, v.side, gtc ? v.qty : undefined);
           if (!protection.stop && p.ownership !== 'external' && p.stop > 0 && !this.killed) {
             const guard = await ex.ensureOnExchange(v.symbol, v.side, v.qty, p.stop, p.tp);
             if (guard.status === 'unknown') {
@@ -966,7 +1015,7 @@ export class Desk extends EventEmitter {
               this.addLog({ kind: 'warn', text: `${v.symbol}: ${guard.note}` });
               continue;
             }
-            protection = { stop: guard.stop, tp: guard.tp };
+            protection = gtc ? await ex.adapter.protection(v.symbol, v.side, v.qty) : { stop: guard.stop, tp: guard.tp };
             this.addLog({ kind: 'warn', text: `${v.symbol}: ${guard.note || 'exchange protection reconciled'}` });
             if (!guard.ok) {
               const remaining = (await ex.adapter.positions(v.symbol)).find((x) => x.side === v.side);
@@ -974,7 +1023,8 @@ export class Desk extends EventEmitter {
               p.qty = remaining.qty; p.margin = remaining.margin ?? remaining.qty * remaining.entry / p.leverage;
             }
           }
-          p.protectionStatus = protection.stop ? 'confirmed' : 'missing';
+          p.protectionStatus = !protection.stop ? 'missing' : !gtc || protection.stopCoverage === 'net_position' || protection.stopCoverage === 'quantity' && (protection.stopQty ?? 0) >= v.qty ? 'confirmed' : 'unknown';
+          if (gtc && evidence) evidence.protectionStatus = p.protectionStatus;
           p.stop = protection.stop ?? 0; p.tp = protection.tp;
         } catch { p.protectionStatus = 'unknown'; }
       }
@@ -1703,12 +1753,22 @@ export class Desk extends EventEmitter {
   }
 
   /** The only way an order is opened, paper or live. Risk gate result in, money split and caps applied here. */
-  async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number; orderSizePct?: number; tp?: number | null; stop?: number | null; evidence?: Record<string, unknown>; autonomous?: boolean; confidence?: number; entryContract?: { scenario: EntryScenario; snapshot: MarketSnapshot; rule: ReturnType<typeof strategyVote>; evidence: DebateEvidence } }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
+  async executeOpen(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number; orderSizePct?: number; tp?: number | null; stop?: number | null; evidence?: Record<string, unknown>; autonomous?: boolean; confidence?: number; entry?: EntryOrder; clientId?: string; entryContract?: { scenario: EntryScenario; snapshot: MarketSnapshot; rule: ReturnType<typeof strategyVote>; evidence: DebateEvidence } }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order']; pending?: PendingEntryResult }> {
     return this.exclusive(() => this.executeOpenUnlocked(symbol, side, price, gate, example));
   }
-  private async executeOpenUnlocked(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number; orderSizePct?: number; tp?: number | null; stop?: number | null; evidence?: Record<string, unknown>; autonomous?: boolean; confidence?: number; entryContract?: { scenario: EntryScenario; snapshot: MarketSnapshot; rule: ReturnType<typeof strategyVote>; evidence: DebateEvidence } }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order'] }> {
+  private async executeOpenUnlocked(symbol: string, side: 'LONG' | 'SHORT', price: number, gate: { sizeFactor: number; leverage: number; stopPct: number; orderSizePct?: number; tp?: number | null; stop?: number | null; evidence?: Record<string, unknown>; autonomous?: boolean; confidence?: number; entry?: EntryOrder; clientId?: string; entryContract?: { scenario: EntryScenario; snapshot: MarketSnapshot; rule: ReturnType<typeof strategyVote>; evidence: DebateEvidence } }, example = false): Promise<{ ok: boolean; line: string; reason: string; order?: Verdict['order']; pending?: PendingEntryResult }> {
     const live = this.opts.executor;
     const no = async (reason: string) => { this.executionEvent('failed', symbol, { reason }); this.scorecard.fill(false); this.note('skipped', symbol, `${side}: ${reason}`); await this.say('execution', `No fill. ${reason}`, false, 'idle'); return { ok: false, line: `No fill. ${reason}`, reason }; };
+    if (gate.entry?.type === 'LIMIT_GTC' && (!live || live.adapter.name !== 'aster' || live.adapter.restingLimitGtcEntry !== true)) return no('Resting LIMIT_GTC is implemented only for an attached Aster executor; no simulated MARKET substitution.');
+    if (gate.clientId) {
+      const existing = live?.journal.intents.find(i => i.clientId === gate.clientId);
+      if (existing) {
+        if (existing.kind !== 'open' || existing.entry?.type !== 'LIMIT_GTC' || gate.entry?.type !== 'LIMIT_GTC' || existing.symbol !== symbol || existing.side !== side || existing.entry.price !== gate.entry.price || existing.entry.expireAt !== gate.entry.expireAt) return no('Client id already belongs to a different entry.');
+        await this.syncLiveUnlocked();
+        const pending = this.pendingEntries().find(i => i.clientId === gate.clientId)!;
+        return { ok: true, line: `Existing LIMIT_GTC ${pending.state}; no entry resubmitted.`, reason: '', pending };
+      }
+    }
     if (this.cfg.tradingMode !== 'PAPER' && !live) return no('Execution venue unavailable. No local fill is allowed in TESTNET or LIVE.');
     if (gate.autonomous) { const blocked = entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, gate.confidence); if (blocked) return no(blocked); }
     if (this.killed) return no('Kill switch is on.');
@@ -1726,8 +1786,9 @@ export class Desk extends EventEmitter {
     if (this.checkDay()) return no(`Daily loss stop is on (${this.cfg.risk.dailyLossLimitPct}% for today).`);
     if (live && example) return no('Refusing an exchange order on sample data.');
     if (live?.hasPending(symbol, side, 'open')) return no('An entry for this symbol is still being reconciled. No duplicate order sent.');
+    let venueQuote: { last: number; fetchedAt: number } | null = null;
     if (live) {
-      try { price = await live.adapter.ticker(symbol); if (!(price > 0) || !Number.isFinite(price)) throw new Error('invalid venue quote'); }
+      try { price = await live.adapter.ticker(symbol); if (!(price > 0) || !Number.isFinite(price)) throw new Error('invalid venue quote'); venueQuote = { last: price, fetchedAt: Date.now() }; }
       catch (e) { return no(`Execution venue price unavailable: ${safe((e as Error).message)}`); }
     }
     const contract = gate.entryContract;
@@ -1745,6 +1806,7 @@ export class Desk extends EventEmitter {
       rules = null; // paper: guessed lot step, the plan says so
     }
     if (live && rules?.status && rules.status !== 'TRADING') return no(`${symbol} is ${rules.status} on the exchange, not TRADING.`);
+    if (gate.entry?.type === 'LIMIT_GTC') price = roundEntryLimit(gate.entry.price, rules!.tickSize, side);
     const plan = planOrder({
       balance: this.book.balance, equity: round2(this.book.balance + this.book.unrealized), safetyNet: this.book.safetyNet, n: this.book.n, openPositions: slots.occupiedSlots, usedMargin: this.book.usedMargin,
       price, side, availableFunds: live ? this.venueAccount?.available : undefined, orderSizePct: gate.orderSizePct ?? this.cfg.risk.orderSizePct, adjustToVenueMinimum: Boolean(live), sizeFactor: 1, leverage: Math.max(1, Math.floor(Math.min(gate.leverage, this.cfg.risk.maxLeverage))),
@@ -1758,8 +1820,16 @@ export class Desk extends EventEmitter {
     this.executionEvent('submitted', symbol, { side, requestedQty: plan.qty });
     if (this.killed || this.paused) return no(this.killed ? 'Kill switch is on.' : 'Desk is paused.');
     if (live) {
-      const fill = await live.open({ symbol, side, qty: plan.qty, stop: plan.stop, tp: plan.tp, leverage: plan.leverage });
+      let fill;
+      try { fill = await live.open({ symbol, side, qty: plan.qty, stop: plan.stop, tp: plan.tp, leverage: plan.leverage, ...(gate.entry ? { entry: gate.entry, clientId: gate.clientId } : {}) }); }
+      catch (error) { if (gate.entry?.type === 'LIMIT_GTC') return no(safe((error as Error).message)); throw error; }
       this.addLog({ kind: 'trade', agent: 'execution', text: `LIVE ${symbol} ${side}: ${fill.note}` });
+      if (gate.entry?.type === 'LIMIT_GTC' && fill.pending && !fill.qty) {
+        await this.checkpoint(); this.setStatus('execution', 'idle'); this.changed();
+        const pending = this.pendingEntries().find(i => i.clientId === fill.clientId)!;
+        this.executionEvent('pending', symbol, { clientId: fill.clientId, entryState: fill.entryState, filledQty: 0 });
+        return { ok: fill.entryState === 'RESTING', line: fill.note, reason: fill.entryState === 'RESTING' ? '' : fill.note, pending };
+      }
       if (!fill.ok) { this.recordError('exchange', `${symbol} ${side} not filled: ${fill.note}`); return no(`LIVE order not filled. ${fill.note}`); }
       entry = fill.avgPrice ?? price; qty = fill.qty; tag = fill.remainingQty > 0 ? 'LIVE partial fill' : 'LIVE fill';
       clientId = fill.clientId; confirmedPrice = fill.avgPrice != null;
@@ -1767,7 +1837,7 @@ export class Desk extends EventEmitter {
     }
     const p = this.book.open({ symbol, side, qty, entry, stop: plan.stop, tp: plan.tp, margin: live ? qty * entry / plan.leverage : plan.margin, leverage: plan.leverage });
     const currentScope = this.accountScope();
-    p.decisionEvidence = { ...(gate.evidence ?? {}), ...(live ? { nativeQuote: { venue: live.adapter.name, symbol, last: price, source: `${live.adapter.name}.ticker`, fetchedAt: Date.now(), certainty: 'confirmed' } } : {}), decisionId: (gate.evidence as any)?.decisionId ?? (gate.evidence as any)?.id, positionId: p.id, accountScope: currentScope };
+    p.decisionEvidence = { ...(gate.evidence ?? {}), ...(live ? { nativeQuote: { venue: live.adapter.name, symbol, last: venueQuote!.last, source: `${live.adapter.name}.ticker`, fetchedAt: venueQuote!.fetchedAt, certainty: 'confirmed' } } : {}), ...(gate.entry ? { entryOrder: gate.entry, plannedEntryPrice: price } : {}), decisionId: (gate.evidence as any)?.decisionId ?? (gate.evidence as any)?.id, positionId: p.id, accountScope: currentScope };
     p.ownership = 'managed'; p.entryStatus = confirmedPrice ? 'confirmed' : 'estimated';
     if (contract) {
       p.invalidationLevel = contract.scenario.invalidationLevel ?? undefined;
@@ -1795,6 +1865,11 @@ export class Desk extends EventEmitter {
     const live = this.opts.executor;
     if (this.cfg.tradingMode !== 'PAPER' && !live) throw new Error('Execution venue unavailable. No local close is allowed in TESTNET or LIVE.');
     if (ownedOnly && (this.killed || this.paused)) return [];
+    if (live) {
+      const pending = live.journal.intents.filter(i => i.symbol === symbol && i.kind === 'open' && i.entry?.type === 'LIMIT_GTC' && !live.journal.settled(i));
+      for (const intent of pending) await live.cancelEntry(intent.clientId);
+      if (pending.length) await this.syncLiveUnlocked();
+    }
     this.setStatus('execution', 'executing'); this.changed();
     const out: ClosedTrade[] = [];
     for (const p of this.book.positions.filter((x) => x.symbol === symbol && (!ownedOnly || x.ownership !== 'external'))) {
@@ -1802,7 +1877,8 @@ export class Desk extends EventEmitter {
       let details: Parameters<PaperBook['close']>[3] = {};
       this.executionEvent('closing', symbol, { side: p.side, requestedQty: p.qty, positionId: p.id });
       if (live) {
-        if (live.hasPending(symbol, p.side, 'open') || live.hasPending(symbol, p.side, 'close')) { this.addLog({ kind: 'warn', text: `${symbol}: entry or close still being reconciled; no overlapping order sent.` }); continue; }
+        const ambiguousMarketEntry = live.journal.intents.some(i => i.symbol === symbol && i.kind === 'open' && i.entry?.type !== 'LIMIT_GTC' && !live.journal.settled(i));
+        if (ambiguousMarketEntry || live.hasPending(symbol, p.side, 'close')) { this.addLog({ kind: 'warn', text: `${symbol}: entry or close still being reconciled; no overlapping order sent.` }); continue; }
         const cause = ownedOnly ? 'AI_DEBATE' : /kill/i.test(reason) ? 'OWNER_KILL' : /owner/i.test(reason) ? 'OWNER_MANUAL' : 'UNKNOWN';
         details.exitCause = cause;
         const f = await live.close(symbol, p.side, p.qty, p.id, cause);
@@ -1830,12 +1906,25 @@ export class Desk extends EventEmitter {
   async closeStale(_shouldContinue: () => boolean = () => true): Promise<number> { return 0; }
 
   /** Kill switch: stop debating, cancel and flatten everything. Persisted: stays on across restarts until the local Owner explicitly releases it. */
-  async kill(): Promise<string[]> {
-    if (this.killInFlight) return this.killInFlight;
+  async kill(context: KillContext = killContext()): Promise<string[]> {
+    if (this.killInFlight) {
+      const audit = appendKillAudit(this.killFilePath, { at: Date.now(), ...context, result: 'already_active', reason: 'Emergency flatten already in progress' });
+      if (!audit.ok) this.killAuditConfirmed = false;
+      const notes = await this.killInFlight;
+      return audit.ok ? notes : [...notes, 'Kill audit append failed; forensic confirmation is unavailable.'];
+    }
     this.killed = true; this.paused = true; this.stopFlag = true; this.autoState.on = false;
+    if (this.killFilePath && this.killAuditConfirmed === null) this.killAuditConfirmed = true;
     if (!this.killedAt) this.killedAt = Date.now();
     let persistenceWarning = '';
-    try { writeKill(this.killFilePath, { at: this.killedAt, reason: 'kill switch' }); } catch (e) { persistenceWarning = `Kill switch is ON in memory but persistence failed: ${safe((e as Error).message)}. Restart retention is UNKNOWN.`; this.addLog({ kind: 'warn', text: persistenceWarning }); }
+    try {
+      const persisted = writeKill(this.killFilePath, { at: this.killedAt, reason: 'kill switch', ...context });
+      if (!persisted.audit.ok) persistenceWarning = 'Kill switch is ON but audit append failed. Forensic confirmation is unavailable.';
+    } catch (e) {
+      persistenceWarning = `Kill switch is ON in memory but persistence failed: ${safe((e as Error).message)}. Restart retention is UNKNOWN.`;
+      appendKillAudit(this.killFilePath, { at: Date.now(), ...context, result: 'persistence_failed', reason: 'Kill activation could not be persisted' });
+    }
+    if (persistenceWarning) { this.killAuditConfirmed = false; this.addLog({ kind: 'warn', text: persistenceWarning }); }
     this.killInFlight = this.exclusive(async () => {
       if (this.opts.executor) {
         const result = await this.opts.executor.killAll(this.book.positions.map((p) => p.symbol));
@@ -1845,7 +1934,12 @@ export class Desk extends EventEmitter {
       const prices = Object.fromEntries(Object.values(this.tickers).map((t) => [t.symbol, t.last]));
       return this.book.closeAll(prices, 'kill switch').map((c) => `${c.symbol} closed, ${c.realizedPnl} USDT`);
     });
-    const notes = await this.killInFlight.finally(() => { this.killInFlight = null; });
+    const notes = await this.killInFlight.catch(error => {
+      appendKillAudit(this.killFilePath, { at: Date.now(), ...context, result: 'flatten_failed', reason: 'Emergency flatten failed; exchange outcome requires reconciliation' });
+      throw error;
+    }).finally(() => { this.killInFlight = null; });
+    const audit = appendKillAudit(this.killFilePath, { at: Date.now(), ...context, result: 'flatten_completed', reason: 'Emergency flatten completed; see execution journal for exchange results' });
+    if (!audit.ok) { this.killAuditConfirmed = false; notes.push('Kill audit append failed; forensic confirmation is unavailable.'); }
     if (persistenceWarning) notes.unshift(persistenceWarning);
     this.addLog({ kind: 'warn', text: `KILL SWITCH. ${notes.join('; ') || 'nothing open'}. Release with the local Office OFF button or npm run unkill -- --yes.` });
     void sendToGrokBot(this.cfg, 'command', { command: 'kill', notes }, this.opts.outboxPath);
@@ -1859,6 +1953,7 @@ export class Desk extends EventEmitter {
     if (this.killFilePath) clearKill(this.killFilePath);
     this.killed = false;
     this.killedAt = 0;
+    this.killAuditConfirmed = null;
     this.paused = false;
     this.stopFlag = false;
     this.addLog({ kind: 'info', text: 'Kill switch released. Auto Trading selection is unchanged; no order was submitted.' });
@@ -2047,8 +2142,12 @@ export class Desk extends EventEmitter {
   }
 
   /** Agent and manual tickets use the same profile SL/TP and allocation as internal debates. */
-  async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId; confidence?: number; riskApproval?: 'APPROVE'; reason?: string }, autonomous = true): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; notes: string[] }> {
+  async gbOpen(o: { symbol: string; side: 'LONG' | 'SHORT'; stop?: number | null; tp?: number | null; leverage?: number | null; agent?: AgentId; confidence?: number; riskApproval?: 'APPROVE'; reason?: string; entry?: EntryOrder; clientId?: string }, autonomous = true): Promise<{ ok: boolean; reply: string; order?: Verdict['order']; pending?: PendingEntryResult; notes: string[] }> {
     const symbol = normSymbol(o.symbol);
+    if (o.clientId && this.opts.executor?.journal.intents.some(i => i.clientId === o.clientId)) {
+      const result = await this.executeOpen(symbol, o.side, 0, { sizeFactor: 1, leverage: this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct, entry: o.entry, clientId: o.clientId });
+      return { ok: result.ok, reply: result.line, pending: result.pending, notes: [] };
+    }
     const agentEntry = autonomous || o.confidence != null;
     const confidenceBlock = agentEntry ? entryConfidenceReason(this.cfg.risk.minEntryConfidencePct, o.confidence) : null;
     if (confidenceBlock) return { ok: false, reply: confidenceBlock, notes: [] };
@@ -2064,12 +2163,12 @@ export class Desk extends EventEmitter {
     const gate = applyRiskGate({ leverage: o.leverage ?? this.cfg.risk.maxLeverage }, this.cfg.risk);
     this.scorecard.verdict(); this.scorecard.riskDecision(gate.decision);
     await this.say('risk', `${gate.decision}. Ticket ${o.side} ${symbol} checked against the code caps.${gate.notes.length ? ' ' + gate.notes.join(' ') : ''}`, false, 'idle');
-    const res = await this.executeOpen(symbol, o.side, price, { ...gate, autonomous: agentEntry, confidence: o.confidence, tp: o.tp ?? null, stop: o.stop ?? null, evidence: { action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', reason: o.reason ?? 'Direct ticket', confidence: o.confidence, riskApproval: o.riskApproval, stop: o.stop, tp: o.tp, source: snap.source } }, snap.example);
-    if (res.ok) this.scorecard.opened(symbol, { side: o.side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
-    this.verdicts.unshift({ id: `gb-${Date.now().toString(36)}`, symbol, action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', riskDecision: gate.decision, executed: res.ok, reason: res.ok ? 'Grok Bot ticket' : res.reason, disagreement: this.score().disagreement, camps: this.score().camps, example: snap.example, at: Date.now(), ...(res.order ? { order: res.order } : {}) });
+    const res = await this.executeOpen(symbol, o.side, price, { ...gate, autonomous: agentEntry, confidence: o.confidence, tp: o.tp ?? null, stop: o.stop ?? null, entry: o.entry, clientId: o.clientId, evidence: { action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', reason: o.reason ?? 'Direct ticket', confidence: o.confidence, riskApproval: o.riskApproval, stop: o.stop, tp: o.tp, source: snap.source } }, snap.example);
+    if (res.ok && !res.pending) this.scorecard.opened(symbol, { side: o.side, stances: Object.fromEntries(DEBATERS.map((a) => [a, this.agents[a].stance])), riskDecision: gate.decision }, res.order?.positionId);
+    this.verdicts.unshift({ id: `gb-${Date.now().toString(36)}`, symbol, action: o.side === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT', riskDecision: gate.decision, executed: res.ok && !res.pending, reason: res.pending ? `LIMIT_GTC ${res.pending.state}` : res.ok ? 'Grok Bot ticket' : res.reason, disagreement: this.score().disagreement, camps: this.score().camps, example: snap.example, at: Date.now(), ...(res.order ? { order: res.order } : {}) });
     this.verdicts = this.verdicts.slice(0, 50);
     this.changed();
-    return { ok: res.ok, reply: res.ok ? res.line : res.reason, order: res.order, notes: gate.notes };
+    return { ok: res.ok, reply: res.ok ? res.line : res.reason, order: res.order, ...(res.pending ? { pending: res.pending } : {}), notes: gate.notes };
   }
 
   async gbClose(target: string, reason = 'Grok Bot close'): Promise<{ ok: boolean; reply: string; closed: ClosedTrade[] }> {

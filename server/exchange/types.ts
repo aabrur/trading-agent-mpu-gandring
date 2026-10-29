@@ -54,14 +54,23 @@ export interface PermissionReport {
   /** Set when an opt-in, exchange-checked exception was used to accept the key. Logged loudly at startup. */
   exception?: string;
 }
-export interface PlaceOrder { symbol: string; side: Side; qty: number; stop: number; tp: number | null; leverage: number; clientId: string }
+/** Omitting entry preserves the existing MARKET contract. Expiration is Owner-selected, never implicit. */
+export type EntryOrder = { type: 'MARKET' } | { type: 'LIMIT_GTC'; price: number; expireAt?: number };
+export function roundEntryLimit(price: number, tick: number, side: Side): number {
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(tick) || tick <= 0) throw new ExchangeError('invalid limit price or venue tick');
+  const ticks = price / tick;
+  return Number(((side === 'LONG' ? Math.floor(ticks + 1e-9) : Math.ceil(ticks - 1e-9)) * tick).toPrecision(15));
+}
+export interface PlaceOrder { symbol: string; side: Side; qty: number; stop: number; tp: number | null; leverage: number; clientId: string; entry?: EntryOrder }
 export interface OrderRecord { clientId: string; orderId: string; status: 'filled' | 'partial' | 'open' | 'rejected' | 'cancelled' | 'unknown'; filledQty: number; avgPrice: number | null; raw?: string }
 /** Stop loss and take profit that rest ON THE EXCHANGE (attached to the position or as reduce-only trigger orders). */
-export interface Protection { stop: number | null; tp: number | null }
+export interface Protection { stop: number | null; tp: number | null; stopCoverage?: 'net_position' | 'quantity' | 'unknown'; stopQty?: number | null }
 export interface ProtectRequest { symbol: string; side: Side; qty: number; stop: number | null; tp: number | null; clientId: string }
 export interface VenuePosition { leverage?: number; margin?: number; mark?: number; symbol: string; side: Side; qty: number; entry: number; stop: number | null; tp: number | null; unrealizedPnl: number }
 
 export interface ExchangeAdapter {
+  /** Explicit adapter support; a TypeScript entry field alone does not establish support. */
+  readonly restingLimitGtcEntry?: boolean;
   financialHistory?(query: FinancialQuery): Promise<FinancialPage>;
   readonly name: ExchangeName;
   readonly network: Network;
@@ -76,7 +85,7 @@ export interface ExchangeAdapter {
   instrumentRules?(symbol: string): Promise<InstrumentRules>;
   /** Last traded or mid price, public read. */
   ticker(symbol: string): Promise<number>;
-  /** One send. Market entry with the stop loss (and take profit) attached. Never retried by the adapter. */
+  /** One send. MARKET remains default; opt-in LIMIT_GTC protection follows observed fills through LiveExecutor. Never retried. */
   placeOrder(o: PlaceOrder): Promise<{ orderId: string | null }>;
   /** Reads the exchange's own record for a client id. This is the source of truth after a send. */
   getOrder(symbol: string, clientId: string): Promise<OrderRecord>;
@@ -91,7 +100,7 @@ export interface ExchangeAdapter {
    */
   readonly exchangeStops: boolean;
   /** Reads the stop loss and take profit resting on the exchange for an open position. */
-  protection(symbol: string, side: Side): Promise<Protection>;
+  protection(symbol: string, side: Side, requiredQty?: number): Promise<Protection>;
   /** Places only the legs given (stop and/or take profit) as exchange-side reduce-only triggers. One send per leg. */
   protect(p: ProtectRequest): Promise<void>;
 }

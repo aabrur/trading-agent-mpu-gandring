@@ -82,6 +82,12 @@ describe('live options observations', () => {
 });
 
 describe('no fabricated live fallbacks', () => {
+  it('retains the latest closed bar and contiguous history when the venue repeats a row', () => {
+    const now = Date.UTC(2026, 9, 29, 8, 30);
+    const bars = sampleCandles('BTCUSDT', 21, now - 15 * 60_000);
+    const repeated = [...bars, bars[10]].reverse();
+    expect(closedLiveCandles(repeated, 15 * 60_000, now)).toEqual(bars);
+  });
   it('preserves small-price precision in measured technical levels and orderbook microprice', async () => {
     const candles = sampleCandles('BTCUSDT', 250).map(candle => ({ ...candle, o: candle.o / 1e10, h: candle.h / 1e10, l: candle.l / 1e10, c: candle.c / 1e10 }));
     const summary = buildTechnicalSummary({ '15m': candles });

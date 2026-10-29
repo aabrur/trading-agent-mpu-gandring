@@ -9,6 +9,7 @@ export interface NormalizedTrade {
 }
 
 export interface FlowWindow {
+  rawVolumes: { takerBuyVol: number; takerSellVol: number; delta: number; buySellRatio: number | null };
   windowMs: number;
   startAt: number | null;
   endAt: number | null;
@@ -150,6 +151,7 @@ export function summarizeOrderflow(
     if (state.truncatedBefore !== null && state.truncatedBefore > startAt) coverageMs = Math.min(coverageMs, Math.max(0, now - state.truncatedBefore));
     const delta = takerBuyVol - takerSellVol;
     return {
+      rawVolumes: { takerBuyVol, takerSellVol, delta, buySellRatio: takerSellVol > 0 ? takerBuyVol / takerSellVol : null },
       windowMs, startAt: trades[0]?.time ?? null, endAt: trades.at(-1)?.time ?? null,
       coverageMs, coveragePct: round(coverageMs / windowMs * 100, 2), partial: coverageMs < windowMs * 0.95,
       tradesCount: trades.length, takerBuyVol: round(takerBuyVol), takerSellVol: round(takerSellVol),

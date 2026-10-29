@@ -216,6 +216,9 @@ describe('Desk Lead and inbound routes', () => {
     const { inBase, desk } = await boot();
     expect(await (await discordReq(inBase, { type: 1 })).json()).toEqual({ type: 1 });
     expect((await discordReq(inBase, { type: 1 }, false)).status).toBe(401);
+    const status = { type: 2, data: { name: 'status' }, member: { user: { id: '3333' } } };
+    expect((await discordReq(inBase, status, false)).status).toBe(401);
+    expect((await (await discordReq(inBase, status)).json()).data.content).toMatch(/Desk Lead status: PAPER/);
     expect((await (await discordReq(inBase, { type: 2, data: { name: 'positions' }, member: { user: { id: '9999' } } })).json()).data.content).toMatch(/allowlist/);
     expect((await (await discordReq(inBase, { type: 2, data: { name: 'kill' }, member: { user: { id: '3333' } } })).json()).data.content).toMatch(/kill confirm/);
     expect(desk.killed).toBe(false);

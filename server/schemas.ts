@@ -16,11 +16,17 @@ export const AgentCloseSchema = z.object({
   positionId: z.string().min(1).max(160), expectedQty: z.number().finite().positive(),
   reason: z.string().min(1).max(300)
 }).strict();
+export const EntryOrderSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('MARKET') }).strict(),
+  z.object({ type: z.literal('LIMIT_GTC'), price: z.number().finite().positive(), expireAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }).strict()
+]);
+export const EntryClientIdSchema = z.string().regex(/^[.A-Z:/a-z0-9_-]{1,32}$/);
 export const AgentOpenSchema = z.object({
   symbol: z.string().regex(/^[A-Z0-9]{3,24}$/), side: z.enum(['LONG', 'SHORT']),
   confidence: z.number().finite().min(0).max(1), riskApproval: z.literal('APPROVE'),
-  reason: z.string().min(1).max(300)
-}).strict();
+  reason: z.string().min(1).max(300),
+  entry: EntryOrderSchema.optional(), clientId: EntryClientIdSchema.optional()
+}).strict().refine(input => !input.clientId || input.entry?.type === 'LIMIT_GTC', 'Client id requires LIMIT_GTC');
 const exitSignal = nullToUndefined(z.object({ kind: z.enum(['MOMENTUM_EXHAUSTION', 'TARGET_COMPLETE']), evidenceRefs: z.array(z.string().min(1).max(160)).min(1).max(10) }));
 
 export const OpinionSchema = z.object({

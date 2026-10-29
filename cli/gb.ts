@@ -8,14 +8,15 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, AGENT_IDS } from '../server/config.js';
-import { getSnapshot, getCandles, TIMEFRAMES, MARKET_SOURCES, type Timeframe } from '../server/market/index.js';
+import { getSnapshot, getCandles, asterSymbolDiagnostic, TIMEFRAMES, MARKET_SOURCES, type Timeframe } from '../server/market/index.js';
 import { EXCHANGES, VENUE_KIND, VENUE_LABEL, VENUE_KEY_HINT, ADAPTER_STATUS, envNames, publicRules } from '../server/exchange/index.js';
 import { moneySplit, planOrder, round2 } from '../server/money.js';
 import { normSymbol } from '../server/commands.js';
 import { safe } from '../server/redact.js';
 import { sizeTicket, type SizeBook } from '../server/sizing.js';
 import { RESEARCH_TOOLS } from '../server/research/catalog.js';
-import { CloseTriggerSchema } from '../server/schemas.js';
+import { CloseTriggerSchema, EntryClientIdSchema } from '../server/schemas.js';
+import type { EntryOrder } from '../server/exchange/types.js';
 
 export interface GbResult { ok: boolean; data: unknown; text: string }
 interface Deps { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; baseUrl?: string }
@@ -31,12 +32,16 @@ const HELP = `Trading Agent Mpu Gandring agent CLI (no model keys needed)
   npm run gb -- close-review <symbol> [--trigger <reason>]   fresh verified exit triggers and current position identity
   npm run gb -- market <symbol> [--source venue]     price, 24h change, funding
   npm run gb -- candles <symbol> [tf] [--limit 100] [--source venue]  closed candles, tf: ${TIMEFRAMES.join(' ')}
+  npm run gb -- symbol <symbol> [tf] [--network mainnet|testnet]   Aster public listing and candle diagnostics (read only)
   npm run gb -- venues                               venues (CEX and DEX), key type, env names, status
   npm run gb -- account                              mode, balance, equity, daily loss stop
   npm run gb -- positions                            open positions with entry, stop, take profit, PnL
   npm run gb -- split [--balance B --safety S --n N] Money Trade = balance - safety net, per order = Money Trade / N
   npm run gb -- size <symbol> <LONG|SHORT> <entry> [--leverage L]   preview profile SL/TP (read only)
   npm run gb -- open <symbol> <LONG|SHORT> --risk-approval APPROVE --confidence <Lead confidence> --reason "..."   agent entry, uses Owner profile
+  npm run gb -- open <symbol> <LONG|SHORT> --limit <price> [--ttl-min <Owner minutes>] [--client-id <id>]   explicit opt-in Aster GTC
+  npm run gb -- entries                              recorded pending entry state (read only)
+  npm run gb -- cancel-entry <client-id>              cancel only the selected entry remainder
   npm run gb -- close <symbol> --trigger <reason> --position-id <id> --expected-qty <qty> --reason "..."   verified agent exit
   npm run gb -- close <symbol|all>                    explicit Owner manual close only
   npm run gb -- report                               write a report now
@@ -136,18 +141,27 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     case 'market': {
       const s = normSymbol(args[0] ?? ''); if (!s) return fail('usage: market <symbol>');
       if (flags.source && !MARKET_SOURCES.includes(flags.source as never)) return fail(`--source must be one of ${MARKET_SOURCES.join(', ')}`);
-      const snap = await getSnapshot(s, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, cfg.tradingMode !== 'PAPER');
-      const d = { symbol: s, last: snap.last, bid: snap.bid, ask: snap.ask, change24hPct: round2(snap.change24hPct), fundingRate: snap.fundingRate, source: snap.source, example: snap.example, at: snap.fetchedAt };
+      if (flags.network && !['mainnet', 'testnet'].includes(flags.network)) return fail('--network must be mainnet or testnet.');
+      const snap = await getSnapshot(s, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, cfg.tradingMode !== 'PAPER', (flags.network as 'mainnet' | 'testnet') ?? 'mainnet');
+      const d = { symbol: s, last: snap.last, bid: snap.bid, ask: snap.ask, change24hPct: round2(snap.change24hPct), fundingRate: snap.fundingRate, source: snap.source, example: snap.example, at: snap.fetchedAt, dataProvenance: snap.dataProvenance, feedProvenance: snap.feedProvenance, candleMetadata: snap.candleMetadata, collectorStartedAt: snap.collectorStartedAt, collectorEndedAt: snap.collectorEndedAt };
       return ok(d, `${s} ${d.last} (${d.change24hPct}% 24h) funding ${d.fundingRate ?? 'n/a'} from ${d.source}${d.example ? ' (SAMPLE, not live)' : ''}`);
     }
     case 'candles': {
       const s = normSymbol(args[0] ?? ''); const tf = (args[1] ?? '15m') as Timeframe;
       if (!s || !TIMEFRAMES.includes(tf)) return fail(`usage: candles <symbol> [${TIMEFRAMES.join('|')}]`);
       if (flags.source && !MARKET_SOURCES.includes(flags.source as never)) return fail(`--source must be one of ${MARKET_SOURCES.join(', ')}`);
-      const r = await getCandles(s, tf, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, num(flags.limit) ?? 100, cfg.tradingMode !== 'PAPER');
-      const d = { symbol: s, tf: r.tf, source: r.source, example: r.example, candles: r.candles.map((c) => ({ t: c.t, o: c.o, h: c.h, l: c.l, c: c.c, v: round2(c.v) })) };
+      if (flags.network && !['mainnet', 'testnet'].includes(flags.network)) return fail('--network must be mainnet or testnet.');
+      const r = await getCandles(s, tf, (flags.source as typeof cfg.marketSource) ?? cfg.marketSource, num(flags.limit) ?? 100, cfg.tradingMode !== 'PAPER', (flags.network as 'mainnet' | 'testnet') ?? 'mainnet');
+      const d = { ...r, symbol: s };
       const last = d.candles.at(-1);
       return ok(d, `${s} ${r.tf}: ${d.candles.length} closed candles from ${r.source}${r.example ? ' (SAMPLE)' : ''}. Last close ${last?.c ?? 'n/a'}.`);
+    }
+    case 'symbol': {
+      const symbol = normSymbol(args[0] ?? ''), tf = (args[1] ?? '15m') as Timeframe;
+      const network = flags.network ?? 'mainnet';
+      if (!symbol || !TIMEFRAMES.includes(tf) || !['mainnet', 'testnet'].includes(network)) return fail('usage: symbol <symbol> [tf] [--network mainnet|testnet]');
+      const data = await asterSymbolDiagnostic(symbol, tf, network as 'mainnet' | 'testnet');
+      return ok(data, JSON.stringify(data, null, 2));
     }
     case 'account': {
       const st = await state();
@@ -187,21 +201,40 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     case 'open': {
       const s = normSymbol(args[0] ?? ''); const side = String(args[1] ?? '').toUpperCase();
       if (!s || (side !== 'LONG' && side !== 'SHORT')) return fail('usage: open <symbol> <LONG|SHORT> [--leverage L] [--confidence 0..1]');
+      let entry: EntryOrder | undefined;
+      if (flags.limit !== undefined) {
+        const price = num(flags.limit), ttl = num(flags['ttl-min']);
+        const expireAt = ttl === undefined ? undefined : Date.now() + ttl * 60000;
+        if (!price || !Number.isFinite(price) || price <= 0 || (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0 || !Number.isSafeInteger(expireAt)))) return fail('--limit and optional --ttl-min must be finite positive values.');
+        entry = { type: 'LIMIT_GTC', price, ...(expireAt === undefined ? {} : { expireAt }) };
+      } else if (flags['ttl-min'] !== undefined || flags['client-id'] !== undefined) return fail('--ttl-min and --client-id require an explicit --limit.');
+      if (flags['client-id'] !== undefined && !EntryClientIdSchema.safeParse(flags['client-id']).success) return fail('--client-id must match the venue client id contract (1 to 32 allowed characters).');
+      const selection = entry ? { entry, ...(flags['client-id'] ? { clientId: flags['client-id'] } : {}) } : {};
       if (flags['risk-approval'] !== undefined) {
         const confidence = num(flags.confidence);
         if (flags['risk-approval'] !== 'APPROVE' || confidence == null || !Number.isFinite(confidence) || confidence < 0 || confidence > 1 || !flags.reason) return fail('Agent OPEN requires --risk-approval APPROVE, actual --confidence 0..1 and --reason.');
         if (flags.leverage || flags.stop || flags.tp) return fail('Agent OPEN uses the saved Owner leverage and profile SL/TP; remove ticket overrides.');
-        const body = { symbol: s, side, confidence, riskApproval: 'APPROVE', reason: flags.reason };
+        const body = { symbol: s, side, confidence, riskApproval: 'APPROVE', reason: flags.reason, ...selection };
         const r = viaOps ? await call('POST', '/api/ops/agent-open', body) : await call('POST', '/api/gb/agent-open', body, true);
         return { ok: !!r.ok, data: r, text: r.ok ? r.reply : `not opened: ${r.reply ?? r.error}` };
       }
-      const body: Record<string, unknown> = { symbol: s, side };
+      const body: Record<string, unknown> = { symbol: s, side, ...selection };
       if (viaOps) body.autonomous = true;
       for (const k of ['stop', 'tp', 'leverage', 'confidence'] as const) if (num(flags[k]) !== undefined) body[k] = num(flags[k]);
       if (!viaOps && flags.agent) body.agent = flags.agent;
       if (!viaOps && flags.reason) body.reason = flags.reason;
       const r = viaOps ? await call('POST', '/api/ops/open', body) : await call('POST', '/api/gb/open', body, true);
       return { ok: !!r.ok, data: r, text: r.ok ? r.reply : `not opened: ${r.reply ?? r.error}` };
+    }
+    case 'entries': {
+      const current = await state();
+      return ok(current.pendingEntries ?? [], JSON.stringify(current.pendingEntries ?? [], null, 2));
+    }
+    case 'cancel-entry': {
+      if (!EntryClientIdSchema.safeParse(args[0]).success) return fail('usage: cancel-entry <client-id>');
+      const body = { clientId: args[0] };
+      const r = viaOps ? await call('POST', '/api/ops/cancel-entry', body) : await call('POST', '/api/gb/cancel-entry', body, true);
+      return { ok: !!r.ok, data: r, text: r.reply ?? r.error };
     }
     case 'close': {
       if (!args[0]) return fail('usage: close <symbol|all>');

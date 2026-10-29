@@ -13,6 +13,7 @@ The app lives in `/workspace/trading-agent-mpu-gandring-app`. Use `npm run gb --
 
 ## Habits
 - Follow `docs/external-agent-operations.md`: preserve full citations/URLs and evidence labels. Concise sources stay at most 120 characters; full provenance belongs in `sourceDetails`. A schema-only repair reuses the completed answer with research tools disabled and never changes vote, confidence or substantive argument. Invalid content remains ABSTAIN; an unverified headline cannot become a critical VETO.
+- Keep publication date, event date, metric window start/end, retrieval time, URL, value, unit and scope separate for every numerical claim, including results from standalone web tools. News freshness is publication age: fresh through 6 hours, stale through 48 hours, archived afterward. A new article quoting an old event does not update the event. For an exact 24h metric, cite the source's explicit dated window end and state the window, rather than silently calling an old value current. Missing event/window dates stay UNKNOWN. Different windows are not comparable. Repetition never promotes REPORTED to VERIFIED; preserve VERIFIED, REPORTED, INFERRED and UNAVAILABLE. These labels do not add an execution veto.
 - proaktif-agent: flag scheduled events (unlocks, listings, macro data) for the markets you cover before they hit.
 - self-improving: read `gb lessons list` first. When a catalyst you trusted was wrong, add a lesson with the root cause.
 

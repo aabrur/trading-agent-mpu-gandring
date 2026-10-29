@@ -4,6 +4,7 @@ import { safe } from '../redact.js';
 import { normSymbol, parseCommand as parseOwnerCommand } from '../commands.js';
 import { proactiveScan } from '../scan.js';
 import type { AgentId } from '../types.js';
+import { killContext } from '../killswitch.js';
 
 export const SAFE_COMMANDS = ['status', 'report', 'positions', 'kill', 'help'] as const;
 export type SafeCommand = (typeof SAFE_COMMANDS)[number];
@@ -207,7 +208,7 @@ export async function runCommand(desk: Desk, p: Parsed, onKill?: () => void, con
     case 'kill': {
       if (!p.confirm) return 'This flattens every position and stops the desk until the local Owner releases it with the Office OFF button or npm run unkill -- --yes. Send "kill confirm" to do it.';
       onKill?.();
-      const notes = await desk.kill();
+      const notes = await desk.kill(killContext('channel'));
       return safe(`KILL SWITCH ON. ${notes.join('; ') || 'nothing was open'}. Release only on the desk computer: the local Office OFF button or npm run unkill -- --yes.`);
     }
   }

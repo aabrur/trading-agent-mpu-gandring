@@ -94,6 +94,54 @@ export function volumeDelta(candles: Candle[], period = 20): { volRatio: number;
   return { volRatio, takerBuyPressure };
 }
 
+export interface VolumeMeasurement {
+  value: number | null;
+  status: 'available' | 'unknown';
+  method: string;
+  lookback: number;
+  candidateIncluded: boolean;
+  unit: 'base_asset' | 'quote_asset' | 'unknown';
+  source: string;
+  barTime: number | null;
+  observedAt: number;
+  reason?: string;
+}
+/** Diagnostics only. The legacy volumeDelta output remains the scoring contract. */
+export function volumeDiagnostics(candles: Candle[], context: { source: string; unit: VolumeMeasurement['unit']; example?: boolean; observedAt?: number; intervalMs?: number; barSources?: string[]; barUnits?: VolumeMeasurement['unit'][] }) {
+  const observedAt = context.observedAt ?? Date.now();
+  const rows = [...candles].sort((a, b) => a.t - b.t);
+  const candidate = rows.at(-1);
+  const measure = (lookback: number, candidateIncluded: boolean, method: string, calculation: (values: Candle[]) => number | null): VolumeMeasurement => {
+    const selected = rows.slice(-(lookback + (candidateIncluded ? 0 : 1)));
+    const valid = !context.example && context.unit !== 'unknown' && selected.length === lookback + (candidateIncluded ? 0 : 1)
+      && selected.every((c, index) => Number.isFinite(c.v) && c.v >= 0 && Number.isFinite(c.t)
+        && (!index || c.t > selected[index - 1].t && (!context.intervalMs || c.t - selected[index - 1].t === context.intervalMs)))
+      && (!context.barSources || context.barSources.slice(-selected.length).every(source => source === context.source))
+      && (!context.barUnits || context.barUnits.slice(-selected.length).every(unit => unit === context.unit));
+    const value = valid ? calculation(selected) : null;
+    return { value: value !== null && Number.isFinite(value) ? value : null,
+      status: value !== null && Number.isFinite(value) ? 'available' : 'unknown', method, lookback, candidateIncluded,
+      unit: context.unit, source: context.source, barTime: candidate?.t ?? null, observedAt,
+      ...(value === null || !Number.isFinite(value) ? { reason: valid ? 'Baseline is zero; relative volume is undefined' : 'Requires complete, finite, nonnegative, same-source and same-unit non-sample observations' } : {}) };
+  };
+  return {
+    relativeVolumeMean20IncludingCurrent: measure(20, true, 'arithmetic_mean', values => {
+      const mean = values.reduce((sum, candle) => sum + candle.v, 0) / values.length;
+      return mean > 0 ? values.at(-1)!.v / mean : null;
+    }),
+    relativeVolumeMedian20Previous: measure(20, false, 'median', values => {
+      const prior = values.slice(0, -1).map(c => c.v).sort((a, b) => a - b);
+      const median = (prior[9] + prior[10]) / 2;
+      return median > 0 ? values.at(-1)!.v / median : null;
+    }),
+    bullishCandleVolumeShare5: measure(5, true, 'inferred_candle_direction_volume_share', values => {
+      if (!values.every(c => Number.isFinite(c.o) && Number.isFinite(c.c))) return null;
+      const total = values.reduce((sum, candle) => sum + candle.v, 0);
+      return total > 0 ? values.reduce((sum, candle) => sum + (candle.c >= candle.o ? candle.v : 0), 0) / total : null;
+    })
+  };
+}
+
 export function atr(candles: Candle[], period = 14): number {
   if (candles.length < 2) return 0;
   const trs: number[] = [];

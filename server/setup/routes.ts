@@ -24,7 +24,8 @@ import { setEnv } from '../../cli/envfile.js';
 import { discoverLocalModels, LOCAL_AGENTS, localAgentStatus, localLoginStatus, openAgentLogin, runLocalAgent, localSelection, localMcpInventory, localResearchActivity, validateResearchConnections, localAgentSettings, localAgentSettingsUpdate } from '../providers/local.js';
 import { ResearchPolicyBody, researchPolicy } from '../providers/research-policy.js';
 import { preferencesInfo, savePreferences } from './preferences.js';
-import { AgentCloseSchema, AgentOpenSchema, extractJson, SCHEMAS } from '../schemas.js';
+import { AgentCloseSchema, AgentOpenSchema, EntryOrderSchema, EntryClientIdSchema, extractJson, SCHEMAS } from '../schemas.js';
+import { killContext } from '../killswitch.js';
 import { saveTradingLimits, TradingLimitsBody, saveTradingProfile, tradingSetupInfo, TradingProfileBody } from './trading.js';
 import { tradingSettingsFromConfig } from '../trading-settings.js';
 import { JevSetupBody, jevSetupInfo, saveJevSetup } from './jev.js';
@@ -80,7 +81,7 @@ const ModeBody = z.object({ mode: z.enum(MODES), confirm: z.string().max(100).op
 const Provider = z.enum(PROVIDERS as [typeof PROVIDERS[number], ...typeof PROVIDERS[number][]]);
 const Selection = z.object({ provider: Provider, model: z.string().min(1).max(200) }).strict();
 const ModelsBody = z.object({ defaultReasoning: ReasoningSchema.nullable().optional(), reasoning: z.object(Object.fromEntries(AGENT_IDS.map(id => [id, ReasoningSchema.nullable().optional()]))).strict().optional(), defaultProvider: Provider, defaultModel: z.string().min(1).max(200), agents: z.object({ lead: Selection.optional(), market: Selection.optional(), research: Selection.optional(), strategist: Selection.optional(), risk: Selection.optional(), execution: Selection.optional() }).strict().optional(), keys: z.object({ xai: z.string().max(400).optional(), openai: z.string().max(400).optional(), anthropic: z.string().max(400).optional(), gemini: z.string().max(400).optional(), deepseek: z.string().max(400).optional(), openrouter: z.string().max(400).optional(), groq: z.string().max(400).optional(), mistral: z.string().max(400).optional(), together: z.string().max(400).optional(), fireworks: z.string().max(400).optional() }).strict().optional() }).strict();
-const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive().optional(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(), confidence: z.number().min(0).max(1).optional(), autonomous: z.boolean().optional() }).strict();
+const OpenBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), stop: z.number().positive().optional(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(), confidence: z.number().min(0).max(1).optional(), autonomous: z.boolean().optional(), entry: EntryOrderSchema.optional(), clientId: EntryClientIdSchema.optional() }).strict().refine(input => !input.clientId || input.entry?.type === 'LIMIT_GTC', 'Client id requires LIMIT_GTC');
 const SizeBody = z.object({ symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']), entry: z.number().positive().optional(), stop: z.number().positive().optional(), leverage: z.number().positive().max(100).optional() }).strict();
 const LessonBody = z.object({ role: z.enum([...AGENT_IDS, 'desk'] as unknown as [string, ...string[]]), lesson: z.string().min(2).max(300), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default('') }).strict();
 const AutoBody = z.object({ on: z.boolean().optional(), intervalMin: z.number().int().min(1).max(1440).optional(), symbols: z.array(z.string().min(2).max(20)).min(1).max(10).optional(), maxHoldHours: z.number().int().min(0).max(720).optional(), n: z.number().int().min(1).max(4).optional(), runNow: z.boolean().optional(), debateMode: z.enum(['normal', 'fast']).optional() }).strict();
@@ -429,6 +430,12 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     const target = String(req.body?.symbol ?? '').slice(0, 20); if (!target) return res.status(400).json({ ok: false, reply: 'symbol or all' });
     res.json(await c.desk.gbClose(target, 'owner command: closed from the office'));
   });
+  app.post('/api/ops/cancel-entry', async (req, res) => {
+    if (!gate(req, res)) return;
+    const input = z.object({ clientId: EntryClientIdSchema }).strict().safeParse(req.body);
+    if (!input.success) return res.status(400).json({ ok: false, error: 'A valid entry clientId is required.' });
+    res.json(await c.desk.cancelEntry(input.data.clientId));
+  });
   app.post('/api/ops/agent-close', async (req, res) => {
     if (!gate(req, res)) return;
     const parsed = AgentCloseSchema.safeParse(req.body);
@@ -461,11 +468,11 @@ export function mountOpsRoutes(app: express.Express, c: RouteCtx) {
     let notes: string[] = [];
     if (on) {
       c.auto?.stop();
-      notes = await c.desk.kill();
+      notes = await c.desk.kill(killContext('office', req.body?.requestId));
     } else {
       try { c.desk.unkill(); } catch (error) { return res.status(409).json({ ok: false, error: safe((error as Error).message) }); }
     }
-    res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, notes, unkillCommand: UNKILL_COMMAND });
+    res.json({ ok: true, killed: c.desk.killed, killedAt: c.desk.killedAt || null, notes, auditConfirmed: c.desk.killAuditConfirmed, unkillCommand: UNKILL_COMMAND });
   });
   app.post('/api/ops/restart', async (req, res) => {
     if (!gate(req, res)) return;

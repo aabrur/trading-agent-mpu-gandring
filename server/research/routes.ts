@@ -50,7 +50,7 @@ export function mountResearchRoutes(app: express.Express, desk: Desk) {
   app.get('/api/research/capabilities', (req, res) => {
     const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
     if (!access.ok) return res.status(403).json({ ok: false, error: access.reason });
-    return res.json({ ok: true, observedAt: Date.now(), capabilities: desk.capabilities() });
+    return res.json({ ok: true, observedAt: Date.now(), capabilities: desk.capabilities(), execution: desk.executionCapabilities() });
   });
   app.get('/api/research', async (req, res) => {
     const access = localClient({ remoteAddress: req.socket.remoteAddress, hostHeader: req.headers.host, origin: req.get('origin') });
@@ -65,9 +65,9 @@ export function mountResearchRoutes(app: express.Express, desk: Desk) {
       let data: unknown;
       let dataStatus: CapabilityStatus = 'DATA_AVAILABLE';
       if (name === 'desk_capabilities') {
-        data = { capabilities: desk.capabilities() };
+        data = { capabilities: desk.capabilities(), execution: desk.executionCapabilities() };
       } else if (name === 'market_snapshot') {
-        const snapshot = await getSnapshot(symbol, desk.cfg.marketSource, true);
+        const snapshot = await getSnapshot(symbol, desk.preferredMarketSource(), true, desk.cfg.live?.network ?? 'mainnet');
         data = { ...snapshot, tacticalTradePlan: buildTacticalTradePlan(snapshot), candles: snapshot.candles.slice(-60) };
       } else if (name === 'market_news') {
         const news = await getNewsFor(symbol, { ...desk.cfg, tradingMode: 'LIVE' });
@@ -120,7 +120,7 @@ export function mountResearchRoutes(app: express.Express, desk: Desk) {
       }));
     } else {
       try {
-        const snapshot = await getSnapshot(normSym, desk.cfg.marketSource, true);
+        const snapshot = await getSnapshot(normSym, desk.cfg.marketSource, true, desk.cfg.live?.network ?? 'mainnet');
         candlesToUse = snapshot.candles.map(c => ({
           timestamp: c.t,
           open: c.o,
@@ -128,7 +128,7 @@ export function mountResearchRoutes(app: express.Express, desk: Desk) {
           low: c.l,
           close: c.c,
           volume: c.v,
-          closedAt: c.t + 60_000
+          closedAt: c.t + 15 * 60_000
         }));
       } catch {
         return res.status(503).json({ ok: false, error: 'Could not fetch market candles for backtest.' });

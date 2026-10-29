@@ -54,6 +54,7 @@ describe('channel commands without mpu prefix', () => {
 
 describe('mpu kill command', () => {
   it('requires confirm to engage kill switch', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}')));
     const tmp = mkdtempSync(path.join(tmpdir(), 'mpu-kill-test-'));
     const killFile = path.join(tmp, 'kill-switch.json');
     try {
@@ -67,6 +68,7 @@ describe('mpu kill command', () => {
       expect(confRes.text).toContain('KILL SWITCH ENGAGED');
       expect(readKill(killFile)).not.toBeNull();
     } finally {
+      vi.unstubAllGlobals();
       rmSync(tmp, { recursive: true, force: true });
     }
   });

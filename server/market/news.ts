@@ -22,6 +22,7 @@ export type NewsFreshness = 'fresh' | 'stale' | 'archived' | 'unknown';
 export type ClaimVerification = 'verified' | 'reported_claim' | 'inferred' | 'unavailable' | 'sample';
 
 export interface NormalizedNewsEvent {
+  metricProvenance?: MetricProvenance;
   id: string;
   title: string;
   source: string;
@@ -54,6 +55,45 @@ export interface NewsBriefing {
 // Normalize headline strings into a slug to identify duplicates
 const FRESH_MS = 6 * 60 * 60 * 1000;
 const STALE_MS = 48 * 60 * 60 * 1000;
+
+export interface MetricProvenance {
+  publishedAt: number | null;
+  eventAt: number | null;
+  windowStartAt: number | null;
+  windowEndAt: number | null;
+  retrievedAt: number;
+  sourceUrl: string | null;
+  value: number | null;
+  unit: string | null;
+  scope: string | null;
+  evidenceStatus: 'VERIFIED' | 'REPORTED' | 'INFERRED' | 'UNAVAILABLE';
+  eventWindowStatus: 'EXPLICIT' | 'UNKNOWN';
+  canDescribeAsLast24Hours: boolean;
+}
+
+/** Article publication is not the event date or a metric's observation window. */
+export function metricProvenance(item: NewsItem, retrievedAt = item.observedAt ?? Date.now()): MetricProvenance {
+  const eventAt = parsePublishedAt(item.eventAt);
+  const windowStartAt = parsePublishedAt(item.windowStartAt);
+  const windowEndAt = parsePublishedAt(item.windowEndAt);
+  const validWindow = windowStartAt !== null && windowEndAt !== null && windowStartAt < windowEndAt && windowEndAt <= retrievedAt;
+  const status = item.example ? 'UNAVAILABLE' : ['VERIFIED', 'REPORTED', 'INFERRED', 'UNAVAILABLE'].includes(item.evidenceStatus ?? '')
+    ? item.evidenceStatus as MetricProvenance['evidenceStatus'] : 'REPORTED';
+  return {
+    publishedAt: parsePublishedAt(item.publishedAt), eventAt, windowStartAt, windowEndAt, retrievedAt,
+    sourceUrl: item.sourceUrl ?? null, value: item.metric && Number.isFinite(item.metric.value) ? item.metric.value : null,
+    unit: item.metric?.unit ?? null, scope: item.metric?.scope ?? null, evidenceStatus: status,
+    eventWindowStatus: validWindow && !!item.sourceUrl ? 'EXPLICIT' : 'UNKNOWN',
+    canDescribeAsLast24Hours: !!item.metric && validWindow && !!item.sourceUrl && !item.example
+      && windowEndAt === retrievedAt && windowEndAt - windowStartAt === 24 * 60 * 60_000
+  };
+}
+
+export function comparableMetricWindows(a: MetricProvenance, b: MetricProvenance): boolean {
+  return a.eventWindowStatus === 'EXPLICIT' && b.eventWindowStatus === 'EXPLICIT'
+    && a.unit !== null && a.unit === b.unit && a.scope !== null && a.scope === b.scope
+    && a.windowStartAt === b.windowStartAt && a.windowEndAt === b.windowEndAt;
+}
 
 export function parsePublishedAt(value: unknown): number | null {
   if (value == null || value === '') return null;
@@ -190,12 +230,13 @@ export function normalizeLegacyItem(item: NewsItem, symbol: string, now: number 
   const status: EvidenceStatus = item.example ? 'UNAVAILABLE' : 'REPORTED';
   const publishedAt = parsePublishedAt(item.publishedAt);
   return {
+    metricProvenance: metricProvenance(item, item.observedAt ?? now),
     id: item.id,
     title: item.headline,
     source: item.source,
     sourceUrl: item.sourceUrl ?? null,
     publishedAt,
-    observedAt: now,
+    observedAt: item.observedAt ?? now,
     affectedAssets: [coinOf(symbol)],
     category: cat,
     evidenceStatus: status,

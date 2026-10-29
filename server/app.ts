@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { AppConfig } from './config.js';
 import { AGENT_IDS } from './config.js';
 import { Desk } from './desk.js';
+import { killContext } from './killswitch.js';
 import { makeCaller, type ModelCaller } from './providers/index.js';
 import { moneySplit } from './money.js';
 import { safe } from './redact.js';
@@ -30,7 +31,7 @@ import { mountSetupRoutes, mountOpsRoutes, localClient } from './setup/routes.js
 import { DeskLead } from './channels/supervisor.js';
 import { createInboundApp, mountChannelSetupRoutes } from './channels/routes.js';
 import { APP_VERSION, checkUpdate, applyUpdate } from './updater.js';
-import { AgentCloseSchema, AgentOpenSchema } from './schemas.js';
+import { AgentCloseSchema, AgentOpenSchema, EntryOrderSchema, EntryClientIdSchema } from './schemas.js';
 
 const sameSecret = (given: string, want: string) => {
   const a = Buffer.from(given), b = Buffer.from(want);
@@ -72,8 +73,9 @@ export const noModelCaller: ModelCaller = async () => { throw new Error('no mode
 const GbOpenSchema = z.object({
   symbol: z.string().min(2).max(20), side: z.enum(['LONG', 'SHORT']),
   stop: z.number().positive().optional(), tp: z.number().positive().optional(), leverage: z.number().positive().max(100).optional(),
-  agent: z.enum(AGENTS).optional(), confidence: z.number().min(0).max(1).optional(), reason: z.string().max(300).optional()
-}).strict();
+  agent: z.enum(AGENTS).optional(), confidence: z.number().min(0).max(1).optional(), reason: z.string().max(300).optional(),
+  entry: EntryOrderSchema.optional(), clientId: EntryClientIdSchema.optional()
+}).strict().refine(input => !input.clientId || input.entry?.type === 'LIMIT_GTC', 'Client id requires LIMIT_GTC');
 const GbLessonSchema = z.object({
   role: z.enum([...AGENTS, 'desk']), kind: z.enum(['loss', 'stop', 'error', 'scan', 'correction', 'review', 'note']).default('note'),
   symbol: z.string().max(20).optional(), happened: z.string().max(400).default(''), rootCause: z.string().max(300).default(''), lesson: z.string().min(8).max(300)
@@ -122,6 +124,7 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const fellBackAgents = cfg.appMode !== 'grokbot' ? AGENT_IDS.filter((id) => cfg.agents[id].fellBackToMock) : [];
     res.json({
       ok: true, app: 'trading-agent-mpu-gandring', version: APP_VERSION, instanceId, mode: cfg.tradingMode, appMode: cfg.appMode,
+      runtime: desk.runtimeDiagnostics(),
       exchange: cfg.live?.exchange ?? cfg.exchange.name,
       killed: desk.killed,
       tradingviewWebhook: cfg.tradingview.webhookEnabled ? 'on' : 'off',
@@ -347,7 +350,8 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
       return res.json({ ok: true, killed: false, released: true, notes: ['Kill switch released.'] });
     }
     auto.stop();
-    res.json({ ok: true, killed: true, notes: await desk.kill() });
+    const notes = await desk.kill(killContext('office', req.body?.requestId));
+    res.json({ ok: true, killed: true, notes, auditConfirmed: desk.killAuditConfirmed });
   });
 
   app.post('/api/unkill', requireLocalOwner, async (_req, res) => {
@@ -390,6 +394,12 @@ export function createApp(cfg: AppConfig, opts: { caller?: ModelCaller; reportsD
     const target = String(req.body?.symbol ?? '').slice(0, 20);
     if (!target) return res.status(400).json({ ok: false, error: 'symbol or all' });
     res.json(await desk.gbClose(target, String(req.body?.reason ?? 'Grok Bot close').slice(0, 120)));
+  });
+  app.post('/api/gb/cancel-entry', async (req, res) => {
+    if (!gbAuth(req, res)) return;
+    const input = z.object({ clientId: EntryClientIdSchema }).strict().safeParse(req.body);
+    if (!input.success) return res.status(400).json({ ok: false, error: 'A valid entry clientId is required.' });
+    res.json(await desk.cancelEntry(input.data.clientId));
   });
   app.post('/api/gb/agent-close', async (req, res) => {
     if (!gbAuth(req, res)) return;

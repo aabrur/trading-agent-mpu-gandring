@@ -128,9 +128,12 @@ Read `grokbot/OPERATIONS.md` and attach its operating instructions to all six pr
 
 Create two routines owned by the Head of Trading.
 
-**Trading loop, every 15 minutes:**
+**Trading loop, at the Owner's saved `DEBATE_INTERVAL_MIN` cadence:**
+
+Read `gb context --json` for the running cadence (`runtime.routine.ownerCadenceMin`); 15 minutes is an example, not a permanent template setting. On upgrades preserve the existing Owner cadence. When the native scheduler supports a wall-clock phase, align the existing routine to that cadence's UTC bar boundaries and record its actual scheduled/last/next run from platform readback. Obtain separate Owner authorization before changing a running host routine. If phase selection or readback is unavailable, report UNKNOWN. Do not add polling or another execution trigger. The local `server/auto.ts` timer is disabled in Grok Bot mode.
 
 > You are the Head of Trading of Trading Agent Mpu Gandring. Work in /workspace/trading-agent-mpu-gandring-app. If health fails, report the outage. Do not restart LIVE without Owner authorization; preserve the current mode and settings.
+> Record native `cycleScheduledAt` and `cycleActualStartedAt` only from platform observations. Keep collector start/end, last closed bar time, debate start/end, venue quote time and order submission/acceptance when actually available. Unobserved timestamps remain UNKNOWN; do not invent them from the interval.
 > 1. Run the proaktif-agent skill first: `npm run gb -- scan --json`, `npm run gb -- account --json`, `npm run gb -- positions --json`, `npm run gb -- lessons list --json`. Post any warn or alert to the group chat "Trading Agent Mpu Gandring".
 > 2. Follow `docs/external-agent-operations.md` for the six-role debate. Each role posts its actual response with `gb event`. OPEN requires Risk APPROVE and actual Lead confidence meeting the saved Owner entry threshold from `gb context`; use profile SL/TP and existing settings. For CLOSE, refresh `gb close-review <symbol> --json` after Lead's verdict, match the selected verified trigger, then Execution uses `gb close <symbol> --trigger <reason> --position-id <id> --expected-qty <qty> --reason "<verdict>"`. Full slots and entry confidence never veto valid CLOSE. Never use bare manual close as an autonomous fallback.
 > 3. Run the self-improving skill last: for every loss, stop hit, error, refusal or owner correction this cycle, `npm run gb -- lessons add <role> "<lesson>" --kind loss|stop|error|correction --happened "<facts>" --cause "<root cause>"`. The app promotes a lesson seen three times into a standing rule. Never write a lesson that loosens a guard; the app refuses those.

@@ -1,7 +1,7 @@
 import type { NewsItem } from '../types.js';
 import { sanitizeUntrusted } from '../untrusted.js';
 import { publicJson, measuredNumber } from './observations.js';
-import { coinOf, categorizeNews } from './news.js';
+import { coinOf, categorizeNews, metricProvenance } from './news.js';
 
 export type LiveNewsStatus = 'DATA_AVAILABLE' | 'NO_RELEVANT_EVENTS' | 'UNAVAILABLE';
 export type LiveNewsItem = NewsItem & {
@@ -55,10 +55,11 @@ export async function getLiveAnnouncementsResult(symbol: string, fetchImpl: type
       const identity = String(row.id ?? row.articleId ?? `${sourceUrl}|${publishedAt}|${headline.text}`);
       if (seen.has(identity)) continue;
       seen.add(identity);
-      items.push({ id: `bybit-${identity}`, symbol: coin, headline: headline.text, body: body.text,
+      const item: LiveNewsItem = { id: `bybit-${identity}`, symbol: coin, headline: headline.text, body: body.text,
         source: 'Bybit announcements', sourceUrl, publishedAt, observedAt, affectedAssets: [coinOf(coin)],
         eventCategory: categorizeNews(`${headline.text} ${body.text}`), evidenceStatus: 'REPORTED',
-        provider: 'bybit', sentiment: 'neutral', example: false, flagged: headline.flagged || body.flagged });
+        provider: 'bybit', sentiment: 'neutral', example: false, flagged: headline.flagged || body.flagged };
+      items.push({ ...item, metricProvenance: metricProvenance(item) });
       if (items.length >= 8) break;
     }
     const response: LiveAnnouncementsResult = { status: items.length ? 'DATA_AVAILABLE' : 'NO_RELEVANT_EVENTS', source: 'Bybit announcements', observedAt, items };

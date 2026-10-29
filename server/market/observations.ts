@@ -8,11 +8,56 @@ export const measuredNumber = (value: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 const round = (value: number) => Math.round(value * 10000) / 10000;
+export interface CandleMetadata {
+  timeContract: 'open_time_utc_ms';
+  intervalMs: number;
+  closedOnly: true;
+  source: string;
+  example: boolean;
+  observedAt: number;
+  lastClosedOpenAt: number | null;
+  lastClosedAt: number | null;
+  latencyMs: number | null;
+  duplicates: number;
+  conflictingDuplicates: number;
+  outOfOrder: boolean;
+  gaps: Array<{ afterOpenAt: number; beforeOpenAt: number; missingBars: number }>;
+  stale: boolean;
+  futureOpenTimes: number;
+}
+const validCandle = (candle: Candle) => [candle.t, candle.o, candle.h, candle.l, candle.c, candle.v].every(Number.isFinite)
+  && candle.t > 0 && Math.min(candle.o, candle.h, candle.l, candle.c) > 0 && candle.v >= 0
+  && candle.h >= Math.max(candle.o, candle.c) && candle.l <= Math.min(candle.o, candle.c);
+/** Candle t is opening UTC milliseconds. Equality at t + intervalMs is closed. */
+export function candleMetadata(raw: Candle[], returned: Candle[], intervalMs: number, source: string, example: boolean, now = Date.now()): CandleMetadata {
+  const rows = raw.filter(validCandle).filter(c => c.t + intervalMs <= now);
+  const unique = new Map<number, Candle>();
+  let conflictingDuplicates = 0;
+  for (const row of rows) {
+    const previous = unique.get(row.t);
+    if (previous && ['o', 'h', 'l', 'c', 'v'].some(key => previous[key as keyof Candle] !== row[key as keyof Candle])) conflictingDuplicates++;
+    unique.set(row.t, row);
+  }
+  const sorted = [...unique.values()].sort((a, b) => a.t - b.t);
+  const lastClosedOpenAt = returned.at(-1)?.t ?? null;
+  const latestObservedClose = sorted.at(-1)?.t;
+  return {
+    timeContract: 'open_time_utc_ms', intervalMs, closedOnly: true, source, example, observedAt: now,
+    lastClosedOpenAt, lastClosedAt: lastClosedOpenAt === null ? null : lastClosedOpenAt + intervalMs,
+    latencyMs: lastClosedOpenAt === null ? null : now - (lastClosedOpenAt + intervalMs),
+    duplicates: rows.length - unique.size, conflictingDuplicates,
+    outOfOrder: raw.some((row, index) => index > 0 && row.t < raw[index - 1].t),
+    gaps: sorted.flatMap((row, index) => index && row.t - sorted[index - 1].t > intervalMs
+      ? [{ afterOpenAt: sorted[index - 1].t, beforeOpenAt: row.t, missingBars: Math.max(0, Math.ceil((row.t - sorted[index - 1].t) / intervalMs) - 1) }] : []),
+    stale: latestObservedClose !== undefined && now - (latestObservedClose + intervalMs) > 2 * intervalMs,
+    futureOpenTimes: raw.filter(row => Number.isFinite(row.t) && row.t > now).length
+  };
+}
 export function closedLiveCandles(candles: Candle[], intervalMs: number, now = Date.now()): Candle[] {
-  const valid = candles.filter(candle => [candle.t, candle.o, candle.h, candle.l, candle.c, candle.v].every(Number.isFinite)
-    && candle.t > 0 && candle.t + intervalMs <= now && Math.min(candle.o, candle.h, candle.l, candle.c) > 0
-    && candle.v >= 0 && candle.h >= Math.max(candle.o, candle.c) && candle.l <= Math.min(candle.o, candle.c))
-    .sort((a, b) => a.t - b.t);
+  if (!(intervalMs > 0) || !Number.isFinite(intervalMs) || !Number.isFinite(now)) return [];
+  const unique = new Map<number, Candle>();
+  for (const candle of candles) if (validCandle(candle) && candle.t + intervalMs <= now) unique.set(candle.t, candle);
+  const valid = [...unique.values()].sort((a, b) => a.t - b.t);
   const last = valid.at(-1);
   if (!last || now - (last.t + intervalMs) > 2 * intervalMs) return [];
   let start = valid.length - 1;

@@ -17,6 +17,7 @@ web/public/mpu-gandring-assets/
 .mpu-gandring/
 data/learnings.json
 data/kill-switch.json
+data/kill-switch.json.audit.jsonl
 *.xml
 *repomix*
 

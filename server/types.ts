@@ -41,6 +41,7 @@ export interface ConversationSummary {
 }
 
 export interface OrderbookSummary {
+  provenance?: import('./market/provenance.js').FeedProvenance;
   liquidityChanges?: import('./market/microstructure.js').LiquidityChanges | null;
   bidObservedCoveragePct?: number;
   askObservedCoveragePct?: number;
@@ -63,6 +64,7 @@ export interface OrderbookSummary {
 }
 
 export interface OrderflowSummary {
+  provenance?: import('./market/provenance.js').FeedProvenance;
   requestedVenue?: string;
   actualDataVenue?: string;
   dataType?: string;
@@ -153,6 +155,11 @@ export interface WhaleOnChainSummary {
 }
 
 export interface MarketSnapshot {
+  collectorStartedAt?: number;
+  collectorEndedAt?: number;
+  candleMetadata?: import('./market/observations.js').CandleMetadata;
+  volumeDiagnostics?: ReturnType<typeof import('./strategy.js').volumeDiagnostics>;
+  feedProvenance?: Record<string, import('./market/provenance.js').FeedProvenance>;
   dataProvenance?: { requestedVenue: string; actualVenue: string; dataType: 'native' | 'reference'; symbolMapping: { requested: string; actual: string; transformed: boolean }; executionCompatible: boolean; fetchedAt: number };
   snapshotId?: string;
   cmcMomentum?: import('./market/coinmarketcap.js').CmcMomentum;
@@ -177,6 +184,11 @@ export interface MarketSnapshot {
 }
 
 export interface NewsItem {
+  eventAt?: number | null;
+  windowStartAt?: number | null;
+  windowEndAt?: number | null;
+  metric?: { value: number; unit: string; scope: string; windowHours?: number };
+  metricProvenance?: import('./market/news.js').MetricProvenance;
   observedAt?: number;
   affectedAssets?: string[];
   eventCategory?: string;

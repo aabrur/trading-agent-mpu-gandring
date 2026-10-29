@@ -2,14 +2,16 @@ import { asterBase } from '../exchange/rules.js';
 import type { Network } from '../exchange/types.js';
 import type { Candle, MarketSnapshot, NewsItem, OrderbookSummary, OrderflowSummary, DerivativesSummary, TechnicalSummary } from '../types.js';
 import { sampleSnapshot } from './sample.js';
-import { closedOnly, buildTechnicalSummary } from '../strategy.js';
+import { closedOnly, buildTechnicalSummary, volumeDiagnostics } from '../strategy.js';
 import { getWhaleOnChainSummary } from './whale.js';
 import { sanitizeUntrusted } from '../untrusted.js';
-import { parsePublishedAt } from './news.js';
+import { metricProvenance, parsePublishedAt } from './news.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { closedLiveCandles, fetchOpenInterestChanges, measuredNumber } from './observations.js';
+import { candleMetadata, closedLiveCandles, fetchOpenInterestChanges, measuredNumber } from './observations.js';
+import { feedProvenance, type FeedProvenance } from './provenance.js';
+import type { CandleMetadata } from './observations.js';
 import { getLiveAnnouncements } from './live-news.js';
 import { noteTradeRequest, normalizeTrades, summarizeDepth, summarizeOrderflow, tradeRequestLimit, type NormalizedTradeInput } from './microstructure.js';
 import { fetchPositioning } from './positioning.js';
@@ -26,7 +28,9 @@ async function getJson(url: string, init?: RequestInit, timeoutMs = 6000): Promi
     const res = await fetch(url, { ...init, signal: ctrl.signal, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (data && !Array.isArray(data) && (data.error || (data.retCode !== undefined && data.retCode !== 0))) throw new Error('Public market provider returned an error');
+    if (data && !Array.isArray(data) && (data.error || (data.retCode !== undefined && data.retCode !== 0) || Number(data.code) < 0)) {
+      throw new Error(`Public market provider rejected request (${data.retCode ?? data.code ?? 'error'}): ${sanitizeUntrusted(String(data.msg ?? data.retMsg ?? data.error ?? ''), 160).text}`);
+    }
     return data;
   } finally { clearTimeout(t); }
 }
@@ -189,6 +193,7 @@ export async function fetchL2Orderbook(symbol: string, source: Source, requested
     const imb1 = (bidVol1 + askVol1) > 0 ? Math.round((bidVol1 / (bidVol1 + askVol1)) * 100) / 100 : 0.5;
 
     return {
+      provenance: feedProvenance(symbol, requestedVenue, source, 'orderbook', network, observedAt),
       evidence: { source, observedAt, status: 'live', basis: 'Depth bands are limited to returned levels and include measured price-range coverage' },
       requestedVenue, actualDataVenue: source, dataType: requestedVenue === source ? 'native' : 'external_proxy',
       sourceEndpoint: source === 'aster' ? `${base}/fapi/v3/depth` : source === 'bybit' ? 'https://api.bybit.com/v5/market/orderbook' : source === 'binance' ? 'https://fapi.binance.com/fapi/v1/depth' : source,
@@ -234,8 +239,9 @@ export async function fetchRecentTrades(symbol: string, source: Source, requeste
     noteTradeRequest(historyKey, rows.length, limit);
     const now = Date.now();
     if (rows.length > 0 && normalizeTrades(trades).filter(trade => trade.time <= now).length === 0) return null;
-    return summarizeOrderflow(trades, { now, observedAt: now, venue: requestedVenue, actualDataVenue: actualVenue,
-      dataType: requestedVenue === actualVenue ? 'native' : 'external_proxy', sourceEndpoint: endpoint, historyKey, emptyActivity: rows.length === 0 }) as OrderflowSummary;
+    return { ...summarizeOrderflow(trades, { now, observedAt: now, venue: requestedVenue, actualDataVenue: actualVenue,
+      dataType: requestedVenue === actualVenue ? 'native' : 'external_proxy', sourceEndpoint: endpoint, historyKey, emptyActivity: rows.length === 0 }),
+      provenance: feedProvenance(symbol, requestedVenue, actualVenue, 'trades', network, now) } as OrderflowSummary;
   } catch {
     return null;
   }
@@ -328,12 +334,14 @@ const FETCHERS: Record<Exclude<Source, 'sample'>, (s: string) => Promise<MarketS
 };
 
 export async function getSnapshot(symbol: string, preferred: Source, liveOnly = false, network: Network = 'mainnet'): Promise<MarketSnapshot & { errors: string[] }> {
+  const collectorStartedAt = Date.now();
   const errors: string[] = [];
   if (preferred !== 'sample') {
     const chain = [preferred, ...ORDER.filter((s) => s !== preferred)] as Exclude<Source, 'sample'>[];
     for (const src of chain) {
       try {
         const snap = await (src === 'aster' ? fromDex('aster', symbol, network) : FETCHERS[src](symbol));
+        const rawCandles = snap.candles;
         snap.candles = closedLiveCandles(snap.candles, 15 * 60_000);
         if (Number.isFinite(snap.last) && snap.last > 0 && snap.candles.length >= 55) {
           const [orderbook, orderflow, derivatives, whaleOnChain, mtf5m, mtf1h, mtf4h, coinMarketCap] = await Promise.all([
@@ -356,6 +364,18 @@ export async function getSnapshot(symbol: string, preferred: Source, liveOnly = 
 
           return {
             ...snap,
+            collectorStartedAt, collectorEndedAt: Date.now(),
+            candleMetadata: candleMetadata(rawCandles, snap.candles, 15 * 60_000, src, false),
+            volumeDiagnostics: volumeDiagnostics(snap.candles, { source: src, unit: feedProvenance(symbol, preferred, src, 'candles', network, snap.fetchedAt).volumeUnit, intervalMs: 15 * 60_000 }),
+            feedProvenance: {
+              ticker: feedProvenance(symbol, preferred, src, 'ticker', network, snap.fetchedAt),
+              candles_15m: feedProvenance(symbol, preferred, src, 'candles', network, snap.fetchedAt),
+              candles_5m: feedProvenance(symbol, preferred, mtf5m?.source ?? null, 'candles', network, mtf5m?.candleMetadata.observedAt ?? Date.now()),
+              candles_1h: feedProvenance(symbol, preferred, mtf1h?.source ?? null, 'candles', network, mtf1h?.candleMetadata.observedAt ?? Date.now()),
+              candles_4h: feedProvenance(symbol, preferred, mtf4h?.source ?? null, 'candles', network, mtf4h?.candleMetadata.observedAt ?? Date.now()),
+              orderbook: orderbook?.provenance ?? feedProvenance(symbol, preferred, null, 'orderbook', network, Date.now()),
+              trades: orderflow?.provenance ?? feedProvenance(symbol, preferred, null, 'trades', network, Date.now())
+            },
             snapshotId: `${symbol}:${snap.source}:${snap.fetchedAt}`,
             dataProvenance: { requestedVenue: preferred, actualVenue: snap.source, dataType: snap.source === preferred ? 'native' : 'reference', symbolMapping: { requested: symbol, actual: symbol, transformed: false }, executionCompatible: snap.source === preferred, fetchedAt: snap.fetchedAt },
             cmcMomentum: cmcMomentum(symbol, coinMarketCap?.quote ?? null),
@@ -380,7 +400,12 @@ export async function getSnapshot(symbol: string, preferred: Source, liveOnly = 
     }
   }
   if (liveOnly) throw new Error(`Live market data unavailable for ${symbol}; sample fallback disabled.`);
-  return { ...sampleSnapshot(symbol), errors };
+  const sample = sampleSnapshot(symbol);
+  return { ...sample, errors,
+    candleMetadata: candleMetadata(sample.candles, sample.candles, 15 * 60_000, 'sample', true),
+    volumeDiagnostics: volumeDiagnostics(sample.candles, { source: 'sample', unit: 'unknown', example: true }),
+    feedProvenance: { candles_15m: feedProvenance(symbol, preferred, 'sample', 'candles', network, sample.fetchedAt) }
+  };
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -401,7 +426,8 @@ export function getNews(symbol: string): NewsItem[] {
     .map((n) => {
       const h = sanitizeUntrusted(n.headline, 200);
       const b = sanitizeUntrusted(n.body, 600);
-      return { ...n, headline: h.text, body: b.text, flagged: h.flagged || b.flagged, example: true };
+      const item = { ...n, headline: h.text, body: b.text, flagged: h.flagged || b.flagged, example: true, observedAt: Date.now() };
+      return { ...item, metricProvenance: metricProvenance(item) };
     });
 }
 
@@ -431,13 +457,14 @@ export async function getNewsFor(symbol: string, cfg: { tradingMode?: string; ne
       const votes = p.votes ?? {};
       const sentiment = (votes.positive ?? 0) > (votes.negative ?? 0) ? 'bullish' : (votes.negative ?? 0) > (votes.positive ?? 0) ? 'bearish' : 'neutral';
       const sourceUrl = typeof p.url === 'string' && p.url ? p.url : (typeof p.source?.url === 'string' ? p.source.url : null);
-      return {
+      const item: NewsItem = {
         id: `cp-${p.id ?? i}`, symbol: coin, headline: h.text, body: b.text,
         source: String(p.source?.title ?? p.domain ?? 'cryptopanic').slice(0, 60),
         sentiment, flagged: h.flagged || b.flagged, example: false,
         publishedAt: parsePublishedAt(p.published_at ?? p.created_at ?? p.createdAt),
-        sourceUrl
-      } as NewsItem;
+        sourceUrl, observedAt: Date.now()
+      };
+      return { ...item, metricProvenance: metricProvenance(item) };
     });
     if (!items.length) return fallback();
     newsCache.set(coin, { at: Date.now(), items });
@@ -453,8 +480,34 @@ export type Timeframe = typeof TIMEFRAMES[number];
 const TF_MS: Record<Timeframe, number> = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000 };
 const BYBIT_TF: Record<Timeframe, string> = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' };
 
+/** Independent public reads. Listing lookup failure is not evidence of an invalid symbol. */
+export async function asterSymbolDiagnostic(symbol: string, tf: Timeframe = '15m', network: Network = 'mainnet') {
+  const observedAt = Date.now(), resolvedSymbol = `${coinOf(symbol)}USDT`;
+  const exchangeInfoEndpoint = `${asterBase(network)}/fapi/v3/exchangeInfo`;
+  const candleEndpoint = `${asterBase(network)}/fapi/v3/klines`;
+  const [listing, candleResult] = await Promise.allSettled([
+    getJson(exchangeInfoEndpoint), dexCandles('aster', symbol, tf, 10, network)
+  ]);
+  const symbols: unknown = listing.status === 'fulfilled' ? listing.value.symbols : null;
+  const rows = Array.isArray(symbols) ? symbols as Array<{ symbol?: string; status?: string }> : null;
+  const instrument = rows?.find(row => row.symbol === resolvedSymbol);
+  const closed = candleResult.status === 'fulfilled' ? closedLiveCandles(candleResult.value, TF_MS[tf]) : [];
+  return {
+    requestedSymbol: symbol, resolvedSymbol, network, tf, observedAt,
+    source: 'aster' as const, exchangeInfoEndpoint, candleEndpoint,
+    symbolStatus: rows === null ? 'UNAVAILABLE' as const : instrument ? 'LISTED' as const : 'NOT_LISTED' as const,
+    tradingStatus: instrument?.status ?? null, candleStatus: closed.length ? 'AVAILABLE' as const : 'UNAVAILABLE' as const,
+    candleMetadata: candleMetadata(candleResult.status === 'fulfilled' ? candleResult.value : [], closed, TF_MS[tf], 'aster', false),
+    errors: [
+      ...(listing.status === 'rejected' ? [`exchangeInfo: ${sanitizeUntrusted(String(listing.reason instanceof Error ? listing.reason.message : 'Request failed'), 200).text}`] : rows === null ? ['exchangeInfo: missing symbols array'] : []),
+      ...(candleResult.status === 'rejected' ? [`candles: ${sanitizeUntrusted(String(candleResult.reason instanceof Error ? candleResult.reason.message : 'Request failed'), 200).text}`] : !closed.length ? ['candles: no fresh completed Aster bars'] : [])
+    ]
+  };
+}
+
 /** Closed candles for one timeframe. Public data only. Falls back to sample data (15m sample bars are aggregated). */
-export async function getCandles(symbol: string, tf: Timeframe, preferred: Source, limit = 100, liveOnly = false, network: Network = 'mainnet'): Promise<{ symbol: string; tf: Timeframe; source: Source; example: boolean; candles: Candle[]; errors: string[] }> {
+export async function getCandles(symbol: string, tf: Timeframe, preferred: Source, limit = 100, liveOnly = false, network: Network = 'mainnet'): Promise<{ symbol: string; tf: Timeframe; source: Source; requestedVenue: Source; example: boolean; candles: Candle[]; errors: string[]; candleMetadata: CandleMetadata; provenance: FeedProvenance; volumeDiagnostics: ReturnType<typeof volumeDiagnostics>; collectorStartedAt: number; collectorEndedAt: number }> {
+  const collectorStartedAt = Date.now();
   const n = Math.min(500, Math.max(10, limit));
   const errors: string[] = [];
   if (preferred !== 'sample') {
@@ -476,7 +529,14 @@ export async function getCandles(symbol: string, tf: Timeframe, preferred: Sourc
           candles = kl.map((r: any) => ({ t: +r.t, o: +r.o, h: +r.h, l: +r.l, c: +r.c, v: +r.v }));
         }
         const closed = closedLiveCandles(candles, TF_MS[tf]).slice(-n);
-        if (closed.length >= 10) return { symbol, tf, source: src, example: false, candles: closed, errors };
+        if (closed.length >= 10) {
+          const observedAt = Date.now();
+          const provenance = feedProvenance(symbol, preferred, src, 'candles', network, observedAt);
+          return { symbol, tf, source: src, requestedVenue: preferred, example: false, candles: closed, errors,
+            provenance, candleMetadata: candleMetadata(candles, closed, TF_MS[tf], src, false, observedAt),
+            volumeDiagnostics: volumeDiagnostics(closed, { source: src, unit: provenance.volumeUnit, observedAt, intervalMs: TF_MS[tf] }),
+            collectorStartedAt, collectorEndedAt: observedAt };
+        }
         errors.push(`${src}: not enough data`);
       } catch (e) { errors.push(`${src}: ${(e as Error).message}`); }
     }
@@ -489,7 +549,13 @@ export async function getCandles(symbol: string, tf: Timeframe, preferred: Sourc
     const g = base.slice(i, i + step);
     out.push({ t: g[0].t, o: g[0].o, h: Math.max(...g.map((x) => x.h)), l: Math.min(...g.map((x) => x.l)), c: g[g.length - 1].c, v: g.reduce((s, x) => s + x.v, 0) });
   }
-  return { symbol, tf: step === 1 && TF_MS[tf] < TF_MS['15m'] ? '15m' : tf, source: 'sample', example: true, candles: out.slice(-n), errors };
+  const actualTf = step === 1 && TF_MS[tf] < TF_MS['15m'] ? '15m' : tf;
+  const returned = out.slice(-n), observedAt = Date.now();
+  return { symbol, tf: actualTf, source: 'sample', requestedVenue: preferred, example: true, candles: returned, errors,
+    provenance: feedProvenance(symbol, preferred, 'sample', 'candles', network, observedAt),
+    candleMetadata: candleMetadata(out, returned, TF_MS[actualTf], 'sample', true, observedAt),
+    volumeDiagnostics: volumeDiagnostics(returned, { source: 'sample', unit: 'unknown', example: true, observedAt }),
+    collectorStartedAt, collectorEndedAt: observedAt };
 }
 
 export * from './news.js';

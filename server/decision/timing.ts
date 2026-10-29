@@ -1,4 +1,6 @@
 export interface CycleTiming {
+  startedAt?: number;
+  endedAt?: number;
   instrumentMetadata: number;
   nativeQuote: number;
   quoteRevalidation: number;
@@ -35,7 +37,8 @@ export class CycleTimer {
     finally { this.mark(key, Date.now() - start); }
   }
   finish(): CycleTiming {
-    const out = { ...ZERO, ...this.marks, total: Date.now() - this.t0 };
+    const endedAt = Date.now();
+    const out = { ...ZERO, ...this.marks, startedAt: this.t0, endedAt, total: endedAt - this.t0 };
     return out;
   }
 }

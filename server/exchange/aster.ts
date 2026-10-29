@@ -2,7 +2,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { historyRows, historyScope, historyWindow, asterIncome, asterFills, parseHistoryJson } from './financial-history.js';
 import type { FinancialQuery, FinancialPage } from './types.js';
 import type { Hex } from 'viem';
-import { ExchangeError, httpJson, floorStep, roundTick, pickProtection, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
+import { ExchangeError, httpJson, floorStep, roundTick, roundEntryLimit, pickProtection, type ExchangeAdapter, type FetchLike, type Network, type PermissionReport, type PlaceOrder, type OrderRecord, type VenuePosition, type Side, type Protection, type ProtectRequest } from './types.js';
 import { asterRules, type InstrumentRules, type RulesCache } from './rules.js';
 import { readEnv } from '../../cli/envfile.js';
 
@@ -27,6 +27,7 @@ export function asterNonce(now = Date.now()) { lastNonce = Math.max(lastNonce + 
 export class AsterAdapter implements ExchangeAdapter {
   readonly name = 'aster' as const;
   readonly exchangeStops = true;
+  readonly restingLimitGtcEntry = true;
   private base: string;
   private account: ReturnType<typeof privateKeyToAccount>;
   private pinnedAgent: string;
@@ -141,9 +142,21 @@ export class AsterAdapter implements ExchangeAdapter {
 
   async placeOrder(o: PlaceOrder) {
     if (!(o.stop > 0)) throw new ExchangeError('refusing an order without a stop loss');
+    if (o.entry && o.entry.type !== 'MARKET' && o.entry.type !== 'LIMIT_GTC') throw new ExchangeError('unsupported entry type');
     const ins = await this.instrument(o.symbol);
     const qty = floorStep(o.qty, ins.qtyStep);
     if (qty < ins.minQty) throw new ExchangeError(`size ${qty} is under the minimum ${ins.minQty}`);
+    if (o.entry?.type === 'LIMIT_GTC') {
+      if (!Number.isFinite(o.entry.price) || o.entry.price <= 0 || (o.entry.expireAt != null && (!Number.isFinite(o.entry.expireAt) || o.entry.expireAt <= Date.now()))) throw new ExchangeError('invalid LIMIT_GTC price or explicit expiration');
+      if (Math.abs(qty - o.qty) > Math.max(1, qty) * 1e-10) throw new ExchangeError('LIMIT_GTC quantity must match the venue lot step');
+      // BUY never exceeds the Owner limit; SELL never goes below it. GTC is not GTX/PostOnly.
+      const price = roundEntryLimit(o.entry.price, ins.tickSize, o.side);
+      if (!(price > 0) || (o.side === 'LONG' ? o.stop >= price : o.stop <= price)) throw new ExchangeError('LIMIT_GTC price crosses the required stop');
+      await this.req('POST', '/fapi/v3/leverage', { symbol: o.symbol, leverage: Math.round(o.leverage) });
+      const r = await this.req('POST', '/fapi/v3/order', { symbol: o.symbol, side: o.side === 'LONG' ? 'BUY' : 'SELL', type: 'LIMIT', timeInForce: 'GTC', quantity: qty, price, newClientOrderId: o.clientId });
+      // No unfilled quantity is protected as a position. The executor observes GET order then protects actual net fills.
+      return { orderId: r?.orderId != null ? String(r.orderId) : null };
+    }
     await this.req('POST', '/fapi/v3/leverage', { symbol: o.symbol, leverage: Math.round(o.leverage) });
     const side = o.side === 'LONG' ? 'BUY' : 'SELL', exit = o.side === 'LONG' ? 'SELL' : 'BUY';
     const r = await this.req('POST', '/fapi/v3/order', { symbol: o.symbol, side, type: 'MARKET', quantity: qty, newClientOrderId: o.clientId });
@@ -175,12 +188,16 @@ export class AsterAdapter implements ExchangeAdapter {
   }
   async cancelOrder(symbol: string, clientId: string) { await this.req('DELETE', '/fapi/v3/order', { symbol, origClientOrderId: clientId }); }
   async cancelAll(symbol: string) { await this.req('DELETE', '/fapi/v3/allOpenOrders', { symbol }); }
-  async protection(symbol: string, side: Side): Promise<Protection> {
+  async protection(symbol: string, side: Side, requiredQty?: number): Promise<Protection> {
     const open: any[] = await this.req('GET', '/fapi/v3/openOrders', { symbol });
-    return pickProtection(side, (open ?? []).map((o) => ({
+    const protection = pickProtection(side, (open ?? []).map((o) => ({
       price: Number(o.stopPrice), kind: /^STOP/.test(o.type) ? 'stop' as const : /^TAKE_PROFIT/.test(o.type) ? 'tp' as const : 'unknown' as const,
       closes: (o.side === 'SELL' ? 'LONG' : 'SHORT') as Side
     })).filter((t) => t.kind !== 'unknown'));
+    if (requiredQty == null) return protection;
+    const stop = (open ?? []).find(o => /^STOP/.test(o.type) && (o.side === 'SELL' ? 'LONG' : 'SHORT') === side && Number(o.stopPrice) === protection.stop);
+    const qty = Number(stop?.origQty ?? stop?.quantity);
+    return { ...protection, stopCoverage: stop?.closePosition === true || stop?.closePosition === 'true' ? 'net_position' : Number.isFinite(qty) && qty > 0 ? 'quantity' : 'unknown', stopQty: Number.isFinite(qty) && qty > 0 ? qty : null };
   }
   async protect(p: ProtectRequest) {
     const ins = await this.instrument(p.symbol);

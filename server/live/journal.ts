@@ -2,7 +2,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkS
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Position, ClosedTrade } from '../types.js';
-import type { OrderRecord, Side } from '../exchange/types.js';
+import type { EntryOrder, ExchangeName, Network, OrderRecord, Side } from '../exchange/types.js';
 import { recordDiagnostic } from '../session-log.js';
 
 export interface ExecutionIntent {
@@ -11,6 +11,16 @@ export interface ExecutionIntent {
   awaitingQty?: number;
   awaitingObservedQty?: number;
   accountedQty: number; accountedValue: number | null; record: OrderRecord | null; at: number;
+  entry?: EntryOrder;
+  entryState?: 'CREATED' | 'SUBMITTED' | 'RESTING' | 'PARTIAL' | 'FILLED' | 'CANCEL_REQUESTED' | 'CANCELLED' | 'EXPIRED' | 'REJECTED' | 'UNKNOWN';
+  venue?: ExchangeName; network?: Network; orderId?: string; updatedAt?: number; submittedAt?: number; acceptedAt?: number;
+  limitPrice?: number;
+  filledQty?: number; remainingQty?: number;
+  cancelRequestedAt?: number; expireRequested?: boolean;
+  protectionStatus?: 'confirmed' | 'missing' | 'unknown';
+  protectionAttemptedQty?: number;
+  emergencyCloseId?: string;
+  emergencyCoveredFillQty?: number;
 }
 
 export interface DailyLossState { key: string; startEquity: number; lossHit: boolean }
@@ -105,6 +115,11 @@ export class ExecutionJournal {
       if (!saved) throw new Error('Execution journal is unreadable and no valid backup exists.');
       if (saved.venue !== venue || !Array.isArray(saved.intents) || !Array.isArray(saved.positions) || !Array.isArray(saved.closed)) throw new Error('Execution journal does not match this venue/network; inspect the local journal before starting.');
       this.intents = saved.intents; this.positions = saved.positions; this.closed = saved.closed; this.protectionClients = saved.protectionClients ?? [];
+      for (const intent of this.intents) {
+        const entry = intent.entry;
+        if (entry?.type !== 'LIMIT_GTC') continue;
+        if (intent.kind !== 'open' || !Number.isFinite(entry.price) || entry.price <= 0 || !Number.isFinite(intent.requestedQty) || intent.requestedQty <= 0 || !Number.isFinite(intent.stop) || !(intent.stop! > 0) || !intent.clientId || `${intent.venue}:${intent.network}` !== venue || (entry.expireAt != null && !Number.isFinite(entry.expireAt))) throw new Error('Invalid persisted LIMIT_GTC intent; inspect the local journal before starting.');
+      }
       if (saved.dailyLoss) {
         const day = saved.dailyLoss;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(day.key) || !Number.isFinite(day.startEquity) || day.startEquity < 0 || typeof day.lossHit !== 'boolean') throw new Error('Invalid persisted daily loss state; inspect the local journal before starting.');
