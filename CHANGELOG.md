@@ -2,6 +2,11 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.10] - 2026-10-30
+
+### Fixed
+- Desk Ops on TESTNET and LIVE counts occupied slots from backend accounting, including a unique pending entry, instead of local book rows. Unverified observations stay labeled unverified. PAPER still counts position rows. Owner settings, slot accounting and guards are unchanged.
+
 ## [v0.0.0.4.9] - 2026-10-29
 
 ### Fixed

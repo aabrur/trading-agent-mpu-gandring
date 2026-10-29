@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.9",
-  "appVersion": "0.0.0.4.9",
+  "version": "0.4.10",
+  "appVersion": "0.0.0.4.10",
   "changelog": [
+    "v0.0.0.4.10: show TESTNET and LIVE occupied slots from backend accounting, including a unique pending entry, and label unverified observations. PAPER still counts position rows. Owner settings and guards are preserved.",
     "v0.0.0.4.9: preserve closed-candle finality and native volume precision; expose per-feed provenance, diagnostic prior-20 median volume, event windows and saved/active runtime identity; preserve kill activation origin with local forensic audit; add explicit opt-in Aster LIMIT GTC with durable reconciliation, partial-fill protection and cancellation. MARKET remains the default; Owner settings and guards are preserved.",
     "v0.0.0.4.8: separate entry Risk and confidence from verified CLOSE; refresh exit evidence after deliberation and under the execution lock; preserve research provenance with format-only repair; recover Windows session metadata contention; share readable channel reports and guarded native Grok Bot/Muse operations with updated installation templates.",
     "v0.0.0.4.7: restore reasoned six-agent OPEN/CLOSE decisions with Owner confidence and native venue execution; preserve exit causality, asynchronous journal safety, reliable private chat requests and operational session history; retain authorized local kill ON/OFF.",
