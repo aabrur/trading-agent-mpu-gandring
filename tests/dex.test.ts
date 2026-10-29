@@ -51,8 +51,9 @@ describe('Aster (EXPERIMENTAL, mocked)', () => {
     const fill = await new LiveExecutor(make(f), 0).open(order);
     expect(fill.ok).toBe(true);
     expect(fill.avgPrice).toBe(60010);
+    expect(fill.protectionStatus).toBe('confirmed');
     expect(f.open.map((o) => o.type)).toEqual(['STOP_MARKET', 'TAKE_PROFIT_MARKET']);
-    expect(f.open[0]).toMatchObject({ side: 'SELL', stopPrice: '58800', closePosition: 'true' });
+    expect(f.open[0]).toMatchObject({ symbol: order.symbol, side: 'SELL', stopPrice: '58800', closePosition: 'true' });
     expect(f.calls.filter((c) => c.path === '/fapi/v3/order' && c.method === 'POST' && c.query.get('type') === 'MARKET').length).toBe(1); // sent once
   });
   it('fails closed when the stop is rejected: entry closed, open reported as not ok', async () => {
@@ -112,11 +113,13 @@ describe('Orderly (EXPERIMENTAL, mocked)', () => {
     expect((await new LiveExecutor(make(f), 0).open(order)).ok).toBe(false);
     expect(await make(f).positions()).toEqual([]);
   });
-  it('startup reconcile re-places a missing stop', async () => {
+  it('startup reconcile re-places a missing stop but reports unknown coverage', async () => {
     const f = fakeOrderly();
     f.setPosition(-0.02, 60000);
     const notes = await new LiveExecutor(make(f), 0).ensureProtection({ BTCUSDT: { stop: 61500, tp: null } }, 3);
-    expect(notes[0]).toMatch(/protected on the exchange, stop 61500/);
+    expect(notes[0]).toMatch(/stop re-placed at 61500.*protected quantity is unknown/);
+    expect(notes[0]).not.toMatch(/protected on the exchange/);
+    expect(f.algos).toHaveLength(1);
     expect(f.algos[0].child_orders[0]).toMatchObject({ algo_type: 'STOP_LOSS', side: 'BUY' });
   });
 });

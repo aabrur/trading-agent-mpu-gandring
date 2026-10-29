@@ -102,3 +102,11 @@ Host-only verification: read-only health snapshots before and after remediation 
 Commit: only the remediation paths and this report; exact SHA supplied in the delivery response.
 
 Push status: exact remote SHA/result supplied in the delivery response after normal push to `origin/main`; no force push or production deployment.
+
+## CI follow-up
+
+The first full remote run, [40925291011](https://github.com/aabrur/trading-agent-mpu-gandring/actions/runs/40925291011), passed typechecking but failed 4 of 1,174 tests. These affected tests were missed by the original focused selection: two Aster cases used protective-order fixtures without `symbol`, Orderly still expected confirmation without quantity coverage, and one strategy test still required the superseded binding tactical zone.
+
+Corrected the Aster fixture to retain the submitted symbol and aligned the two outdated expectations with Scopes C/D. Strengthened the Aster confirmed-status assertion and gave structural-invalidity assertions a valid native quote so they exercise the intended guard. Production source, authorization and trading settings were not changed by this follow-up.
+
+Validation: `npx vitest run tests/dex.test.ts tests/strategy-momentum-contract.test.ts -t 'Aster|reports unknown coverage|treats the entry zone as advisory'`: **9 passed**, 19 unrelated cases skipped. This follows a local reproduction of the same 4 remote failures. Typecheck/build were not repeated locally for test-only edits; the normal push workflow supplies the fresh remote S5 result. Final CI URL and conclusion are recorded in the follow-up delivery response.

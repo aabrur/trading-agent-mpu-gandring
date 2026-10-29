@@ -31,20 +31,20 @@ describe('Owner momentum alignment', () => {
   });
 });
 
-describe('binding entry revalidation', () => {
+describe('advisory entry revalidation', () => {
   const zone = { low: 115, high: 117, basis: 'confirmed pullback structure' };
   const evaluate = (overrides: Partial<Parameters<typeof revalidateEntry>[0]> = {}) => {
     const snap = snapshot();
     return revalidateEntry({ original: snap, originalRule: strategyVote(snap.candles), side: 'LONG', fresh: snap, entryZone: zone, invalidationLevel: 114, expectedVenue: 'bybit', tradingMode: 'LIVE', ...overrides });
   };
 
-  it('binds an actual venue quote to the entry zone and strictly directional invalidation', () => {
+  it('treats the entry zone as advisory while preserving strictly directional invalidation', () => {
     expect(evaluate({ executionQuote: 116 }).ok).toBe(true);
-    expect(evaluate({ executionQuote: 119 })).toMatchObject({ ok: false, quote: 119 });
-    expect(evaluate({ invalidationLevel: 116 }).ok).toBe(false);
-    expect(evaluate({ entryZone: null }).ok).toBe(false);
-    expect(evaluate({ entryZone: { ...zone, low: 118, high: 117 } }).ok).toBe(false);
-    expect(evaluate({ side: 'SHORT', invalidationLevel: 116 }).ok).toBe(false);
+    expect(evaluate({ executionQuote: 119 })).toMatchObject({ ok: true, quote: 119 });
+    expect(evaluate({ executionQuote: 116, invalidationLevel: 116 }).ok).toBe(false);
+    expect(evaluate({ executionQuote: 116, entryZone: null }).ok).toBe(false);
+    expect(evaluate({ executionQuote: 116, entryZone: { ...zone, low: 118, high: 117 } }).ok).toBe(false);
+    expect(evaluate({ executionQuote: 116, side: 'SHORT', invalidationLevel: 116 }).ok).toBe(false);
   });
 
   it('surfaces sample data and price-source conflict rather than silently using another venue', () => {

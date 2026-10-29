@@ -38,7 +38,7 @@ export function fakeAster(opts: FakeOpts = {}) {
           return json({ orderId: orders.size, clientOrderId: cid });
         }
         if (type === 'STOP_MARKET' && opts.rejectStop) return json({ code: -2021, msg: 'Order would immediately trigger.' });
-        if (!opts.dropStops) open.push({ type, side, stopPrice: q.get('stopPrice'), clientOrderId: cid, closePosition: q.get('closePosition') });
+        if (!opts.dropStops) open.push({ symbol: q.get('symbol'), type, side, stopPrice: q.get('stopPrice'), clientOrderId: cid, closePosition: q.get('closePosition') });
         return json({ orderId: 99, clientOrderId: cid });
       }
       case 'GET /fapi/v3/order': { const o = orders.get(q.get('origClientOrderId')!); return o ? json(o) : json({ code: -2013, msg: 'Order does not exist.' }); }
