@@ -27,7 +27,7 @@ export interface DeskState {
   operationalChat?: { id: string; startedAt: number; recovered: boolean };
   version?: string;
   conversations?: ConversationSummary[];
-  accountState?: { hasTradableCapital: boolean | null; openPositionsCount: number; maxPositions: number; freeSlots: number; canOpenNewSlot: boolean; mode: string; source: string; status: string; observedAt: number | null };
+  accountState?: { hasTradableCapital: boolean | null; openPositionsCount: number; maxPositions: number; freeSlots: number; occupiedSlots?: number; pendingOpenCount?: number; canOpenNewSlot: boolean; mode: string; source: string; status: string; observedAt: number | null };
   chatMetrics?: { agentCalls: number; modelAttempts: number; failures: number; lastLatencyMs: number; totalLatencyMs: number; tokenUsage: null; modelCost: null };
   capabilities?: Array<{ name: string; category: string; available: boolean; configured: boolean; status: string; reachable?: boolean; lastSuccessfulObservation?: number; requiresApiKey: boolean | 'provider-dependent'; keyConfigured?: boolean; limitations: string[] }>;
   trading?: { network: 'testnet' | 'mainnet' | null; profile: import('../../server/trading-settings').TradingProfile; values: import('../../server/trading-settings').TradingSettings };

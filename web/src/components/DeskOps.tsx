@@ -13,6 +13,24 @@ import { TRADING_PRESETS, TRADING_PRESET_IDS, type TradingPresetId, type Trading
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const num = (s: string) => (s.trim() === '' ? undefined : Number(s));
 
+export function deskSlotOccupancy(input: {
+  mode: 'PAPER' | 'TESTNET' | 'LIVE';
+  positionCount: number;
+  configuredN: number;
+  accountState?: { occupiedSlots?: number; pendingOpenCount?: number; maxPositions?: number; status?: string } | null;
+}): { used: number; n: number; pending: number; statusNote: string } {
+  const account = input.accountState;
+  if (input.mode === 'PAPER' || !account || typeof account.occupiedSlots !== 'number') {
+    return { used: input.positionCount, n: input.configuredN, pending: 0, statusNote: '' };
+  }
+  return {
+    used: account.occupiedSlots,
+    n: account.maxPositions ?? input.configuredN,
+    pending: account.pendingOpenCount ?? 0,
+    statusNote: account.status && account.status !== 'confirmed' ? account.status : ''
+  };
+}
+
 export function DeskOps({ state }: { state: DeskState }) {
   const { t, lang } = useI18n();
   const [symbol, setSymbol] = useState(state.watchlist[0] ?? 'BTCUSDT');
@@ -37,6 +55,7 @@ export function DeskOps({ state }: { state: DeskState }) {
   const [paperConfirmedPreset, setPaperConfirmedPreset] = useState<TradingPresetId | null>(null);
   // Canonical Max N lives in Portfolio (server-confirmed /api/ops/auto). Desk Ops shows read-only slots.
   const confirmedN = (state.paper?.n ?? 4) as 1 | 2 | 3 | 4;
+  const slotView = deskSlotOccupancy({ mode: state.mode, positionCount: state.paper.positions.length, configuredN: confirmedN, accountState: state.accountState });
 
   useEffect(() => {
     if (state.mode === 'PAPER') {
@@ -302,7 +321,7 @@ export function DeskOps({ state }: { state: DeskState }) {
           </div>
         </div>
         <p className="ops-last-cycle" role="status">{t('opsLastCycle')}: {state.lastCycle?.symbol ? `${state.lastCycle.symbol} · ${state.lastCycle.verdict ?? '-'}${lastOutcome ? ` · ${lastOutcome}` : ''}` : (lang === 'id' ? 'Belum ada siklus.' : 'No cycle yet.')}</p>
-        <p className="ops-slots-line">{lang === 'id' ? 'Slot' : 'Slots'} {state.paper.positions.length}/{confirmedN} · ${state.paper.perOrder}/ord</p>
+        <p className="ops-slots-line">{lang === 'id' ? 'Slot' : 'Slots'} {slotView.used}/{slotView.n}{slotView.pending > 0 ? (lang === 'id' ? ` · ${slotView.pending} antre` : ` · ${slotView.pending} pending`) : ''}{slotView.statusNote ? ` · ${slotView.statusNote}` : ''} · ${state.paper.perOrder}/ord</p>
         {state.accountState && <p className="ops-slots-line">{lang === 'id' ? 'Modal tersedia' : 'Capital available'}: {state.accountState.hasTradableCapital === null ? 'UNKNOWN' : state.accountState.hasTradableCapital ? 'YES' : 'NO'} · {lang === 'id' ? 'Slot kosong' : 'Free slots'}: {state.accountState.freeSlots} · {state.accountState.source} ({state.accountState.status})</p>}
         <details className="ops-details">
           <summary>{lang === 'id' ? 'Rincian siklus' : 'Cycle details'}</summary>
