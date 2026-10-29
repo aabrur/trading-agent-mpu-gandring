@@ -91,9 +91,9 @@ export class MemoryAdapter implements ExchangeAdapter {
     return { orderId: 'c1' };
   }
   async cancelAll() {}
-  async protection(symbol: string, side: Side) {
+  async protection(symbol: string, side: Side, requiredQty?: number) {
     const p = this.pos.find((x) => x.symbol === symbol && x.side === side);
-    return { stop: p?.stop ?? null, tp: p?.tp ?? null };
+    return { stop: p?.stop ?? null, tp: p?.tp ?? null, ...(requiredQty == null ? {} : { stopCoverage: 'quantity' as const, stopQty: p?.qty ?? null }) };
   }
   async protect(r: ProtectRequest) {
     this.protects.push(r);

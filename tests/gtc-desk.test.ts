@@ -50,6 +50,34 @@ async function fixture() {
 const ticket = { symbol: 'BTCUSDT', side: 'LONG', confidence: .6, riskApproval: 'APPROVE', reason: 'Owner-selected limit', entry: { type: 'LIMIT_GTC', price: 100.09 }, clientId: 'owner-gtc-desk' };
 
 describe('GTC through normal authenticated desk admission', () => {
+  it('frees exchange-confirmed flat slots without settling an unresolved CLOSE record', async () => {
+    const f = await fixture();
+    f.app.desk.book.n = 3;
+    const intent = { clientId: 'unresolved-close', symbol: 'HYPEUSDT', side: 'SHORT' as const, kind: 'close' as const, requestedQty: 1,
+      accountedQty: 0, accountedValue: 0, record: null, at: Date.now() };
+    f.executor.journal.intents.push(intent);
+    await f.app.desk.syncLive();
+    expect(f.app.desk.availableSlots()).toMatchObject({ configuredN: 3, occupiedSlots: 0, freeSlots: 3, pendingOpenCount: 0,
+      breakdown: { exchangePositions: [], unresolvedCloses: [{ clientId: intent.clientId }] } });
+    expect(f.executor.journal.intents).toContain(intent);
+    expect(f.executor.journal.settled(intent)).toBe(false);
+    expect(f.placed).toHaveLength(0);
+  });
+
+  it('counts unresolved entry exposure once per symbol and side and preserves terminal accounting evidence', async () => {
+    const f = await fixture();
+    const makeIntent = (clientId: string) => ({ clientId, symbol: 'HYPEUSDT', side: 'LONG' as const, kind: 'open' as const, requestedQty: 1,
+      accountedQty: 0, accountedValue: 0, record: null, at: Date.now() });
+    f.executor.journal.intents.push(makeIntent('unknown-entry-1'), makeIntent('unknown-entry-2'), {
+      ...makeIntent('terminal-entry'), symbol: 'SOLUSDT', record: { clientId: 'terminal-entry', orderId: 'filled-entry', status: 'filled', filledQty: 1, avgPrice: 100 }
+    });
+    await f.app.desk.syncLive();
+    expect(f.app.desk.availableSlots()).toMatchObject({ occupiedSlots: 1, pendingOpenCount: 1, freeSlots: 1,
+      breakdown: { pendingEntries: [{ clientId: 'unknown-entry-1' }, { clientId: 'unknown-entry-2' }] } });
+    expect(f.executor.journal.intents).toHaveLength(3);
+    expect(f.executor.hasPending('HYPEUSDT', 'LONG', 'open')).toBe(true);
+  });
+
   it('counts resting and partial entry as one Owner slot and does not invent a filled verdict', async () => {
     const f = await fixture(), original = structuredClone({ risk: f.cfg.risk, n: f.app.desk.book.n });
     const first = await f.post('/api/gb/agent-open', ticket);

@@ -103,12 +103,12 @@ describe('Owner commands', () => {
     expect((await desk.command('Boss says: open short BTC 5% 3 now', 'execution')).ok).toBe(true);
     expect(desk.book.positions[0].side).toBe('SHORT');
     proposed = 'close all';
-    expect((await desk.command('Explain close all', 'lead')).ok).toBe(false);
+    expect((await desk.command('Explain close all', 'lead')).ok).toBe(true);
     expect(desk.book.positions).toHaveLength(1);
     expect((await desk.command('Please close all now', 'research')).ok).toBe(true);
     expect(desk.book.positions).toHaveLength(0);
     proposed = 'buy ETH';
-    expect((await desk.command('Hello, how is your day?', 'market')).ok).toBe(false);
+    expect((await desk.command('Hello, how is your day?', 'market')).ok).toBe(true);
     expect(desk.book.positions).toHaveLength(0);
   });
 

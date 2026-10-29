@@ -316,13 +316,14 @@ describe('Case G: Office Chat Operational Context Reliability', () => {
 
     // User asks a question, not an execution instruction
     const res = await desk.command('What do you think about opening long BTC?', 'lead');
-    expect(res.ok).toBe(false);
-    expect(res.reply).toContain('No action executed: the proposed command did not match an explicit instruction in your current message.');
+    expect(res.ok).toBe(true);
+    expect(res.reply).toBe('I think buying BTC is viable here.');
     expect(desk.book.positions).toHaveLength(initialPositions);
 
     // Another question
     const res2 = await desk.command('Can we close all positions now?', 'lead');
-    expect(res2.ok).toBe(false);
-    expect(res2.reply).toContain('No action executed');
+    expect(res2.ok).toBe(true);
+    expect(res2.reply).toBe('I think buying BTC is viable here.');
+    expect(desk.book.positions).toHaveLength(initialPositions);
   });
 });

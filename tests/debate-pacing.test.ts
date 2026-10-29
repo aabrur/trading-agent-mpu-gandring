@@ -28,6 +28,43 @@ function fixture(mode: 'normal' | 'fast', override?: ModelCaller) {
 }
 
 describe('visible debate lifecycle', () => {
+  it('normalizes the HYPE repeated execution status before speech, history and Lead synthesis', async () => {
+    vi.useFakeTimers();
+    const base = makeCaller(loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_PROVIDER: 'mock' }));
+    let executionAssessment = '';
+    const caller: ModelCaller = async request => {
+      if (request.agent === 'execution' && request.task === 'chat') return JSON.stringify({ reply: 'No order sent. '.repeat(1200) + 'Exchange snapshot is flat; 3 entry slots are available.' });
+      if (request.agent === 'lead' && request.task === 'lead') executionAssessment = String((request.context.roleAnalysis as { execution?: { assessment?: string } } | undefined)?.execution?.assessment ?? request.user);
+      return base(request);
+    };
+    const { desk, phases } = fixture('fast', caller);
+    const diagnostics = vi.spyOn(desk, 'diagnostic');
+    const speech: string[] = [];
+    desk.on('speech', event => { if (event.agent === 'execution' && event.done) speech.push(event.text); });
+    const verdict = await finish(desk.runDebate('HYPEUSDT'), desk);
+    const expected = 'No order sent. Exchange snapshot is flat; 3 entry slots are available.';
+    expect(speech[0]).toBe(expected);
+    expect(desk.logs.find(line => line.kind === 'speech' && line.agent === 'execution')?.text).toBe(expected);
+    const completed = diagnostics.mock.calls.map(([input]) => input).find(input => input.eventName === 'agent.completed' && input.source === 'agent:execution');
+    expect(completed?.details?.speechNormalization).toMatchObject({ fields: ['reply'], originalResponse: expect.stringContaining('No order sent. No order sent.') });
+    expect(executionAssessment).toContain(expected);
+    expect(executionAssessment).not.toContain('No order sent. No order sent.');
+    expect(phases.map(p => p.phase)).toContain('done');
+    expect(verdict).toBeDefined();
+  });
+
+  it('bounds speech animation while retaining a distinct long reply in chat and events', async () => {
+    vi.useFakeTimers();
+    const reply = '\n\n' + Array.from({ length: 600 }, (_, i) => `Observation ${i}: distinct measured value ${i + 1}.25.`).join('\n');
+    const { desk } = fixture('normal', async () => JSON.stringify({ reply }));
+    const events: Array<{ text: string; done: boolean }> = [];
+    desk.on('speech', event => events.push(event));
+    await finish(desk.command('Explain the observations', 'execution', 'long-reply'), desk);
+    expect(events.length).toBeLessThanOrEqual(25);
+    expect(events.at(-1)).toMatchObject({ text: reply, done: true });
+    expect(desk.roomHistory.find(message => message.from === 'execution')?.text).toBe(reply);
+  });
+
   it.each(['normal', 'fast'] as const)('%s gathers, debates and prepares before submitting a paper order', async (mode) => {
     vi.useFakeTimers();
     const { desk, phases, submissions } = fixture(mode);

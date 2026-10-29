@@ -6,6 +6,7 @@ import type { ModelCaller } from '../providers/index.js';
 import { systemPrompt } from './roles.js';
 import { fenceData } from '../untrusted.js';
 import { log, safe } from '../redact.js';
+import { normalizeAgentSpeech } from './speech.js';
 
 export type Out<K extends TaskKind> = z.infer<Schemas[K]>;
 
@@ -21,7 +22,7 @@ export const FALLBACK: { [K in TaskKind]: Out<K> } = {
 };
 
 export type AgentFailureKind = 'schema' | 'parse' | 'empty_output' | 'provider' | 'timeout' | 'rate_limit' | 'quota' | 'auth' | 'cancelled';
-export interface RunResult<K extends TaskKind> { data: Out<K>; fallback: boolean; example: boolean; provider: string; model: string; attempts: number; failureKind?: AgentFailureKind | null; lastError?: string }
+export interface RunResult<K extends TaskKind> { data: Out<K>; fallback: boolean; example: boolean; provider: string; model: string; attempts: number; failureKind?: AgentFailureKind | null; lastError?: string; speechNormalization?: { fields: string[]; originalResponse: string } }
 
 const failureMessages: Record<AgentFailureKind, string> = {
   schema: 'The model returned an invalid response after one repair attempt. Check the model response format.',
@@ -83,7 +84,20 @@ export async function runAgent<K extends TaskKind>(
           break;
         }
       }
-      if (parsed.success) return { data: parsed.data as Out<K>, fallback: false, example: provider === 'mock', provider, model, attempts: attempt, failureKind: null };
+      if (parsed.success) {
+        const data = parsed.data as Out<K>;
+        const fields: string[] = [];
+        for (const field of ['reply', 'argument', 'rebuttal', 'reason', 'lesson'] as const) {
+          if (!(field in data)) continue;
+          const record = data as Record<string, unknown>;
+          const original = record[field];
+          if (typeof original !== 'string') continue;
+          const normalized = normalizeAgentSpeech(original);
+          if (normalized !== original) { record[field] = normalized; fields.push(field); }
+        }
+        return { data, fallback: false, example: provider === 'mock', provider, model, attempts: attempt, failureKind: null,
+          ...(fields.length ? { speechNormalization: { fields, originalResponse: safe(raw) } } : {}) };
+      }
       lastFailureKind = 'schema';
       lastErr = parsed.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     } catch (e) {

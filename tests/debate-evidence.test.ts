@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MarketSnapshot, Position } from '../server/types.js';
 import type { NewsBriefing, NormalizedNewsEvent } from '../server/market/news.js';
 import type { NormalizedWhaleEvent, WhaleBriefing } from '../server/market/whale.js';
+import { summarizeOrderflow } from '../server/market/microstructure.js';
 import { buildDebateEvidence, closeAuthorized, estimatedNetUnrealized, evaluateCloseTriggers, exitEvidenceRefs, validateEntryGeometry, type CloseEvaluationInput, type CloseTriggerReason, type EntryScenario } from '../server/decision/debate-evidence.js';
 
 const now = Date.UTC(2026, 9, 27, 12);
@@ -33,7 +34,21 @@ const open = (overrides: Partial<Parameters<typeof buildDebateEvidence>[0]> = {}
 const close = (overrides: Partial<CloseEvaluationInput> = {}) => evaluateCloseTriggers({ snapshot: snapshot(), position: position(), mode: 'LIVE', executionVenue: 'bybit', now, ...overrides });
 
 describe('Owner OPEN evidence contract', () => {
-  it('accepts a binding structural setup with independently measured tape while optional feeds are unknown', () => {
+  it('qualifies a six-trade 768:1 partial sample without discarding its raw ratio or inventing a veto', () => {
+    const snap = snapshot();
+    snap.orderflow = summarizeOrderflow(Array.from({ length: 6 }, (_, i) => ({ id: `thin-${i}`, time: now - 500 + i * 60,
+      price: 100, quantity: i === 5 ? 1 : 153.6, takerSide: i === 5 ? 'Sell' as const : 'Buy' as const })), { now, observedAt: now, venue: 'bybit', historyKey: 'remediation-thin-sample', sourceEndpoint: '/public/trades' });
+    const evidence = open({ snapshot: snap });
+    expect(evidence.orderflow).toMatchObject({ kind: 'TAKER_SAMPLE', broadMarketConfirmation: false, venue: 'bybit', windowMs: 60_000,
+      tradesCount: 6, partial: true, raw: { buySellRatio: 768, tradesCount: 6, sourceEndpoint: '/public/trades' } });
+    expect(evidence.orderflow.coveragePct).toBeLessThan(100);
+    expect(evidence.momentum.flowVerified).toBe(false);
+    expect(evidence.openAllowed).toBe(true);
+    snap.orderflow.evidence!.basis = 'Candle-derived volume proxy';
+    expect(open({ snapshot: snap }).orderflow.kind).toBe('CANDLE_PROXY');
+  });
+
+  it('accepts a structural recommendation with independently measured tape while optional feeds are unknown', () => {
     const evidence = open();
     expect(evidence.openAllowed).toBe(true);
     expect(evidence.dimensions.structure.status).toBe('SUPPORTING');
@@ -123,14 +138,21 @@ describe('Owner OPEN evidence contract', () => {
     expect(evidence.momentum.flowVerified).toBe(false);
   });
 
-  it('binds LONG and SHORT entry zones and strictly opposing invalidation without price-chasing caps', () => {
-    expect(validateEntryGeometry('LONG', 102, scenario).ok).toBe(false);
+  it('reports advisory LONG and SHORT zone deviation while preserving structural invalidation', () => {
+    expect(validateEntryGeometry('LONG', 102, scenario)).toMatchObject({ ok: true, reason: expect.stringMatching(/advisory/i) });
     expect(validateEntryGeometry('LONG', 100, scenario).ok).toBe(true);
     expect(validateEntryGeometry('LONG', 100, { ...scenario, invalidationLevel: 100 }).ok).toBe(false);
     const short: EntryScenario = { ...scenario, side: 'SHORT', invalidationLevel: 105 };
-    expect(validateEntryGeometry('SHORT', 98, short).ok).toBe(false);
+    expect(validateEntryGeometry('SHORT', 98, short)).toMatchObject({ ok: true, reason: expect.stringMatching(/advisory/i) });
     expect(validateEntryGeometry('SHORT', 100, short).ok).toBe(true);
     expect(validateEntryGeometry('SHORT', 100, { ...short, invalidationLevel: 100 }).ok).toBe(false);
+  });
+
+  it('does not turn an advisory deviation into openReasons for Risk', () => {
+    const evidence = open({ nativeExecutionQuote: 102 });
+    expect(evidence.openAllowed).toBe(true);
+    expect(evidence.openReasons).toEqual([]);
+    expect(evidence.dimensions.structure).toMatchObject({ status: 'NEUTRAL', basis: expect.stringMatching(/advisory/i) });
   });
 });
 

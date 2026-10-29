@@ -4,15 +4,15 @@ import type { ExchangeAdapter, OrderRecord, Side } from '../exchange/index.js';
 import { ExecutionJournal, type ExecutionIntent } from './journal.js';
 import { recordDiagnostic } from '../session-log.js';
 import { FinancialEvidence } from './financial-evidence.js';
-import { floorStep, roundEntryLimit, type FinancialPage, type FinancialRecord, type PlaceOrder } from '../exchange/types.js';
+import { floorStep, roundEntryLimit, protectionStatus, type Protection, type ProtectionEvidence, type FinancialPage, type FinancialRecord, type PlaceOrder } from '../exchange/types.js';
 import { log, safe } from '../redact.js';
 
 export const newClientId = (tag = 'o') => `mg${tag}${Date.now().toString(36)}${randomBytes(4).toString('hex')}`.slice(0, 32);
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export interface Fill { ok: boolean; clientId: string; record: OrderRecord | null; qty: number; requestedQty: number; remainingQty: number; avgPrice: number | null; note: string; pending?: boolean; entryState?: ExecutionIntent['entryState']; protectionStatus?: ExecutionIntent['protectionStatus'] }
+export interface Fill { ok: boolean; clientId: string; record: OrderRecord | null; qty: number; requestedQty: number; remainingQty: number; avgPrice: number | null; note: string; pending?: boolean; entryState?: ExecutionIntent['entryState']; protectionStatus?: ExecutionIntent['protectionStatus']; protectionEvidence?: ProtectionEvidence }
 export type OpenRequest = Omit<PlaceOrder, 'clientId'> & { clientId?: string };
-export interface ProtectionResult { ok: boolean; status: 'confirmed' | 'missing' | 'unknown'; note: string; stop: number | null; tp: number | null }
+export interface ProtectionResult { ok: boolean; status: 'confirmed' | 'missing' | 'unknown'; note: string; stop: number | null; tp: number | null; evidence: ProtectionEvidence }
 
 // Every exchange write goes through here. Rules:
 //  - one send per intent, never a blind retry
@@ -119,7 +119,8 @@ export class LiveExecutor {
     if (!(o.stop > 0)) return { ok: false, clientId: '', record: null, qty: 0, requestedQty: o.qty, remainingQty: o.qty, avgPrice: null, note: 'refused: no stop loss' };
     // Fail closed: a venue that cannot hold the stop on its own side never gets an entry.
     if (this.adapter.exchangeStops !== true) return { ok: false, clientId: '', record: null, qty: 0, requestedQty: o.qty, remainingQty: o.qty, avgPrice: null, note: `refused: the ${this.adapter.name} adapter cannot place an exchange-side stop loss` };
-    const { clientId } = await this.intent('open', o);
+    const intent = await this.intent('open', o);
+    const { clientId } = intent;
     this.journal.protectionClients.push({ symbol: o.symbol, clientId }); await this.journal.saveAsync();
     let sendError: string | null = null;
     recordDiagnostic({ source: 'exchange', category: 'ORDER', eventName: 'order.submission', status: 'submitting', correlationId: clientId, message: 'Submitting entry order', details: { clientId, symbol: o.symbol, side: o.side, requestedQty: o.qty } });
@@ -132,9 +133,11 @@ export class LiveExecutor {
       return { ...fill, ok: false, note: `${fill.note}. FAIL CLOSED: actual fill crossed the required stop; reduce-only close: ${exit.note}` };
     }
     const guard = await this.ensureOnExchange(o.symbol, o.side, fill.qty, o.stop, o.tp);
-    recordDiagnostic({ source: 'exchange', category: 'PROTECTION', eventName: 'protection.observed', level: guard.status === 'confirmed' ? 'INFO' : 'WARN', status: guard.status, correlationId: clientId, message: guard.note || 'Exchange protection confirmed', details: { clientId, symbol: o.symbol, stop: guard.stop, tp: guard.tp, ok: guard.ok } });
-    if (!guard.ok) return { ...fill, ok: false, qty: 0, note: safe(`${fill.note}. ${guard.note}`) };
-    return guard.note ? { ...fill, note: safe(`${fill.note}. ${guard.note}`) } : fill;
+    intent.protectionStatus = guard.status; intent.protectionEvidence = guard.evidence; await this.journal.saveAsync();
+    const protectedFill = { ...fill, protectionStatus: guard.status, protectionEvidence: guard.evidence };
+    recordDiagnostic({ source: 'exchange', category: 'PROTECTION', eventName: 'protection.observed', level: guard.status === 'confirmed' ? 'INFO' : 'WARN', status: guard.status, correlationId: clientId, message: guard.note || 'Exchange protection confirmed', details: { clientId, ...guard.evidence, ok: guard.ok } });
+    if (!guard.ok) return { ...protectedFill, ok: false, qty: 0, note: safe(`${fill.note}. ${guard.note}`) };
+    return guard.note ? { ...protectedFill, note: safe(`${fill.note}. ${guard.note}`) } : protectedFill;
   }
 
   private limitTerminal(intent: ExecutionIntent) { return !!intent.record && ['filled', 'cancelled', 'rejected'].includes(intent.record.status); }
@@ -250,28 +253,37 @@ export class LiveExecutor {
    * A missing take profit is reported, never a reason to drop the stop.
    */
   async ensureOnExchange(symbol: string, side: Side, qty: number, stop: number, tp: number | null): Promise<ProtectionResult> {
+    let exchangeAccepted: boolean | null = null;
+    const result = (ok: boolean, status: ProtectionResult['status'], note: string, observed: Protection | null): ProtectionResult => ({
+      ok, status, note, stop: observed?.stop ?? null, tp: observed?.tp ?? null,
+      evidence: { symbol, side, requiredQty: qty, requested: true, exchangeAccepted, status, observedAt: observed ? Date.now() : null,
+        stop: observed?.stop ?? null, tp: observed?.tp ?? null, coverage: observed?.stopCoverage ?? 'unknown', protectedQty: observed?.stopQty ?? null }
+    });
     // A failed read is "unknown", not "missing": we never stack orders or close on a network blip.
-    const read = async () => { for (let i = 0; i < 2; i++) { try { return await this.adapter.protection(symbol, side); } catch (e) { log(`[live] protection read failed on ${symbol}: ${safe((e as Error).message)}`); } } return null; };
+    const read = async () => { for (let i = 0; i < 2; i++) { try { return await this.adapter.protection(symbol, side, qty); } catch (e) { log(`[live] protection read failed on ${symbol}: ${safe((e as Error).message)}`); } } return null; };
     let have = await read();
-    if (!have) return { ok: true, status: 'unknown', note: 'WARNING: could not read exchange-side orders to verify protection; exchange state is unknown and requires reconciliation', stop: null, tp: null };
+    if (!have) return result(true, 'unknown', 'WARNING: could not read exchange-side orders to verify protection; exchange state is unknown and requires reconciliation', null);
+    if (have.stop) exchangeAccepted = true;
     const notes: string[] = [];
     const missStop = !have.stop, missTp = !!tp && !have.tp;
     if (missStop || missTp) {
       const protectionId = newClientId('p');
       this.journal.protectionClients.push({ symbol, clientId: protectionId }); await this.journal.saveAsync();
-      try { await this.adapter.protect({ symbol, side, qty, stop: missStop ? stop : null, tp: missTp ? tp : null, clientId: protectionId }); }
-      catch (e) { notes.push(`placing the missing ${missStop ? 'stop' : 'take profit'} failed: ${safe((e as Error).message)}`); }
+      try { await this.adapter.protect({ symbol, side, qty, stop: missStop ? stop : null, tp: missTp ? tp : null, clientId: protectionId }); exchangeAccepted = true; }
+      catch (e) { exchangeAccepted = false; notes.push(`placing the missing ${missStop ? 'stop' : 'take profit'} failed: ${safe((e as Error).message)}`); }
       if (this.reconcileDelayMs) await pause(this.reconcileDelayMs);
       have = await read();
-      if (!have) return { ok: true, status: 'unknown', note: `WARNING: could not read exchange-side orders after protection placement; exchange state is unknown and requires reconciliation${notes.length ? `; ${notes.join('; ')}` : ''}`, stop: null, tp: null };
+      if (!have) return result(true, 'unknown', `WARNING: could not read exchange-side orders after protection placement; exchange state is unknown and requires reconciliation${notes.length ? `; ${notes.join('; ')}` : ''}`, null);
     }
-    if (!have.stop) {
+    const status = protectionStatus(have, qty);
+    if (status === 'missing') {
       const c = await this.close(symbol, side, qty);
-      return { ok: false, status: 'missing', note: `FAIL CLOSED: no exchange-side stop could be confirmed, close attempted (${c.note}); confirmed filled ${c.qty}, requested ${qty}${notes.length ? `; ${notes.join('; ')}` : ''}`, stop: null, tp: null };
+      return result(false, 'missing', `FAIL CLOSED: no exchange-side stop covering the position could be confirmed, close attempted (${c.note}); confirmed filled ${c.qty}, requested ${qty}${notes.length ? `; ${notes.join('; ')}` : ''}`, have);
     }
     if (tp && !have.tp) notes.push('take profit is NOT on the exchange (stop is)');
     if (missStop) notes.push(`exchange-side stop re-placed at ${have.stop}`);
-    return { ok: true, status: 'confirmed', note: notes.join('; '), stop: have.stop, tp: have.tp };
+    if (status === 'unknown') notes.push('WARNING: stop observed but protected quantity is unknown; active protection is unconfirmed');
+    return result(true, status, notes.join('; '), have);
   }
 
   knownProtection(): Record<string, { stop: number; tp: number | null }> {

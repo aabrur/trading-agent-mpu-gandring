@@ -1,11 +1,12 @@
 // Exchange-side protection: every TESTNET/LIVE position must have its stop resting ON THE EXCHANGE.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { LiveExecutor } from '../server/live/executor.js';
 import { BybitAdapter } from '../server/exchange/bybit.js';
+import { AsterAdapter } from '../server/exchange/aster.js';
 import { BinanceAdapter } from '../server/exchange/binance.js';
 import { OkxAdapter } from '../server/exchange/okx.js';
 import { HyperliquidAdapter } from '../server/exchange/hyperliquid.js';
@@ -17,6 +18,31 @@ const order = { symbol: 'BTCUSDT', side: 'LONG' as const, qty: 0.01, stop: 58800
 const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
 
 describe('executor enforces exchange-side stops', () => {
+  it.each(['confirmed', 'unknown', 'missing'] as const)('carries MARKET protection %s with symbol, side and fill quantity evidence', async status => {
+    const a = new MemoryAdapter();
+    if (status === 'unknown') a.protection = async () => { throw new Error('readback timeout'); };
+    if (status === 'missing') { a.dropStops = true; a.failProtect = true; }
+    const read = vi.spyOn(a, 'protection');
+    const executor = new LiveExecutor(a, 0);
+    const fill = await executor.open(order);
+    expect(read).toHaveBeenCalledWith(order.symbol, order.side, order.qty);
+    expect(fill.protectionStatus).toBe(status);
+    expect(fill.protectionEvidence).toMatchObject({ symbol: order.symbol, side: order.side, requiredQty: order.qty, requested: true, status,
+      exchangeAccepted: status === 'confirmed' ? true : status === 'missing' ? false : null });
+    expect(executor.journal.intents[0]).toMatchObject({ protectionStatus: status, protectionEvidence: fill.protectionEvidence });
+    expect(a.closes).toBe(status === 'missing' ? 1 : 0);
+  });
+
+  it('uses Aster active stop identity and coverage rather than another symbol or position side', async () => {
+    const rows = [
+      { symbol: 'ETHUSDT', side: 'SELL', type: 'STOP_MARKET', stopPrice: '90', closePosition: true },
+      { symbol: 'BTCUSDT', side: 'SELL', positionSide: 'SHORT', type: 'STOP_MARKET', stopPrice: '91', closePosition: true },
+      { symbol: 'BTCUSDT', side: 'SELL', positionSide: 'LONG', type: 'STOP_MARKET', stopPrice: '92', origQty: '.005', reduceOnly: true }
+    ];
+    const a = new AsterAdapter('testnet', '0x1111111111111111111111111111111111111111', '0x' + '11'.repeat(32), (async () => json(rows)) as typeof fetch);
+    expect(await a.protection('BTCUSDT', 'LONG', .01)).toMatchObject({ stop: 92, stopCoverage: 'quantity', stopQty: .005 });
+  });
+
   it('refuses to open on an adapter that cannot place an exchange-side stop', async () => {
     const a = new MemoryAdapter(); a.exchangeStops = false;
     const f = await new LiveExecutor(a, 0).open(order);

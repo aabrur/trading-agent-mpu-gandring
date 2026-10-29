@@ -1,5 +1,5 @@
 import { emptyChats, newChatRun, recoverChatRun, type ChatRun, type ChatResult } from './personal-chat.js';
-import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS, roundEntryLimit, type EntryOrder } from './exchange/types.js';
+import { VENUE_KIND, VENUE_LABEL, ADAPTER_STATUS, roundEntryLimit, protectionStatus, type ProtectionEvidence, type EntryOrder } from './exchange/types.js';
 import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE, appendKillAudit, killContext, type KillContext } from './killswitch.js';
 import { adapterRules, publicRules, type InstrumentRules } from './exchange/rules.js';
 import { EventEmitter } from 'node:events';
@@ -44,13 +44,14 @@ import { boundedPostState, boundedPreState, conflictQuestions, interpretAnswers,
 import { CycleTimer, type CycleTiming } from './decision/timing.js';
 import { classifyHoldReason, outcomeFor, type DecisionOutcome, type HoldReasonCode } from './decision/reasons.js';
 import { revalidateEntry, snapshotIsFresh } from './decision/stale.js';
+import { normalizeAgentSpeech } from './agents/speech.js';
 import { rebuttalRounds } from './decision/pace.js';
 import { conversationSymbols, ownerTargets, teammateRequests, capitalAndSlots, type HandoffResult, type TeammateRequest } from './collaboration.js';
 import { capabilityManifest, type ToolObservation, type CapabilityStatus } from './research/catalog.js';
 import { buildTacticalTradePlan } from './market/tactical.js';
 import { WHALE_OBSERVATION_POLICY, type WhaleBriefing } from './market/whale.js';
 import type { NewsBriefing } from './market/news.js';
-import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, snapshotMomentum, type CloseEvaluationInput, type CloseTriggerReason, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
+import { buildDebateEvidence, evaluateCloseTriggers, estimatedNetUnrealized, exitEvidenceRefs, snapshotMomentum, orderflowObservation, type CloseEvaluationInput, type CloseTriggerReason, type DebateEvidence, type EntryScenario, type JevEvidence } from './decision/debate-evidence.js';
 import { researchPolicy } from './providers/research-policy.js';
 import { localResearchActivity } from './providers/local.js';
 import { getSuiEventBriefing } from './market/sui.js';
@@ -372,16 +373,18 @@ export class Desk extends EventEmitter {
     const alerts = (this.lastScan?.findings ?? []).filter((f) => f.level === 'warn' || f.level === 'alert').map((f) => f.text);
     const extra = [
       input.extraSystem ?? '',
+      `The active Owner minimum entry confidence is ${this.cfg.risk.minEntryConfidencePct}% (running_cfg). Use this value for autonomous OPEN only, never a remembered default or a CLOSE restriction.`,
       rules.length ? `Standing rules (advice only, never execution authorization; Boss changes settings through explicit commands):\n${fenceData('learned-advice', { rules })}` : '',
       formattedExperience ? `Evidence-based lessons and past verified trades:\n${formattedExperience}` : ''
     ].filter(Boolean).join('\n\n');
     const res = await withDiagnosticContext(correlationId ?? `agent-${agent}-${started}`, () => runAgent(this.cfg, this.call, agent, task, {
       ...input, extraSystem: extra || undefined,
-      data: { ...input.data, accountState: this.accountState(), researchCapabilities: this.capabilitiesSummary(), ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) }
+      data: { ...input.data, ownerMinEntryConfidencePct: this.cfg.risk.minEntryConfidencePct, accountState: this.accountState(), researchCapabilities: this.capabilitiesSummary(), ...(lessons.length ? { recentLessons: lessons } : {}), ...(alerts.length ? { deskAlerts: alerts } : {}) },
+      context: { ...input.context, ownerMinEntryConfidencePct: this.cfg.risk.minEntryConfidencePct }
     })).catch(error => { this.diagnostic({ source: `agent:${agent}`, category: 'AGENT', eventName: 'agent.error', level: 'ERROR', status: 'failed', correlationId, durationMs: Date.now() - started, message: `${agent} ${task} failed`, details: { error } }); throw error; });
     const result = res.data as Record<string, unknown>;
     this.agents[agent].lastFailure = res.fallback ? { kind: res.failureKind ?? 'provider', attempts: res.attempts, requestId: correlationId ?? null, at: Date.now() } : null;
-    this.diagnostic({ source: `agent:${agent}`, category: 'AGENT', eventName: res.fallback ? 'agent.fallback' : 'agent.completed', level: res.fallback ? 'WARN' : 'INFO', status: res.fallback ? 'fallback' : 'completed', correlationId, durationMs: Date.now() - started, message: `${agent} ${task} ${res.fallback ? 'fallback' : 'completed'}`, details: { agent, task, provider: res.provider, model: res.model, attempts: res.attempts, failureKind: res.failureKind, action: result.action, stance: result.stance, confidence: result.confidence } });
+    this.diagnostic({ source: `agent:${agent}`, category: 'AGENT', eventName: res.fallback ? 'agent.fallback' : 'agent.completed', level: res.fallback ? 'WARN' : 'INFO', status: res.fallback ? 'fallback' : 'completed', correlationId, durationMs: Date.now() - started, message: `${agent} ${task} ${res.fallback ? 'fallback' : 'completed'}`, details: { agent, task, provider: res.provider, model: res.model, attempts: res.attempts, failureKind: res.failureKind, action: result.action, stance: result.stance, confidence: result.confidence, speechNormalization: res.speechNormalization } });
     if (task === 'chat') {
       this.chatMetrics.agentCalls++;
       this.chatMetrics.modelAttempts += res.attempts;
@@ -607,6 +610,14 @@ export class Desk extends EventEmitter {
     freeSlots: number;
     positionsCount: number;
     pendingOpenCount: number;
+    breakdown?: {
+      observedAt: number; status: string;
+      exchangePositions: Array<{ symbol: string; side: string; qty: number }>;
+      localPositions: Array<{ symbol: string; side: string; qty: number; ownership?: string }>;
+      pendingEntries: Array<{ clientId: string; symbol: string; side: string; state: string; filledQty: number }>;
+      unresolvedCloses: Array<{ clientId: string; symbol: string; side: string; state: string }>;
+      unresolvedEntryAccounting: string[];
+    };
     canOpenNew: boolean;
     reason?: string;
   } {
@@ -617,6 +628,16 @@ export class Desk extends EventEmitter {
     if (!paper && ex) {
       const account = this.venueAccount;
       const confirmed = !!account && account.status === 'confirmed' && Date.now() >= account.at && Date.now() - account.at <= 60_000;
+      const unresolvedEntries = ex.journal.intents.filter(i => i.kind === 'open' && !ex.journal.settled(i));
+      const pendingEntries = unresolvedEntries.filter(i => !i.record || !['filled', 'cancelled', 'rejected'].includes(i.record.status));
+      const breakdown = {
+        observedAt: account?.at ?? 0, status: confirmed ? 'confirmed' : 'unverified',
+        exchangePositions: account?.positions ?? [],
+        localPositions: this.book.positions.map(p => ({ symbol: p.symbol, side: p.side, qty: p.qty, ownership: p.ownership })),
+        pendingEntries: pendingEntries.map(i => ({ clientId: i.clientId, symbol: i.symbol, side: i.side, state: i.entryState ?? i.record?.status ?? 'unknown', filledQty: i.record?.filledQty ?? 0 })),
+        unresolvedCloses: ex.journal.intents.filter(i => i.kind === 'close' && !ex.journal.settled(i)).map(i => ({ clientId: i.clientId, symbol: i.symbol, side: i.side, state: i.record?.status ?? 'unknown' })),
+        unresolvedEntryAccounting: unresolvedEntries.filter(i => !pendingEntries.includes(i)).map(i => i.clientId)
+      };
       if (!confirmed) {
         const positionsCount = this.book.positions.length;
         return {
@@ -626,18 +647,20 @@ export class Desk extends EventEmitter {
           positionsCount,
           pendingOpenCount: 0,
           canOpenNew: false,
+          breakdown,
           reason: 'Exchange account observation unverified or stale'
         };
       }
-      const venueCount = account.positions?.length ?? this.book.positions.length;
-      const positionsCount = Math.max(this.book.positions.length, venueCount);
-      const pendingOpenIntents = ex.journal.intents.filter((i) => i.kind === 'open' && !ex.journal.settled(i));
-      const pendingNotYetInPositions = pendingOpenIntents.filter((i) => !this.book.positions.some((p) => p.symbol === i.symbol && p.side === i.side));
-      const pendingOpenCount = pendingNotYetInPositions.length;
-      const pendingCloseIntents = ex.journal.intents.filter((i) => i.kind === 'close' && !ex.journal.settled(i));
-      const pendingCloseNotInPositions = pendingCloseIntents.filter((i) => !this.book.positions.some((p) => p.symbol === i.symbol && p.side === i.side)).length;
-      const totalOccupied = positionsCount + pendingOpenCount + pendingCloseNotInPositions;
-      const occupiedSlots = Math.min(configuredN, totalOccupied);
+      // A slot represents symbol/side exposure, not an order's accounting lifecycle.
+      // Terminal fills are represented by the confirmed venue snapshot; unresolved
+      // reduce-only CLOSE records remain evidence without reserving entry capacity.
+      const key = (p: { symbol: string; side: string }) => `${p.symbol}:${p.side}`;
+      const positions = new Set((account.positions ?? this.book.positions).filter(p => p.qty > 0).map(key));
+      const pending = new Set(pendingEntries.map(key).filter(k => !positions.has(k)));
+      const positionsCount = positions.size;
+      const pendingOpenCount = pending.size;
+      const totalOccupied = positionsCount + pendingOpenCount;
+      const occupiedSlots = totalOccupied;
       const freeSlots = Math.max(0, configuredN - totalOccupied);
       return {
         configuredN,
@@ -646,6 +669,7 @@ export class Desk extends EventEmitter {
         positionsCount,
         pendingOpenCount,
         canOpenNew: freeSlots > 0,
+        breakdown,
         ...(freeSlots === 0 ? { reason: `All ${configuredN} slots occupied (${positionsCount} active, ${pendingOpenCount} pending)` } : {})
       };
     }
@@ -672,7 +696,7 @@ export class Desk extends EventEmitter {
     const capital = paper ? this.book.split().canOpen : confirmed ? account.available > 0 && account.equity > this.book.safetyNet : null;
     const slots = this.availableSlots();
     return { ...capitalAndSlots(capital, slots.positionsCount, this.book.n),
-      freeSlots: slots.freeSlots, canOpenNewSlot: slots.canOpenNew, occupiedSlots: slots.occupiedSlots, pendingOpenCount: slots.pendingOpenCount,
+      freeSlots: slots.freeSlots, canOpenNewSlot: slots.canOpenNew, occupiedSlots: slots.occupiedSlots, pendingOpenCount: slots.pendingOpenCount, slotBreakdown: slots.breakdown,
       mode: this.cfg.tradingMode,
       source: paper ? 'paper' : account ? 'exchange' : 'journal', observedAt: account?.at ?? null,
       status: paper ? 'current' : confirmed ? 'confirmed' : 'unverified',
@@ -761,12 +785,12 @@ export class Desk extends EventEmitter {
 
   /** Speech bubble in the office. log=false when the same line was already logged as a trade (no duplicate log line). */
   private async say(agent: AgentId, text: string, example: boolean, after: AgentStatus = 'arguing', log = true, conversationId = 'office', messageId?: string) {
-    const clean = safe(text);
+    const clean = normalizeAgentSpeech(safe(text));
     const at = Date.now(), id = messageId ?? 'speech-' + at + '-' + (++this.speechSeq);
     const pace = this.cfg.debate.paceMs * (this.debate?.mode === 'fast' ? 0.4 : 1);
     this.setStatus(agent, 'typing');
     const words = clean.split(' ');
-    const chunk = 3;
+    const chunk = Math.max(3, Math.ceil(words.length / 24));
     let shown = '';
     for (let i = 0; i < words.length; i += chunk) {
       shown = words.slice(0, i + chunk).join(' ');
@@ -1007,15 +1031,17 @@ export class Desk extends EventEmitter {
         p.mark = v.mark ?? (v.entry + (v.side === 'LONG' ? 1 : -1) * v.unrealizedPnl / v.qty);
         try {
           const gtc = evidence?.entry?.type === 'LIMIT_GTC';
-          let protection = await ex.adapter.protection(v.symbol, v.side, gtc ? v.qty : undefined);
+          let protection = await ex.adapter.protection(v.symbol, v.side, v.qty);
           if (!protection.stop && p.ownership !== 'external' && p.stop > 0 && !this.killed) {
             const guard = await ex.ensureOnExchange(v.symbol, v.side, v.qty, p.stop, p.tp);
             if (guard.status === 'unknown') {
               p.protectionStatus = 'unknown';
+              p.protectionEvidence = guard.evidence;
               this.addLog({ kind: 'warn', text: `${v.symbol}: ${guard.note}` });
               continue;
             }
-            protection = gtc ? await ex.adapter.protection(v.symbol, v.side, v.qty) : { stop: guard.stop, tp: guard.tp };
+            protection = { stop: guard.stop, tp: guard.tp, stopCoverage: guard.evidence.coverage, stopQty: guard.evidence.protectedQty };
+            p.protectionEvidence = guard.evidence;
             this.addLog({ kind: 'warn', text: `${v.symbol}: ${guard.note || 'exchange protection reconciled'}` });
             if (!guard.ok) {
               const remaining = (await ex.adapter.positions(v.symbol)).find((x) => x.side === v.side);
@@ -1023,10 +1049,17 @@ export class Desk extends EventEmitter {
               p.qty = remaining.qty; p.margin = remaining.margin ?? remaining.qty * remaining.entry / p.leverage;
             }
           }
-          p.protectionStatus = !protection.stop ? 'missing' : !gtc || protection.stopCoverage === 'net_position' || protection.stopCoverage === 'quantity' && (protection.stopQty ?? 0) >= v.qty ? 'confirmed' : 'unknown';
+          p.protectionStatus = protectionStatus(protection, v.qty);
+          p.protectionEvidence = { symbol: v.symbol, side: v.side, requiredQty: v.qty, requested: p.protectionEvidence?.requested ?? p.ownership !== 'external',
+            exchangeAccepted: p.protectionEvidence?.exchangeAccepted ?? (protection.stop ? true : null), status: p.protectionStatus, observedAt: Date.now(),
+            stop: protection.stop, tp: protection.tp, coverage: protection.stopCoverage ?? 'unknown', protectedQty: protection.stopQty ?? null };
           if (gtc && evidence) evidence.protectionStatus = p.protectionStatus;
           p.stop = protection.stop ?? 0; p.tp = protection.tp;
-        } catch { p.protectionStatus = 'unknown'; }
+        } catch {
+          p.protectionStatus = 'unknown';
+          p.protectionEvidence = { symbol: v.symbol, side: v.side, requiredQty: v.qty, requested: p.protectionEvidence?.requested ?? false,
+            exchangeAccepted: p.protectionEvidence?.exchangeAccepted ?? null, status: 'unknown', observedAt: null, stop: null, tp: null, coverage: 'unknown', protectedQty: null };
+        }
       }
       this.book.balance = round2(bal.equityUsdt - venueUpnl);
       this.checkDay(bal.equityUsdt);
@@ -1095,7 +1128,7 @@ export class Desk extends EventEmitter {
         exitEvidenceRefs: exitEvidenceRefs(snap, this.book.positions.find(position => position.symbol === symbol)?.entryScenarioId),
         observedAt: snap.fetchedAt, availability: snap.example ? 'sample' : 'live', evidence: snap.evidence,
         cmcMomentum: snap.cmcMomentum, coinMarketCap: snap.coinMarketCap,
-        orderflow: snap.orderflow, orderbook: snap.orderbook, measurementBasis: 'Exchange observations and separately timestamped CMC rolling aggregates. Missing is not absent.' };
+        orderflow: snap.orderflow, orderflowInterpretation: orderflowObservation(snap), orderbook: snap.orderbook, measurementBasis: 'Exchange observations and separately timestamped CMC rolling aggregates. Missing is not absent.' };
       this.updateTicker(snap);
       const dataTag = snap.example ? 'sample data (EXAMPLE)' : `${snap.source} public feed`;
       const closes = snap.candles.map((c) => c.c);
@@ -1320,7 +1353,7 @@ export class Desk extends EventEmitter {
       const sharedRoleEvidence = { ...positionContext, symbol, debateEvidence, closeTriggers, position: pos, opinions: DEBATERS.map(agent => ({ agent, stance: this.agents[agent].stance, confidence: this.agents[agent].confidence, reasoning: this.agents[agent].lastLine })), ownerSettings: entrySettings, allocation: this.book.split(), nativeQuoteEvidence };
       const [aiRisk, aiExecution] = await Promise.all([
         timer.measure('riskManager', () => this.run('risk', 'risk_assessment', {
-          instruction: 'Assess the supplied decision intent and evidence. For OPEN, assess new-entry admission. For MANAGE_EXISTING or CLOSE_REVIEW, assess the existing position, verified CLOSE triggers and protection; full slots, entry margin and entry confidence cannot veto management or CLOSE. Return APPROVE or REJECT with a specific reason scoped to that intent. Missing optional news/whale/JEV is not a veto. Do not impose confidence thresholds or change Owner sizing, leverage or SL/TP. Owner settings are binding. A rejection must identify the risk, not repeat boilerplate.',
+          instruction: 'Assess the supplied decision intent and evidence. For OPEN, assess new-entry admission. Tactical entry zones are advisory; out-of-zone prices are analysis, not a binding Owner limit or automatic rejection. Preserve structural invalidation. For MANAGE_EXISTING or CLOSE_REVIEW, assess the existing position, verified CLOSE triggers and protection; full slots, entry margin and entry confidence cannot veto management or CLOSE. Return APPROVE or REJECT with a specific reason scoped to that intent. Missing optional news/whale/JEV is not a veto. Do not impose confidence thresholds or change Owner sizing, leverage or SL/TP. Owner settings are binding. A rejection must identify the risk, not repeat boilerplate.',
           data: sharedRoleEvidence, context: { ...sharedRoleEvidence, leverage: this.cfg.risk.maxLeverage, stopPct: this.cfg.risk.defaultStopPct }
         })),
         timer.measure('executionTrader', () => this.run('execution', 'chat', {
@@ -1508,15 +1541,19 @@ export class Desk extends EventEmitter {
         evidence: { strategy: rule, votes: DEBATERS.map((agent) => ({ agent, stance: this.agents[agent].stance })), action }
       });
       this.verdicts.unshift(verdict); this.verdicts = this.verdicts.slice(0, 50);
-      const participatingChairs = pos
-        ? ['lead', 'market', 'research', 'strategist', 'risk', 'execution']
-        : opening
-          ? ['lead', 'market', 'research', 'strategist', 'risk', 'execution']
-          : ['lead', 'market', 'research', 'strategist'];
+      const participants = [
+        { agent: 'market', task: 'opinion', result: mk, modelDurationMs: timing.marketAnalyst },
+        { agent: 'research', task: 'research', result: rs, modelDurationMs: timing.researchAnalyst },
+        { agent: 'strategist', task: 'opinion', result: st, modelDurationMs: timing.strategist },
+        { agent: 'risk', task: 'risk_assessment', result: aiRisk, modelDurationMs: timing.riskManager },
+        { agent: 'execution', task: 'chat', result: aiExecution, modelDurationMs: timing.executionTrader },
+        { agent: 'lead', task: 'lead', result: ld, modelDurationMs: timing.deskLead }
+      ].map(({ result, ...phase }) => ({ ...phase, status: result.fallback ? 'fallback' : 'completed', attempts: result.attempts, failureKind: result.failureKind ?? null }));
+      const participatingChairs = participants.map(p => `${p.agent}${p.status === 'completed' ? '' : ` (${p.status})`}`);
       this.addLog({ kind: 'info', text: `Debate ${symbol} completed (${participatingChairs.join(', ')}). Action: ${action}.` });
       this.addLog({ kind: 'verdict', text: `VERDICT ${symbol}: ${action} (risk ${verdict.riskDecision}, disagreement ${disagreement.toFixed(2)})${verdict.executed ? `, ${this.opts.executor ? 'exchange' : 'paper'} ${verdict.executionStatus ?? 'execution recorded'}` : ''}`, example: verdict.example });
       this.emit('verdict', verdict);
-      this.diagnostic({ source: 'debate', category: 'VERDICT', eventName: 'debate.verdict', status: verdict.executed ? 'executed' : 'not_executed', correlationId: verdict.id, durationMs: timing.total, message: verdict.reason, details: { symbol, action: verdict.action, riskDecision: verdict.riskDecision, executionStatus: verdict.executionStatus, outcome: verdict.outcome, reasonCode: verdict.reasonCode, disagreement, positionId: verdict.order?.positionId } });
+      this.diagnostic({ source: 'debate', category: 'VERDICT', eventName: 'debate.verdict', status: verdict.executed ? 'executed' : 'not_executed', correlationId: verdict.id, durationMs: timing.total, message: verdict.reason, details: { symbol, action: verdict.action, riskDecision: verdict.riskDecision, executionStatus: verdict.executionStatus, outcome: verdict.outcome, reasonCode: verdict.reasonCode, disagreement, positionId: verdict.order?.positionId, participants } });
       transcript.push('', `**Verdict:** ${action}, risk ${verdict.riskDecision}, executed ${verdict.executed}. ${verdict.reason}`);
       this.writeReport(id, transcript.join('\n'));
       void sendToGrokBot(this.cfg, 'verdict', { ...verdict }, this.opts.outboxPath);
@@ -1816,6 +1853,7 @@ export class Desk extends EventEmitter {
     if (!plan.ok) return no(`${plan.reason}${plan.suggestion ? ' ' + plan.suggestion : ''}`);
     this.setStatus('execution', 'executing'); this.changed();
     let entry = price, qty = plan.qty, tag = 'Paper fill', clientId: string | undefined, confirmedPrice = true;
+    let fillProtection: ProtectionEvidence | undefined;
     if (live && !live.adapter.exchangeStops) return no('The execution venue cannot hold a stop loss.');
     this.executionEvent('submitted', symbol, { side, requestedQty: plan.qty });
     if (this.killed || this.paused) return no(this.killed ? 'Kill switch is on.' : 'Desk is paused.');
@@ -1833,12 +1871,14 @@ export class Desk extends EventEmitter {
       if (!fill.ok) { this.recordError('exchange', `${symbol} ${side} not filled: ${fill.note}`); return no(`LIVE order not filled. ${fill.note}`); }
       entry = fill.avgPrice ?? price; qty = fill.qty; tag = fill.remainingQty > 0 ? 'LIVE partial fill' : 'LIVE fill';
       clientId = fill.clientId; confirmedPrice = fill.avgPrice != null;
+      fillProtection = fill.protectionEvidence;
       live.account(clientId, qty, fill.avgPrice, qty);
     }
     const p = this.book.open({ symbol, side, qty, entry, stop: plan.stop, tp: plan.tp, margin: live ? qty * entry / plan.leverage : plan.margin, leverage: plan.leverage });
     const currentScope = this.accountScope();
     p.decisionEvidence = { ...(gate.evidence ?? {}), ...(live ? { nativeQuote: { venue: live.adapter.name, symbol, last: venueQuote!.last, source: `${live.adapter.name}.ticker`, fetchedAt: venueQuote!.fetchedAt, certainty: 'confirmed' } } : {}), ...(gate.entry ? { entryOrder: gate.entry, plannedEntryPrice: price } : {}), decisionId: (gate.evidence as any)?.decisionId ?? (gate.evidence as any)?.id, positionId: p.id, accountScope: currentScope };
     p.ownership = 'managed'; p.entryStatus = confirmedPrice ? 'confirmed' : 'estimated';
+    if (live) { p.protectionStatus = fillProtection?.status ?? 'unknown'; p.protectionEvidence = fillProtection; }
     if (contract) {
       p.invalidationLevel = contract.scenario.invalidationLevel ?? undefined;
       p.entryZone = contract.scenario.entryZone ?? undefined;
@@ -1846,9 +1886,9 @@ export class Desk extends EventEmitter {
     }
     if (clientId && live) { p.id = clientId; const intent = live.journal.intents.find((i) => i.clientId === clientId); if (intent) intent.positionId = p.id; }
     await this.checkpoint();
-    this.executionEvent(qty < plan.qty ? 'partial' : 'filled', symbol, { side, filledQty: qty, requestedQty: plan.qty, clientId, positionId: p.id, decisionId: (gate.evidence as Record<string, unknown> | undefined)?.decisionId });
+    this.executionEvent(qty < plan.qty ? 'partial' : 'filled', symbol, { side, filledQty: qty, requestedQty: plan.qty, clientId, positionId: p.id, protection: fillProtection, decisionId: (gate.evidence as Record<string, unknown> | undefined)?.decisionId });
     this.recordEquity();
-    const line = `${tag}: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
+    const line = `${tag}: ${side} ${p.qty} ${symbol} at ${p.entry}, stop ${p.stop}${p.tp ? `, take profit ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x.${live ? ` Exchange protection ${p.protectionStatus}.` : ''}${plan.notes.length ? ' ' + plan.notes.join(' ') : ''}`;
     this.addLog({ kind: 'trade', agent: 'execution', text: line });
     this.scorecard.fill(true);
     this.note('opened', symbol, `${side} ${p.qty} at ${p.entry}, SL ${p.stop}${p.tp ? `, TP ${p.tp}` : ''}, margin ${p.margin} USDT at ${p.leverage}x`);
@@ -2592,7 +2632,10 @@ export class Desk extends EventEmitter {
             if (authorizedChatCommand(userQuery, res.data.commandToExecute)) {
               const result = await this.command(res.data.commandToExecute, target, conversationId);
               ok = result.ok; reply = `${reply}\n\n${result.reply}`;
-            } else { ok = false; reply += '\n\nNo action executed: the proposed command did not match an explicit instruction in your current message.'; }
+            } else {
+              this.diagnostic({ source: `agent:${target}`, category: 'AGENT', eventName: 'agent.unsolicited_command', status: 'ignored', correlationId: requestId,
+                message: 'Ignored model command proposal without matching current Owner authorization', details: { agent: target } });
+            }
           }
           break;
         }

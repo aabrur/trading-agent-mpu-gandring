@@ -191,9 +191,9 @@ export class BybitAdapter implements ExchangeAdapter {
     await this.req('POST', '/v5/order/cancel-all', { category: 'linear', symbol });
   }
 
-  async protection(symbol: string, side: Side): Promise<Protection> {
-    const p = (await this.positions(symbol)).find((x) => x.side === side);
-    return { stop: p?.stop ?? null, tp: p?.tp ?? null };
+  async protection(symbol: string, side: Side, requiredQty?: number): Promise<Protection> {
+    const p = (await this.positions(symbol)).find((x) => x.symbol === symbol && x.side === side);
+    return { stop: p?.stop ?? null, tp: p?.tp ?? null, ...(requiredQty == null ? {} : { stopCoverage: 'quantity' as const, stopQty: p?.qty ?? null }) };
   }
 
   /** Sets the position stop loss / take profit on Bybit itself. */

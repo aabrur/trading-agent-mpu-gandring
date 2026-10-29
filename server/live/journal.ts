@@ -2,7 +2,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkS
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Position, ClosedTrade } from '../types.js';
-import type { EntryOrder, ExchangeName, Network, OrderRecord, Side } from '../exchange/types.js';
+import type { EntryOrder, ExchangeName, Network, OrderRecord, Side, ProtectionEvidence } from '../exchange/types.js';
 import { recordDiagnostic } from '../session-log.js';
 
 export interface ExecutionIntent {
@@ -18,6 +18,7 @@ export interface ExecutionIntent {
   filledQty?: number; remainingQty?: number;
   cancelRequestedAt?: number; expireRequested?: boolean;
   protectionStatus?: 'confirmed' | 'missing' | 'unknown';
+  protectionEvidence?: ProtectionEvidence;
   protectionAttemptedQty?: number;
   emergencyCloseId?: string;
   emergencyCoveredFillQty?: number;

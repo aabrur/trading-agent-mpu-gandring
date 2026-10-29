@@ -68,12 +68,10 @@ export function revalidateEntry(input: RevalidateInput): RevalidateResult {
     const zone = input.entryZone;
     const invalidation = input.invalidationLevel;
     if (!zone || ![zone.low, zone.high].every(value => Number.isFinite(value) && value > 0) || zone.low > zone.high || !zone.basis.trim()) {
-      return { ok: false, reason: 'Binding entry zone is unavailable or invalid.', quote, rule, usedFreshSnapshot };
+      return { ok: false, reason: 'Structural entry recommendation is unavailable or invalid.', quote, rule, usedFreshSnapshot };
     }
-    const tolerance = (input.fresh.example || input.original.example) ? 0.002 : 0.0005;
-    if (quote < zone.low * (1 - tolerance) || quote > zone.high * (1 + tolerance)) {
-      return { ok: false, reason: 'Execution quote is outside the binding entry zone; wait for the setup pullback or retest.', quote, rule, usedFreshSnapshot };
-    }
+    // Advisory zone deviation is analysis. Only an explicit Owner LIMIT_GTC
+    // ticket binds an entry price, enforced by the shared executor and adapter.
     if (invalidation == null || !Number.isFinite(invalidation) || invalidation <= 0 || (input.side === 'LONG' ? invalidation >= Math.min(quote, zone.low) : invalidation <= Math.max(quote, zone.high))) {
       return { ok: false, reason: 'Structural invalidation must remain strictly beyond the entry in the proposed loss direction.', quote, rule, usedFreshSnapshot };
     }

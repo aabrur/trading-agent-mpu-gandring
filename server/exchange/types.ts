@@ -65,6 +65,18 @@ export interface PlaceOrder { symbol: string; side: Side; qty: number; stop: num
 export interface OrderRecord { clientId: string; orderId: string; status: 'filled' | 'partial' | 'open' | 'rejected' | 'cancelled' | 'unknown'; filledQty: number; avgPrice: number | null; raw?: string }
 /** Stop loss and take profit that rest ON THE EXCHANGE (attached to the position or as reduce-only trigger orders). */
 export interface Protection { stop: number | null; tp: number | null; stopCoverage?: 'net_position' | 'quantity' | 'unknown'; stopQty?: number | null }
+export interface ProtectionEvidence {
+  symbol: string; side: Side; requiredQty: number; requested: boolean;
+  exchangeAccepted: boolean | null; status: 'confirmed' | 'missing' | 'unknown';
+  observedAt: number | null; stop: number | null; tp: number | null;
+  coverage: Protection['stopCoverage']; protectedQty: number | null;
+}
+export function protectionStatus(protection: Protection, qty: number): ProtectionEvidence['status'] {
+  if (!(protection.stop != null && Number.isFinite(protection.stop) && protection.stop > 0)) return 'missing';
+  if (protection.stopCoverage === 'net_position') return 'confirmed';
+  if (protection.stopCoverage === 'quantity' && Number.isFinite(protection.stopQty) && (protection.stopQty ?? 0) > 0) return protection.stopQty! >= qty * (1 - 1e-10) ? 'confirmed' : 'missing';
+  return 'unknown';
+}
 export interface ProtectRequest { symbol: string; side: Side; qty: number; stop: number | null; tp: number | null; clientId: string }
 export interface VenuePosition { leverage?: number; margin?: number; mark?: number; symbol: string; side: Side; qty: number; entry: number; stop: number | null; tp: number | null; unrealizedPnl: number }
 

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Desk } from '../server/desk.js';
 import { loadConfig } from '../server/config.js';
 import { LiveExecutor } from '../server/live/executor.js';
+import { revalidateEntry } from '../server/decision/stale.js';
+import { strategyVote } from '../server/strategy.js';
 import type { MarketSnapshot } from '../server/types.js';
 import type { ModelCaller } from '../server/providers/index.js';
 import type { CloseTriggerReason } from '../server/decision/debate-evidence.js';
@@ -54,6 +56,30 @@ function fixture(options: { closeTrigger?: CloseTriggerReason; shortConviction?:
 }
 
 describe('Desk binding debate contract with a mocked exchange', () => {
+  it.each(['OPEN_LONG', 'HOLD'] as const)('lets Risk and Lead choose %s outside an advisory zone', async action => {
+    const { desk, adapter, snapshot, caller } = fixture();
+    snapshot.last = 110; snapshot.ask = 110; snapshot.bid = 110;
+    vi.mocked(adapter.ticker).mockResolvedValue(110);
+    const base = vi.mocked(caller).getMockImplementation()!;
+    vi.mocked(caller).mockImplementation(async request => {
+      if (request.task === 'risk_assessment') expect(request.context.debateEvidence).toMatchObject({ openAllowed: true, dimensions: { structure: { status: 'NEUTRAL' } } });
+      if (request.task === 'lead' && action === 'HOLD') return JSON.stringify({ action, confidence: .8, reason: 'Wait for the recommended retest.' });
+      return base(request);
+    });
+    const verdict = await desk.runDebate('BTCUSDT');
+    expect(verdict).toMatchObject({ action, executed: action === 'OPEN_LONG' });
+    expect(adapter.placed).toHaveLength(action === 'OPEN_LONG' ? 1 : 0);
+  });
+
+  it('revalidates an advisory-zone deviation without requiring AI to bypass a binding gate', () => {
+    const snapshot = market();
+    const result = revalidateEntry({ original: snapshot, fresh: snapshot, originalRule: strategyVote(snapshot.candles), side: 'LONG',
+      entryZone: scenario.entryZone, invalidationLevel: scenario.invalidationLevel, executionQuote: 110, expectedVenue: 'bybit', tradingMode: 'LIVE' });
+    expect(result).toMatchObject({ ok: true, quote: 110 });
+    expect(revalidateEntry({ original: snapshot, fresh: snapshot, originalRule: strategyVote(snapshot.candles), side: 'LONG',
+      entryZone: scenario.entryZone, invalidationLevel: 111, executionQuote: 110, aiApproved: true })).toMatchObject({ ok: false });
+  });
+
   it('opens inside the selected structural zone while preserving Owner allocation, leverage and profile SL/TP', async () => {
     const { desk, adapter, cfg } = fixture();
     const before = structuredClone({ risk: cfg.risk, paper: cfg.paper });

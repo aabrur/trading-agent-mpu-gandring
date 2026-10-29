@@ -189,7 +189,9 @@ export class AsterAdapter implements ExchangeAdapter {
   async cancelOrder(symbol: string, clientId: string) { await this.req('DELETE', '/fapi/v3/order', { symbol, origClientOrderId: clientId }); }
   async cancelAll(symbol: string) { await this.req('DELETE', '/fapi/v3/allOpenOrders', { symbol }); }
   async protection(symbol: string, side: Side, requiredQty?: number): Promise<Protection> {
-    const open: any[] = await this.req('GET', '/fapi/v3/openOrders', { symbol });
+    const rows: any[] = await this.req('GET', '/fapi/v3/openOrders', { symbol });
+    if (!Array.isArray(rows)) throw new ExchangeError('aster: incomplete protection response');
+    const open = rows.filter(o => o.symbol === symbol && (!o.positionSide || o.positionSide === 'BOTH' || o.positionSide === side));
     const protection = pickProtection(side, (open ?? []).map((o) => ({
       price: Number(o.stopPrice), kind: /^STOP/.test(o.type) ? 'stop' as const : /^TAKE_PROFIT/.test(o.type) ? 'tp' as const : 'unknown' as const,
       closes: (o.side === 'SELL' ? 'LONG' : 'SHORT') as Side

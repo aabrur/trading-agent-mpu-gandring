@@ -214,6 +214,7 @@ export interface Position {
   decisionEvidence?: Record<string, unknown>;
   ownership?: 'managed' | 'recovered' | 'external';
   protectionStatus?: 'confirmed' | 'missing' | 'unknown';
+  protectionEvidence?: import('./exchange/types.js').ProtectionEvidence;
   entryStatus?: 'confirmed' | 'estimated';
   isHedge?: boolean;
   id: string;

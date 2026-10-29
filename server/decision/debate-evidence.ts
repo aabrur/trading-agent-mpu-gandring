@@ -40,6 +40,7 @@ export interface DebateEvidence {
   sourceConflict: boolean;
   provenance: { marketSource: string; executionVenue: string | null; example: boolean; proxySources: string[]; conflicts: string[]; referenceMarket?: boolean };
   momentum: MomentumEvidence;
+  orderflow: ReturnType<typeof orderflowObservation>;
   scenario: EntryScenario | null;
   openAllowed: boolean;
   openReasons: string[];
@@ -66,7 +67,24 @@ const positive = (value: number | null | undefined): value is number => finite(v
 const direction = (side: TradeSide) => side === 'LONG' ? 1 : -1;
 const dimension = (status: EvidenceStatus, basis: string, evidenceRefs: string[] = []): EvidenceDimension => ({ status, basis, evidenceRefs });
 
-/** A structural setup is binding at submission; no RSI, ATR or ROI cutoff is added. */
+/** Scope raw ratios to their actual observation, independently of entry admission. */
+export function orderflowObservation(snapshot: MarketSnapshot) {
+  const flow = snapshot.orderflow;
+  const window = flow?.rollingWindows?.['1m']; // summarizeOrderflow's root metrics use this window.
+  const candleProxy = /candle/i.test(`${flow?.evidence?.basis ?? ''} ${flow?.evidence?.source ?? ''} ${flow?.dataType ?? ''}`);
+  return {
+    kind: !flow ? 'UNAVAILABLE' : candleProxy ? 'CANDLE_PROXY' : snapshot.example ? 'SAMPLE' : 'TAKER_SAMPLE',
+    broadMarketConfirmation: false,
+    venue: flow?.actualDataVenue ?? null, source: flow?.sourceEndpoint ?? flow?.evidence?.source ?? null,
+    observedAt: flow?.evidence?.observedAt ?? null, windowMs: window?.windowMs ?? null,
+    startAt: window?.startAt ?? null, endAt: window?.endAt ?? null,
+    tradesCount: flow?.tradesCount ?? window?.tradesCount ?? null, coveragePct: window?.coveragePct ?? null, partial: window?.partial ?? null,
+    interpretation: candleProxy ? 'Candle direction is an inferred proxy, not verified taker flow.' : 'Venue sample only. State sample size, window and coverage with any ratio. Thin, partial or unknown coverage cannot establish broad market confirmation.',
+    raw: flow ?? null
+  };
+}
+
+/** Tactical zones are advisory. Structural invalidation must still be valid. */
 export function validateEntryGeometry(side: TradeSide, quote: number, scenario?: EntryScenario | null, tolerance = 0.002): { ok: boolean; reason: string | null } {
   if (!positive(quote)) return { ok: false, reason: 'Execution quote unavailable.' };
   const zone = scenario?.entryZone;
@@ -77,7 +95,7 @@ export function validateEntryGeometry(side: TradeSide, quote: number, scenario?:
   if (!positive(invalidation) || (side === 'LONG' ? invalidation >= Math.min(quote, zone.low) : invalidation <= Math.max(quote, zone.high))) {
     return { ok: false, reason: 'Structural invalidation is on the wrong side of the entry zone or quote.' };
   }
-  if (quote < zone.low * (1 - tolerance) || quote > zone.high * (1 + tolerance)) return { ok: false, reason: `Execution quote ${quote} is outside the binding ${side} entry zone [${zone.low}, ${zone.high}]; wait for the setup retest.` };
+  if (quote < zone.low * (1 - tolerance) || quote > zone.high * (1 + tolerance)) return { ok: true, reason: `Execution quote ${quote} is outside the advisory ${side} entry zone [${zone.low}, ${zone.high}]. Risk and Desk Lead may evaluate an immediate entry or HOLD for a retest; this recommendation is not a binding Owner limit.` };
   return { ok: true, reason: null };
 }
 
@@ -198,7 +216,7 @@ export function buildDebateEvidence(input: DebateEvidenceInput): DebateEvidence 
     ? dimension('UNKNOWN', geometry.reason ?? 'Structural geometry is unavailable.')
     : opposingExhaustion
       ? dimension('VERIFIED_OPPOSING', 'The supplied tactical plan confirms buyer/seller exhaustion against this entry.', ['market.tactical.exhaustion'])
-      : dimension('SUPPORTING', 'The execution quote respects the side-specific structural entry zone and invalidation.', [`scenario:${scenario?.id ?? scenario?.kind ?? 'selected'}`]);
+      : dimension(geometry.reason ? 'NEUTRAL' : 'SUPPORTING', geometry.reason ?? 'The execution quote respects the recommended structural entry zone and invalidation.', [`scenario:${scenario?.id ?? scenario?.kind ?? 'selected'}`]);
   const momentum = input.momentum ?? snapshotMomentum(snapshot);
   const dimensions = { structure, tape: tapeDimension(input, momentum), catalyst: catalystDimension(input), jev: jevDimension(input) };
   const isCrossVenue = Boolean(live && venue && snapshot.source.toLowerCase() !== venue.toLowerCase());
@@ -211,7 +229,7 @@ export function buildDebateEvidence(input: DebateEvidenceInput): DebateEvidence 
   // "Multi-dimensional" requires structure and at least one distinct supporting
   // evidence family, never four votes copied from the same EMA series.
   if (structure.status === 'SUPPORTING' && ![dimensions.tape, dimensions.catalyst, dimensions.jev].some(item => item.status === 'SUPPORTING')) openReasons.push('The structural setup lacks a distinct supporting tape, verified catalyst, or remote probabilistic dimension.');
-  return { side, symbol: snapshot.symbol, observedAt: snapshot.fetchedAt, snapshotId: snapshot.snapshotId ?? null, dimensions, sourceConflict: conflicts.length > 0, provenance: { marketSource: snapshot.source, executionVenue: venue, referenceMarket: !!venue && snapshot.source !== venue, example: snapshot.example, proxySources, conflicts }, momentum, scenario, openAllowed: openReasons.length === 0, openReasons };
+  return { side, symbol: snapshot.symbol, observedAt: snapshot.fetchedAt, snapshotId: snapshot.snapshotId ?? null, dimensions, sourceConflict: conflicts.length > 0, provenance: { marketSource: snapshot.source, executionVenue: venue, referenceMarket: !!venue && snapshot.source !== venue, example: snapshot.example, proxySources, conflicts }, momentum, orderflow: orderflowObservation(snapshot), scenario, openAllowed: openReasons.length === 0, openReasons };
 }
 
 export const CLOSE_TRIGGER_REASONS = ['INVALIDATION_HIT', 'MOMENTUM_REVERSAL', 'SENTIMENT_REVERSAL', 'OPPOSING_NEWS', 'WHALE_EXIT', 'EXCHANGE_STOP_OR_TP', 'EARLY_TAKE_PROFIT', 'DATA_ANOMALY_OR_CONFLICT', 'GUARD_THREATENED'] as const;
