@@ -12,10 +12,45 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'dotenv';
 import { getSessionLogger, recordDiagnostic } from '../server/session-log.js';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export function repoRoot(moduleUrl: string): string {
+  let dir = path.dirname(fileURLToPath(moduleUrl));
+  for (let i = 0; i < 8; i++) {
+    const pkgPath = path.join(dir, 'package.json');
+    if (existsSync(pkgPath)) {
+      let name = '';
+      try { name = JSON.parse(readFileSync(pkgPath, 'utf8')).name ?? ''; } catch { name = ''; }
+      if (name === 'trading-agent-mpu-gandring' && existsSync(path.join(dir, 'cli'))) return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`Cannot resolve Trading Agent Mpu Gandring root from ${fileURLToPath(moduleUrl)}`);
+}
+export function backendEntry(rootDir: string) { return path.join(rootDir, 'dist', 'server', 'server', 'index.js'); }
+export function envFilePath(rootDir: string) { return path.join(rootDir, '.env'); }
+export function serviceAfterExit(code: number, opts: { stopping: boolean; service: boolean }): { exit: number } | { restart: true } {
+  if (opts.stopping || code === 0) return { exit: 0 };
+  if (code === 2) return { exit: opts.service ? 0 : 2 };
+  if (!opts.service) return { exit: code };
+  return { restart: true };
+}
+export function nextServiceBackoff(backoff: number, uptimeMs: number) {
+  const wait = uptimeMs > 10 * 60_000 ? 5_000 : backoff;
+  return { wait, next: Math.min(wait * 2, 120_000) };
+}
+export function launcherExitFacts(input: { code: number | null; signal: string | null; pid?: number | null; restartRequested: boolean; stopping: boolean; error?: string | null }) {
+  return {
+    at: new Date().toISOString(), code: input.code, signal: input.signal, pid: input.pid ?? null,
+    restartRequested: input.restartRequested, stopping: input.stopping, spawnError: input.error ?? null,
+    unexpected: !input.stopping && !input.restartRequested && (input.code !== 0 || !!input.error)
+  };
+}
+
+const root = repoRoot(import.meta.url);
 const argv = process.argv.slice(2);
 const service = argv.includes('--service');
-const envFile = path.join(root, '.env');
+const envFile = envFilePath(root);
 const fileEnv = existsSync(envFile) ? parse(readFileSync(envFile)) : {};
 const get = (k: string, d = '') => (process.env[k] ?? fileEnv[k] ?? d).trim();
 
@@ -33,7 +68,7 @@ export function buildEnv(base: NodeJS.ProcessEnv, nodePath: string): NodeJS.Proc
 export function officeUrl(host: string, port: string) { return `http://${host === '0.0.0.0' || host === '' || host === '::' ? '127.0.0.1' : host}:${port}`; }
 
 function needsBuild() {
-  const server = path.join(root, 'dist/server/server/index.js'), web = path.join(root, 'dist/web/index.html');
+  const server = backendEntry(root), web = path.join(root, 'dist/web/index.html');
   if (argv.includes('--rebuild') || !existsSync(server) || !existsSync(web)) return true;
   const pkg = statSync(path.join(root, 'package.json')).mtimeMs;
   return statSync(server).mtimeMs < pkg;
@@ -62,18 +97,21 @@ async function main() {
   for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopping = true; child?.kill(sig); });
   for (;;) {
     const startedAt = Date.now();
-    child = spawn(process.execPath, [path.join(root, 'dist/server/server/index.js')], { cwd: root, env: { ...tradeEnv(process.env, fileEnv), ...(getSessionLogger() ? { MPU_PARENT_SESSION_ID: getSessionLogger()!.session.sessionId } : {}) }, stdio: 'inherit' });
+    child = spawn(process.execPath, [backendEntry(root)], { cwd: root, env: { ...tradeEnv(process.env, fileEnv), ...(getSessionLogger() ? { MPU_PARENT_SESSION_ID: getSessionLogger()!.session.sessionId } : {}) }, stdio: 'inherit' });
     const ready = setTimeout(() => log(`office: ${url}`), 2500);
-    const code: number = await new Promise((r) => child!.on('exit', (c) => r(c ?? 1)));
-    recordDiagnostic({ source: 'launcher:trade', category: 'SESSION', eventName: 'child.exited', status: String(code), message: 'Backend process exited', durationMs: Date.now() - startedAt, details: { pid: child.pid, code } });
+    let signal: NodeJS.Signals | null = null;
+    const code: number = await new Promise((r) => child!.on('exit', (c, s) => { signal = s; r(c ?? 1); }));
+    const action = serviceAfterExit(code, { stopping, service });
+    recordDiagnostic({ source: 'launcher:trade', category: 'SESSION', eventName: 'child.exited', status: String(code), message: 'Backend process exited', durationMs: Date.now() - startedAt, details: launcherExitFacts({ code, signal, pid: child.pid, restartRequested: 'restart' in action, stopping }) });
     clearTimeout(ready);
-    if (stopping || code === 0) process.exit(0);
-    if (code === 2) { log('the backend refused to start (a safety guard said no; see the message above). Not restarting.'); process.exit(service ? 0 : 2); }
-    if (!service) process.exit(code);
-    if (Date.now() - startedAt > 10 * 60_000) backoff = 5_000;
-    log(`backend exited with code ${code}. Restarting in ${Math.round(backoff / 1000)}s.`);
-    await new Promise((r) => setTimeout(r, backoff));
-    backoff = Math.min(backoff * 2, 120_000);
+    if ('exit' in action) {
+      if (code === 2 && !stopping) log('the backend refused to start (a safety guard said no; see the message above). Not restarting.');
+      process.exit(action.exit);
+    }
+    const step = nextServiceBackoff(backoff, Date.now() - startedAt);
+    log(`backend exited with code ${code}. Restarting in ${Math.round(step.wait / 1000)}s.`);
+    await new Promise((r) => setTimeout(r, step.wait));
+    backoff = step.next;
   }
 }
 

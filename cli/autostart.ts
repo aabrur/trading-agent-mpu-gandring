@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { repoRoot } from './trade.js';
 
 export const LABEL = 'com.mpugandring.trading-agent';
 export const UNIT = 'trading-agent-mpu-gandring.service';
@@ -76,7 +76,7 @@ function run(cmds: string[][], quietFail = false) {
 
 function main() {
   const sub = process.argv[2] ?? 'status';
-  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const repo = repoRoot(import.meta.url);
   const plan = servicePlan(process.platform, { node: process.execPath, repo, home: os.homedir(), uid: process.getuid?.() });
   const dry = process.argv.includes('--dry-run');
   if (dry) { console.log(plan.file ? `${plan.file}\n\n${plan.content}` : plan.content); return; }

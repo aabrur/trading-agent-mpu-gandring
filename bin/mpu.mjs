@@ -15,6 +15,10 @@ if (!['test', 'build'].includes(first) && existsSync(sessionEntry)) {
   const session = await beginApplicationSession('launcher:mpu', root);
   process.env.MPU_PARENT_SESSION_ID = session.session.sessionId;
 }
+let recordDiagnostic = (_input) => {};
+if (existsSync(path.join(root, 'dist/server/server/session-log.js'))) {
+  try { ({ recordDiagnostic } = await import(new URL('../dist/server/server/session-log.js', import.meta.url))); } catch { /* Console evidence remains if the logger cannot load. */ }
+}
 
 if (args.includes('--help') || args.includes('-h') || first === 'help') {
   console.log(`Trading Agent Mpu Gandring (mpu)
@@ -245,12 +249,19 @@ do {
   restart = false;
   child = spawn(process.execPath, [serverFile], { cwd: root, env: { ...process.env, NODE_ENV: 'production', MPU_MANAGED: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: true });
   let exited = false;
+  let exitCode = null, exitSignal = null, spawnError = null;
   child.on('message', (m) => { if (m?.type === 'mpu:restart') { restart = true; child.kill('SIGTERM'); } });
-  const done = new Promise((resolve) => { child.once('error', () => { exited = true; resolve(1); }); child.once('exit', (code) => { exited = true; resolve(code ?? 1); }); });
+  const done = new Promise((resolve) => {
+    child.once('error', (err) => { spawnError = err?.message ?? String(err); exited = true; resolve(1); });
+    child.once('exit', (code, signal) => { exitCode = code; exitSignal = signal; exited = true; resolve(code ?? 1); });
+  });
   for (let i = 0; i < 120 && !exited; i++) {
     if (await getRunningHealth()) { console.log(`Office ready: ${target}`); if (!opened) { open(); opened = true; } break; }
     await new Promise((r) => setTimeout(r, 500));
   }
   const code = await done;
+  const facts = { at: new Date().toISOString(), code: exitCode, signal: exitSignal, pid: child.pid ?? null, restartRequested: restart, stopping, spawnError };
+  if (!stopping && !restart && (code !== 0 || spawnError)) console.error(`[mpu] backend ended: code=${facts.code ?? '-'} signal=${facts.signal ?? '-'} pid=${facts.pid ?? '-'} restart=${restart}`);
+  try { recordDiagnostic({ source: 'launcher:mpu', category: 'SESSION', eventName: 'child.exited', status: String(facts.code ?? facts.signal ?? 'spawn-error'), message: spawnError ? `Backend spawn failed: ${spawnError}` : 'Backend process exited', details: facts }); } catch { /* Observational only. */ }
   if (!restart || stopping) process.exit(stopping ? 0 : code);
 } while (!stopping);

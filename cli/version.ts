@@ -1,10 +1,10 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parse } from 'dotenv';
+import { repoRoot } from './trade.js';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = repoRoot(import.meta.url);
 
 export interface VersionInfo {
   app: string;
