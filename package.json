@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.10",
-  "appVersion": "0.0.0.4.10",
+  "version": "0.4.11",
+  "appVersion": "0.0.0.4.11",
   "changelog": [
+    "v0.0.0.4.11: resolve the compiled trade launcher root so mpu trade --service starts dist/server/server/index.js and reads the project .env. Windows autostart uses the same root. Ordinary mpu records child exit code, signal, pid, and restart attribution. Owner settings and guards are preserved.",
     "v0.0.0.4.10: show TESTNET and LIVE occupied slots from backend accounting, including a unique pending entry, and label unverified observations. PAPER still counts position rows. Owner settings and guards are preserved.",
     "v0.0.0.4.9: preserve closed-candle finality and native volume precision; expose per-feed provenance, diagnostic prior-20 median volume, event windows and saved/active runtime identity; preserve kill activation origin with local forensic audit; add explicit opt-in Aster LIMIT GTC with durable reconciliation, partial-fill protection and cancellation. MARKET remains the default; Owner settings and guards are preserved.",
     "v0.0.0.4.8: separate entry Risk and confidence from verified CLOSE; refresh exit evidence after deliberation and under the execution lock; preserve research provenance with format-only repair; recover Windows session metadata contention; share readable channel reports and guarded native Grok Bot/Muse operations with updated installation templates.",

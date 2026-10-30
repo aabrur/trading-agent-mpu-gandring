@@ -2,6 +2,11 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.11] - 2026-10-30
+
+### Fixed
+- Compiled `mpu trade --service` resolves the project root instead of `dist/server`, so it starts `dist/server/server/index.js` and reads the existing project `.env`. Windows autostart uses that same root. Ordinary `mpu` records child exit code, signal, pid, and whether a restart was requested. Trading settings and guards are unchanged.
+
 ## [v0.0.0.4.10] - 2026-10-30
 
 ### Fixed
