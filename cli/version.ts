@@ -23,7 +23,7 @@ export interface VersionInfo {
 }
 
 export async function getVersionInfo(): Promise<VersionInfo> {
-  let pkg = { name: 'trading-agent-mpu-gandring', version: '0.4.11', appVersion: '0.0.0.4.11' };
+  let pkg = { name: 'trading-agent-mpu-gandring', version: '0.4.12', appVersion: '0.0.0.4.12' };
   try {
     pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   } catch {
@@ -72,8 +72,8 @@ export async function getVersionInfo(): Promise<VersionInfo> {
 
   return {
     app: pkg.name || 'trading-agent-mpu-gandring',
-    appVersion: pkg.appVersion || '0.0.0.4.11',
-    version: pkg.version || '0.4.11',
+    appVersion: pkg.appVersion || '0.0.0.4.12',
+    version: pkg.version || '0.4.12',
     commit,
     branch,
     tag,

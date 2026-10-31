@@ -1,0 +1,25 @@
+{
+  "rules": {
+    "symbol": "BTCUSDT",
+    "nativeSymbol": "BTCUSDT",
+    "tickSize": "0.1",
+    "qtyStep": "0.001",
+    "minQty": "0.001",
+    "maxQty": "100",
+    "minNotional": "5",
+    "contractMultiplier": "1",
+    "settlementCurrency": "USDT",
+    "positionModeCapability": "BOTH",
+    "exchangeStops": true,
+    "restingLimitGtcEntry": false
+  },
+  "quote": {
+    "symbol": "BTCUSDT",
+    "last": "68500.5",
+    "bid": "68500.0",
+    "ask": "68501.0",
+    "sourceAt": 1761900000000,
+    "observedAt": 1761900000120,
+    "ageMs": 120
+  }
+}

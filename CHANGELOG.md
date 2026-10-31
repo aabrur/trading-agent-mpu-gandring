@@ -2,6 +2,17 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.12] - 2026-10-31
+
+### Added
+- Rebirth v2 architecture overhaul with LibSQL SQLite store and WAL durability.
+- Bybit Linear WebSocket/REST market hub with deterministic decimal indicators.
+- Six-role agent runner with 24 persona profiles, Jev calibration client, and CycleRunner.
+- ExecutionGateway and ProtectionService ensuring resting stop loss on exchange for all live trades.
+- 8 venue adapters: Bybit, Aster, Hyperliquid, Binance, OKX, dYdX, Paradex, and Orderly.
+- Grok v2 bridge with HMAC raw-body verification and D09 STOP semantics.
+- Support for ZECUSDT across default watchlist, auto symbols, sample feeds, and UI.
+
 ## [v0.0.0.4.11] - 2026-10-30
 
 ### Fixed

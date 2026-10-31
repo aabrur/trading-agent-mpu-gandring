@@ -396,7 +396,7 @@ export function DeskOps({ state }: { state: DeskState }) {
           </div>
           <label className="ops-symbols-field ops-symbols-field-raw">
             <span>{t('opsSymbolsLabel')}</span>
-            <input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} />
+            <input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT, ZECUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} />
           </label>
           <p className="ops-help">{t('opsAutoHelpText')}</p>
         </details>

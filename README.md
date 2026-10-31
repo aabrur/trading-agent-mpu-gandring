@@ -4,11 +4,11 @@
   <img src="web/public/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring" width="240" />
 </p>
 
-**v0.0.0.4.11 · Six agent roles · PAPER / TESTNET / LIVE · MIT**
+**v0.0.0.4.12 · Six agent roles · PAPER / TESTNET / LIVE · MIT**
 
 A trading desk that collects market evidence, runs a six-role debate, and executes eligible orders through exchange adapters. The Office brings together the discussion, positions, protection, reports and session history. You choose the models, venue and trading settings.
 
-[Release v0.0.0.4.11](https://github.com/aabrur/trading-agent-mpu-gandring/releases/tag/v0.0.0.4.11) · [Public validation](https://github.com/aabrur/trading-agent-mpu-gandring/actions/workflows/ci.yml) · [Operational evidence](docs/live-evidence.md) · [Changelog](CHANGELOG.md)
+[Release v0.0.0.4.12](https://github.com/aabrur/trading-agent-mpu-gandring/releases/tag/v0.0.0.4.12) · [Public validation](https://github.com/aabrur/trading-agent-mpu-gandring/actions/workflows/ci.yml) · [Operational evidence](docs/live-evidence.md) · [Changelog](CHANGELOG.md)
 
 A fresh installation starts in **PAPER**, uses mock agents, and leaves **Auto Trading off**. Exchange and model API keys are optional for getting started. Public market-data requests may still use the network.
 

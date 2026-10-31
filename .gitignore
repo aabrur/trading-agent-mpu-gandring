@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-rebirth/
 .env
 .env.*
 !.env.example

@@ -3,8 +3,8 @@ import { buildTechnicalSummary } from '../strategy.js';
 
 // Offline sample market. Deterministic, labeled EXAMPLE. Used when public APIs
 // are unreachable or MARKET_SOURCE=sample.
-const BASE: Record<string, number> = { BTCUSDT: 67250, ETHUSDT: 3120, SOLUSDT: 151.4, BNBUSDT: 585, XRPUSDT: 0.52, DOGEUSDT: 0.124, AVAXUSDT: 27.8, LINKUSDT: 13.9 };
-const DRIFT: Record<string, number> = { BTCUSDT: 0.00035, ETHUSDT: -0.0004, SOLUSDT: 0.0001 };
+const BASE: Record<string, number> = { BTCUSDT: 67250, ETHUSDT: 3120, SOLUSDT: 151.4, BNBUSDT: 585, XRPUSDT: 0.52, DOGEUSDT: 0.124, AVAXUSDT: 27.8, LINKUSDT: 13.9, ZECUSDT: 38.2 };
+const DRIFT: Record<string, number> = { BTCUSDT: 0.00035, ETHUSDT: -0.0004, SOLUSDT: 0.0001, ZECUSDT: 0.0002 };
 
 function rng(seed: number) {
   let s = seed >>> 0;

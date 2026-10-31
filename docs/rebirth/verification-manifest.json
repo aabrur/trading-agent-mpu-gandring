@@ -1,0 +1,89 @@
+{
+  "manifestVersion": "2.0.0",
+  "baselineSha": "a725218a304bc32f5347ed150da9755eb8df7783",
+  "generatedAt": "2026-10-31T18:16:00.000Z",
+  "suites": {
+    "T00_baseline": "tests/rebirth/baseline.test.ts",
+    "T01_isolation": "tests/rebirth/runtime-isolation.test.ts",
+    "T02_store": "tests/rebirth/store.test.ts",
+    "T03_settings_accounts": [
+      "tests/rebirth/settings.test.ts",
+      "tests/rebirth/accounts.test.ts"
+    ],
+    "T04_bybit_market": "tests/rebirth/bybit.test.ts",
+    "T05_indicators": [
+      "tests/rebirth/decimal.test.ts",
+      "tests/rebirth/indicators.test.ts"
+    ],
+    "T06_research_tools": [
+      "tests/rebirth/research.test.ts",
+      "tests/rebirth/tool-security.test.ts"
+    ],
+    "T07_roles_jev": [
+      "tests/rebirth/roles.test.ts",
+      "tests/rebirth/provider-tools.test.ts",
+      "tests/rebirth/jev.test.ts"
+    ],
+    "T08_decision_cycle": [
+      "tests/rebirth/debate.test.ts",
+      "tests/rebirth/reversal.test.ts",
+      "tests/rebirth/exits.test.ts"
+    ],
+    "T09_gateway_protection": [
+      "tests/rebirth/protection.test.ts",
+      "tests/rebirth/gateway.test.ts",
+      "tests/rebirth/authority.test.ts"
+    ],
+    "T10_adapter_wallet": [
+      "tests/rebirth/adapter-contract.test.ts",
+      "tests/rebirth/wallet.test.ts"
+    ],
+    "T11_venue_adapters": [
+      "tests/rebirth/venue-bybit.test.ts",
+      "tests/rebirth/venue-aster.test.ts",
+      "tests/rebirth/venue-hyperliquid.test.ts",
+      "tests/rebirth/venue-binance.test.ts",
+      "tests/rebirth/venue-okx.test.ts",
+      "tests/rebirth/venue-dydx.test.ts",
+      "tests/rebirth/venue-paradex.test.ts",
+      "tests/rebirth/venue-orderly.test.ts"
+    ],
+    "T12_sandbox_learning": [
+      "tests/rebirth/sandbox.test.ts",
+      "tests/rebirth/learning.test.ts"
+    ],
+    "T13_ui_parity": [
+      "tests/rebirth/api-parity.test.ts",
+      "tests/rebirth/office-browser.test.ts"
+    ],
+    "T14_channels_cli": [
+      "tests/rebirth/cli.test.ts",
+      "tests/rebirth/channels.test.ts",
+      "tests/rebirth/launcher.test.ts"
+    ],
+    "T15_grok_protocol_auth": [
+      "tests/rebirth/grok-protocol.test.ts",
+      "tests/rebirth/grok-auth.test.ts"
+    ],
+    "T16_grok_bridge": [
+      "tests/rebirth/grok-bridge.test.ts",
+      "tests/rebirth/grok-role-routing.test.ts"
+    ],
+    "T17_grok_owner_stop": [
+      "tests/rebirth/grok-owner.test.ts",
+      "tests/rebirth/handover.test.ts",
+      "tests/rebirth/stop.test.ts"
+    ],
+    "T18_system_migration": [
+      "tests/rebirth/system.test.ts",
+      "tests/rebirth/migration.test.ts"
+    ]
+  },
+  "retainedSafetyChecks": {
+    "liveExitWithoutKeys": "server/v2/settings/service.ts enforces missing key refusal",
+    "withdrawPermissionRefusal": "server/v2/execution/adapters/* verify trade-only permissions",
+    "mandatoryRestingStop": "server/v2/execution/gateway.ts fails closed on missing stop",
+    "maxPositionsBound": "OPEN_ORDERS_N bound strictly to 1..4 in server/v2/settings/schema.ts",
+    "zeroSecretsInLogs": "server/redact.ts scrubs all credentials in logs and reports"
+  }
+}

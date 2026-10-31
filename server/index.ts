@@ -2,6 +2,6 @@ import { runApplicationEntry } from './session-entry.js';
 
 // Start diagnostics before importing configuration and the application graph.
 await runApplicationEntry('server', async () => {
-  const { startServer } = await import('./runtime.js');
-  await startServer();
+  const { startReplacementServer } = await import('./v2/runtime.js');
+  await startReplacementServer();
 });

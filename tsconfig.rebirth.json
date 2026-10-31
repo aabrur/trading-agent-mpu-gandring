@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist-rebirth",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "shared/**/*.ts",
+    "server/index.ts",
+    "server/session-entry.ts",
+    "server/session-log.ts",
+    "server/redact.ts",
+    "server/untrusted.ts",
+    "server/v2/**/*.ts",
+    "cli/v2/**/*.ts"
+  ]
+}

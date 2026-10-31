@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://mpugandring.org/schemas/grok-event-v2.json",
+  "title": "GrokBridgeEventV2",
+  "description": "Typed discriminator envelope for Grok async bridge events in Trading Agent Mpu Gandring",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "protocol",
+        "kind",
+        "eventId",
+        "cycleId",
+        "role",
+        "phase",
+        "attempt",
+        "evidence",
+        "configVersion",
+        "accountRef",
+        "timestamp"
+      ],
+      "properties": {
+        "protocol": { "type": "string", "const": "mpu.grok.v2" },
+        "kind": { "type": "string", "const": "role.task.result" },
+        "eventId": { "type": "string", "minLength": 1 },
+        "cycleId": { "type": "string", "minLength": 1 },
+        "role": {
+          "type": "string",
+          "enum": ["lead", "market", "research", "strategist", "risk", "execution"]
+        },
+        "phase": { "type": "string", "minLength": 1 },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "evidence": { "type": "object" },
+        "configVersion": { "type": "integer", "minimum": 0 },
+        "accountRef": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "protocol",
+        "kind",
+        "eventId",
+        "command",
+        "accountRef",
+        "expectedActiveVersion",
+        "timestamp"
+      ],
+      "properties": {
+        "protocol": { "type": "string", "const": "mpu.grok.v2" },
+        "kind": { "type": "string", "const": "owner.command.request" },
+        "eventId": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "grantId": { "type": "string" },
+        "accountRef": { "type": "string", "minLength": 1 },
+        "expectedActiveVersion": { "type": "integer", "minimum": 0 },
+        "timestamp": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "protocol",
+        "kind",
+        "eventId",
+        "mode",
+        "killed",
+        "timestamp"
+      ],
+      "properties": {
+        "protocol": { "type": "string", "const": "mpu.grok.v2" },
+        "kind": { "type": "string", "const": "desk.state.sync" },
+        "eventId": { "type": "string", "minLength": 1 },
+        "mode": { "type": "string", "enum": ["PAPER", "TESTNET", "LIVE"] },
+        "killed": { "type": "boolean" },
+        "timestamp": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "protocol",
+        "kind",
+        "eventId",
+        "peerId",
+        "timestamp"
+      ],
+      "properties": {
+        "protocol": { "type": "string", "const": "mpu.grok.v2" },
+        "kind": { "type": "string", "const": "peer.heartbeat" },
+        "eventId": { "type": "string", "minLength": 1 },
+        "peerId": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

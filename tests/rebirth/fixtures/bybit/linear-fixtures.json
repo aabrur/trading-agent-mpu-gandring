@@ -1,0 +1,119 @@
+{
+  "instruments": [
+    {
+      "symbol": "BTCUSDT",
+      "contractType": "LinearPerpetual",
+      "status": "Trading",
+      "baseCoin": "BTC",
+      "quoteCoin": "USDT",
+      "settleCoin": "USDT",
+      "priceFilter": { "minPrice": "0.10", "maxPrice": "1999999.80", "tickSize": "0.10" },
+      "lotSizeFilter": { "maxOrderQty": "1190.000", "minOrderQty": "0.001", "qtyStep": "0.001", "minNotionalValue": "5" }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "contractType": "LinearPerpetual",
+      "status": "Trading",
+      "baseCoin": "ETH",
+      "quoteCoin": "USDT",
+      "settleCoin": "USDT",
+      "priceFilter": { "minPrice": "0.01", "maxPrice": "199999.98", "tickSize": "0.01" },
+      "lotSizeFilter": { "maxOrderQty": "10000.00", "minOrderQty": "0.01", "qtyStep": "0.01", "minNotionalValue": "5" }
+    },
+    {
+      "symbol": "1000PEPEUSDT",
+      "contractType": "LinearPerpetual",
+      "status": "Trading",
+      "baseCoin": "1000PEPE",
+      "quoteCoin": "USDT",
+      "settleCoin": "USDT",
+      "priceFilter": { "minPrice": "0.0000001", "maxPrice": "1.9999998", "tickSize": "0.0000001" },
+      "lotSizeFilter": { "maxOrderQty": "50000000", "minOrderQty": "100", "qtyStep": "100", "minNotionalValue": "5" }
+    }
+  ],
+  "restKlines1m": [
+    ["1761897720000", "95020.0", "95060.0", "95010.0", "95050.0", "14.250", "1354280.0"],
+    ["1761897660000", "95000.0", "95030.0", "94990.0", "95020.0", "12.500", "1187625.0"],
+    ["1761897600000", "94980.0", "95010.0", "94970.0", "95000.0", "10.000", "949900.0"]
+  ],
+  "tickerSnapshot": {
+    "topic": "tickers.BTCUSDT",
+    "type": "snapshot",
+    "ts": 1761897725000,
+    "cs": 80001,
+    "data": {
+      "symbol": "BTCUSDT",
+      "lastPrice": "95050.0",
+      "bid1Price": "95049.9",
+      "bid1Size": "2.400",
+      "ask1Price": "95050.1",
+      "ask1Size": "1.800",
+      "fundingRate": "0.0001",
+      "openInterest": "54210.500",
+      "openInterestValue": "5152708025.0",
+      "price24hPcnt": "0.0245"
+    }
+  },
+  "tickerDelta": {
+    "topic": "tickers.BTCUSDT",
+    "type": "delta",
+    "ts": 1761897726000,
+    "cs": 80002,
+    "data": {
+      "symbol": "BTCUSDT",
+      "lastPrice": "95085.5"
+    }
+  },
+  "orderbookSnapshot1": {
+    "topic": "orderbook.50.BTCUSDT",
+    "type": "snapshot",
+    "ts": 1761897725100,
+    "cts": 1761897725090,
+    "data": {
+      "s": "BTCUSDT",
+      "b": [["95049.9", "2.500"], ["95049.0", "5.000"]],
+      "a": [["95050.1", "1.800"], ["95051.0", "3.200"]],
+      "u": 100,
+      "seq": 900100
+    }
+  },
+  "orderbookDeltaJump1": {
+    "topic": "orderbook.50.BTCUSDT",
+    "type": "delta",
+    "ts": 1761897725300,
+    "cts": 1761897725290,
+    "data": {
+      "s": "BTCUSDT",
+      "b": [["95049.9", "3.100"], ["95049.0", "0"]],
+      "a": [["95050.5", "1.250"]],
+      "u": 107,
+      "seq": 900107
+    }
+  },
+  "orderbookDeltaJump2": {
+    "topic": "orderbook.50.BTCUSDT",
+    "type": "delta",
+    "ts": 1761897725500,
+    "cts": 1761897725490,
+    "data": {
+      "s": "BTCUSDT",
+      "b": [["95050.0", "1.000"]],
+      "a": [["95050.1", "0.000"]],
+      "u": 115,
+      "seq": 900115
+    }
+  },
+  "orderbookSnapshotReset": {
+    "topic": "orderbook.50.BTCUSDT",
+    "type": "snapshot",
+    "ts": 1761897726000,
+    "cts": 1761897725990,
+    "data": {
+      "s": "BTCUSDT",
+      "b": [["95080.0", "4.000"]],
+      "a": [["95081.0", "2.000"]],
+      "u": 1,
+      "seq": 900200
+    }
+  }
+}

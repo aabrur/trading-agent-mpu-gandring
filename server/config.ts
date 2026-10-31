@@ -178,7 +178,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     defaultProvider,
     agents,
     marketSource: src as AppConfig['marketSource'],
-    watchlist: (env.WATCHLIST || 'BTCUSDT,ETHUSDT,SOLUSDT').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
+    watchlist: (env.WATCHLIST || 'BTCUSDT,ETHUSDT,SOLUSDT,ZECUSDT').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
     tickerRefreshSeconds: Math.max(5, num(env, 'TICKER_REFRESH_SECONDS', 20)),
     paper: { balance, safetyNet, n },
     risk: {
@@ -206,7 +206,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     auto: {
       on: !/^(0|off|no|false)$/i.test((env.AUTO_TRADING ?? 'off').trim()),
       intervalMin: Math.max(0.1, num(env, 'DEBATE_INTERVAL_MIN', 15)),
-      symbols: (env.AUTO_SYMBOLS || env.WATCHLIST || 'BTCUSDT,ETHUSDT,SOLUSDT').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
+      symbols: (env.AUTO_SYMBOLS || env.WATCHLIST || 'BTCUSDT,ETHUSDT,SOLUSDT,ZECUSDT').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
       maxHoldHours: Math.max(0, num(env, 'MAX_HOLD_HOURS', 0))
     },
     learning: {
