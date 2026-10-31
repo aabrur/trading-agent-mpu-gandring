@@ -109,7 +109,7 @@ export function mountStateRoutes(
     });
   });
 
-  app.get('/api/candles', (req, res) => {
+  app.get('/api/candles', async (req, res) => {
     const symbol = String(req.query.symbol ?? 'BTCUSDT').trim().toUpperCase();
     const rawTf = String(req.query.tf ?? '15m').trim();
     const tf = (TIMEFRAMES as readonly string[]).includes(rawTf) ? rawTf : '15m';
@@ -117,8 +117,13 @@ export function mountStateRoutes(
     const hub = (runtime as any).marketHub;
     if (hub && typeof hub.snapshot === 'function') {
       try {
-        const snap = hub.snapshot(symbol);
-        const bars = snap.closed?.[tf] ?? [];
+        let snap = hub.snapshot(symbol);
+        let bars = snap.closed?.[tf] ?? [];
+        if (bars.length === 0 && typeof hub.bootstrapSymbol === 'function') {
+          await hub.bootstrapSymbol(symbol).catch(() => {});
+          snap = hub.snapshot(symbol);
+          bars = snap.closed?.[tf] ?? [];
+        }
         if (bars.length > 0) {
           const candles = bars.map((b: any) => ({
             time: Math.floor(b.startAt / 1000),
@@ -126,8 +131,21 @@ export function mountStateRoutes(
             high: Number(b.high),
             low: Number(b.low),
             close: Number(b.close),
-            volume: Number(b.volume)
+            volume: Number(b.volume),
+            confirmed: true
           }));
+          const openBar = snap.open?.[tf];
+          if (openBar) {
+            candles.push({
+              time: Math.floor(openBar.startAt / 1000),
+              open: Number(openBar.open),
+              high: Number(openBar.high),
+              low: Number(openBar.low),
+              close: Number(openBar.close),
+              volume: Number(openBar.volume),
+              confirmed: false
+            });
+          }
           const last = snap.last?.value !== null ? Number(snap.last.value) : null;
           res.json({
             symbol,

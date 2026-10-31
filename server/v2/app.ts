@@ -9,6 +9,11 @@ import { mountOperationsRoutes } from './api/operations.js';
 import { ChatService, mountChatRoutes } from './api/chat.js';
 import { HistoryService, mountHistoryRoutes } from './api/history.js';
 import { ReportsService, mountReportRoutes } from './reports.js';
+import { mountSetupApiRoutes, type SetupApiDeps } from './api/setup.js';
+import { mountGrokRoutes } from './api/grok.js';
+import type { GrokBridge } from './connectors/grok/bridge.js';
+import type { KeyRegistry } from './connectors/grok/auth.js';
+import { mountResearchRoutesV2, type ResearchRouteDeps } from './api/research.js';
 
 export interface ReplacementAppOptions {
   instanceId?: string;
@@ -18,6 +23,10 @@ export interface ReplacementAppOptions {
   reportsService?: ReportsService;
   chatService?: ChatService;
   historyService?: HistoryService;
+  setupDeps?: SetupApiDeps;
+  grokBridge?: GrokBridge;
+  grokKeyRegistry?: KeyRegistry;
+  researchDeps?: ResearchRouteDeps;
   mountAdditionalRoutes?: (app: express.Express, runtime: OfficeRuntime) => void;
 }
 
@@ -38,6 +47,18 @@ export function createReplacementApp(
   });
 
   mountOperationsRoutes(app, runtime);
+
+  if (options.setupDeps) {
+    mountSetupApiRoutes(app, options.setupDeps);
+  }
+
+  if (options.grokBridge && options.grokKeyRegistry) {
+    mountGrokRoutes(app, options.grokBridge, options.grokKeyRegistry, runtime);
+  }
+
+  if (options.researchDeps) {
+    mountResearchRoutesV2(app, options.researchDeps);
+  }
 
   const reportsService = options.reportsService ?? new ReportsService();
   mountReportRoutes(app, reportsService, runtime);

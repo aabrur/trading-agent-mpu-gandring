@@ -86,11 +86,25 @@ export function mountOperationsRoutes(
     }
 
     const state = runtime.snapshot();
-    const balance = state.financial.balance.value ?? 1000;
-    const riskAmount = balance * 0.02; // 2% risk
-    const calculatedQty = riskAmount / riskDistance;
-    const quantizedQty = Math.max(0.001, Math.floor(calculatedQty * 1000) / 1000).toFixed(3);
-    const notional = (parseFloat(quantizedQty) * entryNum).toFixed(2);
+    const isLive = state.mode === 'LIVE' || state.mode === 'TESTNET';
+    const balanceVal = isLive ? state.financial.balance.value : state.paper.balance;
+    if (balanceVal === null || balanceVal === undefined) {
+      res.status(400).json({ ok: false, error: 'Account balance unavailable for sizing.' });
+      return;
+    }
+
+    const safetyNet = state.trading?.values.safetyNet ?? state.paper.safetyNet;
+    const n = state.trading?.values.maxPositions ?? state.paper.n;
+    const orderSizePct = state.trading?.values.orderSizePct;
+    const maxLeverage = parsed.data.leverage ?? state.trading?.values.maxLeverage ?? 5;
+
+    const moneyTrade = Math.max(0, balanceVal - safetyNet);
+    const perOrder = orderSizePct != null ? (moneyTrade * orderSizePct) / 100 : moneyTrade / n;
+    const notional = perOrder * maxLeverage;
+    const rawQty = entryNum > 0 ? notional / entryNum : 0;
+    const quantizedQty = Math.max(0.001, Math.floor(rawQty * 1000) / 1000).toFixed(3);
+    const actualNotional = (parseFloat(quantizedQty) * entryNum).toFixed(2);
+    const riskAmount = (parseFloat(quantizedQty) * riskDistance).toFixed(2);
 
     res.json({
       ok: true,
@@ -99,12 +113,12 @@ export function mountOperationsRoutes(
       entry,
       stop,
       qty: quantizedQty,
-      notional,
-      riskAmount: riskAmount.toFixed(2)
+      notional: actualNotional,
+      riskAmount
     });
   });
 
-  app.post('/api/ops/open', (req, res) => {
+  app.post('/api/ops/open', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
     const parsed = openBodySchema.safeParse(req.body ?? {});
@@ -113,22 +127,50 @@ export function mountOperationsRoutes(
       return;
     }
 
-    const { symbol, side, qty, stop, tp } = parsed.data;
+    const { symbol, side, qty, stop, tp, leverage, orderType } = parsed.data;
     const clientOrderId = `ord-manual-${Date.now()}`;
+
+    const reply = await runtime.dispatch({
+      kind: 'open',
+      actor: 'local_owner',
+      symbol,
+      payload: {
+        symbol,
+        side,
+        qty,
+        stop,
+        tp: tp ?? null,
+        leverage: leverage ?? 5,
+        orderType,
+        clientOrderId
+      }
+    });
+
+    if (!reply.ok) {
+      res.status(400).json({
+        ok: false,
+        error: reply.message,
+        code: reply.code,
+        status: 'REJECTED'
+      });
+      return;
+    }
 
     res.json({
       ok: true,
-      clientOrderId,
+      clientOrderId: (reply.data?.clientOrderId as string | undefined) ?? clientOrderId,
       symbol,
       side,
       qty,
       stop,
       tp: tp ?? null,
-      status: 'SUBMITTED'
+      status: (reply.data?.orderState as string | undefined) ?? 'SUBMITTED',
+      orderState: (reply.data?.orderState as string | undefined) ?? 'ACCEPTED',
+      protectionState: (reply.data?.protectionState as string | undefined) ?? 'UNVERIFIED'
     });
   });
 
-  app.post('/api/ops/close', (req, res) => {
+  app.post('/api/ops/close', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
     const parsed = closeBodySchema.safeParse(req.body ?? {});
@@ -138,60 +180,35 @@ export function mountOperationsRoutes(
     }
 
     const sym = parsed.data.symbol.trim().toUpperCase();
-    if ('updateState' in runtime && typeof (runtime as any).updateState === 'function') {
-      (runtime as any).updateState((draft: any) => {
-        if (sym === 'ALL') {
-          for (const pos of draft.paper?.positions ?? []) {
-            draft.paper.closed.push({
-              id: `closed-${Date.now()}-${pos.symbol}`,
-              symbol: pos.symbol,
-              side: pos.side,
-              qty: pos.qty,
-              entry: pos.entry,
-              exit: pos.mark,
-              realizedPnl: pos.unrealizedPnl,
-              reason: parsed.data.cause ?? 'Manual Close All',
-              closedAt: Date.now()
-            });
-          }
-          draft.paper.positions = [];
-          draft.paper.usedMargin = 0;
-          draft.paper.canOpen = true;
-        } else {
-          const remaining: any[] = [];
-          for (const pos of draft.paper?.positions ?? []) {
-            if (pos.symbol === sym) {
-              draft.paper.closed.push({
-                id: `closed-${Date.now()}-${pos.symbol}`,
-                symbol: pos.symbol,
-                side: pos.side,
-                qty: pos.qty,
-                entry: pos.entry,
-                exit: pos.mark,
-                realizedPnl: pos.unrealizedPnl,
-                reason: parsed.data.cause ?? `Manual Close ${sym}`,
-                closedAt: Date.now()
-              });
-              draft.paper.usedMargin = Math.max(0, (draft.paper.usedMargin ?? 0) - pos.margin);
-            } else {
-              remaining.push(pos);
-            }
-          }
-          draft.paper.positions = remaining;
-          draft.paper.canOpen = remaining.length < draft.paper.n;
-        }
+    const reply = await runtime.dispatch({
+      kind: 'close',
+      actor: 'local_owner',
+      symbol: sym,
+      payload: {
+        symbol: sym,
+        cause: parsed.data.cause ?? 'Manual Close'
+      }
+    });
+
+    if (!reply.ok) {
+      res.status(400).json({
+        ok: false,
+        error: reply.message,
+        code: reply.code
       });
+      return;
     }
 
     res.json({
       ok: true,
       symbol: parsed.data.symbol,
       closed: true,
-      status: 'CLOSED'
+      status: (reply.data?.orderState as string | undefined) ?? 'CLOSED',
+      orderState: (reply.data?.orderState as string | undefined) ?? 'CLOSED'
     });
   });
 
-  app.post('/api/ops/cancel-entry', (req, res) => {
+  app.post('/api/ops/cancel-entry', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
     const parsed = cancelEntryBodySchema.safeParse(req.body ?? {});
@@ -200,10 +217,21 @@ export function mountOperationsRoutes(
       return;
     }
 
+    const reply = await runtime.dispatch({
+      kind: 'cancel_entry',
+      actor: 'local_owner',
+      symbol: parsed.data.symbol,
+      payload: {
+        clientOrderId: parsed.data.clientId,
+        symbol: parsed.data.symbol
+      }
+    });
+
     res.json({
-      ok: true,
+      ok: reply.ok,
       clientId: parsed.data.clientId,
-      status: 'CANCELLED'
+      status: reply.ok ? 'CANCELLED' : 'FAILED',
+      message: reply.message
     });
   });
 
@@ -261,13 +289,19 @@ export function mountOperationsRoutes(
     });
   });
 
-  app.post('/api/ops/scan', (req, res) => {
+  app.post('/api/ops/scan', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
+    const reply = await runtime.dispatch({
+      kind: 'scan',
+      actor: 'local_owner'
+    });
+
     res.json({
-      ok: true,
+      ok: reply.ok,
       timestamp: Date.now(),
-      findings: []
+      findings: (reply.data?.findings as unknown[] | undefined) ?? [],
+      message: reply.message
     });
   });
 
@@ -284,33 +318,55 @@ export function mountOperationsRoutes(
     });
   });
 
-  app.post('/api/ops/kill', (req, res) => {
+  app.post('/api/ops/kill', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
+    const reply = await runtime.dispatch({
+      kind: 'kill',
+      actor: 'local_owner'
+    });
+
     res.json({
-      ok: true,
+      ok: reply.ok,
       killed: true,
-      reason: 'MANUAL_HALT_AND_FLATTEN'
+      reason: 'MANUAL_HALT_AND_FLATTEN',
+      flatten: reply.data?.flatten ?? 'COMPLETED',
+      entryCancellation: reply.data?.entryCancellation ?? 'COMPLETED',
+      message: reply.message
     });
   });
 
-  app.post('/api/kill', (req, res) => {
+  app.post('/api/kill', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
+    const reply = await runtime.dispatch({
+      kind: 'kill',
+      actor: 'local_owner'
+    });
+
     res.json({
-      ok: true,
+      ok: reply.ok,
       killed: true,
-      action: 'HALT_AND_FLATTEN'
+      action: 'HALT_AND_FLATTEN',
+      flatten: reply.data?.flatten ?? 'COMPLETED',
+      entryCancellation: reply.data?.entryCancellation ?? 'COMPLETED',
+      message: reply.message
     });
   });
 
-  app.post('/api/unkill', (req, res) => {
+  app.post('/api/unkill', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
+    const reply = await runtime.dispatch({
+      kind: 'unkill',
+      actor: 'local_owner'
+    });
+
     res.json({
-      ok: true,
+      ok: reply.ok,
       killed: false,
-      autoTrading: 'OFF'
+      autoTrading: 'OFF',
+      message: reply.message
     });
   });
 
@@ -345,19 +401,17 @@ export function mountOperationsRoutes(
       return;
     }
 
-    const cmd = parsed.data.text.trim().toLowerCase();
-    let reply = `Command acknowledged: "${safe(parsed.data.text)}"`;
-
-    if (cmd === 'status') {
-      const state = runtime.snapshot();
-      reply = `Mode: ${state.mode}. Venue: ${state.venue?.name ?? 'unconfigured'}. Kill switch: ${state.killed ? 'ON' : 'OFF'}.`;
-    } else if (cmd.startsWith('close')) {
-      reply = `Close request queued for ${cmd.slice(5).trim().toUpperCase()}.`;
-    }
+    const reply = await runtime.dispatch({
+      kind: 'command',
+      actor: 'local_owner',
+      text: parsed.data.text,
+      agent: parsed.data.agent as any,
+      clientRequestId: parsed.data.clientRequestId
+    });
 
     res.json({
-      ok: true,
-      reply
+      ok: reply.ok,
+      reply: reply.message
     });
   });
 }

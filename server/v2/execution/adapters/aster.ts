@@ -259,7 +259,8 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         };
       }
 
-      const pinned = creds.verifiedAgentAddress?.trim() ?? '';
+      const envPin = (options.network === 'testnet' ? process.env.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED : process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED)?.trim() || process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED?.trim() || '';
+      const pinned = creds.verifiedAgentAddress?.trim() || envPin;
       if (!pinned || pinned.toLowerCase() !== signerAddress.toLowerCase()) {
         return {
           ok: false,

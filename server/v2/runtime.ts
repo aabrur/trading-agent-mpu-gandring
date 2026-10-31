@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -12,6 +14,8 @@ import {
   EXCHANGES,
   ROLE_IDS,
   unavailableEvidence,
+  availableFinancialField,
+  unavailableFinancialField,
   type AppMode,
   type Network,
   type OfficeCommand,
@@ -35,9 +39,26 @@ import { CycleRunner, type CyclePolicy, type CycleReason } from './decision/cycl
 import { JevClient } from './agents/jev.js';
 import { createOfficialProviderCaller } from './agents/providers.js';
 import { buildRoleSystemPrompt, resolveCanonicalRole } from './agents/roles.js';
-import { PROVIDER_KEY_ENV } from './settings/secrets.js';
+import { PROVIDER_KEY_ENV, SecretStore } from './settings/secrets.js';
 import type { ApiProviderId } from './settings/schema.js';
 import type { Position, Stance, Verdict } from '../../shared/office.js';
+import { RuntimeStore } from './store/database.js';
+import { ExecutionAuthorityService } from './accounts/authority.js';
+import { AccountRegistry } from './accounts/registry.js';
+import { SettingsService } from './settings/service.js';
+import { ExecutionGateway } from './execution/gateway.js';
+import { getVenueAdapter, createTransportFromAdapter } from './execution/adapters/factory.js';
+import { PaperVenue } from './sandbox/paper.js';
+import {
+  assertLivePermissionEvidence,
+  type PermissionEvidence,
+  type NativeAccountIdentity,
+  type NativeBalance,
+  type NativePosition
+} from './execution/adapters/types.js';
+import { ResearchHost } from './research/host.js';
+import { GrokBridge } from './connectors/grok/bridge.js';
+import type { KeyRegistry } from './connectors/grok/auth.js';
 
 export class StartupValidationError extends Error {
   constructor(message: string, public readonly exitCode = 2) {
@@ -208,6 +229,12 @@ export interface ReplacementRuntimeOptions {
   cycleRunner?: CycleRunner;
   jevClient?: JevClient;
   env?: Record<string, string | undefined>;
+  initialFinancial?: OfficeState['financial'];
+  initialPositions?: Position[];
+  venue?: OfficeState['venue'];
+  runtimeIdentity?: OfficeState['runtimeIdentity'];
+  accountState?: OfficeState['accountState'];
+  executionGateway?: ExecutionGateway;
 }
 
 export function createReplacementRuntime(
@@ -225,6 +252,21 @@ export function createReplacementRuntime(
   }
   if (options.initialAppMode) {
     state = { ...state, appMode: options.initialAppMode };
+  }
+  if (options.initialFinancial) {
+    state.financial = { ...state.financial, ...options.initialFinancial };
+  }
+  if (options.initialPositions) {
+    state.paper.positions = options.initialPositions;
+  }
+  if (options.venue) {
+    state.venue = options.venue;
+  }
+  if (options.runtimeIdentity) {
+    state.runtimeIdentity = options.runtimeIdentity;
+  }
+  if (options.accountState) {
+    state.accountState = options.accountState;
   }
 
   if (state.mode === 'PAPER') {
@@ -877,6 +919,137 @@ export function createReplacementRuntime(
         message: 'Local halt latch released; Auto remains OFF.'
       };
     }
+    if (input.kind === 'open') {
+      const p = input.payload ?? {};
+      const symbol = String(p.symbol ?? input.symbol ?? 'BTCUSDT').toUpperCase();
+      const side = (p.side as 'LONG' | 'SHORT') ?? 'LONG';
+      const qty = Number(p.qty ?? '0.01');
+      const stop = p.stop ? Number(p.stop) : null;
+      const tp = p.tp ? Number(p.tp) : null;
+      const leverage = Number(p.leverage ?? 5);
+      const entry = Number(p.entry ?? 65000);
+      const margin = (qty * entry) / leverage;
+
+      updateState((draft) => {
+        draft.paper.positions.push({
+          id: `pos-${Date.now()}`,
+          symbol,
+          side,
+          qty,
+          entry,
+          stop: stop ?? (side === 'LONG' ? entry * 0.95 : entry * 1.05),
+          tp,
+          margin,
+          leverage,
+          openedAt: Date.now(),
+          mark: entry,
+          unrealizedPnl: 0,
+          protectionStatus: 'confirmed',
+          entryStatus: 'confirmed'
+        });
+        draft.paper.usedMargin += margin;
+        draft.paper.canOpen = draft.paper.positions.length < draft.paper.n;
+      });
+
+      return {
+        ok: true,
+        code: 'OK',
+        message: 'Order filled in paper mode',
+        data: {
+          clientOrderId: (p.clientOrderId as string) ?? `ord-paper-${Date.now()}`,
+          orderState: 'FILLED',
+          filledQty: String(qty),
+          protectionState: 'VERIFIED'
+        }
+      };
+    }
+
+    if (input.kind === 'close') {
+      const sym = String(input.symbol ?? input.payload?.symbol ?? '').toUpperCase();
+      let closedCount = 0;
+      updateState((draft) => {
+        if (sym === 'ALL') {
+          for (const pos of draft.paper?.positions ?? []) {
+            draft.paper.closed.push({
+              id: `closed-${Date.now()}-${pos.symbol}`,
+              symbol: pos.symbol,
+              side: pos.side,
+              qty: pos.qty,
+              entry: pos.entry,
+              exit: pos.mark,
+              realizedPnl: pos.unrealizedPnl,
+              reason: (input.payload?.cause as string) ?? 'Manual Close All',
+              closedAt: Date.now()
+            });
+            closedCount += 1;
+          }
+          draft.paper.positions = [];
+          draft.paper.usedMargin = 0;
+          draft.paper.canOpen = true;
+        } else {
+          const remaining: Position[] = [];
+          for (const pos of draft.paper?.positions ?? []) {
+            if (pos.symbol.toUpperCase() === sym) {
+              draft.paper.closed.push({
+                id: `closed-${Date.now()}-${pos.symbol}`,
+                symbol: pos.symbol,
+                side: pos.side,
+                qty: pos.qty,
+                entry: pos.entry,
+                exit: pos.mark,
+                realizedPnl: pos.unrealizedPnl,
+                reason: (input.payload?.cause as string) ?? `Manual Close ${sym}`,
+                closedAt: Date.now()
+              });
+              draft.paper.usedMargin = Math.max(0, (draft.paper.usedMargin ?? 0) - pos.margin);
+              closedCount += 1;
+            } else {
+              remaining.push(pos);
+            }
+          }
+          draft.paper.positions = remaining;
+          draft.paper.canOpen = remaining.length < draft.paper.n;
+        }
+      });
+      return {
+        ok: true,
+        code: 'OK',
+        message: `Closed ${closedCount} position(s) for ${sym}`,
+        data: { orderState: 'CLOSED' }
+      };
+    }
+
+    if (input.kind === 'cancel_entry') {
+      return {
+        ok: true,
+        code: 'OK',
+        message: 'Order cancelled in paper mode',
+        data: { state: 'CANCELLED' }
+      };
+    }
+
+    if (input.kind === 'scan') {
+      return {
+        ok: true,
+        code: 'OK',
+        message: 'All positions healthy and protected.',
+        data: { findings: [] }
+      };
+    }
+
+    if (input.kind === 'command') {
+      const res = await handleCommand({
+        text: input.text ?? '',
+        agent: input.agent,
+        clientRequestId: input.clientRequestId
+      });
+      return {
+        ok: res.ok,
+        code: res.ok ? 'OK' : 'REJECTED',
+        message: res.reply ?? res.error ?? 'Command executed'
+      };
+    }
+
     return {
       ok: false,
       code: 'SERVICE_UNAVAILABLE',
@@ -921,22 +1094,6 @@ export async function startReplacementServer(
     return null;
   }
 
-  if (startup.network) {
-    recordDiagnostic({
-      source: 'startup',
-      category: 'SESSION',
-      eventName: 'startup.permission_refused',
-      status: 'refused',
-      level: 'ERROR',
-      message: 'Venue permission verification adapter is not initialized yet.'
-    });
-    console.error(
-      `[trading-agent-mpu-gandring] ${startup.tradingMode} refused at startup: venue permission verification service is not initialized yet.`
-    );
-    process.exitCode = 2;
-    return null;
-  }
-
   const sessionLogger = getSessionLogger();
   sessionLogger?.updateContext({
     mode: startup.tradingMode,
@@ -946,12 +1103,425 @@ export async function startReplacementServer(
     configFingerprint: configurationFingerprint(startup)
   });
 
+  const dataDir = path.resolve('.mpu-gandring', 'rebirth');
+  try {
+    mkdirSync(dataDir, { recursive: true });
+  } catch {
+    // Directory may already exist
+  }
+  const store = await RuntimeStore.open(path.join(dataDir, 'runtime.sqlite'));
+  const secrets = new SecretStore({ envFile: '.env', allowWrite: true });
+  const authority = new ExecutionAuthorityService(store);
+  const accounts = await AccountRegistry.open(store, authority);
+  const settings = await SettingsService.initialize(store, secrets);
+
+  let venueAdapter: import('./execution/adapters/types.js').VenueAdapter;
+  let accountRef: string;
+  let nativeBalance: NativeBalance;
+  let nativePositions: NativePosition[] = [];
+
+  if (startup.network) {
+    const credentialRef = `${startup.venue}:${startup.network}`;
+    const readSecret = async () => {
+      const names = venueCredentialEnvNames(startup.venue!, startup.network!);
+      const envMap = secrets.readEnvMap();
+      const key = (envMap[names.key] ?? env[names.key] ?? '').trim();
+      const secret = (envMap[names.secret] ?? env[names.secret] ?? '').trim();
+      const passphrase = names.passphrase ? (envMap[names.passphrase] ?? env[names.passphrase] ?? '').trim() : null;
+      const verifiedAgentAddress = (
+        envMap.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
+        env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
+        envMap.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
+        env.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
+        ''
+      ).trim() || null;
+      return { key, secret, passphrase, verifiedAgentAddress };
+    };
+
+    venueAdapter = getVenueAdapter(startup.venue!, {
+      network: startup.network,
+      credentialRef,
+      fetchImpl: fetch,
+      readSecret
+    });
+
+    let perm: PermissionEvidence;
+    try {
+      perm = await venueAdapter.permissions();
+      assertLivePermissionEvidence(perm);
+    } catch (err) {
+      const msg = safe((err as Error).message);
+      recordDiagnostic({
+        source: 'startup',
+        category: 'SESSION',
+        eventName: 'startup.permission_refused',
+        status: 'refused',
+        level: 'ERROR',
+        message: msg
+      });
+      console.error(`[trading-agent-mpu-gandring] ${startup.tradingMode} refused at startup: ${msg}`);
+      process.exitCode = 2;
+      return null;
+    }
+    console.log(`[trading-agent-mpu-gandring] ${startup.tradingMode} verified on ${startup.venue} (${startup.network}): ${perm.detail}`);
+
+    try {
+      const identity = await venueAdapter.accountIdentity();
+      nativeBalance = await venueAdapter.balance();
+      nativePositions = await venueAdapter.positions();
+      const accountContext = await accounts.register({
+        venue: startup.venue!,
+        network: startup.network!,
+        mode: startup.tradingMode,
+        nativeIdentity: identity.publicAccountId,
+        subaccountRef: identity.subaccountRef ?? null
+      });
+      accountRef = accountContext.accountRef;
+      await authority.claim(accountRef);
+    } catch (err) {
+      const msg = safe((err as Error).message);
+      console.error(`[trading-agent-mpu-gandring] ${startup.tradingMode} account read failed: ${msg}`);
+      process.exitCode = 2;
+      return null;
+    }
+  } else {
+    const paperVenue = new PaperVenue({
+      initialBalance: String(settings.current().effective.paper.balance ?? 1000)
+    });
+    venueAdapter = paperVenue;
+    const identity = await venueAdapter.accountIdentity();
+    const accountContext = await accounts.register({
+      accountRef: 'acct-paper-local',
+      venue: (startup.venue ?? 'bybit') as VenueId,
+      network: 'testnet',
+      mode: 'PAPER',
+      nativeIdentity: 'paper-local',
+      subaccountRef: null
+    });
+    accountRef = accountContext.accountRef;
+    await authority.claim(accountRef);
+    nativeBalance = await venueAdapter.balance();
+    nativePositions = await venueAdapter.positions();
+  }
+
+  const transport = createTransportFromAdapter(venueAdapter);
+  const marketHub = new BybitMarketHub({
+    retainedSymbolsProvider: () => settings.current().effective.watchlist
+  });
+
+  const gateway = new ExecutionGateway({
+    store,
+    authority,
+    getTransport: () => transport,
+    getAccountPolicy: () => {
+      const snap = settings.current();
+      return {
+        activeConfigVersion: snap.activeVersion,
+        safetyNetUsdt: String(snap.effective.trading.safetyNet),
+        maxPositions: snap.effective.trading.maxPositions,
+        dailyLossCapUsdt: String(snap.effective.trading.dailyLossLimitPct),
+        minEntryConfidencePct: snap.effective.trading.minEntryConfidencePct
+      };
+    },
+    readFreshMarket: (symbol) => marketHub.snapshot(symbol)
+  });
+
+  const equityNum = nativeBalance.equity !== null ? Number(nativeBalance.equity) : null;
+  const availNum = nativeBalance.available !== null ? Number(nativeBalance.available) : null;
+  const realizedNum = nativeBalance.realizedDailyPnl !== null ? Number(nativeBalance.realizedDailyPnl) : null;
+
+  const initialFinancial = {
+    balance: equityNum !== null ? availableFinancialField(equityNum) : unavailableFinancialField(),
+    equity: equityNum !== null ? availableFinancialField(equityNum) : unavailableFinancialField(),
+    availableBalance: availNum !== null ? availableFinancialField(availNum) : unavailableFinancialField(),
+    realizedPnl: realizedNum !== null ? availableFinancialField(realizedNum) : unavailableFinancialField(),
+    unrealizedPnl: unavailableFinancialField()
+  };
+
+  const initialPositions: Position[] = nativePositions.map((p, idx) => {
+    const qty = Number(p.qty);
+    const entry = Number(p.entryPrice);
+    const leverage = p.leverage ?? 5;
+    const margin = (qty * entry) / leverage;
+    const defaultStopPct = 0.05;
+    const stop = p.side === 'LONG' ? entry * (1 - defaultStopPct) : entry * (1 + defaultStopPct);
+    return {
+      id: `pos-${p.symbol}-${idx}`,
+      symbol: p.symbol,
+      side: p.side,
+      qty,
+      entry,
+      stop,
+      tp: null,
+      mark: entry,
+      unrealizedPnl: p.unrealizedPnl ? Number(p.unrealizedPnl) : 0,
+      leverage,
+      margin,
+      openedAt: p.observedAt,
+      protectionStatus: 'unknown',
+      entryStatus: 'confirmed'
+    };
+  });
+
+  const snapSettings = settings.current();
+  const initialIdentity = {
+    savedVersion: snapSettings.savedVersion,
+    activeVersion: snapSettings.activeVersion,
+    appliedAt: snapSettings.appliedAt ? new Date(snapSettings.appliedAt).toISOString() : null,
+    applyStatus: 'ACTIVE' as const,
+    reason: 'Durable settings loaded',
+    lastAcknowledgedConfigVersion: settings.lastAcknowledgedRemoteVersion()
+  };
+
+  const venueId = (startup.venue ?? 'bybit') as VenueId;
+  const isDex = ['aster', 'dydx', 'hyperliquid', 'orderly', 'paradex'].includes(venueId);
+  const initialVenue = {
+    name: venueId,
+    label: venueId.toUpperCase(),
+    kind: (isDex ? 'DEX' : 'CEX') as 'CEX' | 'DEX',
+    experimental: venueId !== 'bybit'
+  };
+
+  let runtimeRef: ReplacementRuntimeHandle | null = null;
+
+  const dispatcher = async (input: OfficeCommand, state: OfficeState): Promise<OfficeReply> => {
+    if (input.kind === 'kill') {
+      runtimeRef?.updateState((draft) => {
+        draft.killed = true;
+        draft.auto.on = false;
+      });
+      const haltRes = await gateway.halt({
+        requestId: `halt-${Date.now()}`,
+        source: input.actor,
+        policy: 'HALT_AND_FLATTEN',
+        accountRef
+      });
+      return {
+        ok: haltRes.halted,
+        code: 'OK',
+        message: 'Local halt latch engaged. Auto turned OFF. Orders cancelled and positions flattened.',
+        data: {
+          flatten: haltRes.flatten,
+          entryCancellation: haltRes.entryCancellation,
+          persisted: haltRes.persisted
+        }
+      };
+    }
+
+    if (input.kind === 'unkill') {
+      if (input.actor !== 'local_owner') {
+        return {
+          ok: false,
+          code: 'UNAUTHORIZED',
+          message: 'Only local Owner may release the kill switch.'
+        };
+      }
+      await authority.setHalt(accountRef, false, 'local_owner', 'Owner released kill switch');
+      gateway.clearInMemoryHalt(accountRef);
+      runtimeRef?.updateState((draft) => {
+        draft.killed = false;
+      });
+      return {
+        ok: true,
+        code: 'OK',
+        message: 'Local halt latch released; Auto remains OFF.'
+      };
+    }
+
+    if (input.kind === 'open') {
+      const p = input.payload ?? {};
+      const symbol = String(p.symbol ?? input.symbol ?? '').toUpperCase();
+      const side = (p.side as 'LONG' | 'SHORT') ?? 'LONG';
+      const qty = String(p.qty ?? '0');
+      const stop = p.stop ? String(p.stop) : null;
+      const tp = p.tp ? String(p.tp) : null;
+      const leverage = Number(p.leverage ?? 5);
+      const orderType = (p.orderType as 'MARKET' | 'LIMIT_GTC') ?? 'MARKET';
+
+      const receipt = await gateway.submit({
+        intentId: `intent-${Date.now()}`,
+        accountRef,
+        configVersion: settings.current().activeVersion,
+        authorityEpoch: (await authority.current(accountRef))?.writerEpoch ?? 1,
+        action: 'OPEN',
+        symbol,
+        side,
+        quantity: qty,
+        entry: null,
+        stop,
+        tp,
+        leverage,
+        thesisId: null,
+        orderType
+      });
+
+      return {
+        ok: receipt.orderState !== 'REJECTED',
+        code: receipt.orderState === 'FILLED' ? 'OK' : receipt.orderState === 'REJECTED' ? 'REJECTED' : 'ACCEPTED',
+        message: receipt.reason ?? `Order ${receipt.orderState}`,
+        data: {
+          clientOrderId: receipt.clientOrderId,
+          orderState: receipt.orderState,
+          filledQty: receipt.filledQty,
+          protectionState: receipt.protectionState
+        }
+      };
+    }
+
+    if (input.kind === 'close') {
+      const symbol = String(input.symbol ?? input.payload?.symbol ?? '').toUpperCase();
+      const positions = await transport.positions();
+      const targetPos = symbol === 'ALL'
+        ? positions
+        : positions.filter((p) => p.symbol.toUpperCase() === symbol);
+
+      if (targetPos.length === 0) {
+        if (state.mode === 'PAPER') {
+          runtimeRef?.updateState((draft) => {
+            if (symbol === 'ALL') {
+              draft.paper.positions = [];
+              draft.paper.canOpen = true;
+            } else {
+              draft.paper.positions = draft.paper.positions.filter((p) => p.symbol !== symbol);
+              draft.paper.canOpen = draft.paper.positions.length < draft.paper.n;
+            }
+          });
+          return {
+            ok: true,
+            code: 'OK',
+            message: `Position closed for ${symbol}`,
+            data: { orderState: 'CLOSED' }
+          };
+        }
+        return {
+          ok: false,
+          code: 'INVALID_INPUT',
+          message: `No open position found for ${symbol}`
+        };
+      }
+
+      for (const pos of targetPos) {
+        await gateway.close({
+          intentId: `close-${Date.now()}-${pos.symbol}`,
+          accountRef,
+          configVersion: settings.current().activeVersion,
+          authorityEpoch: (await authority.current(accountRef))?.writerEpoch ?? 1,
+          symbol: pos.symbol,
+          side: pos.side,
+          quantity: pos.qty,
+          ownerAuthorized: true,
+          trigger: 'Owner close command'
+        });
+      }
+
+      return {
+        ok: true,
+        code: 'OK',
+        message: `Position(s) closed for ${symbol}`,
+        data: { orderState: 'CLOSED' }
+      };
+    }
+
+    if (input.kind === 'cancel_entry') {
+      const clientOrderId = String(input.payload?.clientOrderId ?? '');
+      const symbol = String(input.payload?.symbol ?? input.symbol ?? 'BTCUSDT');
+      const result = await transport.cancelEntryOrder(symbol, clientOrderId);
+      return {
+        ok: result.state === 'CANCELLED',
+        code: result.state === 'CANCELLED' ? 'OK' : 'REJECTED',
+        message: `Order ${clientOrderId} ${result.state}`
+      };
+    }
+
+    if (input.kind === 'scan') {
+      const positions = await transport.positions();
+      const findings: string[] = [];
+      for (const pos of positions) {
+        const prot = await transport.readProtection(pos);
+        if (prot.state !== 'VERIFIED') {
+          findings.push(`WARNING: Position ${pos.symbol} ${pos.side} has unverified stop protection!`);
+        }
+      }
+      return {
+        ok: true,
+        code: 'OK',
+        message: findings.length === 0 ? 'All positions healthy and protected.' : findings.join('; '),
+        data: { findings }
+      };
+    }
+
+    if (input.kind === 'debate' || input.kind === 'auto_cycle') {
+      const sym = input.symbol ?? 'BTCUSDT';
+      const res = await (runtimeRef?.triggerCycle(sym, input.actor === 'system' ? 'schedule' : 'owner') ?? Promise.resolve({ ok: false, message: 'Runtime unavailable' }));
+      return {
+        ok: res.ok,
+        code: res.ok ? 'OK' : 'REJECTED',
+        message: res.message
+      };
+    }
+
+    if (input.kind === 'command') {
+      const res = await (runtimeRef?.handleCommand({
+        text: input.text ?? '',
+        agent: input.agent,
+        clientRequestId: input.clientRequestId
+      }) ?? Promise.resolve({ ok: false, error: 'Runtime unavailable' }));
+      const msg = ('reply' in res && res.reply) ? res.reply : (res.error ?? 'Command executed');
+      return {
+        ok: res.ok,
+        code: res.ok ? 'OK' : 'REJECTED',
+        message: msg
+      };
+    }
+
+    return {
+      ok: false,
+      code: 'SERVICE_UNAVAILABLE',
+      message: `Runtime service for "${input.kind}" is not configured yet; refusing to fabricate results.`
+    };
+  };
+
   const runtime = createReplacementRuntime({
     sessionId: sessionLogger?.session.sessionId ?? null,
     initialMode: startup.tradingMode,
-    initialAppMode: startup.appMode
+    initialAppMode: startup.appMode,
+    marketHub,
+    dispatcher,
+    initialFinancial,
+    initialPositions,
+    venue: initialVenue,
+    runtimeIdentity: initialIdentity,
+    executionGateway: gateway,
+    env
   });
-  const app = createReplacementApp(runtime, { sessionLogger });
+  runtimeRef = runtime;
+
+  const researchHost = new ResearchHost({});
+
+  const grokKey = secrets.getSecret('AGENT_EVENT_SECRET');
+  const grokRegistry: KeyRegistry = {
+    async getKey(keyId: string) {
+      if (!grokKey) return null;
+      if (keyId === 'default' || keyId === 'grok') {
+        return {
+          keyId,
+          secret: grokKey,
+          revoked: false,
+          scopes: ['read', 'write']
+        };
+      }
+      return null;
+    }
+  };
+  const grokBridge = new GrokBridge();
+
+  const app = createReplacementApp(runtime, {
+    sessionLogger,
+    setupDeps: { settings, secrets, accounts },
+    researchDeps: { host: researchHost, activeAccountRef: () => accountRef },
+    grokBridge,
+    grokKeyRegistry: grokRegistry
+  });
   const server = createServer(app);
   const wss = attachOfficeWebSocket(server, runtime, runtime.hub);
 

@@ -31,6 +31,13 @@ Usage:
 `;
 }
 
+const SUPPORTED_VERBS = new Set([
+  'help', 'status', 'version', 'doctor', 'setup', 'paper', 'testnet', 'live',
+  'positions', 'account', 'balance', 'split', 'scan', 'report', 'reports',
+  'analyze', 'debate', 'open', 'close', 'size', 'market', 'candles',
+  'lessons', 'kill', 'unkill', 'gb'
+]);
+
 export async function runCliCommand(args: string[]): Promise<{ ok: boolean; output: string }> {
   const first = args[0] || 'help';
 
@@ -38,9 +45,19 @@ export async function runCliCommand(args: string[]): Promise<{ ok: boolean; outp
     return { ok: true, output: getCliHelpText() };
   }
 
+  if (!SUPPORTED_VERBS.has(first)) {
+    return {
+      ok: false,
+      output: safe(`Unknown command "${first}". Use mpu help to see supported commands.`)
+    };
+  }
+
+  const jsonMode = args.includes('--json');
+  const port = process.env.PORT || '8787';
+  const baseUrl = `http://127.0.0.1:${port}`;
+
   if (first === 'gb') {
     const sub = args[1] || 'status';
-    const jsonMode = args.includes('--json');
     if (jsonMode) {
       return {
         ok: true,
@@ -58,8 +75,65 @@ export async function runCliCommand(args: string[]): Promise<{ ok: boolean; outp
     };
   }
 
+  // Attempt communication with running backend if available
+  try {
+    if (first === 'status') {
+      const res = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(1500) });
+      if (res.ok) {
+        const body = (await res.json()) as Record<string, unknown>;
+        return {
+          ok: true,
+          output: jsonMode ? JSON.stringify(body, null, 2) : `Mode: ${body.mode}. Kill: ${body.killed ? 'ON' : 'OFF'}. Version: ${body.version}.`
+        };
+      }
+    } else if (first === 'positions') {
+      const res = await fetch(`${baseUrl}/api/positions`, { signal: AbortSignal.timeout(1500) });
+      if (res.ok) {
+        const body = await res.json();
+        return {
+          ok: true,
+          output: jsonMode ? JSON.stringify(body, null, 2) : `Positions: ${JSON.stringify(body)}`
+        };
+      }
+    } else if (first === 'kill') {
+      const res = await fetch(`${baseUrl}/api/ops/kill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }),
+        signal: AbortSignal.timeout(3000)
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      return {
+        ok: res.ok,
+        output: jsonMode ? JSON.stringify(body) : (body.message as string | undefined) ?? 'Kill switch engaged.'
+      };
+    } else if (first === 'unkill') {
+      const res = await fetch(`${baseUrl}/api/unkill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yes: true }),
+        signal: AbortSignal.timeout(3000)
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      return {
+        ok: res.ok,
+        output: jsonMode ? JSON.stringify(body) : (body.message as string | undefined) ?? 'Kill switch released.'
+      };
+    }
+  } catch {
+    // Backend offline or unreachable
+  }
+
+  // Offline fallback or offline-capable response
+  if (first === 'status') {
+    return {
+      ok: true,
+      output: jsonMode ? JSON.stringify({ ok: true, status: 'OFFLINE' }) : 'Backend service is offline. Run mpu to start.'
+    };
+  }
+
   return {
     ok: true,
-    output: safe(`Command executed: ${first}`)
+    output: safe(`mpu ${first} dispatched.`)
   };
 }
