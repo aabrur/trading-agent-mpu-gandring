@@ -76,7 +76,10 @@ export function mountStateRoutes(
 
   app.get('/api/split', (_req, res) => {
     const state = runtime.snapshot();
-    const balance = state.financial.balance;
+    let balance = state.financial.balance;
+    if ((balance.availability === 'UNAVAILABLE' || balance.value === null) && state.mode === 'PAPER' && state.paper.balance > 0) {
+      balance = { value: state.paper.balance, availability: 'AVAILABLE' };
+    }
     if (balance.availability === 'UNAVAILABLE' || balance.value === null) {
       res.json({
         ok: true,
@@ -110,6 +113,40 @@ export function mountStateRoutes(
     const symbol = String(req.query.symbol ?? 'BTCUSDT').trim().toUpperCase();
     const rawTf = String(req.query.tf ?? '15m').trim();
     const tf = (TIMEFRAMES as readonly string[]).includes(rawTf) ? rawTf : '15m';
+
+    const hub = (runtime as any).marketHub;
+    if (hub && typeof hub.snapshot === 'function') {
+      try {
+        const snap = hub.snapshot(symbol);
+        const bars = snap.closed?.[tf] ?? [];
+        if (bars.length > 0) {
+          const candles = bars.map((b: any) => ({
+            time: Math.floor(b.startAt / 1000),
+            open: Number(b.open),
+            high: Number(b.high),
+            low: Number(b.low),
+            close: Number(b.close),
+            volume: Number(b.volume)
+          }));
+          const last = snap.last?.value !== null ? Number(snap.last.value) : null;
+          res.json({
+            symbol,
+            tf,
+            source: 'bybit',
+            dataType: 'reference',
+            example: false,
+            fetchedAt: Date.now(),
+            last,
+            candles,
+            availability: 'AVAILABLE'
+          });
+          return;
+        }
+      } catch {
+        // Fall back to unavailable response
+      }
+    }
+
     res.json({
       symbol,
       tf,

@@ -241,6 +241,9 @@ export interface StoreTransaction {
 export interface OfficeRuntime {
   snapshot(): OfficeState;
   dispatch(input: OfficeCommand): Promise<OfficeReply>;
+  triggerCycle?(symbol?: string, reason?: string): Promise<{ ok: boolean; message: string; cycleId?: string }>;
+  updateAutoSettings?(patch: Record<string, unknown>): OfficeState;
+  handleCommand?(input: { text: string; agent?: string; clientRequestId?: string }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
 }
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);

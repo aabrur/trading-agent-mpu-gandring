@@ -33,14 +33,20 @@ const cancelEntryBodySchema = z.object({
 
 const autoBodySchema = z.object({
   on: z.boolean().optional(),
+  runNow: z.boolean().optional(),
   intervalMin: z.number().int().min(1).max(1440).optional(),
+  maxHoldHours: z.number().int().min(0).max(720).optional(),
   symbols: z.array(z.string()).optional(),
-  n: z.number().int().min(1).max(4).optional()
+  symbolsOverride: z.array(z.string()).optional(),
+  n: z.number().int().min(1).max(4).optional(),
+  debateMode: z.enum(['normal', 'fast']).optional()
 });
 
 const commandBodySchema = z.object({
   text: z.string().min(1),
-  agent: z.string().optional()
+  agent: z.string().optional(),
+  clientRequestId: z.string().optional(),
+  conversationId: z.string().optional()
 });
 
 export function mountOperationsRoutes(
@@ -131,6 +137,52 @@ export function mountOperationsRoutes(
       return;
     }
 
+    const sym = parsed.data.symbol.trim().toUpperCase();
+    if ('updateState' in runtime && typeof (runtime as any).updateState === 'function') {
+      (runtime as any).updateState((draft: any) => {
+        if (sym === 'ALL') {
+          for (const pos of draft.paper?.positions ?? []) {
+            draft.paper.closed.push({
+              id: `closed-${Date.now()}-${pos.symbol}`,
+              symbol: pos.symbol,
+              side: pos.side,
+              qty: pos.qty,
+              entry: pos.entry,
+              exit: pos.mark,
+              realizedPnl: pos.unrealizedPnl,
+              reason: parsed.data.cause ?? 'Manual Close All',
+              closedAt: Date.now()
+            });
+          }
+          draft.paper.positions = [];
+          draft.paper.usedMargin = 0;
+          draft.paper.canOpen = true;
+        } else {
+          const remaining: any[] = [];
+          for (const pos of draft.paper?.positions ?? []) {
+            if (pos.symbol === sym) {
+              draft.paper.closed.push({
+                id: `closed-${Date.now()}-${pos.symbol}`,
+                symbol: pos.symbol,
+                side: pos.side,
+                qty: pos.qty,
+                entry: pos.entry,
+                exit: pos.mark,
+                realizedPnl: pos.unrealizedPnl,
+                reason: parsed.data.cause ?? `Manual Close ${sym}`,
+                closedAt: Date.now()
+              });
+              draft.paper.usedMargin = Math.max(0, (draft.paper.usedMargin ?? 0) - pos.margin);
+            } else {
+              remaining.push(pos);
+            }
+          }
+          draft.paper.positions = remaining;
+          draft.paper.canOpen = remaining.length < draft.paper.n;
+        }
+      });
+    }
+
     res.json({
       ok: true,
       symbol: parsed.data.symbol,
@@ -164,13 +216,47 @@ export function mountOperationsRoutes(
       return;
     }
 
+    if (parsed.data.runNow) {
+      const snap = runtime.snapshot();
+      if (snap.killed) {
+        res.status(409).json({ ok: false, error: 'Kill switch is ON. Release it first.' });
+        return;
+      }
+      const sym = parsed.data.symbols?.[0] ?? snap.auto.symbols?.[0] ?? 'BTCUSDT';
+      if (runtime.triggerCycle) {
+        void runtime.triggerCycle(sym, 'owner').catch((err) => {
+          console.error('[cycle] Trigger error:', err);
+        });
+      }
+    }
+
+    if (
+      parsed.data.on !== undefined ||
+      parsed.data.intervalMin !== undefined ||
+      parsed.data.maxHoldHours !== undefined ||
+      parsed.data.symbols !== undefined ||
+      parsed.data.debateMode !== undefined ||
+      parsed.data.n !== undefined
+    ) {
+      if (runtime.updateAutoSettings) {
+        runtime.updateAutoSettings(parsed.data as any);
+      }
+    }
+
+    const state = runtime.snapshot();
     res.json({
       ok: true,
+      auto: {
+        on: state.auto.on,
+        intervalMin: state.auto.intervalMin,
+        maxHoldHours: state.auto.maxHoldHours,
+        symbols: state.auto.symbols
+      },
       autoTrading: {
-        enabled: parsed.data.on ?? false,
-        intervalMin: parsed.data.intervalMin ?? 15,
-        symbols: parsed.data.symbols ?? ['BTCUSDT'],
-        n: parsed.data.n ?? 3
+        enabled: state.auto.on,
+        intervalMin: state.auto.intervalMin,
+        symbols: state.auto.symbols,
+        n: state.paper.n
       }
     });
   });
@@ -228,12 +314,34 @@ export function mountOperationsRoutes(
     });
   });
 
-  app.post('/api/command', (req, res) => {
+  app.post('/api/debate', async (req, res) => {
+    if (!verifyOwner(req, res)) return;
+
+    const symbol = String(req.body?.symbol ?? '').slice(0, 20).trim().toUpperCase() || 'BTCUSDT';
+    if (runtime.triggerCycle) {
+      const result = await runtime.triggerCycle(symbol, 'owner');
+      res.json(result);
+    } else {
+      res.status(503).json({ ok: false, error: 'Cycle runner not configured.' });
+    }
+  });
+
+  app.post('/api/command', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
     const parsed = commandBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       res.status(400).json({ ok: false, error: 'Command text cannot be empty.' });
+      return;
+    }
+
+    if (runtime.handleCommand) {
+      const reply = await runtime.handleCommand({
+        text: parsed.data.text,
+        agent: parsed.data.agent,
+        clientRequestId: parsed.data.clientRequestId
+      });
+      res.json(reply);
       return;
     }
 

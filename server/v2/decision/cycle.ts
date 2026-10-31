@@ -6,7 +6,8 @@ import {
   satisfiesLeadProbabilityThreshold,
   type RiskRoleResult,
   type RoleResult,
-  type RoleRoute
+  type RoleRoute,
+  type RoleTask
 } from '../agents/runner.js';
 import type { VerifiedExit } from './exits.js';
 import type { TradeThesis } from './revalidate.js';
@@ -30,6 +31,8 @@ export interface RunCycleInput {
   routeForRole?: (role: RoleId) => RoleRoute;
   deadlineMs?: number;
   signal?: AbortSignal;
+  onRoleStart?: (task: RoleTask) => void;
+  onRoleResult?: (result: RoleResult) => void;
 }
 
 export interface CycleResult {
@@ -90,27 +93,31 @@ export class CycleRunner {
       };
     }
 
+    const runRole = async (task: import('../agents/runner.js').RoleTask): Promise<RoleResult> => {
+      input.onRoleStart?.(task);
+      const res = await this.roleRunner.run(task, input.signal);
+      input.onRoleResult?.(res);
+      return res;
+    };
+
     // 1. Observe phase across the 3 analyst roles.
     const observeResults = await Promise.all(
       ANALYST_ROLES.map((role) =>
-        this.roleRunner.run(
-          {
-            cycleId,
-            role,
-            phase: 'observe',
-            taskAttempt: 1,
-            evidenceId: input.evidenceId,
-            configVersion: input.configVersion,
-            accountRef: input.accountRef,
-            route: routeOf(role),
-            deadlineAt,
-            symbol: input.symbol,
-            promptContext: {
-              marketSummary: input.marketSummary
-            }
-          },
-          input.signal
-        )
+        runRole({
+          cycleId,
+          role,
+          phase: 'observe',
+          taskAttempt: 1,
+          evidenceId: input.evidenceId,
+          configVersion: input.configVersion,
+          accountRef: input.accountRef,
+          route: routeOf(role),
+          deadlineAt,
+          symbol: input.symbol,
+          promptContext: {
+            marketSummary: input.marketSummary
+          }
+        })
       )
     );
     roleResults.push(...observeResults);
@@ -139,103 +146,91 @@ export class CycleRunner {
     // 3. Structured challenge phase across the 3 analyst roles with visible observations + Jev review.
     const challengeResults = await Promise.all(
       ANALYST_ROLES.map((role) =>
-        this.roleRunner.run(
-          {
-            cycleId,
-            role,
-            phase: 'challenge',
-            taskAttempt: 1,
-            evidenceId: input.evidenceId,
-            configVersion: input.configVersion,
-            accountRef: input.accountRef,
-            route: routeOf(role),
-            deadlineAt,
-            symbol: input.symbol,
-            promptContext: {
-              marketSummary: input.marketSummary,
-              peerObservations: observeResults,
-              jevReview
-            }
-          },
-          input.signal
-        )
+        runRole({
+          cycleId,
+          role,
+          phase: 'challenge',
+          taskAttempt: 1,
+          evidenceId: input.evidenceId,
+          configVersion: input.configVersion,
+          accountRef: input.accountRef,
+          route: routeOf(role),
+          deadlineAt,
+          symbol: input.symbol,
+          promptContext: {
+            marketSummary: input.marketSummary,
+            peerObservations: observeResults,
+            jevReview
+          }
+        })
       )
     );
     roleResults.push(...challengeResults);
 
     // 4. Risk and Execution feasibility on final phase.
     const [riskResult, executionResult] = await Promise.all([
-      this.roleRunner.run(
-        {
-          cycleId,
-          role: 'risk',
-          phase: 'final',
-          taskAttempt: 1,
-          evidenceId: input.evidenceId,
-          configVersion: input.configVersion,
-          accountRef: input.accountRef,
-          route: routeOf('risk'),
-          deadlineAt,
-          symbol: input.symbol,
-          promptContext: {
-            marketSummary: input.marketSummary,
-            observations: observeResults,
-            challenges: challengeResults,
-            jevReview,
-            policy: input.policy
-          }
-        },
-        input.signal
-      ),
-      this.roleRunner.run(
-        {
-          cycleId,
-          role: 'execution',
-          phase: 'final',
-          taskAttempt: 1,
-          evidenceId: input.evidenceId,
-          configVersion: input.configVersion,
-          accountRef: input.accountRef,
-          route: routeOf('execution'),
-          deadlineAt,
-          symbol: input.symbol,
-          promptContext: {
-            marketSummary: input.marketSummary,
-            observations: observeResults,
-            challenges: challengeResults,
-            jevReview
-          }
-        },
-        input.signal
-      )
-    ]);
-    roleResults.push(riskResult, executionResult);
-
-    // 5. Desk Lead final synthesis seeing all available role results and Jev review.
-    const leadResult = await this.roleRunner.run(
-      {
+      runRole({
         cycleId,
-        role: 'lead',
+        role: 'risk',
         phase: 'final',
         taskAttempt: 1,
         evidenceId: input.evidenceId,
         configVersion: input.configVersion,
         accountRef: input.accountRef,
-        route: routeOf('lead'),
+        route: routeOf('risk'),
         deadlineAt,
         symbol: input.symbol,
         promptContext: {
           marketSummary: input.marketSummary,
           observations: observeResults,
           challenges: challengeResults,
-          riskResult,
-          executionResult,
           jevReview,
           policy: input.policy
         }
-      },
-      input.signal
-    );
+      }),
+      runRole({
+        cycleId,
+        role: 'execution',
+        phase: 'final',
+        taskAttempt: 1,
+        evidenceId: input.evidenceId,
+        configVersion: input.configVersion,
+        accountRef: input.accountRef,
+        route: routeOf('execution'),
+        deadlineAt,
+        symbol: input.symbol,
+        promptContext: {
+          marketSummary: input.marketSummary,
+          observations: observeResults,
+          challenges: challengeResults,
+          jevReview
+        }
+      })
+    ]);
+    roleResults.push(riskResult, executionResult);
+
+    // 5. Desk Lead final synthesis seeing all available role results and Jev review.
+    const leadResult = await runRole({
+      cycleId,
+      role: 'lead',
+      phase: 'final',
+      taskAttempt: 1,
+      evidenceId: input.evidenceId,
+      configVersion: input.configVersion,
+      accountRef: input.accountRef,
+      route: routeOf('lead'),
+      deadlineAt,
+      symbol: input.symbol,
+      promptContext: {
+        marketSummary: input.marketSummary,
+        observations: observeResults,
+        challenges: challengeResults,
+        riskResult,
+        executionResult,
+        jevReview,
+        policy: input.policy
+      }
+    });
     roleResults.push(leadResult);
 
     if (roleResults.some((r) => r.status === 'cancelled') || input.signal?.aborted) {
