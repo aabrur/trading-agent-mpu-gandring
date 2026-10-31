@@ -301,4 +301,80 @@ describe('T07 six-role integrity, task fencing, confidence scales and non-mock u
     expect(satisfiesLeadProbabilityThreshold('lead', leadProb, 70)).toBe(true);
     expect(satisfiesLeadProbabilityThreshold('lead', leadProb, 80)).toBe(false);
   });
+
+  it('handles_think_tags_and_chatter_in_raw_replies', async () => {
+    let capturedPrompt = '';
+    const runner = new RoleRunner({
+      providerCaller: async (req) => {
+        capturedPrompt = req.user;
+        return '<think>The market is ranging, wait for breakout</think>\nHere is my analysis:\n```json\n{\n  "stance": "HOLD",\n  "reasoning": "Wait for valid reclaim of resistance",\n  "confidence": 0.45\n}\n```\nHope that helps!';
+      },
+      resolveAssignment: () => ({
+        provider: 'openrouter',
+        model: 'deepseek/deepseek-v4.1-flash',
+        apiKey: 'test-key'
+      })
+    });
+
+    const res = await runner.run({
+      cycleId: 'c1',
+      role: 'market',
+      phase: 'observe',
+      taskAttempt: 1,
+      evidenceId: 'ev1',
+      configVersion: 1,
+      accountRef: 'acct1',
+      route: 'LOCAL',
+      deadlineAt: Date.now() + 60000,
+      symbol: 'BTCUSDT'
+    });
+
+    expect(capturedPrompt).toContain('Respond strictly with a valid JSON object matching this schema');
+    expect(res.status).toBe('completed');
+    expect(res.stance).toBe('HOLD');
+    expect(res.confidence.value).toBe(0.45);
+    expect(res.confidence.scale).toBe('probability_0_1');
+  });
+
+  it('normalizes_numeric_confidence_and_infers_risk_decision', async () => {
+    const runner = new RoleRunner({
+      providerCaller: async (req) => {
+        if (req.role === 'risk') {
+          return JSON.stringify({
+            stance: 'LONG',
+            reasoning: 'Parameters approved within risk limits',
+            confidence: 90
+          });
+        }
+        return JSON.stringify({
+          stance: 'LONG',
+          reasoning: 'Strong bullish engulfing candle',
+          confidence: 0.88
+        });
+      },
+      resolveAssignment: () => ({
+        provider: 'openrouter',
+        model: 'deepseek/deepseek-v4.1-flash',
+        apiKey: 'test-key'
+      })
+    });
+
+    const riskRes = await runner.run({
+      cycleId: 'c2',
+      role: 'risk',
+      phase: 'final',
+      taskAttempt: 1,
+      evidenceId: 'ev2',
+      configVersion: 1,
+      accountRef: 'acct1',
+      route: 'LOCAL',
+      deadlineAt: Date.now() + 60000,
+      symbol: 'BTCUSDT'
+    });
+
+    expect(riskRes.status).toBe('completed');
+    expect((riskRes as any).decision).toBe('APPROVE');
+    expect(riskRes.confidence.value).toBe(90);
+    expect(riskRes.confidence.scale).toBe('score_0_100');
+  });
 });

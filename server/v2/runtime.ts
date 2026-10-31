@@ -359,8 +359,9 @@ export function createReplacementRuntime(
     const next = structuredClone(state);
     const returned = mutator(next);
     state = returned ?? next;
-    hub.emit('state', snapshot());
-    return snapshot();
+    const currentSnap = structuredClone(state);
+    hub.emit('state', currentSnap);
+    return currentSnap;
   };
 
   const marketHub =
@@ -563,6 +564,7 @@ export function createReplacementRuntime(
         configVersion: 1,
         policy,
         marketSummary,
+        deadlineMs: 180_000,
         onRoleStart: (task) => {
           updateState((draft) => {
             const agentView = draft.agents[task.role as RoleId];
@@ -1775,10 +1777,20 @@ export async function startReplacementServer(
     console.warn(`[market] Bybit bootstrap warning: ${(err as Error).message}`);
   });
 
-  // Wire market frame updates to tickers
+  // Wire market frame updates to tickers with state update throttling
+  const lastTickerUpdateBySymbol = new Map<string, { price: number; at: number }>();
   runtime.marketHub.onFrame((frame) => {
     const lastPrice = frame.last.value !== null ? Number(frame.last.value) : null;
     if (lastPrice !== null && Number.isFinite(lastPrice)) {
+      const now = Date.now();
+      const prev = lastTickerUpdateBySymbol.get(frame.symbol);
+      if (prev && prev.price === lastPrice && now - prev.at < 2000) {
+        return;
+      }
+      if (prev && now - prev.at < 1000) {
+        return;
+      }
+      lastTickerUpdateBySymbol.set(frame.symbol, { price: lastPrice, at: now });
       runtime.updateState((draft) => {
         draft.tickers[frame.symbol] = {
           symbol: frame.symbol,
@@ -1786,7 +1798,7 @@ export async function startReplacementServer(
           change24hPct: 0,
           source: 'bybit.v5.linear',
           example: false,
-          at: Date.now()
+          at: now
         };
       });
     }

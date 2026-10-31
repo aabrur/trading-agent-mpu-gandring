@@ -73,6 +73,7 @@ export interface BybitMarketHubOptions {
   retainedSymbolsProvider?: () => string[];
   maxTradesPerSymbol?: number;
   pingIntervalMs?: number;
+  publishThrottleMs?: number;
 }
 
 export class BybitMarketHub {
@@ -83,10 +84,12 @@ export class BybitMarketHub {
   private readonly retainedSymbolsProvider: () => string[];
   private readonly maxTradesPerSymbol: number;
   private readonly pingIntervalMs: number;
+  private readonly publishThrottleMs: number;
 
   private readonly instruments = new Map<string, BybitLinearInstrument>();
   private readonly states = new Map<string, SymbolHubState>();
   private readonly listeners = new Set<(frame: MarketFrame) => void>();
+  private readonly lastPublishAt = new Map<string, number>();
   private desiredWatchlist = new Set<string>();
   private subscribedTopics = new Set<string>();
   private ws: BybitWsLike | null = null;
@@ -102,6 +105,7 @@ export class BybitMarketHub {
     this.retainedSymbolsProvider = options.retainedSymbolsProvider ?? (() => []);
     this.maxTradesPerSymbol = options.maxTradesPerSymbol ?? 400;
     this.pingIntervalMs = options.pingIntervalMs ?? 20_000;
+    this.publishThrottleMs = options.publishThrottleMs ?? 500;
   }
 
   private effectiveSymbols(): string[] {
@@ -560,6 +564,12 @@ export class BybitMarketHub {
 
   private publishSymbolFrame(symbol: string): void {
     if (this.listeners.size === 0) return;
+    const now = Date.now();
+    const last = this.lastPublishAt.get(symbol) ?? 0;
+    if (this.publishThrottleMs > 0 && now - last < this.publishThrottleMs) {
+      return;
+    }
+    this.lastPublishAt.set(symbol, now);
     const frame = this.snapshot(symbol);
     for (const listener of this.listeners) {
       listener(frame);

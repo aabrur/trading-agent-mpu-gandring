@@ -47,6 +47,7 @@ function createFixtureHarness(options: {
   retainedPositionSymbols?: () => string[];
   bootstrapBarrier?: { promise: Promise<void> };
   customKlineHandler?: (url: URL) => string[][];
+  publishThrottleMs?: number;
 } = {}) {
   const requests: URL[] = [];
   const sockets: FakeBybitWs[] = [];
@@ -140,7 +141,8 @@ function createFixtureHarness(options: {
       queueMicrotask(() => ws.emit('open'));
       return ws;
     },
-    retainedSymbolsProvider: options.retainedPositionSymbols
+    retainedSymbolsProvider: options.retainedPositionSymbols,
+    publishThrottleMs: options.publishThrottleMs
   });
 
   return { hub, requests, sockets };
@@ -434,6 +436,63 @@ describe('T04 Bybit linear realtime hub', () => {
     expect(pepeMapping.ok).toBe(true);
 
     openPositionSymbols = [];
+    await hub.stop();
+  });
+
+  it('throttles_onframe_listeners_under_rapid_fire_ws_messages', async () => {
+    const { hub, sockets } = createFixtureHarness({ publishThrottleMs: 200 });
+
+    await hub.configure(['BTCUSDT']);
+    await new Promise((r) => setTimeout(r, 10));
+    const ws = sockets[0]!;
+
+    let publishedCount = 0;
+    const unsub = hub.onFrame(() => {
+      publishedCount += 1;
+    });
+
+    // Fire 20 rapid WS messages
+    for (let i = 0; i < 20; i += 1) {
+      ws.pushJson({
+        topic: 'publicTrade.BTCUSDT',
+        type: 'snapshot',
+        ts: Date.now(),
+        data: [
+          {
+            T: Date.now(),
+            s: 'BTCUSDT',
+            S: 'Buy',
+            v: '0.01',
+            p: `${95050 + i}`,
+            i: `trade-${i}`
+          }
+        ]
+      });
+    }
+
+    // Since publishThrottleMs is 200ms, only the first message publishes immediately
+    expect(publishedCount).toBe(1);
+
+    // After waiting > 200ms, next message should publish
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    ws.pushJson({
+      topic: 'publicTrade.BTCUSDT',
+      type: 'snapshot',
+      ts: Date.now(),
+      data: [
+        {
+          T: Date.now(),
+          s: 'BTCUSDT',
+          S: 'Buy',
+          v: '0.01',
+          p: '95100',
+          i: 'trade-late'
+        }
+      ]
+    });
+
+    expect(publishedCount).toBe(2);
+    unsub();
     await hub.stop();
   });
 });

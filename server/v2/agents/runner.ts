@@ -137,16 +137,69 @@ function validateScaleBounds(scale: ConfidenceScale | null, value: number | null
 }
 
 function tryParseJson(raw: string): unknown {
-  const trimmed = raw.trim();
+  const stripped = raw
+    .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
+    .trim();
   try {
-    return JSON.parse(trimmed);
+    return JSON.parse(stripped);
   } catch {
-    const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
+    const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(stripped);
     if (fenced?.[1]) {
-      return JSON.parse(fenced[1].trim());
+      try {
+        return JSON.parse(fenced[1].trim());
+      } catch {
+        // continue
+      }
+    }
+    const start = stripped.indexOf('{');
+    const end = stripped.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(stripped.slice(start, end + 1));
+      } catch {
+        // continue
+      }
     }
     throw new Error('Malformed JSON reply');
   }
+}
+
+export function getRoleSchemaInstruction(role: RoleId): string {
+  if (role === 'risk') {
+    return `Respond strictly with a valid JSON object matching this schema:
+{
+  "decision": "APPROVE" | "REJECT",
+  "stance": "LONG" | "SHORT" | "HOLD" | "CLOSE" | "NEUTRAL",
+  "reasoning": "Clear explanation of risk verdict in character (max 3 sentences)",
+  "confidence": { "value": 0.0 to 1.0, "scale": "probability_0_1" },
+  "claimRefs": [],
+  "contraryRefs": []
+}`;
+  }
+
+  if (role === 'lead') {
+    return `Respond strictly with a valid JSON object matching this schema:
+{
+  "stance": "LONG" | "SHORT" | "HOLD" | "CLOSE",
+  "reasoning": "Executive decision synthesis in character (max 3 sentences)",
+  "confidence": { "value": 0.0 to 1.0, "scale": "probability_0_1" },
+  "claimRefs": [],
+  "contraryRefs": [],
+  "proposedStop": "optional SL price string",
+  "proposedTp": "optional TP price string",
+  "proposedOrderType": "MARKET" | "LIMIT_GTC"
+}`;
+  }
+
+  return `Respond strictly with a valid JSON object matching this schema:
+{
+  "stance": "LONG" | "SHORT" | "HOLD" | "CLOSE" | "NEUTRAL",
+  "reasoning": "Analysis in character (max 3 sentences)",
+  "confidence": { "value": 0.0 to 1.0, "scale": "probability_0_1" },
+  "claimRefs": [],
+  "contraryRefs": []
+}`;
 }
 
 export interface RoleRunnerOptions {
@@ -274,16 +327,17 @@ export class RoleRunner {
       );
     }
 
-    const remainingBudgetMs = Math.max(1_000, task.deadlineAt - Date.now());
+    const remainingBudgetMs = Math.max(30_000, Math.min(90_000, task.deadlineAt - Date.now()));
     const system = buildRoleSystemPrompt(task.role);
-    let userPrompt = JSON.stringify({
+    const schemaHint = getRoleSchemaInstruction(task.role);
+    let userPrompt = `${schemaHint}\n\nTask and Market Context:\n${JSON.stringify({
       cycleId: task.cycleId,
       role: task.role,
       phase: task.phase,
       evidenceId: task.evidenceId,
       symbol: task.symbol ?? null,
       context: task.promptContext ?? {}
-    });
+    }, null, 2)}`;
 
     try {
       let rawText = '';
@@ -374,7 +428,7 @@ export class RoleRunner {
           apiKey: assignment.apiKey ?? '',
           baseUrl: assignment.baseUrl,
           system,
-          user: `Reformat the following draft strictly as valid JSON matching the schema without adding or changing any factual claims or references:\n\n${rawText}`,
+          user: `Reformat the following draft strictly as valid JSON matching the schema without adding or changing any factual claims or references:\n\n${schemaHint}\n\nDraft to reformat:\n${rawText}`,
           retryReason: 'format_repair',
           signal: combinedSignal,
           timeoutMs: remainingBudgetMs,
@@ -386,6 +440,68 @@ export class RoleRunner {
 
       if (combinedSignal.aborted || this.activeAttempts.get(key)?.attempt !== task.taskAttempt) {
         return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Late result discarded after cancellation');
+      }
+
+      if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
+        const obj = parsedJson as Record<string, unknown>;
+
+        if (typeof obj.stance === 'string') {
+          const upper = obj.stance.toUpperCase().trim();
+          if (['LONG', 'SHORT', 'HOLD', 'CLOSE', 'NEUTRAL'].includes(upper)) {
+            obj.stance = upper;
+          } else if (upper.includes('BUY') || upper.includes('BULL')) {
+            obj.stance = 'LONG';
+          } else if (upper.includes('SELL') || upper.includes('BEAR')) {
+            obj.stance = 'SHORT';
+          } else if (upper.includes('CLOSE')) {
+            obj.stance = 'CLOSE';
+          } else {
+            obj.stance = 'HOLD';
+          }
+        } else if (typeof obj.action === 'string') {
+          const act = obj.action.toUpperCase();
+          if (act.includes('LONG')) obj.stance = 'LONG';
+          else if (act.includes('SHORT')) obj.stance = 'SHORT';
+          else if (act.includes('CLOSE')) obj.stance = 'CLOSE';
+          else obj.stance = 'HOLD';
+        } else if (!obj.stance) {
+          obj.stance = 'HOLD';
+        }
+
+        if (!obj.reasoning && typeof obj.argument === 'string') {
+          obj.reasoning = obj.argument;
+        } else if (!obj.reasoning && typeof obj.summary === 'string') {
+          obj.reasoning = obj.summary;
+        } else if (!obj.reasoning && typeof obj.text === 'string') {
+          obj.reasoning = obj.text;
+        }
+
+        if (typeof obj.confidence === 'number') {
+          const num = obj.confidence;
+          if (num >= 0 && num <= 1) {
+            obj.confidence = { value: num, scale: 'probability_0_1' };
+          } else if (num > 1 && num <= 100) {
+            obj.confidence = { value: num, scale: 'score_0_100' };
+          } else {
+            obj.confidence = { value: null, scale: null };
+          }
+        }
+
+        if (task.role === 'risk' && !obj.decision) {
+          if (typeof obj.decision === 'string' && /reject|veto/i.test(obj.decision)) {
+            obj.decision = 'REJECT';
+          } else if (typeof obj.decision === 'string' && /approve/i.test(obj.decision)) {
+            obj.decision = 'APPROVE';
+          } else if (obj.stance === 'LONG' || obj.stance === 'SHORT') {
+            obj.decision = 'APPROVE';
+          } else if (typeof obj.reasoning === 'string' && /reject|veto|risk too high/i.test(obj.reasoning)) {
+            obj.decision = 'REJECT';
+          } else if (typeof obj.reasoning === 'string' && /approve|acceptable risk/i.test(obj.reasoning)) {
+            obj.decision = 'APPROVE';
+          } else {
+            obj.decision = 'REJECT';
+          }
+        }
       }
 
       const validated = BaseReplySchema.safeParse(parsedJson);
