@@ -232,9 +232,11 @@ export interface ReplacementRuntimeOptions {
   initialFinancial?: OfficeState['financial'];
   initialPositions?: Position[];
   venue?: OfficeState['venue'];
+  venueAccount?: OfficeState['venueAccount'];
   runtimeIdentity?: OfficeState['runtimeIdentity'];
   accountState?: OfficeState['accountState'];
   executionGateway?: ExecutionGateway;
+  settings?: SettingsService;
 }
 
 export function createReplacementRuntime(
@@ -265,33 +267,76 @@ export function createReplacementRuntime(
   if (options.runtimeIdentity) {
     state.runtimeIdentity = options.runtimeIdentity;
   }
+  if (options.venueAccount) {
+    state.venueAccount = options.venueAccount;
+  }
   if (options.accountState) {
     state.accountState = options.accountState;
   }
 
+  const savedPaper = options.settings?.current().effective.paper;
+  const savedTrading = options.settings?.current().effective.trading;
+
+  const rawPaperBal = Number(savedPaper?.balance ?? env.PAPER_BALANCE ?? 1000);
+  const finBal = options.initialFinancial?.balance?.value != null ? Number(options.initialFinancial.balance.value) : null;
+  const initBal = state.mode !== 'PAPER' && finBal !== null && Number.isFinite(finBal) && finBal > 0
+    ? finBal
+    : (Number.isFinite(rawPaperBal) ? rawPaperBal : 1000);
+
+  const rawSafety = Number(savedTrading?.safetyNet ?? savedPaper?.safetyNet ?? env.SAFETY_NET ?? 200);
+  const initSafety = Number.isFinite(rawSafety) && rawSafety >= 0 ? rawSafety : 200;
+
+  const rawN = Math.trunc(Number(savedTrading?.maxPositions ?? savedPaper?.n ?? env.OPEN_ORDERS_N ?? 3));
+  const initN = Math.min(4, Math.max(1, Number.isFinite(rawN) ? rawN : 3));
+
+  const moneyTrade = Math.round(Math.max(0, initBal - initSafety) * 100) / 100;
+  const perOrder = Math.floor((moneyTrade / initN) * 100) / 100;
+  const canOpen = perOrder > 0 && (options.initialPositions ? options.initialPositions.length < initN : true);
+
+  state.paper.balance = initBal;
+  state.paper.safetyNet = initSafety;
+  state.paper.n = initN;
+  state.paper.moneyTrade = moneyTrade;
+  state.paper.perOrder = perOrder;
+  state.paper.canOpen = canOpen;
+  state.paper.equity = initBal;
+
   if (state.mode === 'PAPER') {
-    const paperBal = Number(env.PAPER_BALANCE ?? 1000);
-    const safetyNet = Number(env.SAFETY_NET ?? 200);
-    const n = Math.min(4, Math.max(1, Math.trunc(Number(env.OPEN_ORDERS_N ?? 3))));
-    const moneyTrade = Math.max(0, paperBal - safetyNet);
-    const perOrder = Math.floor((moneyTrade / n) * 100) / 100;
-    state.paper.balance = paperBal;
-    state.paper.safetyNet = safetyNet;
-    state.paper.n = n;
-    state.paper.moneyTrade = moneyTrade;
-    state.paper.perOrder = perOrder;
-    state.paper.canOpen = perOrder > 0;
-    state.paper.equity = paperBal;
     state.accountState = {
-      hasTradableCapital: true,
+      hasTradableCapital: canOpen,
       openPositionsCount: 0,
-      maxPositions: n,
-      freeSlots: n,
+      maxPositions: initN,
+      freeSlots: initN,
       occupiedSlots: 0,
       pendingOpenCount: 0,
-      canOpenNewSlot: true,
+      canOpenNewSlot: canOpen,
       mode: 'PAPER',
       source: 'simulated',
+      status: 'AVAILABLE',
+      observedAt: Date.now()
+    };
+  } else if (finBal !== null && !state.venueAccount) {
+    const finAvail = options.initialFinancial?.availableBalance?.value != null
+      ? Number(options.initialFinancial.availableBalance.value)
+      : finBal;
+    state.venueAccount = {
+      equity: finBal,
+      available: finAvail,
+      unrealized: 0,
+      at: Date.now(),
+      status: 'confirmed',
+      positions: (options.initialPositions ?? []).map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
+    };
+    state.accountState = {
+      hasTradableCapital: canOpen,
+      openPositionsCount: options.initialPositions?.length ?? 0,
+      maxPositions: initN,
+      freeSlots: Math.max(0, initN - (options.initialPositions?.length ?? 0)),
+      occupiedSlots: options.initialPositions?.length ?? 0,
+      pendingOpenCount: 0,
+      canOpenNewSlot: canOpen,
+      mode: state.mode,
+      source: 'reconciliation',
       status: 'AVAILABLE',
       observedAt: Date.now()
     };
@@ -914,40 +959,120 @@ export function createReplacementRuntime(
       return { ok: true, command: 'close', reply: `Closed ${closedCount} position(s).` };
     }
 
-    if (cmd.startsWith('safety ')) {
-      const val = Number(raw.split(/\s+/)[1]);
-      if (val > 0) {
+    const balanceMatch = raw.match(/^(?:set\s+)?(?:balance|saldo)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i);
+    if (balanceMatch) {
+      const val = Number(balanceMatch[1]);
+      if (Number.isFinite(val) && val >= 0) {
+        updateState((d) => {
+          d.paper.balance = val;
+          d.paper.equity = val + (d.paper.unrealized ?? 0);
+          d.financial.balance = availableFinancialField(val);
+          d.financial.equity = availableFinancialField(val + (d.paper.unrealized ?? 0));
+          d.financial.availableBalance = availableFinancialField(val);
+          d.venueAccount = {
+            equity: val,
+            available: val,
+            unrealized: d.paper.unrealized ?? 0,
+            at: Date.now(),
+            status: 'confirmed',
+            positions: d.paper.positions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
+          };
+          const mt = Math.round(Math.max(0, val - d.paper.safetyNet) * 100) / 100;
+          d.paper.moneyTrade = mt;
+          d.paper.perOrder = Math.floor((mt / d.paper.n) * 100) / 100;
+          d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
+          if (d.accountState) {
+            d.accountState.hasTradableCapital = d.paper.canOpen;
+            d.accountState.canOpenNewSlot = d.paper.canOpen;
+          }
+        });
+        if (options.settings) {
+          void options.settings
+            .apply({ paper: { balance: val } }, options.settings.current().activeVersion)
+            .catch(() => {});
+        }
+        hub.emit('state', snapshot());
+        return { ok: true, command: 'set_balance', reply: `Balance set to ${val} USDT. Money trade: ${snapshot().paper.moneyTrade} USDT.` };
+      }
+      return { ok: false, error: 'Balance must be a non-negative number.' };
+    }
+
+    const safetyMatch = raw.match(/^(?:set\s+)?(?:safety(?:\s*net)?|sn)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i);
+    if (safetyMatch) {
+      const val = Number(safetyMatch[1]);
+      if (Number.isFinite(val) && val >= 0) {
         updateState((d) => {
           d.paper.safetyNet = val;
           if (d.trading) {
             d.trading.values.safetyNet = val;
           }
-          const mt = Math.max(0, d.paper.balance - val);
+          const mt = Math.round(Math.max(0, d.paper.balance - val) * 100) / 100;
           d.paper.moneyTrade = mt;
           d.paper.perOrder = Math.floor((mt / d.paper.n) * 100) / 100;
-          d.paper.canOpen = d.paper.perOrder > 0;
+          d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
+          if (d.accountState) {
+            d.accountState.hasTradableCapital = d.paper.canOpen;
+            d.accountState.canOpenNewSlot = d.paper.canOpen;
+          }
         });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                paper: { safetyNet: val },
+                trading: { safetyNet: val }
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
         hub.emit('state', snapshot());
-        return { ok: true, command: 'safety', reply: `Safety net set to ${val} USDT.` };
+        return { ok: true, command: 'set_safety', reply: `Safety net set to ${val} USDT. Money trade: ${snapshot().paper.moneyTrade} USDT.` };
       }
+      return { ok: false, error: 'Safety net must be a non-negative number.' };
     }
 
-    if (cmd.startsWith('n ')) {
-      const count = Number(raw.split(/\s+/)[1]);
+    const nMatch = raw.match(/^(?:set\s+)?(?:n|orders?|open\s+orders?|order)\s*(?:=|to|:)?\s*(\d+)\b/i);
+    if (nMatch) {
+      const count = Number(nMatch[1]);
       if (Number.isInteger(count) && count >= 1 && count <= 4) {
         updateState((d) => {
           d.paper.n = count;
           if (d.trading) {
             d.trading.values.maxPositions = count;
           }
-          const mt = Math.max(0, d.paper.balance - d.paper.safetyNet);
+          const mt = Math.round(Math.max(0, d.paper.balance - d.paper.safetyNet) * 100) / 100;
           d.paper.moneyTrade = mt;
           d.paper.perOrder = Math.floor((mt / count) * 100) / 100;
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < count;
+          if (d.accountState) {
+            d.accountState.maxPositions = count;
+            d.accountState.freeSlots = Math.max(0, count - d.paper.positions.length);
+            d.accountState.hasTradableCapital = d.paper.canOpen;
+            d.accountState.canOpenNewSlot = d.paper.canOpen;
+          }
         });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                paper: { n: count },
+                trading: { maxPositions: count }
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
         hub.emit('state', snapshot());
-        return { ok: true, command: 'n', reply: `Slots N set to ${count}.` };
+        return { ok: true, command: 'set_n', reply: `Slots N set to ${count}.` };
       }
+      return { ok: false, error: 'N must be an integer between 1 and 4.' };
+    }
+
+    if (cmd === 'sync' || cmd === 'sync balance' || cmd === 'sync to book' || cmd === 'refresh balance') {
+      const snap = snapshot();
+      hub.emit('state', snap);
+      return { ok: true, command: 'sync', reply: `Synced book. Balance: ${snap.paper.balance} USDT, Safety net: ${snap.paper.safetyNet} USDT, Money trade: ${snap.paper.moneyTrade} USDT.` };
     }
 
     return { ok: true, command: cmd, reply: `Command acknowledged: "${safe(raw)}"` };
@@ -1555,6 +1680,15 @@ export async function startReplacementServer(
     };
   };
 
+  const initialVenueAccount = equityNum !== null ? {
+    equity: equityNum,
+    available: availNum ?? equityNum,
+    unrealized: 0,
+    at: Date.now(),
+    status: 'confirmed' as const,
+    positions: initialPositions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
+  } : null;
+
   const runtime = createReplacementRuntime({
     sessionId: sessionLogger?.session.sessionId ?? null,
     initialMode: startup.tradingMode,
@@ -1564,9 +1698,11 @@ export async function startReplacementServer(
     initialFinancial,
     initialPositions,
     venue: initialVenue,
+    venueAccount: initialVenueAccount,
     runtimeIdentity: initialIdentity,
     executionGateway: gateway,
-    env
+    env,
+    settings
   });
   runtimeRef = runtime;
 
