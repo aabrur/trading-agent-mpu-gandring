@@ -682,11 +682,11 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
       {!!state.venueAccount?.pendingSymbols?.length && <p className="account-note" role="status">Fill reconciliation pending. Last venue observation: {state.venueAccount.positions?.map((p) => `${p.symbol} ${p.side} ${p.qty}`).join(', ') || 'flat'}. Local quantities are awaiting venue confirmation.</p>}
       <div className="stats">
         <label className="stat"><small>{t('totalBalance')}</small>
-          <span className="inline-edit"><input value={balance} onChange={(e) => setBalance(e.target.value)} onBlur={() => balance !== String(p.balance) && command(`set balance ${balance}`)} inputMode="decimal" aria-label="paper balance" /> USDT</span>
+          <span className="inline-edit"><input value={balance} onChange={(e) => setBalance(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLElement).blur(); }} onBlur={() => balance !== String(p.balance) && command(`set balance ${balance}`)} inputMode="decimal" aria-label="paper balance" /> USDT</span>
           {curOpt.code !== 'USDT' && <small className="stat-fiat">{formatCurrencyValue(p.balance, curOpt)}</small>}
         </label>
         <label className="stat"><small>{t('safetyNet')}</small>
-          <span className="inline-edit"><input value={safety} onChange={(e) => setSafety(e.target.value)} onBlur={() => safety !== String(p.safetyNet) && command(`set safety ${safety}`)} inputMode="decimal" aria-label="safety net" /> USDT</span>
+          <span className="inline-edit"><input value={safety} onChange={(e) => setSafety(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLElement).blur(); }} onBlur={() => safety !== String(p.safetyNet) && command(`set safety ${safety}`)} inputMode="decimal" aria-label="safety net" /> USDT</span>
           {curOpt.code !== 'USDT' && <small className="stat-fiat">{formatCurrencyValue(p.safetyNet, curOpt)}</small>}
         </label>
         <div className="stat hi"><small>{t('moneyTrade')}</small><b>{fmt(p.moneyTrade)}</b>{curOpt.code !== 'USDT' && <small className="stat-fiat">{formatCurrencyValue(p.moneyTrade, curOpt)}</small>}</div>
@@ -733,7 +733,18 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
               <span>{t('equityUsdt')}: <b>{fmt(venueBal.equityUsdt ?? 0)} USDT</b>{curOpt.code !== 'USDT' ? ` (${formatCurrencyValue(venueBal.equityUsdt ?? 0, curOpt)})` : ''}</span>
               <span>{t('availableUsdt')}: <b>{venueBal.availableUsdt == null ? 'unavailable' : fmt(venueBal.availableUsdt)} USDT</b></span>
               {(venueBal.equityUsdt ?? 0) > 0 && Math.abs((venueBal.equityUsdt ?? 0) - p.balance) > 0.01 && (
-                <button type="button" className="mini" onClick={() => command(`set balance ${venueBal.equityUsdt}`)}>
+                <button
+                  type="button"
+                  className="mini"
+                  onClick={() => {
+                    const eq = venueBal.equityUsdt ?? 0;
+                    command(`set balance ${eq}`);
+                    if (p.safetyNet >= eq) {
+                      const safeNet = Math.max(0, Math.floor(eq * 0.1 * 100) / 100);
+                      command(`set safety ${safeNet}`);
+                    }
+                  }}
+                >
                   {t('syncToBookBtn')}
                 </button>
               )}

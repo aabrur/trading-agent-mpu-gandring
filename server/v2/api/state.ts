@@ -44,9 +44,10 @@ export function mountStateRoutes(
     const state = runtime.snapshot();
     res.json({
       ok: true,
+      app: 'trading-agent-mpu-gandring',
       runtimeGeneration: 'v2',
       instanceId: options.instanceId ?? null,
-      version: state.version ?? '0.0.0.4.11',
+      version: state.version ?? '0.0.0.4.12',
       mode: state.mode,
       appMode: state.appMode,
       venue: state.venue?.name ?? state.live?.exchange ?? null,

@@ -197,7 +197,7 @@ async function getRunningHealth() {
     const r = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1200) });
     if (!r.ok) return null;
     const body = await r.json();
-    return body && body.app === 'trading-agent-mpu-gandring' ? body : null;
+    return body && (body.app === 'trading-agent-mpu-gandring' || body.runtimeGeneration === 'v2') ? body : null;
   } catch {
     return null;
   }

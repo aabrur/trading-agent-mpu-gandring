@@ -6,9 +6,11 @@ import { TRADING_PRESETS, draftProfile, resolveTradingPreset } from '../../../se
 import { useI18n, type TranslationKey } from '../i18n';
 
 interface TradingInfo {
-  defaults: TradingSettings;
-  networks: Record<TradingNetwork, { profile: TradingProfile; values: TradingSettings; manual: TradingSettings }>;
-  running: { mode: string; network: TradingNetwork | null; profile: TradingProfile; values: TradingSettings };
+  defaults?: TradingSettings;
+  networks?: Record<TradingNetwork, { profile: TradingProfile; values: TradingSettings; manual: TradingSettings }>;
+  running?: { mode: string; network: TradingNetwork | null; profile: TradingProfile; values: TradingSettings };
+  profile?: TradingProfile;
+  values?: TradingSettings;
 }
 
 function getTradingFields(t: (k: TranslationKey) => string) {
@@ -43,13 +45,21 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     try {
       const r = await fetch('/api/setup/trading'), d = await r.json();
       if (!r.ok || !d.ok) { setMessage(d.detail || t('tradingUnavailableMsg')); return; }
-      const next: TradingInfo = d; setInfo(next);
+      const next = d as TradingInfo; setInfo(next);
+      const fallbackValues = next.values ?? (state.trading?.values as TradingSettings) ?? {
+        dailyLossLimitPct: 10, maxLossPerTradePct: 20, minEntryConfidencePct: 60, maxLeverage: 5, defaultStopPct: 20, minStopPct: 0, takeProfitPct: 60, takeProfitR: 3, maxPositions: 3, safetyNet: 0
+      };
       setDrafts((previous) => {
-        const manuals = { testnet: next.networks.testnet.values, mainnet: next.networks.mainnet.values };
+        const testnetVals = next.networks?.testnet?.values ?? fallbackValues;
+        const mainnetVals = next.networks?.mainnet?.values ?? fallbackValues;
+        const manuals = { testnet: testnetVals, mainnet: mainnetVals };
         if (!previous || refreshDrafts) return manuals;
         return previous;
       });
-      if (!honorShortcut.current) setProfile(draftProfile(next.networks[network].profile));
+      if (!honorShortcut.current) {
+        const netProf = next.networks?.[network]?.profile ?? next.profile ?? 'manual';
+        setProfile(draftProfile(netProf));
+      }
     } catch { setMessage(lang === 'id' ? 'Meja trading tidak dapat dihubungi. Pengaturan tersimpan gagal dimuat.' : 'Office not reachable. Saved settings could not be loaded.'); }
   };
   useEffect(() => { void load(); }, []);
@@ -57,12 +67,12 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
   useEffect(() => {
     if (!info) return;
     honorShortcut.current = false;
-    setProfile(draftProfile(info.networks[network].profile));
+    setProfile(draftProfile(info.networks?.[network]?.profile ?? info.profile ?? 'manual'));
   }, [network]);
   if (!info || !drafts) return <div className="wallet-note" role="status"><p>{message || t('tradingLoadingProfiles')}</p>{message && <button onClick={() => void load()}>{t('tradingRetryBtn')}</button>}</div>;
   const isPreset = profile in TRADING_PRESETS;
   const values = drafts[network];
-  const active = info.running.network === network;
+  const active = info.running ? info.running.network === network : (state.mode === 'LIVE' ? network === 'mainnet' : network === 'testnet');
   async function save() {
     setBusy(true); setMessage('');
     try {
@@ -87,16 +97,16 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     } catch { setMessage(lang === 'id' ? 'Gagal menyimpan batas trading.' : 'Unable to save trading limits.'); }
     finally { setBusy(false); }
   }
-  const savedProfile = info.networks[network].profile;
+  const savedProfile = info.networks?.[network]?.profile ?? info.profile ?? 'manual';
   const savedLabel = profileName(savedProfile, lang);
-  const runningLabel = profileName(info.running.profile, lang);
+  const runningLabel = profileName(info.running?.profile ?? savedProfile, lang);
   const draftDirty = draftProfile(savedProfile) !== profile;
   return <section className="trading-setup">
-    <p className="wallet-note">{lang === 'id' ? 'Berjalan:' : 'Running:'} <b>{info.running.mode}</b>{info.running.network ? ` · ${info.running.network}` : ''} · {runningLabel}. {lang === 'id' ? 'Testnet menggunakan dana tes; mainnet LIVE menggunakan uang sungguhan. Memilih profil tidak mengganti mode atau menyambungkan bursa.' : 'Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.'}</p>
-    <p className="setup-guide-note"><b>{t('tradingAppliedToDesk')}</b>: {info.running.mode}{info.running.network ? ` · ${info.running.network}` : ''} · {runningLabel}</p>
+    <p className="wallet-note">{lang === 'id' ? 'Berjalan:' : 'Running:'} <b>{info.running?.mode ?? state.mode}</b>{info.running?.network ? ` · ${info.running.network}` : ''} · {runningLabel}. {lang === 'id' ? 'Testnet menggunakan dana tes; mainnet LIVE menggunakan uang sungguhan. Memilih profil tidak mengganti mode atau menyambungkan bursa.' : 'Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.'}</p>
+    <p className="setup-guide-note"><b>{t('tradingAppliedToDesk')}</b>: {info.running?.mode ?? state.mode}{info.running?.network ? ` · ${info.running.network}` : ''} · {runningLabel}</p>
     <p className="setup-guide-note"><b>{t('tradingSavedForNextStart')}</b> ({network}): {savedLabel}</p>
     {draftDirty && <p className="field-help">{t('tradingDraftProfile')}: {profileName(profile, lang)}</p>}
-    {profile === 'manual' && info.running.profile !== 'manual' && active && <p className="field-help">{lang === 'id' ? 'Nilai manual ini belum aktif. Simpan dan terapkan untuk mengganti preset yang berjalan.' : 'These manual values are not active. Save and apply to replace the running preset.'}</p>}
+    {profile === 'manual' && info.running?.profile !== 'manual' && active && <p className="field-help">{lang === 'id' ? 'Nilai manual ini belum aktif. Simpan dan terapkan untuk mengganti preset yang berjalan.' : 'These manual values are not active. Save and apply to replace the running preset.'}</p>}
     <div className="wallet-pick">
       <label>{lang === 'id' ? 'Jaringan trading' : 'Trading network'}<select aria-label="Trading network" disabled={busy} value={network} onChange={(e) => { setNetwork(e.target.value as TradingNetwork); setMessage(''); }}><option value="testnet">Testnet · TESTNET</option><option value="mainnet">Mainnet · LIVE</option></select></label>
       <label>{t('tradingProfileLabel')}<select aria-label="Settings profile" disabled={busy} value={profile} onChange={(e) => {
@@ -117,10 +127,10 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     </div>
     <form onSubmit={e => {e.preventDefault(); void saveLimits();}}>
       <fieldset disabled={busy}><legend>{lang === 'id' ? 'Batas Trading' : 'Trading Limits'} · {network}</legend>
-        {(['minOrderUsdt', 'maxOrderUsdt'] as const).map(key => <label key={key}>{key === 'minOrderUsdt' ? (lang === 'id' ? 'Batas Minimum Trade (USDT)' : 'Minimum Trade Limit (USDT)') : (lang === 'id' ? 'Batas Maksimum Trade (USDT)' : 'Maximum Trade Limit (USDT)')}<input type="number" min="0" step="any" required value={values[key] ?? 0} onChange={e => setDrafts(old => old ? {...old, [network]: {...old[network], [key]: Number(e.target.value)}} : old)} /><small>{lang === 'id' ? 'Tersimpan' : 'Saved'}: {info.networks[network].values[key] ?? 0} · {lang === 'id' ? 'Berjalan' : 'Running'}: {info.running.values[key] ?? 0}</small></label>)}
+        {(['minOrderUsdt', 'maxOrderUsdt'] as const).map(key => <label key={key}>{key === 'minOrderUsdt' ? (lang === 'id' ? 'Batas Minimum Trade (USDT)' : 'Minimum Trade Limit (USDT)') : (lang === 'id' ? 'Batas Maksimum Trade (USDT)' : 'Maximum Trade Limit (USDT)')}<input type="number" min="0" step="any" required value={values[key] ?? 0} onChange={e => setDrafts(old => old ? {...old, [network]: {...old[network], [key]: Number(e.target.value)}} : old)} /><small>{lang === 'id' ? 'Tersimpan' : 'Saved'}: {info.networks?.[network]?.values?.[key] ?? values[key] ?? 0} · {lang === 'id' ? 'Berjalan' : 'Running'}: {info.running?.values?.[key] ?? values[key] ?? 0}</small></label>)}
         <p className="field-help">{lang === 'id' ? '0 = tanpa batas tambahan aplikasi. Aturan kuantitas, step, dan nominal bursa tetap berlaku.' : '0 = no additional application limit. Exchange quantity, step, and notional rules still apply.'}</p>
         <button type="submit">{lang === 'id' ? 'Simpan & Terapkan' : 'Save & Apply'}</button>
-        <button type="button" onClick={() => setDrafts(old => old ? {...old, [network]: {...old[network], minOrderUsdt: info.networks[network].values.minOrderUsdt, maxOrderUsdt: info.networks[network].values.maxOrderUsdt}} : old)}>{lang === 'id' ? 'Reset Perubahan Belum Disimpan' : 'Reset Unsaved Changes'}</button>
+        <button type="button" onClick={() => setDrafts(old => old ? {...old, [network]: {...old[network], minOrderUsdt: info.networks?.[network]?.values?.minOrderUsdt ?? values.minOrderUsdt, maxOrderUsdt: info.networks?.[network]?.values?.maxOrderUsdt ?? values.maxOrderUsdt}} : old)}>{lang === 'id' ? 'Reset Perubahan Belum Disimpan' : 'Reset Unsaved Changes'}</button>
       </fieldset>
     </form>
     <p className="setup-guide-note">{t('tradingSavedProfilePrefix')} {network}: <b>{savedLabel}</b>. {isPreset ? `${lang === 'id' ? 'Tinjau preset' : 'Review the'} ${TRADING_PRESETS[profile as TradingPresetId].name} ${t('tradingPresetBanner')}` : (lang === 'id' ? 'Edit hanya nilai yang ingin kamu ubah. Nilai manual sebelumnya disimpan terpisah untuk tiap jaringan.' : 'Edit only the values you want to change. The previous manual values are retained separately for each network.')}</p>
@@ -138,9 +148,9 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
           }
           return { ...old, [network]: current };
         });
-      }} /><small className="field-help">{f.help}{active ? ` ${lang === 'id' ? 'Aktif' : 'Active'}: ${info.running.values[f.key]}.` : ''}</small></label>)}</div>
+      }} /><small className="field-help">{f.help}{active ? ` ${lang === 'id' ? 'Aktif' : 'Active'}: ${info.running?.values?.[f.key] ?? values[f.key]}.` : ''}</small></label>)}</div>
       <p className="field-help">{lang === 'id' ? 'Semua order memakai SL/TP profil dari margin, sebelum biaya dan pembulatan bursa. Tidak ada jarak stop minimal, pemotongan ukuran oleh AI, atau batas rugi per order dari ekuitas akun. Keyakinan minimal berlaku untuk entry mandiri agen. Menyimpan tidak mengubah order terbuka, me-reset batas rugi harian, menyalakan Auto Trade, atau mengganti mode.' : 'Every order uses profile SL/TP percentages of margin, before fees and venue rounding. No minimum stop distance, AI size reduction, or account-equity loss cap per order. Minimum confidence applies to agent entries. Saving does not change open orders, reset the daily loss stop, enable Auto Trade, or switch mode.'}</p>
-      <div className="setup-nav"><button disabled={busy} type="submit">{busy ? t('tradingSavingBtn') : `${active ? (lang === 'id' ? 'Simpan & terapkan' : 'Save and apply') : t('tradingSaveProfileBtn')} ${isPreset ? TRADING_PRESETS[profile as TradingPresetId].name : profile} ${lang === 'id' ? 'untuk' : 'for'} ${network}`}</button><button disabled={busy} type="button" onClick={() => { setProfile(draftProfile(savedProfile)); setDrafts({ ...drafts, [network]: info.networks[network].values }); setMessage(lang === 'id' ? 'Draf dikembalikan ke nilai tersimpan.' : 'Draft restored to saved values.'); }}>{t('tradingDiscardEdits')}</button></div>
+      <div className="setup-nav"><button disabled={busy} type="submit">{busy ? t('tradingSavingBtn') : `${active ? (lang === 'id' ? 'Simpan & terapkan' : 'Save and apply') : t('tradingSaveProfileBtn')} ${isPreset ? TRADING_PRESETS[profile as TradingPresetId].name : profile} ${lang === 'id' ? 'untuk' : 'for'} ${network}`}</button><button disabled={busy} type="button" onClick={() => { setProfile(draftProfile(savedProfile)); setDrafts({ ...drafts, [network]: info.networks?.[network]?.values ?? values }); setMessage(lang === 'id' ? 'Draf dikembalikan ke nilai tersimpan.' : 'Draft restored to saved values.'); }}>{t('tradingDiscardEdits')}</button></div>
       {!active && <p className="field-help">{lang === 'id' ? 'Jaringan ini sedang tidak berjalan. Menyimpan akan mempersiapkannya untuk dijalankan berikutnya; ganti mode di Bursa & Pengamanan.' : 'This network is not running. Saving prepares it for its next start; change mode separately in Exchange & Safety.'}</p>}
     </form>
     {message && <p className="wallet-note" role="status">{message}</p>}

@@ -13,6 +13,7 @@ import { venueCredentialEnvNames } from '../runtime.js';
 import type { AccountRegistry } from '../accounts/registry.js';
 import {
   API_PROVIDERS,
+  DEFAULT_TRADING_SETTINGS,
   LIVE_CONFIRM_PHRASE,
   MODEL_PROVIDERS,
   PreferencesBody,
@@ -28,6 +29,23 @@ import {
 import { PROVIDER_KEY_ENV, type SecretStore } from '../settings/secrets.js';
 import type { SettingsService } from '../settings/service.js';
 import { getVenueGuide } from '../setup/guide.js';
+import {
+  V2_CHANNELS,
+  V2_CHANNEL_GUIDES,
+  CHANNEL_LINKS_CHECKED_ON,
+  NOT_SHIPPED,
+  SUPERVISOR_ENV,
+  channelStatusV2,
+  isChannelV2,
+  testChannelV2,
+  saveChannelV2,
+  resetChannelV2,
+  telegramChatsV2,
+  discordRegisterCommand,
+  syncDiscordCommandsV2,
+  inspectDiscordBotV2,
+  DiscordBotBody
+} from '../channels.js';
 
 export interface SetupApiDeps {
   settings: SettingsService;
@@ -197,13 +215,36 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
 
   app.get('/api/setup/trading', (_req, res) => {
     const snap = deps.settings.current();
+    const defaults = DEFAULT_TRADING_SETTINGS;
+    const testnetValues = snap.effective.networkProfiles?.testnet ?? snap.effective.trading;
+    const mainnetValues = snap.effective.networkProfiles?.mainnet ?? snap.effective.trading;
+    const profile = snap.effective.tradingProfile;
     res.json({
       ok: true,
       savedVersion: snap.savedVersion,
       activeVersion: snap.activeVersion,
-      profile: snap.effective.tradingProfile,
+      profile,
       values: snap.effective.trading,
-      presets: TRADING_PRESETS
+      presets: TRADING_PRESETS,
+      defaults,
+      networks: {
+        testnet: {
+          profile,
+          values: testnetValues,
+          manual: testnetValues
+        },
+        mainnet: {
+          profile,
+          values: mainnetValues,
+          manual: mainnetValues
+        }
+      },
+      running: {
+        mode: snap.effective.mode,
+        network: snap.effective.venue.network,
+        profile,
+        values: snap.effective.trading
+      }
     });
   });
 
@@ -790,93 +831,125 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     res.json({ ok: true, lines });
   });
 
-  app.post('/api/setup/restart', (_req, res) => {
-    res.json({ ok: true, detail: 'Restart requested.' });
-  });
+  const handleRestart: express.RequestHandler = (_req, res) => {
+    res.json({ ok: true, detail: 'Restarting trading desk...' });
+    setTimeout(() => {
+      if (process.send) {
+        process.send({ type: 'mpu:restart' });
+      }
+      process.exit(0);
+    }, 200);
+  };
+  app.post('/api/setup/restart', handleRestart);
+  app.post('/api/ops/restart', handleRestart);
 
   app.get('/api/setup/channels', (_req, res) => {
-    const snap = deps.settings.current();
-    const ch = snap.effective.channels;
+    const st = channelStatusV2(process.env);
     res.json({
       ok: true,
-      linksCheckedOn: '2026-11-01',
+      linksCheckedOn: CHANNEL_LINKS_CHECKED_ON,
       entry: { available: true, reason: 'local loopback' },
-      status: {
-        commands: ch.commandsEnabled,
-        telegram: ch.telegramEnabled,
-        discord: ch.discordEnabled,
-        slack: ch.slackEnabled,
-        whatsapp: ch.whatsappEnabled,
-        supervisorIntervalMin: ch.supervisorIntervalMin
-      },
-      channels: ['telegram', 'discord', 'slack', 'whatsapp'],
-      guides: [
-        {
-          channel: 'telegram',
-          label: 'Telegram',
-          docsUrl: 'https://core.telegram.org/bots',
-          fields: [
-            { env: 'TELEGRAM_BOT_TOKEN', label: 'Bot Token', secret: true, required: true },
-            { env: 'TELEGRAM_CHAT_ID', label: 'Chat ID', secret: false, required: true }
-          ]
-        },
-        {
-          channel: 'discord',
-          label: 'Discord',
-          docsUrl: 'https://discord.com/developers/docs/intro',
-          fields: [
-            { env: 'DISCORD_BOT_TOKEN', label: 'Bot Token', secret: true, required: false },
-            { env: 'DISCORD_WEBHOOK_URL', label: 'Webhook URL', secret: true, required: false }
-          ]
-        },
-        {
-          channel: 'slack',
-          label: 'Slack',
-          docsUrl: 'https://api.slack.com/bot-users',
-          fields: [
-            { env: 'SLACK_BOT_TOKEN', label: 'Bot Token', secret: true, required: false },
-            { env: 'SLACK_WEBHOOK_URL', label: 'Webhook URL', secret: true, required: false }
-          ]
-        },
-        {
-          channel: 'whatsapp',
-          label: 'WhatsApp',
-          docsUrl: 'https://developers.facebook.com/docs/whatsapp',
-          fields: [
-            { env: 'WHATSAPP_ACCESS_TOKEN', label: 'Access Token', secret: true, required: true }
-          ]
-        }
-      ]
+      status: st,
+      discordConnection: 'unknown',
+      supervisorEnv: SUPERVISOR_ENV,
+      notShipped: NOT_SHIPPED,
+      discordRegister: discordRegisterCommand(),
+      channels: V2_CHANNELS,
+      guides: V2_CHANNELS.map((ch) => {
+        const g = V2_CHANNEL_GUIDES[ch];
+        return {
+          channel: ch,
+          ...g,
+          fields: g.fields.map((f) => ({
+            env: f.env,
+            label: f.label,
+            secret: f.secret,
+            required: f.required,
+            hint: f.hint
+          }))
+        };
+      })
     });
   });
 
+  app.post('/api/setup/channels/discord-bot', async (req, res) => {
+    const parsed = DiscordBotBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ ok: false, detail: 'Enter a bot token and valid server/channel selections.' });
+      return;
+    }
+    const token = parsed.data.token || process.env.DISCORD_BOT_TOKEN || '';
+    if (!token) {
+      res.status(400).json({ ok: false, detail: 'Enter the Bot Token in the masked input.' });
+      return;
+    }
+    try {
+      const result = await inspectDiscordBotV2(token, parsed.data.guildId, deps.fetchImpl ?? fetch);
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      res.status(422).json({ ok: false, detail: (error as Error).message });
+    }
+  });
+
+  app.post('/api/setup/channels/discord-sync', async (_req, res) => {
+    try {
+      const result = await syncDiscordCommandsV2(
+        process.env.DISCORD_BOT_TOKEN || '',
+        process.env.DISCORD_APPLICATION_ID || '',
+        process.env.DISCORD_GUILD_ID || undefined,
+        deps.fetchImpl ?? fetch
+      );
+      res.json({ ok: true, ...result, detail: 'Channel commands registered and verified.' });
+    } catch (error) {
+      res.status(422).json({ ok: false, detail: (error as Error).message });
+    }
+  });
+
   app.post('/api/setup/channels/save', async (req, res) => {
-    const raw = (req.body ?? {}) as { channel?: string; values?: Record<string, string>; commands?: boolean };
-    const updates: Record<string, string> = {};
-    if (raw.values) {
-      for (const [k, v] of Object.entries(raw.values)) {
-        if (v && v.trim()) updates[k] = v.trim();
+    const raw = (req.body ?? {}) as { channel?: unknown; values?: Record<string, string>; commands?: boolean };
+    const ch = raw.channel;
+    if (!isChannelV2(ch)) {
+      res.status(400).json({ ok: false, error: 'invalid channel' });
+      return;
+    }
+    const result = saveChannelV2('.env', ch, raw.values ?? {}, { commands: raw.commands });
+    if (result.ok) {
+      for (const [k, v] of Object.entries(raw.values ?? {})) {
+        if (v !== undefined) process.env[k] = v;
+      }
+      if (raw.commands !== undefined) {
+        process.env.CHANNEL_COMMANDS = raw.commands ? 'on' : 'off';
+        await deps.settings.apply({ channels: { commandsEnabled: raw.commands } }, deps.settings.current().activeVersion);
       }
     }
-    if (Object.keys(updates).length > 0) {
-      deps.secrets.writeSecrets(updates);
+    res.status(result.ok ? 200 : 422).json(result);
+  });
+
+  app.post('/api/setup/channels/reset', (req, res) => {
+    const raw = (req.body ?? {}) as { channel?: unknown };
+    const ch = raw.channel;
+    if (!isChannelV2(ch)) {
+      res.status(400).json({ ok: false, error: 'unknown channel' });
+      return;
     }
-    if (raw.commands !== undefined) {
-      await deps.settings.apply({ channels: { commandsEnabled: raw.commands } }, deps.settings.current().activeVersion);
+    const result = resetChannelV2('.env', ch);
+    res.json(result);
+  });
+
+  app.post('/api/setup/channels/test', async (req, res) => {
+    const raw = (req.body ?? {}) as { channel?: unknown };
+    const ch = raw.channel;
+    if (!isChannelV2(ch)) {
+      res.status(400).json({ ok: false, error: 'unknown channel' });
+      return;
     }
-    res.json({ ok: true, detail: `${raw.channel ?? 'Channel'} configuration saved.` });
+    const result = await testChannelV2(process.env, ch, deps.fetchImpl ?? fetch);
+    res.status(result.ok ? 200 : 422).json(result);
   });
 
-  app.post('/api/setup/channels/reset', (_req, res) => {
-    res.json({ ok: true, detail: 'Channel reset.' });
-  });
-
-  app.post('/api/setup/channels/test', (req, res) => {
-    const raw = (req.body ?? {}) as { channel?: string };
-    res.json({ ok: true, detail: `Test notification sent for ${raw.channel ?? 'channel'}.` });
-  });
-
-  app.post('/api/setup/channels/telegram-chats', (_req, res) => {
-    res.json({ ok: true, chats: [] });
+  app.post('/api/setup/channels/telegram-chats', async (_req, res) => {
+    const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
+    const result = await telegramChatsV2(token, deps.fetchImpl ?? fetch);
+    res.json(result);
   });
 }

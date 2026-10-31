@@ -106,6 +106,8 @@ export function createReplacementApp(
   }
 
   const reportsService = options.reportsService ?? new ReportsService();
+  const reportInterval = options.setupDeps?.settings.current().effective.auto.reportIntervalMin ?? 60;
+  reportsService.start(runtime, reportInterval);
   mountReportRoutes(app, reportsService, runtime);
 
   const chatService = options.chatService ?? new ChatService();

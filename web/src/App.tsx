@@ -23,7 +23,12 @@ function initialTheme() {
 }
 
 function initialTourOpen() {
-  return true;
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem('mpu_tour_done_v1') !== '1';
+  } catch {
+    return false;
+  }
 }
 
 function AppInner() {
@@ -42,7 +47,7 @@ function AppInner() {
   const [tourOpen, setTourOpen] = useState<boolean>(initialTourOpen);
   const [updateOpen, setUpdateOpen] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [trakteerOpen, setTrakteerOpen] = useState<boolean>(true);
+  const [trakteerOpen, setTrakteerOpen] = useState<boolean>(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -67,7 +72,7 @@ function AppInner() {
     try { localStorage.setItem('mpu_tour_done_v1', '1'); } catch { /* ignore */ }
   };
 
-  const anyModalOpen = Boolean(state) && (setup || updateOpen || tourOpen || trakteerOpen || Boolean(selected));
+  const anyModalOpen = Boolean(state) && (setup || updateOpen || tourOpen || trakteerOpen);
   useEffect(() => {
     document.documentElement.classList.toggle('modal-open', anyModalOpen);
     document.body.classList.toggle('modal-open', anyModalOpen);

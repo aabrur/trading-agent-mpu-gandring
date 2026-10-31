@@ -283,7 +283,13 @@ export function createReplacementRuntime(
     ? finBal
     : (Number.isFinite(rawPaperBal) ? rawPaperBal : 1000);
 
-  const rawSafety = Number(savedTrading?.safetyNet ?? savedPaper?.safetyNet ?? env.SAFETY_NET ?? 200);
+  const rawSafety = Number(
+    (state.mode === 'LIVE' ? env.MAINNET_DESK_SAFETY_NET : env.TESTNET_DESK_SAFETY_NET) ??
+    savedTrading?.safetyNet ??
+    savedPaper?.safetyNet ??
+    env.SAFETY_NET ??
+    200
+  );
   const initSafety = Number.isFinite(rawSafety) && rawSafety >= 0 ? rawSafety : 200;
 
   const rawN = Math.trunc(Number(savedTrading?.maxPositions ?? savedPaper?.n ?? env.OPEN_ORDERS_N ?? 3));
@@ -315,18 +321,20 @@ export function createReplacementRuntime(
       status: 'AVAILABLE',
       observedAt: Date.now()
     };
-  } else if (finBal !== null && !state.venueAccount) {
-    const finAvail = options.initialFinancial?.availableBalance?.value != null
+  } else {
+    const finAvail = state.venueAccount?.available ?? (options.initialFinancial?.availableBalance?.value != null
       ? Number(options.initialFinancial.availableBalance.value)
-      : finBal;
-    state.venueAccount = {
-      equity: finBal,
-      available: finAvail,
-      unrealized: 0,
-      at: Date.now(),
-      status: 'confirmed',
-      positions: (options.initialPositions ?? []).map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
-    };
+      : finBal);
+    if (!state.venueAccount && finBal !== null) {
+      state.venueAccount = {
+        equity: finBal,
+        available: finAvail ?? finBal,
+        unrealized: 0,
+        at: Date.now(),
+        status: 'confirmed',
+        positions: (options.initialPositions ?? []).map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
+      };
+    }
     state.accountState = {
       hasTradableCapital: canOpen,
       openPositionsCount: options.initialPositions?.length ?? 0,
@@ -336,7 +344,7 @@ export function createReplacementRuntime(
       pendingOpenCount: 0,
       canOpenNewSlot: canOpen,
       mode: state.mode,
-      source: 'reconciliation',
+      source: state.venueAccount ? 'native_exchange' : 'reconciliation',
       status: 'AVAILABLE',
       observedAt: Date.now()
     };
@@ -1811,7 +1819,56 @@ export async function startReplacementServer(
     runtime.updateAutoSettings({ on: true, intervalMin });
   }
 
+  let syncTimer: NodeJS.Timeout | null = null;
+  if (startup.tradingMode !== 'PAPER') {
+    const syncVenueAccount = async () => {
+      try {
+        const [bal, posList] = await Promise.all([
+          venueAdapter.balance(),
+          venueAdapter.positions()
+        ]);
+        const eq = bal.equity !== null ? Number(bal.equity) : null;
+        const av = bal.available !== null ? Number(bal.available) : null;
+        if (eq !== null && Number.isFinite(eq)) {
+          runtime.updateState((d) => {
+            d.financial.balance = availableFinancialField(eq);
+            d.financial.equity = availableFinancialField(eq);
+            if (av !== null && Number.isFinite(av)) {
+              d.financial.availableBalance = availableFinancialField(av);
+            }
+            d.venueAccount = {
+              equity: eq,
+              available: av ?? eq,
+              unrealized: d.paper.unrealized ?? 0,
+              at: Date.now(),
+              status: 'confirmed',
+              positions: posList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) }))
+            };
+            d.paper.balance = eq;
+            d.paper.equity = eq + (d.paper.unrealized ?? 0);
+            const mt = Math.round(Math.max(0, eq - d.paper.safetyNet) * 100) / 100;
+            d.paper.moneyTrade = mt;
+            d.paper.perOrder = Math.floor((mt / d.paper.n) * 100) / 100;
+            d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
+            if (d.accountState) {
+              d.accountState.hasTradableCapital = d.paper.canOpen;
+              d.accountState.canOpenNewSlot = d.paper.canOpen;
+              d.accountState.status = 'AVAILABLE';
+              d.accountState.mode = d.mode;
+              d.accountState.observedAt = Date.now();
+            }
+          });
+        }
+      } catch {
+        // Venue polling failure is non-fatal
+      }
+    };
+    syncTimer = setInterval(syncVenueAccount, 15_000);
+    syncTimer.unref();
+  }
+
   const shutdown = () => {
+    if (syncTimer) clearInterval(syncTimer);
     wss.close();
     server.closeAllConnections();
     void runtime.stop().catch(() => {});
