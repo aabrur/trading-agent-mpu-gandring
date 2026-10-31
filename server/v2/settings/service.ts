@@ -340,8 +340,17 @@ export class SettingsService {
         language: 'en',
         currency: 'USD',
         tradingviewWidget: boolOr(env.TRADINGVIEW_WIDGET, false),
-        tradingviewWebhook: boolOr(env.TRADINGVIEW_WEBHOOK, false),
-        tradingviewPrefix: (env.TRADINGVIEW_PREFIX ?? 'BYBIT:').trim() || 'BYBIT:',
+        tradingviewWebhook: boolOr(
+          env.TRADINGVIEW_WEBHOOK,
+          Boolean((env.TRADINGVIEW_PASSPHRASE ?? '').trim())
+        ),
+        tradingviewPrefix: (
+          env.TRADINGVIEW_EXCHANGE_PREFIX ??
+          env.TRADINGVIEW_PREFIX ??
+          'BYBIT'
+        )
+          .trim()
+          .replace(/:+$/, '') || 'BYBIT',
         debateMode: (env.DEBATE_MODE ?? '').trim().toLowerCase() === 'fast' ? 'fast' : 'normal',
         fightThreshold: Math.min(1, Math.max(0.05, numOr(env.FIGHT_THRESHOLD, 0.35)))
       },

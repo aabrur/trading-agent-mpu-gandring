@@ -190,7 +190,7 @@ export function createInitialOfficeState(options: {
     scorecard: createInitialScorecard(),
     learning: { on: true, scan: true, promoteAfter: 3 },
     dailyLoss: { limitPct: 10, startEquity: 0, hit: false },
-    tradingview: { widget: false, prefix: 'BYBIT:', webhook: false },
+    tradingview: { widget: false, prefix: 'BYBIT', webhook: false },
     agentEvents: false,
     signals: [],
     agents: createInitialAgents(),

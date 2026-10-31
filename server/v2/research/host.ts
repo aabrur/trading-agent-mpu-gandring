@@ -12,6 +12,7 @@ import {
   normalizeResearchFinding,
   type ResearchFinding
 } from './provenance.js';
+import { computeWhaleIntelligence } from '../market/whale.js';
 
 export const HOST_TOOL_NAMES = [
   'search_web',
@@ -560,16 +561,18 @@ export class ResearchHost {
         );
       }
 
-      case 'search_news':
-      case 'market_news':
-      case 'onchain_briefing':
-      case 'jev_research': {
+      case 'onchain_briefing': {
         const parsed = SymbolArgSchema.safeParse(call.args);
         if (!parsed.success) {
           return finish('error', null, [], 'Invalid symbol argument');
         }
         const optionalProviders = this.optionalProviderStates();
-        if (call.name === 'onchain_briefing' && optionalProviders.whaleAlert === 'UNCONFIGURED') {
+        const whaleReport = await computeWhaleIntelligence({
+          symbol: parsed.data.symbol,
+          apiKey: this.options.optionalSources?.whaleAlertKey,
+          fetchImpl: this.options.fetchImpl
+        });
+        if (optionalProviders.whaleAlert === 'UNCONFIGURED' && whaleReport.onchain.status === 'UNCONFIGURED') {
           return finish(
             'unavailable',
             {
@@ -577,12 +580,35 @@ export class ResearchHost {
               veto: false,
               providerStatus: 'UNCONFIGURED',
               optionalProviders,
-              items: []
+              items: [],
+              report: whaleReport
             },
             [],
             'Optional on-chain provider is unconfigured'
           );
         }
+        return finish(
+          whaleReport.onchain.status === 'UNAVAILABLE' ? 'unavailable' : 'ok',
+          {
+            symbol: parsed.data.symbol,
+            veto: false,
+            optionalProviders,
+            report: whaleReport,
+            items: whaleReport.onchain.events
+          },
+          ['whale-alert'],
+          whaleReport.onchain.status === 'UNAVAILABLE' ? whaleReport.onchain.summary : null
+        );
+      }
+
+      case 'search_news':
+      case 'market_news':
+      case 'jev_research': {
+        const parsed = SymbolArgSchema.safeParse(call.args);
+        if (!parsed.success) {
+          return finish('error', null, [], 'Invalid symbol argument');
+        }
+        const optionalProviders = this.optionalProviderStates();
         const findings = await this.research({
           symbol: parsed.data.symbol,
           objective: parsed.data.objective

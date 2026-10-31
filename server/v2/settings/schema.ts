@@ -228,7 +228,7 @@ export const PreferencesSettingsSchema = z
     currency: z.enum(['USD', 'IDR']).default('USD'),
     tradingviewWidget: z.boolean().default(false),
     tradingviewWebhook: z.boolean().default(false),
-    tradingviewPrefix: z.string().min(1).max(30).default('BYBIT:'),
+    tradingviewPrefix: z.string().min(1).max(30).default('BYBIT'),
     debateMode: z.enum(['normal', 'fast']).default('normal'),
     fightThreshold: z.number().finite().min(0.05).max(1).default(0.35)
   })

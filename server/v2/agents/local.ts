@@ -15,6 +15,7 @@ export interface LocalCliAgentSpec {
 export const LOCAL_CLI_AGENTS: readonly LocalCliAgentSpec[] = [
   { id: 'codex', bin: 'codex', label: 'Codex', login: ['login'], docs: 'https://developers.openai.com/codex/cli', models: ['default', 'gpt-6-astra', 'gpt-6.1-sol'] },
   { id: 'claude', bin: 'claude', label: 'Claude Code', login: ['auth', 'login'], docs: 'https://code.claude.com/docs/en/cli-reference', models: ['default', 'opus', 'sonnet'] },
+  { id: 'gemini', bin: 'gemini', label: 'Gemini CLI', login: ['auth', 'login'], docs: 'https://ai.google.dev/gemini-api/docs', models: ['default', 'gemini-2.5-pro', 'gemini-2.5-flash'] },
   { id: 'pi', bin: 'pi', label: 'Pi', login: [], docs: 'https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent', models: ['default'] },
   { id: 'kimi', bin: 'kimi', label: 'Kimi Code', login: ['login'], docs: 'https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html', models: ['default'] },
   { id: 'kilo', bin: 'kilo', label: 'Kilo', login: ['auth', 'login'], docs: 'https://kilo.ai/docs/code-with-ai/platforms/cli', models: ['default'] },

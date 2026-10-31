@@ -1,8 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import express from 'express';
+import { z } from 'zod';
 import type { SessionLogger } from '../session-log.js';
+import { sanitizeUntrusted } from '../untrusted.js';
 import type { OfficeRuntime } from './contracts.js';
 import { mountStateRoutes } from './api/state.js';
 import { mountOperationsRoutes } from './api/operations.js';
@@ -14,6 +16,8 @@ import { mountGrokRoutes } from './api/grok.js';
 import type { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
 import { mountResearchRoutesV2, type ResearchRouteDeps } from './api/research.js';
+import { mountWalletRoutes, type WalletRouteDeps } from './api/wallet.js';
+import { mountLocalAgentsRoutes } from './api/local-agents.js';
 
 export interface ReplacementAppOptions {
   instanceId?: string;
@@ -24,11 +28,41 @@ export interface ReplacementAppOptions {
   chatService?: ChatService;
   historyService?: HistoryService;
   setupDeps?: SetupApiDeps;
+  walletDeps?: WalletRouteDeps;
   grokBridge?: GrokBridge;
   grokKeyRegistry?: KeyRegistry;
   researchDeps?: ResearchRouteDeps;
   mountAdditionalRoutes?: (app: express.Express, runtime: OfficeRuntime) => void;
 }
+
+const sameSecret = (given: string, want: string): boolean => {
+  const a = Buffer.from(given);
+  const b = Buffer.from(want);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
+
+function createRateLimiter(max: number, windowMs: number) {
+  const hits = new Map<string, { count: number; at: number }>();
+  return (key: string): boolean => {
+    const now = Date.now();
+    const h = hits.get(key);
+    if (!h || now - h.at > windowMs) {
+      hits.set(key, { count: 1, at: now });
+      return true;
+    }
+    if (h.count >= max) return false;
+    h.count += 1;
+    return true;
+  };
+}
+
+const TradingViewSchema = z.object({
+  passphrase: z.string().max(200),
+  symbol: z.string().min(2).max(40),
+  action: z.string().max(20),
+  price: z.union([z.number(), z.string()]).optional(),
+  note: z.string().max(500).optional()
+});
 
 export function createReplacementApp(
   runtime: OfficeRuntime,
@@ -50,6 +84,17 @@ export function createReplacementApp(
 
   if (options.setupDeps) {
     mountSetupApiRoutes(app, options.setupDeps);
+    mountLocalAgentsRoutes(app, options.setupDeps);
+  }
+
+  const walletDeps =
+    options.walletDeps ??
+    (options.setupDeps
+      ? { settings: options.setupDeps.settings, secrets: options.setupDeps.secrets }
+      : undefined);
+
+  if (walletDeps) {
+    mountWalletRoutes(app, walletDeps);
   }
 
   if (options.grokBridge && options.grokKeyRegistry) {
@@ -69,6 +114,60 @@ export function createReplacementApp(
   const historyService = options.historyService ?? new HistoryService();
   mountHistoryRoutes(app, historyService, runtime);
 
+  const tvLimit = createRateLimiter(1, 60_000);
+  app.post('/api/tradingview', async (req, res) => {
+    const expectedPass =
+      options.setupDeps?.secrets.getSecret('TRADINGVIEW_PASSPHRASE') ??
+      process.env.TRADINGVIEW_PASSPHRASE;
+    const tvEnabled =
+      options.setupDeps?.settings.current().effective.preferences.tradingviewWebhook ??
+      Boolean(expectedPass);
+
+    if (!tvEnabled || !expectedPass) {
+      res.status(404).json({
+        ok: false,
+        error: 'TradingView webhook is off (set TRADINGVIEW_PASSPHRASE)'
+      });
+      return;
+    }
+
+    const parsed = TradingViewSchema.safeParse(req.body);
+    if (!parsed.success || !sameSecret(parsed.data.passphrase, expectedPass)) {
+      res.status(401).json({ ok: false, error: 'bad request or passphrase' });
+      return;
+    }
+
+    const rawSym = parsed.data.symbol
+      .replace(/^[A-Z0-9]+:/i, '')
+      .replace(/\.P$/i, '')
+      .trim()
+      .toUpperCase();
+    if (rawSym.length < 2) {
+      res.status(400).json({ ok: false, error: 'unknown symbol' });
+      return;
+    }
+
+    if (!tvLimit(rawSym)) {
+      res.status(429).json({ ok: false, error: 'one alert per symbol per minute' });
+      return;
+    }
+
+    const price = Number(parsed.data.price);
+    const action = sanitizeUntrusted(parsed.data.action, 20).text.toLowerCase();
+    const note = sanitizeUntrusted(parsed.data.note ?? '', 300).text;
+
+    void runtime.triggerCycle?.(rawSym, 'signal')?.catch(console.error);
+
+    res.json({
+      ok: true,
+      symbol: rawSym,
+      action,
+      price: Number.isFinite(price) && price > 0 ? price : null,
+      note,
+      at: Date.now()
+    });
+  });
+
   options.mountAdditionalRoutes?.(app, runtime);
 
   app.use('/api', (_req, res) => {
@@ -80,9 +179,8 @@ export function createReplacementApp(
     });
   });
 
-  const webRoot = options.staticWebDir === undefined
-    ? path.resolve('dist/web')
-    : options.staticWebDir;
+  const webRoot =
+    options.staticWebDir === undefined ? path.resolve('dist/web') : options.staticWebDir;
 
   if (webRoot && existsSync(webRoot)) {
     app.use(express.static(webRoot));

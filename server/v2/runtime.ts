@@ -297,6 +297,17 @@ export function createReplacementRuntime(
     };
   }
 
+  const tvWidget = ['1', 'on', 'yes', 'true'].includes((env.TRADINGVIEW_WIDGET ?? '').trim().toLowerCase());
+  const tvPass = (env.TRADINGVIEW_PASSPHRASE ?? '').trim();
+  const tvWebhook = ['1', 'on', 'yes', 'true'].includes((env.TRADINGVIEW_WEBHOOK ?? '').trim().toLowerCase()) || Boolean(tvPass);
+  const rawTvPrefix = (env.TRADINGVIEW_EXCHANGE_PREFIX ?? env.TRADINGVIEW_PREFIX ?? 'BYBIT').trim();
+  const tvPrefix = rawTvPrefix.replace(/:+$/, '') || 'BYBIT';
+  state.tradingview = {
+    widget: tvWidget,
+    prefix: tvPrefix,
+    webhook: tvWebhook
+  };
+
   const snapshot = (): OfficeState => structuredClone(state);
 
   const updateState = (mutator: (draft: OfficeState) => OfficeState | void): OfficeState => {
@@ -598,61 +609,108 @@ export function createReplacementRuntime(
         };
 
         if (isApproved && out.verdict.thesis) {
-          if (currentSnap.paper.positions.length < currentSnap.paper.n) {
-            const entryPrice = Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
-            const stopPrice = Number(out.verdict.thesis.stop);
-            const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : null;
-            const leverage = currentSnap.paper.maxLeverage || 5;
-            const perOrder = currentSnap.paper.perOrder || 50;
-            const margin = Math.round(perOrder * 100) / 100;
-            const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
-            const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
-            const positionId = `pos-${Date.now()}-${targetSymbol}`;
+          const entryPrice = Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
+          const stopPrice = Number(out.verdict.thesis.stop);
+          const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : null;
+          const leverage = currentSnap.paper.maxLeverage || 5;
+          const perOrder = currentSnap.paper.perOrder || 50;
+          const margin = Math.round(perOrder * 100) / 100;
+          const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
+          const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
 
-            verdictRecord.executed = true;
-            verdictRecord.order = {
-              positionId,
-              status: 'filled',
-              side,
-              qty,
-              entry: entryPrice,
-              stop: stopPrice,
-              tp: tpPrice,
-              margin,
-              leverage
-            };
+          if (currentSnap.mode === 'PAPER') {
+            if (currentSnap.paper.positions.length < currentSnap.paper.n) {
+              const positionId = `pos-${Date.now()}-${targetSymbol}`;
 
-            const newPos: Position = {
-              id: positionId,
-              symbol: targetSymbol,
-              side,
-              qty,
-              entry: entryPrice,
-              stop: stopPrice,
-              tp: tpPrice,
-              margin,
-              leverage,
-              openedAt: Date.now(),
-              mark: entryPrice,
-              unrealizedPnl: 0,
-              protectionStatus: 'confirmed',
-              entryStatus: 'confirmed'
-            };
+              verdictRecord.executed = true;
+              verdictRecord.order = {
+                positionId,
+                status: 'filled',
+                side,
+                qty,
+                entry: entryPrice,
+                stop: stopPrice,
+                tp: tpPrice,
+                margin,
+                leverage
+              };
 
-            updateState((draft) => {
-              draft.paper.positions.push(newPos);
-              draft.paper.usedMargin += margin;
-              draft.paper.canOpen = draft.paper.positions.length < draft.paper.n;
-            });
+              const newPos: Position = {
+                id: positionId,
+                symbol: targetSymbol,
+                side,
+                qty,
+                entry: entryPrice,
+                stop: stopPrice,
+                tp: tpPrice,
+                margin,
+                leverage,
+                openedAt: Date.now(),
+                mark: entryPrice,
+                unrealizedPnl: 0,
+                protectionStatus: 'confirmed',
+                entryStatus: 'confirmed'
+              };
 
-            hub.emit('log', {
-              at: Date.now(),
-              kind: 'execution',
-              text: `Opened PAPER ${side} ${qty} ${targetSymbol} at ${entryPrice} (SL: ${stopPrice}, TP: ${tpPrice ?? 'none'})`
-            });
+              updateState((draft) => {
+                draft.paper.positions.push(newPos);
+                draft.paper.usedMargin += margin;
+                draft.paper.canOpen = draft.paper.positions.length < draft.paper.n;
+              });
+
+              hub.emit('log', {
+                at: Date.now(),
+                kind: 'execution',
+                text: `Opened PAPER ${side} ${qty} ${targetSymbol} at ${entryPrice} (SL: ${stopPrice}, TP: ${tpPrice ?? 'none'})`
+              });
+            } else {
+              verdictRecord.executed = false;
+              verdictRecord.reason = `Risk gate held: Max open positions (${currentSnap.paper.n}) reached.`;
+            }
           } else {
-            verdictRecord.executed = false;
-            verdictRecord.reason = `Risk gate held: Max open positions (${currentSnap.paper.n}) reached.`;
+            const dispatchRes = await dispatch({
+              kind: 'open',
+              actor: 'system',
+              symbol: targetSymbol,
+              payload: {
+                symbol: targetSymbol,
+                side,
+                qty: String(qty),
+                stop: String(stopPrice),
+                tp: tpPrice ? String(tpPrice) : null,
+                leverage,
+                orderType: 'MARKET'
+              }
+            });
+
+            if (dispatchRes.ok) {
+              verdictRecord.executed = true;
+              const clientOrderId = (dispatchRes.data as any)?.clientOrderId ?? `order-${Date.now()}`;
+              verdictRecord.order = {
+                positionId: clientOrderId,
+                status: 'filled',
+                side,
+                qty,
+                entry: entryPrice,
+                stop: stopPrice,
+                tp: tpPrice,
+                margin,
+                leverage
+              };
+              hub.emit('log', {
+                at: Date.now(),
+                kind: 'execution',
+                text: `Submitted ${currentSnap.mode} ${side} ${qty} ${targetSymbol} (SL: ${stopPrice}, TP: ${tpPrice ?? 'none'}) via ExecutionGateway: ${dispatchRes.message}`
+              });
+            } else {
+              verdictRecord.executed = false;
+              verdictRecord.reason = `ExecutionGateway rejected order: ${dispatchRes.message}`;
+              hub.emit('log', {
+                at: Date.now(),
+                kind: 'execution',
+                text: `${currentSnap.mode} order for ${targetSymbol} rejected by gateway: ${dispatchRes.message}`
+              });
+            }
           }
         }
       } else {
@@ -791,6 +849,22 @@ export function createReplacementRuntime(
     if (cmd.startsWith('close')) {
       const parts = raw.split(/\s+/);
       const target = (parts[1] ?? 'all').toUpperCase();
+      const currentSnap = snapshot();
+
+      if (currentSnap.mode !== 'PAPER') {
+        const dispatchRes = await dispatch({
+          kind: 'close',
+          actor: 'local_owner',
+          symbol: target
+        });
+        return {
+          ok: dispatchRes.ok,
+          command: 'close',
+          reply: dispatchRes.message,
+          error: dispatchRes.ok ? undefined : dispatchRes.message
+        };
+      }
+
       let closedCount = 0;
       updateState((draft) => {
         if (target === 'ALL') {
@@ -1496,7 +1570,24 @@ export async function startReplacementServer(
   });
   runtimeRef = runtime;
 
-  const researchHost = new ResearchHost({});
+  const cryptopanicKey =
+    secrets.getSecret('CRYPTOPANIC_API_KEY') ?? env.CRYPTOPANIC_API_KEY ?? null;
+  const whaleAlertKey =
+    secrets.getSecret('WHALE_ALERT_API_KEY') ?? env.WHALE_ALERT_API_KEY ?? null;
+  const coinmarketcapKey =
+    secrets.getSecret('CMC_API_KEY') ??
+    secrets.getSecret('COINMARKETCAP_API_KEY') ??
+    env.CMC_API_KEY ??
+    env.COINMARKETCAP_API_KEY ??
+    null;
+
+  const researchHost = new ResearchHost({
+    optionalSources: {
+      cryptopanicKey,
+      whaleAlertKey,
+      coinmarketcapKey
+    }
+  });
 
   const grokKey = secrets.getSecret('AGENT_EVENT_SECRET');
   const grokRegistry: KeyRegistry = {

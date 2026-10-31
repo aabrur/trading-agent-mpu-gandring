@@ -77,10 +77,11 @@ export class SecretStore {
     envFile?: string | null;
     allowWrite?: boolean;
     initialOverrides?: Record<string, string>;
+    initialSecrets?: Record<string, string>;
   } = {}) {
     this.envFile = options.envFile === undefined ? null : options.envFile;
     this.allowWrite = options.allowWrite ?? false;
-    this.memoryOverrides = { ...(options.initialOverrides ?? {}) };
+    this.memoryOverrides = { ...(options.initialOverrides ?? options.initialSecrets ?? {}) };
     this.captureBaselineHash();
     this.registerKnownSecrets();
   }
