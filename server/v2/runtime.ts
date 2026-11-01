@@ -206,6 +206,7 @@ export interface ReplacementRuntimeHandle extends OfficeRuntime {
     on?: boolean;
     intervalMin?: number;
     maxHoldHours?: number;
+    reportIntervalMin?: number;
     symbols?: string[];
     debateMode?: 'normal' | 'fast';
     n?: number;
@@ -490,6 +491,7 @@ export function createReplacementRuntime(
     on?: boolean;
     intervalMin?: number;
     maxHoldHours?: number;
+    reportIntervalMin?: number;
     symbols?: string[];
     debateMode?: 'normal' | 'fast';
     n?: number;
@@ -498,6 +500,7 @@ export function createReplacementRuntime(
       if (patch.on !== undefined) draft.auto.on = patch.on;
       if (patch.intervalMin !== undefined) draft.auto.intervalMin = patch.intervalMin;
       if (patch.maxHoldHours !== undefined) draft.auto.maxHoldHours = patch.maxHoldHours;
+      if (patch.reportIntervalMin !== undefined) draft.reportIntervalMin = patch.reportIntervalMin;
       if (patch.symbols !== undefined && patch.symbols.length > 0) {
         draft.auto.symbols = patch.symbols;
         draft.watchlist = [...new Set([...draft.watchlist, ...patch.symbols])];
@@ -541,7 +544,7 @@ export function createReplacementRuntime(
         auto: {
           on: patch.on ?? cur.effective.auto.on,
           intervalMin: patch.intervalMin ?? cur.effective.auto.intervalMin,
-          reportIntervalMin: cur.effective.auto.reportIntervalMin,
+          reportIntervalMin: patch.reportIntervalMin ?? cur.effective.auto.reportIntervalMin,
           maxHoldHours: patch.maxHoldHours ?? cur.effective.auto.maxHoldHours
         },
         watchlist: patch.symbols && patch.symbols.length > 0 ? [...new Set([...cur.effective.watchlist, ...patch.symbols])] : cur.effective.watchlist,
@@ -556,6 +559,7 @@ export function createReplacementRuntime(
       const updates: Record<string, string> = {};
       if (patch.on !== undefined) updates.AUTO_TRADING = patch.on ? 'on' : 'off';
       if (patch.intervalMin !== undefined) updates.DEBATE_INTERVAL_MIN = String(patch.intervalMin);
+      if (patch.reportIntervalMin !== undefined) updates.REPORT_INTERVAL_MIN = String(patch.reportIntervalMin);
       if (patch.n !== undefined) {
         updates.OPEN_ORDERS_N = String(patch.n);
         updates.MAINNET_DESK_OPEN_ORDERS_N = String(patch.n);
@@ -973,6 +977,29 @@ export function createReplacementRuntime(
     }
   };
 
+  const extractCleanAgentReply = (raw: string): string => {
+    if (!raw) return '';
+    const trimmed = raw.trim();
+    let candidate = trimmed;
+    if (candidate.startsWith('```')) {
+      candidate = candidate.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    }
+    if (candidate.startsWith('{') && candidate.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (parsed && typeof parsed === 'object') {
+          if (typeof parsed.reply === 'string' && parsed.reply) return parsed.reply;
+          if (typeof parsed.text === 'string' && parsed.text) return parsed.text;
+          if (typeof parsed.message === 'string' && parsed.message) return parsed.message;
+          if (typeof parsed.content === 'string' && parsed.content) return parsed.content;
+        }
+      } catch {
+        // Fall back to raw string if JSON parsing fails
+      }
+    }
+    return raw;
+  };
+
   const handleCommand = async (input: {
     text: string;
     agent?: string;
@@ -996,7 +1023,7 @@ export function createReplacementRuntime(
           prompt,
           configVersion: options.settings?.current().activeVersion ?? 1
         });
-        return { role, answer: String(answer) };
+        return { role, answer: extractCleanAgentReply(String(answer)) };
       }));
       const results = outcomes.flatMap((item) => item.status === 'fulfilled' ? [item.value] : []);
       const failures = outcomes.length - results.length;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentId, DeskState } from '../types';
 import { Bot } from './Bot';
+import { FormattedText } from '../formatText';
 import { officeFetch } from '../officeApi';
 import type { ChatLine } from '../types';
 import { useI18n } from '../i18n';
@@ -149,7 +150,7 @@ export function AgentPanel({ state, id, onClose, command, conversationId, onNewC
           {selected && <p className="muted">{lang === 'id' ? 'Arsip hanya baca' : 'Read-only archive'}</p>}
           {chat.length === 0 && <p className="muted">{t('apSaySomething')}</p>}
           {chat.map(c => <div key={c.id} className={`msg ${c.from === 'user' ? 'me' : 'them'}`}>
-            <span>{c.text}</span>
+            <span><FormattedText text={c.text} /></span>
             <small><time dateTime={new Date(c.at).toISOString()}>{new Date(c.at).toLocaleTimeString()}</time>{c.from !== 'user' && c.status && c.status !== 'completed' ? `, ${c.status}` : ''}</small>
           </div>)}
           {selected && nextOffset !== null && <button disabled={historyBusy} onClick={() => void openArchive(selected, nextOffset)}>{lang === 'id' ? 'Muat lagi' : 'Load more'}</button>}

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import type { DeskState, Speech } from '../types';
 import { useI18n } from '../i18n';
 import { discussionMessages } from '../discussion';
+import { FormattedText } from '../formatText';
 
 export function OfficeDiscussion({
   state,
@@ -118,7 +119,7 @@ export function OfficeDiscussion({
             return (
               <button key={msg.id} onClick={() => targetAgent && onSelect(targetAgent)}>
                 <b>{fromName}{toName ? ` -> ${toName}` : ''}</b>
-                <span>{msg.text}</span>
+                <span><FormattedText text={msg.text} /></span>
                 {msg.example && <small>EXAMPLE</small>}
               </button>
             );

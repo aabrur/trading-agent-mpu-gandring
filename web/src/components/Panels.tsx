@@ -11,6 +11,7 @@ import type { UpdateInfo } from './UpdateModal';
 import { WalletMenu } from './WalletMenu';
 import { activityEntries, activityForView, activityParticipants, filterActivity, type ActivityFilter, type ActivityView } from '../activityLog';
 import { SessionLogs } from './SessionLogs';
+import { FormattedText } from '../formatText';
 export { fmt, fmtPx };
 
 const SHORT: Record<AgentId, string> = { lead: 'Lead', market: 'Market', research: 'Research', strategist: 'Strategist', risk: 'Risk', execution: 'Exec' };
@@ -973,7 +974,7 @@ export function TradeLog({ state, active = true, view = 'log' }: { state: DeskSt
             {l.from ? <b>{activityParticipants(l, state.agents)}</b> : l.agent && <b style={{ color: state.agents[l.agent]?.color }}>{state.agents[l.agent]?.name}</b>}
             {l.status && <small>{l.status}</small>}
             {'durationMs' in l && l.durationMs !== undefined && <small>{l.durationMs}ms</small>}
-            <span>{l.text}</span>
+            <span><FormattedText text={l.text} /></span>
           </div>
         ))}
         </div>

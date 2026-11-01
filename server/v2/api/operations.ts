@@ -36,6 +36,7 @@ const autoBodySchema = z.object({
   runNow: z.boolean().optional(),
   intervalMin: z.number().int().min(1).max(1440).optional(),
   maxHoldHours: z.number().int().min(0).max(720).optional(),
+  reportIntervalMin: z.number().int().min(1).max(1440).optional(),
   symbols: z.array(z.string()).optional(),
   symbolsOverride: z.array(z.string()).optional(),
   n: z.number().int().min(1).max(4).optional(),
@@ -265,6 +266,7 @@ export function mountOperationsRoutes(
       parsed.data.on !== undefined ||
       parsed.data.intervalMin !== undefined ||
       parsed.data.maxHoldHours !== undefined ||
+      parsed.data.reportIntervalMin !== undefined ||
       parsed.data.symbols !== undefined ||
       parsed.data.debateMode !== undefined ||
       parsed.data.n !== undefined
@@ -281,6 +283,7 @@ export function mountOperationsRoutes(
         on: state.auto.on,
         intervalMin: state.auto.intervalMin,
         maxHoldHours: state.auto.maxHoldHours,
+        reportIntervalMin: state.reportIntervalMin ?? 60,
         symbols: state.auto.symbols
       },
       autoTrading: {

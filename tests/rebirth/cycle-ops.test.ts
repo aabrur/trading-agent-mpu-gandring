@@ -121,4 +121,58 @@ describe('Cycle Ops and Command Integration Verification', () => {
       expect(runtime.snapshot().paper.closed.length).toBe(1);
     });
   });
+
+  it('ops_auto_accepts_and_persists_report_interval', async () => {
+    await withTestApp(async (baseUrl, runtime) => {
+      const res = await fetch(`${baseUrl}/api/ops/auto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intervalMin: 25, maxHoldHours: 3, reportIntervalMin: 45 })
+      });
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as Record<string, any>;
+      expect(data.ok).toBe(true);
+      expect(data.auto.reportIntervalMin).toBe(45);
+      expect(data.auto.intervalMin).toBe(25);
+      expect(data.auto.maxHoldHours).toBe(3);
+
+      const state = runtime.snapshot();
+      expect(state.reportIntervalMin).toBe(45);
+      expect(state.auto.intervalMin).toBe(25);
+      expect(state.auto.maxHoldHours).toBe(3);
+    });
+  });
+
+  it('command_chat_unwraps_raw_json_into_clean_reply', async () => {
+    const roleRunner = new RoleRunner({
+      providerCaller: async () =>
+        JSON.stringify({
+          reply: 'Aman dan terkendali, **Boss**.',
+          confidence: 0.95,
+          claimRefs: [],
+          contraryRefs: []
+        }),
+      resolveAssignment: () => ({
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        apiKey: 'test-key'
+      })
+    });
+    const cycleRunner = new CycleRunner({ roleRunner });
+    const runtime = createReplacementRuntime({ roleRunner, cycleRunner });
+    try {
+      const res = await runtime.handleCommand({
+        text: 'halo lead',
+        agent: 'lead'
+      });
+      expect(res.ok).toBe(true);
+      expect(res.reply).toContain('Aman dan terkendali, **Boss**.');
+      expect(res.reply).not.toContain('{"reply"');
+      const chat = runtime.snapshot().chats.lead;
+      expect(chat?.at(-1)?.text).toBe('Aman dan terkendali, **Boss**.');
+    } finally {
+      await runtime.stop();
+    }
+  });
 });
