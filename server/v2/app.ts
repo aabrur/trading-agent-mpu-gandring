@@ -4,6 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import { z } from 'zod';
 import type { SessionLogger } from '../session-log.js';
+import { safe } from '../redact.js';
 import { sanitizeUntrusted } from '../untrusted.js';
 import type { OfficeRuntime } from './contracts.js';
 import { mountStateRoutes } from './api/state.js';
@@ -73,7 +74,14 @@ export function createReplacementApp(
   const instanceId = options.instanceId ?? randomUUID();
 
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '256kb' }));
+  app.use(
+    express.json({
+      limit: '256kb',
+      verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => {
+        req.rawBody = Buffer.from(buf);
+      }
+    })
+  );
 
   mountStateRoutes(app, runtime, {
     instanceId,
@@ -82,6 +90,79 @@ export function createReplacementApp(
   });
 
   mountOperationsRoutes(app, runtime);
+
+  app.post('/api/channels/discord', async (req: express.Request & { rawBody?: Buffer }, res) => {
+    const pubKey = (process.env.DISCORD_PUBLIC_KEY ?? '').trim();
+    if (!pubKey) {
+      res.status(404).json({ error: 'Discord commands are off (set DISCORD_PUBLIC_KEY)' });
+      return;
+    }
+    const ts = req.get('X-Signature-Timestamp');
+    const sig = req.get('X-Signature-Ed25519');
+    const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
+
+    const { verifyDiscord } = await import('./channels.js');
+    if (!verifyDiscord(pubKey, rawBody, ts, sig)) {
+      res.status(401).json({ error: 'invalid request signature' });
+      return;
+    }
+
+    const b = req.body as { type?: number; member?: { user?: { id?: string } }; user?: { id?: string }; data?: any };
+    if (b.type === 1) {
+      res.json({ type: 1 });
+      return;
+    }
+
+    if (b.type === 2) {
+      const userId = b.member?.user?.id ?? b.user?.id;
+      const allowed = (process.env.DISCORD_ALLOWED_USER_IDS ?? '').split(/[\s,]+/).filter(Boolean);
+      if (!userId || !allowed.includes(userId)) {
+        res.json({
+          type: 4,
+          data: {
+            content: 'You are not on this desk\'s allowlist.',
+            flags: 64,
+            allowed_mentions: { parse: [] }
+          }
+        });
+        return;
+      }
+
+      const commandsEnabled = /^on$/i.test((process.env.CHANNEL_COMMANDS ?? '').trim());
+      if (!commandsEnabled) {
+        res.json({
+          type: 4,
+          data: {
+            content: 'Chat commands are off on this desk (CHANNEL_COMMANDS=off).',
+            flags: 64,
+            allowed_mentions: { parse: [] }
+          }
+        });
+        return;
+      }
+
+      const { discordCommandText } = await import('./channels.js');
+      const text = discordCommandText(b.data);
+      const cmdRes = runtime.handleCommand
+        ? await runtime.handleCommand({
+            text,
+            conversationId: 'discord'
+          })
+        : { ok: false, error: 'Command service unavailable.' };
+      const reply = cmdRes.reply ?? cmdRes.error ?? 'Command executed.';
+      res.json({
+        type: 4,
+        data: {
+          content: safe(reply).slice(0, 1990),
+          flags: 64,
+          allowed_mentions: { parse: [] }
+        }
+      });
+      return;
+    }
+
+    res.status(400).json({ error: 'Unsupported interaction type' });
+  });
 
   if (options.setupDeps) {
     mountSetupApiRoutes(app, options.setupDeps);

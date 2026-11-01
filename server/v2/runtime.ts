@@ -60,6 +60,8 @@ import {
 import { ResearchHost } from './research/host.js';
 import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
+import { HELP_TEXT, DiscordGateway } from './channels.js';
+import { formatDeskReportText } from './reports.js';
 
 export class StartupValidationError extends Error {
   constructor(message: string, public readonly exitCode = 2) {
@@ -1094,6 +1096,123 @@ export function createReplacementRuntime(
       };
     }
 
+    if (cmd === 'help') {
+      return { ok: true, command: 'help', reply: HELP_TEXT };
+    }
+
+    if (cmd === 'report' || cmd.startsWith('report')) {
+      const snap = snapshot();
+      const latestReport = snap.reports?.[0]?.text;
+      if (latestReport) {
+        return { ok: true, command: 'report', reply: latestReport };
+      }
+      const generated = formatDeskReportText({
+        at: Date.now(),
+        mode: snap.mode,
+        venue: snap.venue?.name ?? null,
+        killed: snap.killed,
+        equity: snap.financial.equity.value,
+        balance: snap.financial.balance.value,
+        safetyNet: snap.paper.safetyNet,
+        moneyTrade: snap.paper.moneyTrade,
+        dailyLossHit: snap.dailyLoss?.hit ?? false,
+        dailyLossLimitPct: snap.dailyLoss?.limitPct ?? 10,
+        positions: (snap.paper.positions ?? []) as any[],
+        autoOn: snap.auto.on,
+        autoIntervalMin: snap.auto.intervalMin
+      });
+      return { ok: true, command: 'report', reply: generated };
+    }
+
+    if (cmd === 'positions') {
+      const snap = snapshot();
+      const ps = snap.paper.positions ?? [];
+      const header = `Positions (${ps.length}):`;
+      if (!ps.length) {
+        return { ok: true, command: 'positions', reply: `${header}\n  none` };
+      }
+      const lines = ps.map((p, i) => [
+        `${i + 1}. ${p.symbol} ${p.side} ${p.leverage}x`,
+        `Qty: ${p.qty} | Margin: ${Number(p.margin ?? 0).toFixed(2)} USDT`,
+        `Entry: ${p.entry} | Mark: ${p.mark}`,
+        `SL: ${p.stop ? p.stop : 'NONE (alert)'} | TP: ${p.tp ?? 'Not set'}`,
+        `Protection: ${p.protectionStatus === 'confirmed' ? 'Confirmed at exchange' : 'Local or unverified'}`,
+        `Unrealized PnL: ${Number(p.unrealizedPnl ?? 0) >= 0 ? '+' : ''}${Number(p.unrealizedPnl ?? 0).toFixed(2)} USDT`
+      ].join('\n'));
+      return { ok: true, command: 'positions', reply: safe([header, ...lines].join('\n\n')) };
+    }
+
+    if (cmd === 'scan') {
+      const snap = snapshot();
+      const ps = snap.paper.positions ?? [];
+      const unprot = ps.filter(p => !p.stop || p.stop <= 0);
+      const findings: string[] = [];
+      if (unprot.length > 0) {
+        findings.push(`ALERTS: ${unprot.length} position(s) missing stop loss!`);
+      }
+      if (snap.killed) {
+        findings.push('ALERTS: Kill switch is currently engaged.');
+      }
+      return {
+        ok: true,
+        command: 'scan',
+        reply: safe([
+          'Proactive scan status:',
+          findings.length === 0 ? 'All positions healthy and protected.' : findings.join('\n')
+        ].join('\n'))
+      };
+    }
+
+    if (cmd === 'watchlist' || cmd === 'tokens') {
+      const snap = snapshot();
+      return {
+        ok: true,
+        command: 'watchlist',
+        reply: `Watchlist (${snap.watchlist.length} symbols, auto every ${snap.auto.intervalMin}m):\n${snap.watchlist.join(', ')}`
+      };
+    }
+
+    if (cmd === 'scorecard' || cmd === 'scores') {
+      const snap = snapshot();
+      const sc = snap.scorecard ?? [];
+      const header = 'Employee Scorecard:';
+      if (!sc.length) {
+        return { ok: true, command: 'scorecard', reply: `${header}\nNo settled decisions recorded yet.` };
+      }
+      const lines = sc.map(r => `${r.name}: Calls ${r.calls}, Right ${r.right}, Wrong ${r.wrong} (${r.note})`);
+      return { ok: true, command: 'scorecard', reply: [header, ...lines].join('\n') };
+    }
+
+    if (cmd === 'lessons' || cmd === 'learnings') {
+      const snap = snapshot();
+      const ls = snap.lessons ?? [];
+      if (!ls.length) {
+        return { ok: true, command: 'lessons', reply: 'No lessons recorded yet.' };
+      }
+      return {
+        ok: true,
+        command: 'lessons',
+        reply: `Recent Lessons:\n${ls.slice(-5).map(l => `[${l.role}] ${l.lesson}`).join('\n')}`
+      };
+    }
+
+    if (cmd === 'kill' || cmd.startsWith('kill')) {
+      const confirm = /confirm|yes/i.test(raw);
+      if (!confirm) {
+        return {
+          ok: true,
+          command: 'kill',
+          reply: 'This flattens every position and stops the desk until the local Owner releases it with the Office OFF button or npm run unkill -- --yes. Send "/kill confirm" to do it.'
+        };
+      }
+      const res = await dispatch({ kind: 'kill', actor: 'owner_channel' });
+      return {
+        ok: res.ok,
+        command: 'kill',
+        reply: safe(`KILL SWITCH ON. ${res.message}. Release only on the desk computer: the local Office OFF button or npm run unkill -- --yes.`)
+      };
+    }
+
     if (cmd === 'pause') {
       updateState((d) => { d.paused = true; });
       return { ok: true, command: 'pause', reply: 'Desk paused.' };
@@ -2078,6 +2197,49 @@ export async function startReplacementServer(
     runtime.updateAutoSettings({ on: true, intervalMin });
   }
 
+  // Start Discord Gateway if configured for bot interactions
+  let discordGateway: any = null;
+  const dcBot = (env.DISCORD_BOT_TOKEN ?? '').trim();
+  const dcDelivery = (env.DISCORD_DELIVERY ?? 'gateway').trim().toLowerCase();
+  const commandsEnabled = /^on$/i.test((env.CHANNEL_COMMANDS ?? '').trim());
+
+  if (dcBot && (dcDelivery === 'gateway' || !env.DISCORD_DELIVERY)) {
+    try {
+      const channelCfg = () => ({
+        commands: commandsEnabled,
+        discord: {
+          botToken: dcBot,
+          channelId: (env.DISCORD_CHANNEL_ID ?? '').trim() || undefined,
+          guildId: (env.DISCORD_GUILD_ID ?? '').trim() || undefined,
+          applicationId: (env.DISCORD_APPLICATION_ID ?? '').trim() || undefined,
+          allowed: (env.DISCORD_ALLOWED_USER_IDS ?? '').split(/[\s,]+/).filter(Boolean),
+          commands: commandsEnabled
+        }
+      });
+      discordGateway = new DiscordGateway(
+        channelCfg as any,
+        fetch,
+        async (commandText: string, actor: string) => {
+          if (!commandsEnabled) {
+            return 'Chat commands are off on this desk (CHANNEL_COMMANDS=off).';
+          }
+          const res = await runtime.handleCommand({
+            text: commandText,
+            conversationId: 'discord'
+          });
+          return res.reply ?? res.error ?? 'Command executed.';
+        },
+        () => {
+          void runtime.dispatch({ kind: 'kill', actor: 'owner_channel' });
+        }
+      );
+      discordGateway.start();
+      log(`[channels:discord] Gateway client started (commands: ${commandsEnabled ? 'on' : 'off'})`);
+    } catch (err) {
+      console.error(`[channels:discord] Failed to start Gateway: ${(err as Error).message}`);
+    }
+  }
+
   let syncTimer: NodeJS.Timeout | null = null;
   if (startup.tradingMode !== 'PAPER') {
     const syncVenueAccount = async () => {
@@ -2128,6 +2290,10 @@ export async function startReplacementServer(
   }
 
   const shutdown = () => {
+    if (discordGateway) {
+      try { discordGateway.stop(); } catch {}
+      discordGateway = null;
+    }
     if (syncTimer) clearInterval(syncTimer);
     wss.close();
     server.closeAllConnections();

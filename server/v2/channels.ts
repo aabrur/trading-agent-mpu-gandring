@@ -1,6 +1,8 @@
 import { safe } from '../redact.js';
 import { z } from 'zod';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createPublicKey, timingSafeEqual, verify as edVerify } from 'node:crypto';
+import WebSocket from 'ws';
 
 export interface TelegramChannelConfig {
   enabled: boolean;
@@ -721,5 +723,310 @@ export class ChannelSupervisor {
       return challenge;
     }
     return null;
+  }
+}
+
+export const HELP_TEXT = [
+  'Trading Agent Mpu Gandring Commands:',
+  '• /status: Balance, equity, venue, guards status',
+  '• /positions: Active positions and resting exchange stops',
+  '• /report: Latest performance and execution report',
+  '• /scan: Instant proactive scan for desk alerts',
+  '• /analyze <symbol>: Direct agents to debate & auto-trade (e.g. /analyze BTCUSDT)',
+  '• /ask <question>: Chat with Desk Lead (or /ask <agent> <question>)',
+  '• /set profile <default|balance|profit|aggressive>, /set size <1.5..100>%, /set leverage <1..20>',
+  '• /open long|short <symbol> [size%] [leverage]',
+  '• /close <symbol> or /close all: Execute directly using the active settings',
+  '• /watchlist: Active auto-trading symbols',
+  '• /scorecard: Agent performance & win rate',
+  '• /lessons: Recent self-improving lessons',
+  '• /cautious or /aggressive: Adjust agent risk appetite',
+  '• /kill: Emergency stop (send "kill confirm" to flatten all positions)'
+].join('\n');
+
+const DISCORD_API = 'https://discord.com/api/v10';
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+export function verifyDiscord(
+  publicKeyHex: string,
+  raw: Buffer | string,
+  ts: string | undefined,
+  sigHex: string | undefined,
+  nowS = Math.floor(Date.now() / 1000)
+): boolean {
+  try {
+    if (!/^[0-9a-f]{64}$/i.test(publicKeyHex) || !ts || !sigHex || !/^[0-9a-f]{128}$/i.test(sigHex)) return false;
+    if (!/^\d{1,12}$/.test(ts) || Math.abs(nowS - Number(ts)) > 300) return false;
+    const key = createPublicKey({
+      key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(publicKeyHex, 'hex')]),
+      format: 'der',
+      type: 'spki'
+    });
+    return edVerify(
+      null,
+      Buffer.concat([Buffer.from(ts, 'utf8'), Buffer.isBuffer(raw) ? raw : Buffer.from(raw, 'utf8')]),
+      key,
+      Buffer.from(sigHex, 'hex')
+    );
+  } catch {
+    return false;
+  }
+}
+
+export interface DiscordOption {
+  name?: string;
+  type?: number;
+  value?: unknown;
+  options?: DiscordOption[];
+}
+
+export interface DiscordInteraction {
+  id?: string;
+  token?: string;
+  application_id?: string;
+  type?: number;
+  guild_id?: string;
+  channel_id?: string;
+  member?: { user?: { id?: string } };
+  user?: { id?: string };
+  data?: { name?: string; options?: DiscordOption[] };
+}
+
+export function discordCommandText(data: DiscordInteraction['data']): string {
+  if (!data?.name) return 'help';
+  const cmd = data.name.toLowerCase();
+  const group = (data.options ?? []).find((o) => o.options && o.options.length > 0);
+  if (group && group.name) {
+    return discordCommandText({ name: group.name, options: group.options });
+  }
+  return [
+    cmd,
+    ...(data.options ?? []).flatMap((o) =>
+      o.options
+        ? [discordCommandText({ name: o.name, options: o.options })]
+        : o.value !== undefined
+        ? [String(o.value)]
+        : []
+    )
+  ]
+    .join(' ')
+    .trim();
+}
+
+export class DiscordGateway {
+  private socket: WebSocket | null = null;
+  private heartbeat: NodeJS.Timeout | null = null;
+  private retry: NodeJS.Timeout | null = null;
+  private stopped = true;
+  private sequence: number | null = null;
+  private session: string | null = null;
+  private resumeUrl = 'wss://gateway.discord.gg';
+  private acknowledged = true;
+  private seen = new Map<string, number>();
+  status = 'disconnected';
+
+  constructor(
+    private config: () => {
+      commands?: boolean;
+      discord?: {
+        botToken?: string;
+        channelId?: string;
+        guildId?: string;
+        applicationId?: string;
+        allowed?: string[];
+        ownerUserIds?: string[];
+      };
+    },
+    private fetchImpl: typeof fetch = fetch,
+    private executeCommand?: (cmdText: string, actor: string) => Promise<string>,
+    private onKill?: () => void
+  ) {}
+
+  start() {
+    this.stopped = false;
+    this.connect();
+  }
+
+  stop() {
+    this.stopped = true;
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.retry) clearTimeout(this.retry);
+    this.socket?.close();
+    this.socket = null;
+    this.status = 'disconnected';
+  }
+
+  private connect() {
+    if (this.stopped) return;
+    this.status = 'connecting';
+    const socket = new WebSocket(`${this.resumeUrl}/?v=10&encoding=json`);
+    this.socket = socket;
+    const send = (value: unknown) => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value));
+    };
+
+    socket.on('message', (raw) => {
+      try {
+        const packet = JSON.parse(raw.toString()) as {
+          op: number;
+          s?: number;
+          t?: string;
+          d: Record<string, unknown>;
+        };
+        if (typeof packet.s === 'number') this.sequence = packet.s;
+        if (packet.op === 10) {
+          const interval = Number(packet.d.heartbeat_interval);
+          if (!Number.isFinite(interval) || interval < 1000) {
+            socket.close();
+            return;
+          }
+          if (this.heartbeat) clearInterval(this.heartbeat);
+          this.acknowledged = true;
+          this.heartbeat = setInterval(() => {
+            if (!this.acknowledged) {
+              socket.terminate();
+              return;
+            }
+            this.acknowledged = false;
+            send({ op: 1, d: this.sequence });
+          }, interval);
+          this.heartbeat.unref();
+
+          const token = this.config().discord?.botToken;
+          if (this.session) {
+            send({ op: 6, d: { token, session_id: this.session, seq: this.sequence } });
+          } else {
+            send({
+              op: 2,
+              d: {
+                token,
+                intents: 1,
+                properties: {
+                  os: process.platform,
+                  browser: 'Trading Agent Mpu Gandring',
+                  device: 'Trading Agent Mpu Gandring'
+                }
+              }
+            });
+          }
+        } else if (packet.op === 11) {
+          this.acknowledged = true;
+        } else if (packet.op === 1) {
+          send({ op: 1, d: this.sequence });
+        } else if (packet.op === 7) {
+          socket.close();
+        } else if (packet.op === 9) {
+          this.session = null;
+          this.sequence = null;
+          socket.close();
+        } else if (packet.t === 'READY') {
+          this.session = String(packet.d.session_id);
+          if (
+            typeof packet.d.resume_gateway_url === 'string' &&
+            /^wss:\/\/[^/]+\.discord\.gg\/?$/.test(packet.d.resume_gateway_url)
+          ) {
+            this.resumeUrl = packet.d.resume_gateway_url.replace(/\/$/, '');
+          }
+          this.status = 'connected';
+        } else if (packet.t === 'RESUMED') {
+          this.status = 'connected';
+        } else if (packet.t === 'INTERACTION_CREATE') {
+          void this.handle(packet.d as DiscordInteraction);
+        }
+      } catch {
+        this.status = 'invalid_packet';
+      }
+    });
+
+    socket.on('error', () => {
+      this.status = 'connection_failed';
+      socket.close();
+    });
+
+    socket.on('close', (code) => {
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      this.status = 'disconnected';
+      if (!this.stopped && ![4004, 4010, 4011, 4013, 4014].includes(code)) {
+        this.retry = setTimeout(() => this.connect(), 5000);
+        this.retry.unref();
+      }
+    });
+  }
+
+  async handle(interaction: DiscordInteraction) {
+    if (interaction.type !== 2 || !interaction.id || !interaction.token || this.seen.has(interaction.id)) return;
+    const now = Date.now();
+    for (const [id, at] of this.seen) if (now - at > 900_000) this.seen.delete(id);
+    this.seen.set(interaction.id, now);
+
+    const c = this.config();
+    const userId = interaction.member?.user?.id ?? interaction.user?.id;
+    const allowed = c.discord?.allowed ?? c.discord?.ownerUserIds ?? [];
+    const commandsOn = c.commands !== false;
+
+    let refusal: string | null = null;
+    if (!commandsOn) {
+      refusal = 'Chat commands are off on this desk (CHANNEL_COMMANDS=off).';
+    } else if (!userId || !allowed.includes(userId)) {
+      refusal = 'You are not on this desk\'s allowlist.';
+    } else if (
+      interaction.guild_id &&
+      ((c.discord?.guildId && interaction.guild_id !== c.discord.guildId) ||
+        (c.discord?.channelId && interaction.channel_id !== c.discord.channelId))
+    ) {
+      refusal = 'Use the configured server and channel.';
+    }
+
+    const appId =
+      interaction.application_id ||
+      c.discord?.applicationId ||
+      (typeof process !== 'undefined' ? process.env?.DISCORD_APPLICATION_ID : undefined);
+
+    try {
+      const response = await this.fetchImpl(
+        `${DISCORD_API}/interactions/${interaction.id}/${interaction.token}/callback`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            refusal
+              ? { type: 4, data: { content: refusal, flags: 64, allowed_mentions: { parse: [] } } }
+              : { type: 5, data: { flags: 64 } }
+          ),
+          signal: AbortSignal.timeout(2500)
+        }
+      );
+      if (!response.ok || refusal) return;
+
+      let content: string;
+      const cmdText = discordCommandText(interaction.data);
+      const actor = `discord:${userId ?? 'unknown'}`;
+      try {
+        if (this.executeCommand) {
+          content = await this.executeCommand(cmdText, actor);
+        } else {
+          content = `Executed: ${cmdText}`;
+        }
+      } catch {
+        content = 'The desk could not complete this command.';
+      }
+
+      if (appId) {
+        await this.fetchImpl(
+          `${DISCORD_API}/webhooks/${appId}/${interaction.token}/messages/@original`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              content: safe(content).slice(0, 1990),
+              allowed_mentions: { parse: [] }
+            }),
+            signal: AbortSignal.timeout(8000)
+          }
+        );
+      }
+    } catch {
+      this.status = 'interaction_failed';
+    }
   }
 }

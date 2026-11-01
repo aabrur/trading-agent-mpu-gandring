@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ChannelSupervisor,
   type InboundChannelMessage,
-  type ChannelConfig
+  type ChannelConfig,
+  DiscordGateway
 } from '../../server/v2/channels.js';
 
 describe('T14 Channels and Supervisor Operations Verification', () => {
@@ -111,5 +112,73 @@ describe('T14 Channels and Supervisor Operations Verification', () => {
       'challenge_code_98765'
     );
     expect(badChallenge).toBeNull();
+  });
+
+  it('discord_gateway_interaction_handling: enforces allowlist and handles interactions', async () => {
+    const fetchCalls: Array<{ url: string; method: string; body: any }> = [];
+    const mockFetch = async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      fetchCalls.push({
+        url: String(url),
+        method: init?.method ?? 'GET',
+        body: init?.body ? JSON.parse(String(init.body)) : null
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+
+    let executedCommand = '';
+    const gateway = new DiscordGateway(
+      () => ({
+        commands: true,
+        discord: {
+          botToken: 'MOCK_BOT_TOKEN',
+          applicationId: 'MOCK_APP_ID',
+          allowed: ['allowed-user-123']
+        }
+      }) as any,
+      mockFetch as any,
+      async (cmd) => {
+        executedCommand = cmd;
+        return `Report: desk running OK (${cmd})`;
+      }
+    );
+
+    // 1. Rejected interaction (unauthorized user)
+    await gateway.handle({
+      id: 'inter-1',
+      token: 'tok-1',
+      application_id: 'MOCK_APP_ID',
+      type: 2,
+      user: { id: 'unauthorized-user-999' },
+      data: { name: 'report' }
+    });
+
+    expect(fetchCalls.length).toBe(1);
+    expect(fetchCalls[0].url).toContain('/interactions/inter-1/tok-1/callback');
+    expect(fetchCalls[0].body.type).toBe(4);
+    expect(fetchCalls[0].body.data.content).toContain('not on this desk\'s allowlist');
+    expect(executedCommand).toBe('');
+
+    fetchCalls.length = 0;
+
+    // 2. Authorized interaction (allowed user)
+    await gateway.handle({
+      id: 'inter-2',
+      token: 'tok-2',
+      application_id: 'MOCK_APP_ID',
+      type: 2,
+      user: { id: 'allowed-user-123' },
+      data: { name: 'report' }
+    });
+
+    expect(fetchCalls.length).toBe(2);
+    // Initial callback: type 5 (deferred) within 2500ms
+    expect(fetchCalls[0].url).toContain('/interactions/inter-2/tok-2/callback');
+    expect(fetchCalls[0].body.type).toBe(5);
+    // Execution occurred
+    expect(executedCommand).toBe('report');
+    // Followup message patch
+    expect(fetchCalls[1].url).toContain('/webhooks/MOCK_APP_ID/tok-2/messages/@original');
+    expect(fetchCalls[1].method).toBe('PATCH');
+    expect(fetchCalls[1].body.content).toContain('Report: desk running OK (report)');
   });
 });
