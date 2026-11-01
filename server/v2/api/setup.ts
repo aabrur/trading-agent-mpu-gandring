@@ -10,6 +10,8 @@ import {
   type VenueId
 } from '../contracts.js';
 import { venueCredentialEnvNames } from '../runtime.js';
+import { MODEL_CHOICES, MODEL_KEY_ENV, MODEL_SOURCES, MODEL_CATALOG_DATE, USAGE_SOURCE, fetchLiveProviderModels } from '../settings/model-catalog.js';
+import { LOCAL_CLI_AGENTS } from '../agents/local.js';
 import type { AccountRegistry } from '../accounts/registry.js';
 import {
   API_PROVIDERS,
@@ -24,7 +26,8 @@ import {
   TRADING_PROFILES,
   TradingFields,
   type ApiProviderId,
-  type TradingPresetId
+  type TradingPresetId,
+  type TradingProfile
 } from '../settings/schema.js';
 import { PROVIDER_KEY_ENV, type SecretStore } from '../settings/secrets.js';
 import type { SettingsService } from '../settings/service.js';
@@ -185,7 +188,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     if (!parsed.success) {
       res.status(400).json({
         ok: false,
-        error: 'Check the amounts, safety net, N (1-4), loss cap (0.1-100%), intervals (1-1440 minutes), and max hold hours (0-720 hours).'
+        error: 'Check the amounts, safety net, N (1-100), loss cap (0.1-100%), intervals (1-1440 minutes), and max hold hours (0-720 hours).'
       });
       return;
     }
@@ -201,7 +204,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
         trading: {
           safetyNet: v.safetyNet,
           maxPositions: v.n,
-          dailyLossLimitPct: Math.min(25, Math.max(0.5, v.dailyLoss))
+          dailyLossLimitPct: Math.min(100, Math.max(0.1, v.dailyLoss))
         },
         auto: {
           on: v.auto,
@@ -212,6 +215,29 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       },
       expectedActiveVersion
     );
+    if (result.applyStatus === 'applied') {
+      const updates: Record<string, string> = {};
+      if (v.n !== undefined) {
+        updates.OPEN_ORDERS_N = String(v.n);
+        updates.MAINNET_DESK_OPEN_ORDERS_N = String(v.n);
+      }
+      if (v.safetyNet !== undefined) {
+        updates.SAFETY_NET = String(v.safetyNet);
+        updates.MAINNET_DESK_SAFETY_NET = String(v.safetyNet);
+      }
+      if (v.auto !== undefined) {
+        updates.AUTO_TRADING = v.auto ? 'on' : 'off';
+      }
+      if (v.debateInterval !== undefined) {
+        updates.DEBATE_INTERVAL_MIN = String(v.debateInterval);
+      }
+      if (v.reportInterval !== undefined) {
+        updates.REPORT_INTERVAL_MIN = String(v.reportInterval);
+      }
+      if (Object.keys(updates).length > 0) {
+        deps.secrets.writeSecrets(updates);
+      }
+    }
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
     res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Preferences saved.', ...result });
   });
@@ -298,8 +324,9 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     const expected = Number(
       req.body?.expectedActiveVersion ?? deps.settings.current().activeVersion
     );
-    const { expectedActiveVersion: _omit, network, ...rawValues } = (req.body ?? {}) as Record<string, unknown>;
-    const parsed = TradingFields.partial().safeParse(rawValues);
+    const { expectedActiveVersion: _omit, network, profile, values, ...rest } = (req.body ?? {}) as Record<string, unknown>;
+    const payloadToParse = (values && typeof values === 'object') ? values : rest;
+    const parsed = TradingFields.partial().safeParse(payloadToParse);
     if (!parsed.success) {
       res.status(400).json({ ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') });
       return;
@@ -307,99 +334,75 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     const net = typeof network === 'string' && (NETWORKS as readonly string[]).includes(network)
       ? (network as Network)
       : undefined;
+    const chosenProfile = typeof profile === 'string' && (TRADING_PROFILES as readonly string[]).includes(profile as any)
+      ? (profile as TradingProfile)
+      : 'manual';
     const result = await deps.settings.apply(
       {
-        tradingProfile: 'manual',
+        tradingProfile: chosenProfile,
         trading: parsed.data,
         ...(net ? { networkProfiles: { [net]: parsed.data } } : {})
       },
       expected
     );
+    if (result.applyStatus === 'applied') {
+      const updates: Record<string, string> = {};
+      if (parsed.data.maxPositions !== undefined) {
+        updates.OPEN_ORDERS_N = String(parsed.data.maxPositions);
+        updates.MAINNET_DESK_OPEN_ORDERS_N = String(parsed.data.maxPositions);
+      }
+      if (parsed.data.safetyNet !== undefined) {
+        updates.SAFETY_NET = String(parsed.data.safetyNet);
+        updates.MAINNET_DESK_SAFETY_NET = String(parsed.data.safetyNet);
+      }
+      if (Object.keys(updates).length > 0) {
+        deps.secrets.writeSecrets(updates);
+      }
+    }
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
     res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Trading configuration saved.', ...result });
   });
 
-  app.get('/api/setup/models', (_req, res) => {
+  app.get('/api/setup/models', async (req, res) => {
+    const discoverProvider = typeof req.query?.discover === 'string' ? req.query.discover.trim().toLowerCase() : null;
+    if (discoverProvider && API_PROVIDERS.includes(discoverProvider as ApiProviderId)) {
+      const prov = discoverProvider as ApiProviderId;
+      const envKey = MODEL_KEY_ENV[prov];
+      const apiKey = deps.secrets.getSecret(envKey);
+      const result = await fetchLiveProviderModels(prov, apiKey ?? undefined);
+      res.json({
+        ok: true,
+        provider: prov,
+        source: result.source,
+        models: result.models
+      });
+      return;
+    }
+
     const snap = deps.settings.current();
-    const catalog = [
-      {
-        provider: 'xai',
-        keyEnv: 'XAI_API_KEY',
-        keySet: deps.secrets.hasProviderKey('xai'),
-        source: 'xAI API',
-        defaultModel: 'grok-2-latest',
-        models: [
-          { id: 'grok-2-latest', label: 'Grok 2 Latest', tags: ['fast', 'reasoning'] },
-          { id: 'grok-beta', label: 'Grok Beta', tags: ['chat'] }
-        ]
-      },
-      {
-        provider: 'openai',
-        keyEnv: 'OPENAI_API_KEY',
-        keySet: deps.secrets.hasProviderKey('openai'),
-        source: 'OpenAI API',
-        defaultModel: 'gpt-4o',
-        models: [
-          { id: 'gpt-4o', label: 'GPT-4o', tags: ['flagship'] },
-          { id: 'gpt-4o-mini', label: 'GPT-4o Mini', tags: ['fast'] },
-          { id: 'o3-mini', label: 'o3-mini', tags: ['reasoning'], reasoningLevels: ['low', 'medium', 'high'] }
-        ]
-      },
-      {
-        provider: 'anthropic',
-        keyEnv: 'ANTHROPIC_API_KEY',
-        keySet: deps.secrets.hasProviderKey('anthropic'),
-        source: 'Anthropic API',
-        defaultModel: 'claude-3-7-sonnet-latest',
-        models: [
-          { id: 'claude-3-7-sonnet-latest', label: 'Claude 3.7 Sonnet', tags: ['flagship', 'thinking'] },
-          { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', tags: ['balanced'] },
-          { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku', tags: ['fast'] }
-        ]
-      },
-      {
-        provider: 'gemini',
-        keyEnv: 'GEMINI_API_KEY',
-        keySet: deps.secrets.hasProviderKey('gemini'),
-        source: 'Google Gemini API',
-        defaultModel: 'gemini-2.5-flash',
-        models: [
-          { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', tags: ['fast', 'multimodal'] },
-          { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', tags: ['deep-reasoning'] }
-        ]
-      },
-      {
-        provider: 'deepseek',
-        keyEnv: 'DEEPSEEK_API_KEY',
-        keySet: deps.secrets.hasProviderKey('deepseek'),
-        source: 'DeepSeek API',
-        defaultModel: 'deepseek-chat',
-        models: [
-          { id: 'deepseek-chat', label: 'DeepSeek V3', tags: ['general'] },
-          { id: 'deepseek-reasoner', label: 'DeepSeek R1', tags: ['reasoning'] }
-        ]
-      },
-      {
-        provider: 'openrouter',
-        keyEnv: 'OPENROUTER_API_KEY',
-        keySet: deps.secrets.hasProviderKey('openrouter'),
-        source: 'OpenRouter Aggregator',
-        defaultModel: 'anthropic/claude-3.5-sonnet',
-        models: [
-          { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet (OpenRouter)', tags: ['openrouter'] },
-          { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1 (OpenRouter)', tags: ['openrouter'] },
-          { id: 'openai/gpt-4o', label: 'GPT-4o (OpenRouter)', tags: ['openrouter'] }
-        ]
-      },
-      {
-        provider: 'mock',
-        keyEnv: null,
-        keySet: true,
-        source: 'Built-in Demo',
-        defaultModel: 'mock-desk-v1',
-        models: [{ id: 'mock-desk-v1', label: 'Mock Engine V1', tags: ['offline'] }]
-      }
-    ];
+    // This is a compatibility catalogue, not proof of live model availability.
+    // Provider discovery is a separate authenticated operation; never fabricate 25 entries.
+    const allProviderIds = [...MODEL_PROVIDERS.filter((id) => id !== 'unconfigured'), 'mock'];
+    const catalog = allProviderIds.map((id) => {
+      const provider = id as keyof typeof MODEL_CHOICES;
+      const keyEnv = provider === 'local' || provider === 'mock'
+        ? null : MODEL_KEY_ENV[provider as keyof typeof MODEL_KEY_ENV];
+      const models = provider === 'local'
+        ? LOCAL_CLI_AGENTS.flatMap(agent => agent.models.map(model => ({
+            id: `${agent.id}:${model}`,
+            label: `${agent.label}: ${model}`,
+            tags: ['installed account required']
+          })))
+        : MODEL_CHOICES[provider].map(model => ({ ...model }));
+      return {
+        provider: id,
+        keyEnv,
+        keySet: keyEnv ? deps.secrets.hasProviderKey(provider as keyof typeof MODEL_KEY_ENV) : true,
+        source: MODEL_SOURCES[provider],
+        defaultModel: models[0]?.id ?? 'default',
+        models
+      };
+    });
 
     const defaultProvider = snap.effective.agents.lead.provider;
     const defaultModel = snap.effective.agents.lead.model;
@@ -420,8 +423,8 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       ok: true,
       savedVersion: snap.savedVersion,
       activeVersion: snap.activeVersion,
-      checkedOn: new Date().toISOString().slice(0, 10),
-      usageSource: { url: 'https://openrouter.ai', asOf: 'today', period: 'monthly' },
+      checkedOn: MODEL_CATALOG_DATE,
+      usageSource: USAGE_SOURCE,
       providers: catalog,
       defaultProvider,
       defaultModel,

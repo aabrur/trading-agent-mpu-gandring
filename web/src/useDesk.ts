@@ -19,9 +19,18 @@ const CONV_STORAGE_KEY = 'mpu_gandring_active_conversation_id';
 
 export async function requestNewConversation(): Promise<string> {
   const response = await officeFetch('/api/conversations/new', { method: 'POST' });
-  const result = await response.json() as { ok?: boolean; conversationId?: string; error?: string };
-  if (!response.ok || !result.ok || !result.conversationId) throw new Error(result.error || 'Conversation could not be created. Your current conversation is unchanged.');
-  return result.conversationId;
+  const result = await response.json() as { ok?: boolean; conversationId?: string; conversation?: { id: string }; error?: string };
+  const id = result.conversationId ?? result.conversation?.id;
+  if (!response.ok || !result.ok || !id) throw new Error(result.error || 'Conversation could not be created. Your current conversation is unchanged.');
+  return id;
+}
+
+export async function requestDeleteConversation(id: string): Promise<void> {
+  const response = await officeFetch(`/api/conversations/${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirm: true })
+  });
+  const result = await response.json() as { ok?: boolean; error?: string };
+  if (!response.ok || !result.ok) throw new Error(result.error || 'Conversation could not be deleted.');
 }
 
 function getSavedConversationId(): string {
@@ -48,6 +57,10 @@ export function useDesk() {
     const freshId = await requestNewConversation();
     selectConversation(freshId);
     return freshId;
+  }, [selectConversation]);
+  const deleteConversation = useCallback(async (id: string) => {
+    await requestDeleteConversation(id);
+    if (conversationId.current === id) selectConversation('office');
   }, [selectConversation]);
   useEffect(installDiagnostics, []);
   const [state, setState] = useState<DeskState | null>(null);
@@ -207,5 +220,5 @@ export function useDesk() {
     return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid', failureKind: result.failureKind, requestId: result.requestId };
   }, []);
 
-  return { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation };
+  return { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation, deleteConversation };
 }

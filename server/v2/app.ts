@@ -41,18 +41,18 @@ const sameSecret = (given: string, want: string): boolean => {
   return a.length === b.length && timingSafeEqual(a, b);
 };
 
-function createRateLimiter(max: number, windowMs: number) {
-  const hits = new Map<string, { count: number; at: number }>();
-  return (key: string): boolean => {
-    const now = Date.now();
-    const h = hits.get(key);
-    if (!h || now - h.at > windowMs) {
-      hits.set(key, { count: 1, at: now });
-      return true;
+function createEventDeduplicator(ttlMs = 10 * 60_000) {
+  const seen = new Map<string, number>();
+  return {
+    isDuplicate: (key: string): boolean => {
+      const now = Date.now();
+      for (const [k, ts] of seen) {
+        if (now - ts > ttlMs) seen.delete(k);
+      }
+      if (seen.has(key)) return true;
+      seen.set(key, now);
+      return false;
     }
-    if (h.count >= max) return false;
-    h.count += 1;
-    return true;
   };
 }
 
@@ -61,7 +61,8 @@ const TradingViewSchema = z.object({
   symbol: z.string().min(2).max(40),
   action: z.string().max(20),
   price: z.union([z.number(), z.string()]).optional(),
-  note: z.string().max(500).optional()
+  note: z.string().max(500).optional(),
+  eventId: z.string().max(100).optional()
 });
 
 export function createReplacementApp(
@@ -116,7 +117,7 @@ export function createReplacementApp(
   const historyService = options.historyService ?? new HistoryService();
   mountHistoryRoutes(app, historyService, runtime);
 
-  const tvLimit = createRateLimiter(1, 60_000);
+  const tvDedupe = createEventDeduplicator();
   app.post('/api/tradingview', async (req, res) => {
     const expectedPass =
       options.setupDeps?.secrets.getSecret('TRADINGVIEW_PASSPHRASE') ??
@@ -149,14 +150,25 @@ export function createReplacementApp(
       return;
     }
 
-    if (!tvLimit(rawSym)) {
-      res.status(429).json({ ok: false, error: 'one alert per symbol per minute' });
-      return;
-    }
-
     const price = Number(parsed.data.price);
     const action = sanitizeUntrusted(parsed.data.action, 20).text.toLowerCase();
     const note = sanitizeUntrusted(parsed.data.note ?? '', 300).text;
+
+    const dedupeKey = parsed.data.eventId
+      ? `id:${parsed.data.eventId}`
+      : `${rawSym}:${action}:${parsed.data.price ?? ''}:${note}`;
+
+    if (tvDedupe.isDuplicate(dedupeKey)) {
+      res.json({
+        ok: true,
+        duplicate: true,
+        symbol: rawSym,
+        action,
+        note: 'Duplicate alert acknowledged without re-triggering cycle.',
+        at: Date.now()
+      });
+      return;
+    }
 
     void runtime.triggerCycle?.(rawSym, 'signal')?.catch(console.error);
 

@@ -10,7 +10,8 @@ export function OfficeDiscussion({
   command,
   activeConversationId,
   onSelectConversation,
-  onNewConversation
+  onNewConversation,
+  onDeleteConversation
 }: {
   state: DeskState;
   latest?: Speech;
@@ -19,6 +20,7 @@ export function OfficeDiscussion({
   activeConversationId?: string;
   onSelectConversation?: (id: string) => void;
   onNewConversation?: () => Promise<string>;
+  onDeleteConversation?: (id: string) => Promise<void>;
 }) {
   const { lang } = useI18n();
   const [open, setOpen] = useState(false);
@@ -84,9 +86,17 @@ export function OfficeDiscussion({
               ))}
             </select>
           )}
+          {onDeleteConversation && activeConversationId && activeConversationId !== 'office' && (
+            <button type="button" data-rebirth-additive="true" disabled={creating || busy} onClick={() => {
+              if (!window.confirm(lang === 'id' ? 'Hapus percakapan ini? Catatan trading tetap tersimpan.' : 'Delete this conversation? Trading records remain saved.')) return;
+              setError('');
+              void onDeleteConversation(activeConversationId).catch(reason => setError(reason instanceof Error ? reason.message : 'Conversation could not be deleted.'));
+            }}>{lang === 'id' ? 'Hapus' : 'Delete'}</button>
+          )}
           {onNewConversation && (
             <button
               type="button"
+              data-rebirth-additive="true"
               title={lang === 'id' ? 'Mulai percakapan baru' : 'Start new conversation'}
               disabled={creating || busy}
               aria-busy={creating}

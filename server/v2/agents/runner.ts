@@ -221,6 +221,27 @@ export class RoleRunner {
     this.resolveAssignment = options.resolveAssignment;
   }
 
+  /** Direct owner chat uses the same typed provider route as strategy roles, without a trade side effect. */
+  async chat(input: { role: RoleId; prompt: string; configVersion: number; cycleId: string }): Promise<string> {
+    const assignment = this.resolveAssignment(input.role, input.configVersion);
+    return this.providerCaller({
+      cycleId: input.cycleId,
+      role: input.role,
+      phase: 'final',
+      taskAttempt: 1,
+      turn: 0,
+      provider: assignment.provider.trim().toLowerCase(),
+      model: assignment.model.trim(),
+      apiKey: assignment.apiKey ?? '',
+      baseUrl: assignment.baseUrl,
+      system: buildRoleSystemPrompt(input.role),
+      user: input.prompt,
+      timeoutMs: 120_000,
+      reasoningEffort: assignment.reasoningEffort,
+      provenOsSandbox: assignment.provenOsSandbox
+    });
+  }
+
   private slotKey(cycleId: string, role: RoleId, phase: RolePhase): string {
     return `${cycleId}:${role}:${phase}`;
   }
@@ -327,7 +348,7 @@ export class RoleRunner {
       );
     }
 
-    const remainingBudgetMs = Math.max(30_000, Math.min(90_000, task.deadlineAt - Date.now()));
+    const remainingBudgetMs = Math.max(120_000, Math.min(300_000, task.deadlineAt - Date.now()));
     const system = buildRoleSystemPrompt(task.role);
     const schemaHint = getRoleSchemaInstruction(task.role);
     let userPrompt = `${schemaHint}\n\nTask and Market Context:\n${JSON.stringify({

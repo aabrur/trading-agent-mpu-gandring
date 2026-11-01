@@ -75,7 +75,7 @@ export class CycleRunner {
 
   async run(input: RunCycleInput): Promise<CycleResult> {
     const cycleId = input.cycleId ?? `cycle-${randomUUID()}`;
-    const deadlineAt = Date.now() + (input.deadlineMs ?? 180_000);
+    const deadlineAt = Date.now() + (input.deadlineMs ?? 360_000);
     const routeOf = (role: RoleId): RoleRoute => input.routeForRole?.(role) ?? 'LOCAL';
     const roleResults: RoleResult[] = [];
 

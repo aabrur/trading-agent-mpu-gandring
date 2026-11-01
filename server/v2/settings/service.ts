@@ -213,11 +213,11 @@ export class SettingsService {
       mode === 'LIVE' ? 'mainnet' : mode === 'TESTNET' ? 'testnet' : null;
 
     const safetyNet = numOr(env.SAFETY_NET, 200);
-    const maxPositions = Math.min(4, Math.max(1, Math.trunc(numOr(env.OPEN_ORDERS_N, DEFAULT_TRADING_SETTINGS.maxPositions))));
+    const maxPositions = Math.min(100, Math.max(1, Math.trunc(numOr(env.OPEN_ORDERS_N, DEFAULT_TRADING_SETTINGS.maxPositions))));
     const paperBalance = numOr(env.PAPER_BALANCE, 1000);
 
     const trading: TradingSettings = {
-      dailyLossLimitPct: Math.min(25, Math.max(0.5, numOr(env.DAILY_LOSS_LIMIT_PCT, DEFAULT_TRADING_SETTINGS.dailyLossLimitPct))),
+      dailyLossLimitPct: Math.min(100, Math.max(0.1, numOr(env.DAILY_LOSS_LIMIT_PCT, DEFAULT_TRADING_SETTINGS.dailyLossLimitPct))),
       maxLossPerTradePct: numOr(env.MAX_LOSS_PER_TRADE_PCT, DEFAULT_TRADING_SETTINGS.maxLossPerTradePct),
       minEntryConfidencePct: numOr(env.MIN_ENTRY_CONFIDENCE_PCT, DEFAULT_TRADING_SETTINGS.minEntryConfidencePct),
       maxLeverage: Math.trunc(numOr(env.MAX_LEVERAGE, DEFAULT_TRADING_SETTINGS.maxLeverage)),

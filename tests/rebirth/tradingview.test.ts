@@ -104,26 +104,38 @@ describe('TradingView Webhook Integration', () => {
     });
   });
 
-  it('enforces rate limiting per symbol', async () => {
+  it('deduplicates exact retries while accepting distinct same-symbol signals', async () => {
     await withTestApp('secret123', async (baseUrl) => {
-      const callAlert = () =>
+      const callAlert = (payload: Record<string, unknown>) =>
         fetch(`${baseUrl}/api/tradingview`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             passphrase: 'secret123',
-            symbol: 'ETHUSDT',
-            action: 'buy'
+            ...payload
           })
         });
 
-      const first = await callAlert();
+      // First signal
+      const first = await callAlert({ symbol: 'ETHUSDT', action: 'buy', price: 3000, eventId: 'sig-1' });
       expect(first.status).toBe(200);
+      const data1 = (await first.json()) as { ok: boolean; duplicate?: boolean };
+      expect(data1.ok).toBe(true);
+      expect(data1.duplicate).toBeUndefined();
 
-      const second = await callAlert();
-      expect(second.status).toBe(429);
-      const data = (await second.json()) as { ok: boolean; error: string };
-      expect(data.error).toContain('one alert per symbol per minute');
+      // Exact retry with same eventId returns 200 with duplicate: true
+      const retry = await callAlert({ symbol: 'ETHUSDT', action: 'buy', price: 3000, eventId: 'sig-1' });
+      expect(retry.status).toBe(200);
+      const dataRetry = (await retry.json()) as { ok: boolean; duplicate?: boolean };
+      expect(dataRetry.ok).toBe(true);
+      expect(dataRetry.duplicate).toBe(true);
+
+      // Distinct signal for same symbol is immediately accepted (no 1-min throttle)
+      const secondSignal = await callAlert({ symbol: 'ETHUSDT', action: 'buy', price: 3050, eventId: 'sig-2' });
+      expect(secondSignal.status).toBe(200);
+      const data2 = (await secondSignal.json()) as { ok: boolean; duplicate?: boolean };
+      expect(data2.ok).toBe(true);
+      expect(data2.duplicate).toBeUndefined();
     });
   });
 });

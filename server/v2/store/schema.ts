@@ -211,8 +211,19 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     is_legacy_readonly INTEGER NOT NULL DEFAULT 0 CHECK (is_legacy_readonly IN (0, 1)),
     messages_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
   )`,
+  `CREATE TABLE IF NOT EXISTS chat_messages (
+    message_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    client_request_id TEXT,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'delivered'
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages (conversation_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS lessons (
     lesson_id TEXT PRIMARY KEY,
     account_ref TEXT,

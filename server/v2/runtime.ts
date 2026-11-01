@@ -38,7 +38,7 @@ import { RoleRunner } from './agents/runner.js';
 import { CycleRunner, type CyclePolicy, type CycleReason } from './decision/cycle.js';
 import { JevClient } from './agents/jev.js';
 import { createOfficialProviderCaller } from './agents/providers.js';
-import { buildRoleSystemPrompt, resolveCanonicalRole } from './agents/roles.js';
+import { resolveCanonicalRole } from './agents/roles.js';
 import { PROVIDER_KEY_ENV, SecretStore } from './settings/secrets.js';
 import type { ApiProviderId } from './settings/schema.js';
 import type { Position, Stance, Verdict } from '../../shared/office.js';
@@ -48,6 +48,7 @@ import { AccountRegistry } from './accounts/registry.js';
 import { SettingsService } from './settings/service.js';
 import { ExecutionGateway } from './execution/gateway.js';
 import { getVenueAdapter, createTransportFromAdapter } from './execution/adapters/factory.js';
+import { ChatService } from './api/chat.js';
 import { PaperVenue } from './sandbox/paper.js';
 import {
   assertLivePermissionEvidence,
@@ -168,8 +169,8 @@ export function validateStartupEnvironment(env: NodeJS.ProcessEnv = process.env)
   const rawN = env.OPEN_ORDERS_N;
   if (rawN !== undefined && rawN !== '') {
     const n = Number(rawN);
-    if (!Number.isInteger(n) || n < 1 || n > 4) {
-      throw new StartupValidationError('OPEN_ORDERS_N must be an integer from 1 to 4', 2);
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      throw new StartupValidationError('OPEN_ORDERS_N must be an integer from 1 to 100', 2);
     }
   }
 
@@ -213,6 +214,7 @@ export interface ReplacementRuntimeHandle extends OfficeRuntime {
     text: string;
     agent?: string;
     clientRequestId?: string;
+    conversationId?: string;
   }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
   stop(): Promise<void>;
 }
@@ -237,6 +239,8 @@ export interface ReplacementRuntimeOptions {
   accountState?: OfficeState['accountState'];
   executionGateway?: ExecutionGateway;
   settings?: SettingsService;
+  secrets?: SecretStore;
+  chatService?: ChatService;
 }
 
 export function createReplacementRuntime(
@@ -284,16 +288,22 @@ export function createReplacementRuntime(
     : (Number.isFinite(rawPaperBal) ? rawPaperBal : 1000);
 
   const rawSafety = Number(
-    (state.mode === 'LIVE' ? env.MAINNET_DESK_SAFETY_NET : env.TESTNET_DESK_SAFETY_NET) ??
     savedTrading?.safetyNet ??
     savedPaper?.safetyNet ??
+    (state.mode === 'LIVE' ? env.MAINNET_DESK_SAFETY_NET : env.TESTNET_DESK_SAFETY_NET) ??
     env.SAFETY_NET ??
     200
   );
   const initSafety = Number.isFinite(rawSafety) && rawSafety >= 0 ? rawSafety : 200;
 
-  const rawN = Math.trunc(Number(savedTrading?.maxPositions ?? savedPaper?.n ?? env.OPEN_ORDERS_N ?? 3));
-  const initN = Math.min(4, Math.max(1, Number.isFinite(rawN) ? rawN : 3));
+  const rawN = Math.trunc(Number(
+    savedTrading?.maxPositions ??
+    savedPaper?.n ??
+    (state.mode === 'LIVE' ? env.MAINNET_DESK_OPEN_ORDERS_N : undefined) ??
+    env.OPEN_ORDERS_N ??
+    3
+  ));
+  const initN = Math.max(1, Number.isFinite(rawN) ? rawN : 3);
 
   const moneyTrade = Math.round(Math.max(0, initBal - initSafety) * 100) / 100;
   const perOrder = Math.floor((moneyTrade / initN) * 100) / 100;
@@ -361,6 +371,31 @@ export function createReplacementRuntime(
     webhook: tvWebhook
   };
 
+  const savedAuto = options.settings?.current().effective.auto;
+  const savedWatchlist = options.settings?.current().effective.watchlist;
+  if (savedAuto) {
+    state.auto.on = savedAuto.on ?? state.auto.on;
+    state.auto.intervalMin = savedAuto.intervalMin ?? state.auto.intervalMin;
+    state.auto.maxHoldHours = savedAuto.maxHoldHours ?? state.auto.maxHoldHours;
+    if (savedAuto.symbols && savedAuto.symbols.length > 0) {
+      state.auto.symbols = [...savedAuto.symbols];
+    }
+  }
+  if (savedWatchlist && savedWatchlist.length > 0) {
+    state.watchlist = [...savedWatchlist];
+    if (!savedAuto?.symbols || savedAuto.symbols.length === 0) {
+      state.auto.symbols = [...savedWatchlist];
+    }
+  }
+  if (savedTrading && state.trading) {
+    state.trading.values = {
+      ...state.trading.values,
+      ...savedTrading,
+      maxPositions: initN,
+      safetyNet: initSafety
+    };
+  }
+
   const snapshot = (): OfficeState => structuredClone(state);
 
   const updateState = (mutator: (draft: OfficeState) => OfficeState | void): OfficeState => {
@@ -394,17 +429,26 @@ export function createReplacementRuntime(
     options.roleRunner ??
     new RoleRunner({
       providerCaller: createOfficialProviderCaller(),
-      resolveAssignment: (role) => {
+      resolveAssignment: (role, _version) => {
+        const settingsSnap = options.settings?.current();
+        const configuredAgent = settingsSnap?.effective?.agents?.[role];
+        const defaultAgent = settingsSnap?.effective?.agents?.lead;
+
         const upper = role.toUpperCase();
-        const rawProv = (env[`AGENT_${upper}_PROVIDER`] ?? env.DEFAULT_PROVIDER ?? '').trim().toLowerCase();
-        const provider = rawProv && rawProv !== 'mock' ? rawProv : 'unconfigured';
-        const model = (env[`AGENT_${upper}_MODEL`] ?? env.DEFAULT_MODEL ?? 'unconfigured').trim();
+        const rawProv = (configuredAgent?.provider ?? defaultAgent?.provider ?? env[`AGENT_${upper}_PROVIDER`] ?? env.DEFAULT_PROVIDER ?? '').trim().toLowerCase();
+        const provider = rawProv && rawProv !== 'mock' ? rawProv : (rawProv === 'mock' ? 'mock' : 'unconfigured');
+        const model = (configuredAgent?.model ?? defaultAgent?.model ?? env[`AGENT_${upper}_MODEL`] ?? env.DEFAULT_MODEL ?? 'unconfigured').trim();
+        const reasoningEffort = configuredAgent?.reasoning ?? defaultAgent?.reasoning;
+
+        const secretsMap = options.secrets?.readEnvMap() ?? env;
         const keyEnv = PROVIDER_KEY_ENV[provider as ApiProviderId] || `${provider.toUpperCase()}_API_KEY`;
-        const apiKey = (env[keyEnv] ?? '').trim();
+        const apiKey = (secretsMap[keyEnv] ?? env[keyEnv] ?? '').trim();
         return {
           provider,
           model,
-          apiKey: apiKey || null
+          apiKey: apiKey || null,
+          reasoningEffort: reasoningEffort ?? undefined,
+          provenOsSandbox: true
         };
       }
     });
@@ -464,6 +508,10 @@ export function createReplacementRuntime(
         if (draft.trading) {
           draft.trading.values.maxPositions = patch.n;
         }
+        if (draft.accountState) {
+          draft.accountState.maxPositions = patch.n;
+          draft.accountState.freeSlots = Math.max(0, patch.n - draft.paper.positions.length);
+        }
         const mt = Math.max(0, draft.paper.balance - draft.paper.safetyNet);
         draft.paper.moneyTrade = mt;
         draft.paper.perOrder = Math.floor((mt / patch.n) * 100) / 100;
@@ -477,6 +525,46 @@ export function createReplacementRuntime(
     });
 
     scheduleNextAutoCycle();
+
+    if (patch.on && !snapshot().auto.running && !snapshot().killed) {
+      setTimeout(() => {
+        const s = snapshot();
+        if (s.auto.on && !s.killed && !s.auto.running) {
+          void triggerCycle(undefined, 'schedule');
+        }
+      }, 2000).unref();
+    }
+
+    if (options.settings) {
+      const cur = options.settings.current();
+      void options.settings.apply({
+        auto: {
+          on: patch.on ?? cur.effective.auto.on,
+          intervalMin: patch.intervalMin ?? cur.effective.auto.intervalMin,
+          reportIntervalMin: cur.effective.auto.reportIntervalMin,
+          maxHoldHours: patch.maxHoldHours ?? cur.effective.auto.maxHoldHours
+        },
+        watchlist: patch.symbols && patch.symbols.length > 0 ? [...new Set([...cur.effective.watchlist, ...patch.symbols])] : cur.effective.watchlist,
+        ...(patch.n !== undefined ? {
+          trading: { maxPositions: patch.n },
+          paper: { n: patch.n }
+        } : {})
+      }, cur.activeVersion).catch(() => {});
+    }
+
+    if (options.secrets) {
+      const updates: Record<string, string> = {};
+      if (patch.on !== undefined) updates.AUTO_TRADING = patch.on ? 'on' : 'off';
+      if (patch.intervalMin !== undefined) updates.DEBATE_INTERVAL_MIN = String(patch.intervalMin);
+      if (patch.n !== undefined) {
+        updates.OPEN_ORDERS_N = String(patch.n);
+        updates.MAINNET_DESK_OPEN_ORDERS_N = String(patch.n);
+      }
+      if (Object.keys(updates).length > 0) {
+        options.secrets.writeSecrets(updates);
+      }
+    }
+
     hub.emit('state', snapshot());
     return snapshot();
   };
@@ -569,10 +657,10 @@ export function createReplacementRuntime(
         accountRef: 'paper:default',
         symbol: targetSymbol,
         evidenceId: intelFrame.evidenceId,
-        configVersion: 1,
+        configVersion: options.settings?.current().activeVersion ?? 1,
         policy,
         marketSummary,
-        deadlineMs: 180_000,
+        deadlineMs: 360_000,
         onRoleStart: (task) => {
           updateState((draft) => {
             const agentView = draft.agents[task.role as RoleId];
@@ -591,6 +679,15 @@ export function createReplacementRuntime(
           const at = Date.now();
           const reasoning =
             res.reasoning ?? (res.errorReason ? `Failure: ${res.errorReason}` : `Completed with stance ${res.stance ?? 'HOLD'}`);
+          const roomMsg = {
+            id: `room-${at}-${res.role}`,
+            conversationId: 'office',
+            at,
+            from: res.role,
+            to: 'owner' as const,
+            text: reasoning,
+            symbol: targetSymbol
+          };
 
           updateState((draft) => {
             draft.agents[res.role].status = 'idle';
@@ -603,6 +700,21 @@ export function createReplacementRuntime(
             }
             draft.agents[res.role].lastLine = reasoning.slice(0, 160);
 
+            if (!draft.roomHistory) draft.roomHistory = [];
+            draft.roomHistory.push(roomMsg);
+            draft.roomHistory = draft.roomHistory.slice(-100);
+
+            if (!draft.logs) draft.logs = [];
+            draft.logs.push({
+              id: `log-${at}-${res.role}`,
+              conversationId: 'office',
+              at,
+              kind: 'speech',
+              agent: res.role,
+              text: `[${res.role.toUpperCase()}] ${res.stance ?? 'HOLD'} (${res.confidence?.value ?? '-'}): ${reasoning}`
+            });
+            draft.logs = draft.logs.slice(-500);
+
             const bull = Object.values(draft.agents).filter((a) => a.stance === 'LONG').map((a) => a.id);
             const bear = Object.values(draft.agents).filter((a) => a.stance === 'SHORT').map((a) => a.id);
             const neutral = Object.values(draft.agents).filter((a) => a.stance !== 'LONG' && a.stance !== 'SHORT').map((a) => a.id);
@@ -611,7 +723,39 @@ export function createReplacementRuntime(
               draft.debate.camps = { bull, bear, neutral };
               draft.debate.disagreement = disagreement;
             }
+
+            if (disagreement >= (draft.fightThreshold ?? 0.35) && bull.length > 0 && bear.length > 0) {
+              const fromAgent = bull[Math.floor(Math.random() * bull.length)]!;
+              const toAgent = bear[Math.floor(Math.random() * bear.length)]!;
+              const punches = 1 + Math.round(disagreement * 3);
+              draft.agents[fromAgent].status = 'fighting';
+              draft.agents[toAgent].status = 'fighting';
+              hub.emit('fight', {
+                from: fromAgent,
+                to: toAgent,
+                intensity: Math.min(1, disagreement),
+                punches,
+                at
+              });
+              draft.logs.push({
+                id: `fight-${at}-${fromAgent}`,
+                conversationId: 'office',
+                at,
+                kind: 'fight',
+                agent: fromAgent,
+                text: `${fromAgent.toUpperCase()} clashes with ${toAgent.toUpperCase()} over ${targetSymbol} (heat ${Math.round(disagreement * 100)}%)`
+              });
+            }
           });
+
+          if (options.chatService) {
+            void options.chatService.recordMessage({
+              messageId: roomMsg.id,
+              conversationId: 'office',
+              role: res.role,
+              text: reasoning
+            }).catch(() => {});
+          }
 
           hub.emit('speech', {
             id: `speech-${at}-${res.role}`,
@@ -621,13 +765,7 @@ export function createReplacementRuntime(
             example: false,
             at
           });
-          hub.emit('room', {
-            id: `room-${at}-${res.role}`,
-            at,
-            from: res.role,
-            text: reasoning,
-            symbol: targetSymbol
-          });
+          hub.emit('room', roomMsg);
           hub.emit('log', {
             at,
             kind: 'debate',
@@ -739,13 +877,18 @@ export function createReplacementRuntime(
             });
 
             if (dispatchRes.ok) {
-              verdictRecord.executed = true;
-              const clientOrderId = (dispatchRes.data as any)?.clientOrderId ?? `order-${Date.now()}`;
+              const resData = (dispatchRes.data as any) ?? {};
+              const orderState: string = resData.orderState ?? 'UNKNOWN';
+              const isFilled = orderState === 'FILLED';
+              const isPartial = orderState === 'PARTIAL';
+              const clientOrderId = resData.clientOrderId ?? `order-${Date.now()}`;
+              verdictRecord.executed = isFilled || isPartial;
+              verdictRecord.executionStatus = isFilled ? 'filled' : (isPartial ? 'partial' : undefined);
               verdictRecord.order = {
                 positionId: clientOrderId,
-                status: 'filled',
+                status: isFilled ? 'filled' : (isPartial ? 'partial' : undefined),
                 side,
-                qty,
+                qty: resData.filledQty ? Number(resData.filledQty) : qty,
                 entry: entryPrice,
                 stop: stopPrice,
                 tp: tpPrice,
@@ -755,7 +898,7 @@ export function createReplacementRuntime(
               hub.emit('log', {
                 at: Date.now(),
                 kind: 'execution',
-                text: `Submitted ${currentSnap.mode} ${side} ${qty} ${targetSymbol} (SL: ${stopPrice}, TP: ${tpPrice ?? 'none'}) via ExecutionGateway: ${dispatchRes.message}`
+                text: `Submitted ${currentSnap.mode} ${side} ${qty} ${targetSymbol} (SL: ${stopPrice}, TP: ${tpPrice ?? 'none'}) via ExecutionGateway: [${orderState}] ${dispatchRes.message}`
               });
             } else {
               verdictRecord.executed = false;
@@ -795,6 +938,15 @@ export function createReplacementRuntime(
         }
         draft.verdicts = [verdictRecord, ...draft.verdicts.slice(0, 49)];
         draft.lastVerdict = verdictRecord;
+        if (!draft.logs) draft.logs = [];
+        draft.logs.push({
+          id: `log-${Date.now()}-verdict`,
+          conversationId: 'office',
+          at: Date.now(),
+          kind: 'verdict',
+          text: `[VERDICT] ${verdictRecord.action} on ${targetSymbol}: ${verdictRecord.reason}`
+        });
+        draft.logs = draft.logs.slice(-500);
         draft.lastCycle = {
           symbol: targetSymbol,
           durationMs: Date.now() - Number(cycleId.split('-')[1] || Date.now()),
@@ -825,46 +977,69 @@ export function createReplacementRuntime(
     text: string;
     agent?: string;
     clientRequestId?: string;
+    conversationId?: string;
   }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }> => {
     const raw = input.text.trim();
-    if (!raw) {
-      return { ok: false, error: 'empty command' };
-    }
+    if (!raw) return { ok: false, error: 'empty command' };
     const cmd = raw.toLowerCase();
+    const toAll = /^@all\s+/i.test(raw);
+    const targetRole = input.agent ? resolveCanonicalRole(input.agent) : null;
 
-    if (input.agent) {
-      const role = resolveCanonicalRole(input.agent);
-      if (role) {
-        try {
-          const systemPrompt = buildRoleSystemPrompt(role);
-          const assignment = (roleRunner as any).resolveAssignment(role, 1);
-          const replyText = await (roleRunner as any).providerCaller({
-            cycleId: `chat-${Date.now()}`,
+    if (targetRole || toAll) {
+      const roles: RoleId[] = targetRole ? [targetRole] : [...ROLE_IDS];
+      const prompt = toAll ? raw.replace(/^@all\s+/i, '') : raw;
+      const conversationId = input.conversationId || 'office';
+      const outcomes = await Promise.allSettled(roles.map(async role => {
+        const answer = await roleRunner.chat({
+          cycleId: `chat-${randomUUID()}`,
+          role,
+          prompt,
+          configVersion: options.settings?.current().activeVersion ?? 1
+        });
+        return { role, answer: String(answer) };
+      }));
+      const results = outcomes.flatMap((item) => item.status === 'fulfilled' ? [item.value] : []);
+      const failures = outcomes.length - results.length;
+      updateState(draft => {
+        const at = Date.now();
+        if (!draft.roomHistory) draft.roomHistory = [];
+        draft.roomHistory.push({
+          id: randomUUID(), conversationId, at, from: 'owner',
+          to: toAll ? 'all' : roles[0], text: prompt
+        });
+        for (const { role, answer } of results) {
+          const chatList = draft.chats[role] ?? [];
+          chatList.push(
+            { from: 'user', text: prompt, at, conversationId, clientRequestId: input.clientRequestId },
+            { from: role, text: answer, at: Date.now(), conversationId }
+          );
+          draft.chats[role] = chatList.slice(-50);
+          draft.roomHistory.push({ id: randomUUID(), conversationId, at: Date.now(), from: role, to: 'owner', text: answer });
+        }
+        draft.roomHistory = draft.roomHistory.slice(-100);
+      });
+      if (options.chatService) {
+        void options.chatService.recordMessage({
+          conversationId,
+          clientRequestId: input.clientRequestId,
+          role: 'owner',
+          text: prompt
+        });
+        for (const { role, answer } of results) {
+          void options.chatService.recordMessage({
+            conversationId,
             role,
-            phase: 'final',
-            taskAttempt: 1,
-            turn: 0,
-            provider: assignment.provider,
-            model: assignment.model,
-            apiKey: assignment.apiKey ?? '',
-            system: systemPrompt,
-            user: raw,
-            timeoutMs: 60_000
+            text: answer
           });
-          updateState((draft) => {
-            const chatList = draft.chats[role] ?? [];
-            chatList.push(
-              { from: 'user', text: raw, at: Date.now() },
-              { from: role, text: replyText, at: Date.now() }
-            );
-            draft.chats[role] = chatList.slice(-50);
-          });
-          hub.emit('state', snapshot());
-          return { ok: true, command: 'chat', reply: replyText };
-        } catch (err) {
-          return { ok: false, error: `Agent ${role} error: ${(err as Error).message}` };
         }
       }
+      return {
+        ok: failures === 0,
+        command: 'chat',
+        reply: results.map(({ role, answer }) => `${role}: ${answer}`).join('\n\n') +
+          (failures ? `\n${failures} agent(s) failed to reply.` : ''),
+        error: failures ? `${failures} agent(s) failed to reply.` : undefined
+      };
     }
 
     if (cmd.startsWith('analyze ') || cmd.startsWith('debate ')) {
@@ -1045,7 +1220,7 @@ export function createReplacementRuntime(
     const nMatch = raw.match(/^(?:set\s+)?(?:n|orders?|open\s+orders?|order)\s*(?:=|to|:)?\s*(\d+)\b/i);
     if (nMatch) {
       const count = Number(nMatch[1]);
-      if (Number.isInteger(count) && count >= 1 && count <= 4) {
+      if (Number.isInteger(count) && count >= 1 && count <= 100) {
         updateState((d) => {
           d.paper.n = count;
           if (d.trading) {
@@ -1076,7 +1251,7 @@ export function createReplacementRuntime(
         hub.emit('state', snapshot());
         return { ok: true, command: 'set_n', reply: `Slots N set to ${count}.` };
       }
-      return { ok: false, error: 'N must be an integer between 1 and 4.' };
+      return { ok: false, error: 'N must be an integer between 1 and 100.' };
     }
 
     if (cmd === 'sync' || cmd === 'sync balance' || cmd === 'sync to book' || cmd === 'refresh balance') {
@@ -1609,8 +1784,9 @@ export async function startReplacementServer(
         };
       }
 
+      const receipts = [];
       for (const pos of targetPos) {
-        await gateway.close({
+        const r = await gateway.close({
           intentId: `close-${Date.now()}-${pos.symbol}`,
           accountRef,
           configVersion: settings.current().activeVersion,
@@ -1621,13 +1797,63 @@ export async function startReplacementServer(
           ownerAuthorized: true,
           trigger: 'Owner close command'
         });
+        receipts.push(r);
+      }
+
+      const allFilled = receipts.length > 0 && receipts.every((r) => r.orderState === 'FILLED');
+      const anyRejected = receipts.some((r) => r.orderState === 'REJECTED');
+      const anyUnknown = receipts.some((r) => r.orderState === 'UNKNOWN');
+      const overallState = allFilled
+        ? 'CLOSED'
+        : anyRejected
+        ? 'REJECTED'
+        : anyUnknown
+        ? 'UNKNOWN'
+        : 'PENDING';
+
+      try {
+        const freshPositions = await transport.positions();
+        runtimeRef?.updateState((draft) => {
+          draft.paper.positions = freshPositions.map((p, idx) => {
+            const qty = Number(p.qty);
+            const entry = Number(p.entryPrice);
+            const leverage = 5;
+            const margin = (qty * entry) / leverage;
+            const stop = entry * (p.side === 'LONG' ? 0.95 : 1.05);
+            return {
+              id: `pos-${p.symbol}-${idx}`,
+              symbol: p.symbol,
+              side: p.side,
+              qty,
+              entry,
+              stop,
+              tp: null,
+              mark: entry,
+              unrealizedPnl: 0,
+              leverage,
+              margin,
+              openedAt: Date.now(),
+              protectionStatus: 'confirmed',
+              entryStatus: 'confirmed'
+            };
+          });
+          draft.paper.usedMargin = draft.paper.positions.reduce((sum, pos) => sum + pos.margin, 0);
+          draft.paper.canOpen = draft.paper.positions.length < draft.paper.n;
+        });
+      } catch {
+        // Venue read failure in close reconciliation
       }
 
       return {
-        ok: true,
-        code: 'OK',
-        message: `Position(s) closed for ${symbol}`,
-        data: { orderState: 'CLOSED' }
+        ok: !anyRejected,
+        code: allFilled ? 'OK' : anyRejected ? 'REJECTED' : 'ACCEPTED',
+        message: allFilled
+          ? `Position(s) closed for ${symbol}`
+          : `Position close submitted for ${symbol}: ${overallState}`,
+        data: {
+          orderState: overallState,
+          receipts
+        }
       };
     }
 
@@ -1699,6 +1925,9 @@ export async function startReplacementServer(
     positions: initialPositions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
   } : null;
 
+  const chatService = new ChatService(store);
+  await chatService.hydrateFromStore();
+
   const runtime = createReplacementRuntime({
     sessionId: sessionLogger?.session.sessionId ?? null,
     initialMode: startup.tradingMode,
@@ -1712,7 +1941,9 @@ export async function startReplacementServer(
     runtimeIdentity: initialIdentity,
     executionGateway: gateway,
     env,
-    settings
+    settings,
+    secrets,
+    chatService
   });
   runtimeRef = runtime;
 
@@ -1754,6 +1985,7 @@ export async function startReplacementServer(
 
   const app = createReplacementApp(runtime, {
     sessionLogger,
+    chatService,
     setupDeps: { settings, secrets, accounts },
     researchDeps: { host: researchHost, activeAccountRef: () => accountRef },
     grokBridge,

@@ -82,4 +82,69 @@ describe('Local CLI Agents Integration', () => {
       expect(postData.policy.autoResearch).toBe(true);
     });
   });
+
+  it('reports installed_unverified instead of fake connected when verify is false', async () => {
+    await withTestApp(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/setup/local-agents/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'codex', verify: false })
+      });
+      const data = (await res.json()) as { ok: boolean; installed: boolean; connected: boolean; state: string };
+      expect(res.status).toBe(200);
+      expect(data.ok).toBe(true);
+      if (data.installed) {
+        expect(data.connected).toBe(false);
+        expect(data.state).toBe('installed_unverified');
+      }
+    });
+  });
+
+  it('returns 501 on settings endpoint to avoid fake persistence acknowledgements', async () => {
+    await withTestApp(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/setup/local-agents/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'codex', settings: {} })
+      });
+      expect(res.status).toBe(501);
+      const data = (await res.json()) as { ok: boolean; detail: string };
+      expect(data.ok).toBe(false);
+      expect(data.detail).toContain('not implemented');
+    });
+  });
+
+  it('handles /api/setup/local-agents/test endpoint with validation', async () => {
+    await withTestApp(async (baseUrl) => {
+      const resEmpty = await fetch(`${baseUrl}/api/setup/local-agents/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      expect(resEmpty.status).toBe(400);
+
+      const resUnknown = await fetch(`${baseUrl}/api/setup/local-agents/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'unknown-agent:default' })
+      });
+      expect(resUnknown.status).toBe(400);
+      const data = (await resUnknown.json()) as { ok: boolean; detail: string };
+      expect(data.detail).toContain('Unknown local agent');
+    });
+  });
+
+  it('rejects unsupported explicit model flags with 422', async () => {
+    await withTestApp(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/setup/local-agents/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'gemini', model: 'unsupported-custom-model' })
+      });
+      expect(res.status).toBe(422);
+      const data = (await res.json()) as { ok: boolean; state: string; detail: string };
+      expect(data.ok).toBe(false);
+      expect(data.state).toBe('MODEL NOT VERIFIED');
+    });
+  });
 });

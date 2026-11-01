@@ -461,4 +461,110 @@ describe('T09 single execution gateway, journal-before-send, timeout UNKNOWN, Ow
     expect(submitsDuringRecovery).toBe(0);
     expect(recon.protection['BTCUSDT:ONE_WAY']).toBe('VERIFIED');
   });
+
+  it('reports ACCEPTED state for submitted orders without claiming FILLED and distinguishes pending close from filled close', async () => {
+    const { store, accountRef, authority, epoch } = await createTestStore();
+
+    const pendingTransport: GatewayVenueTransport = {
+      balance: async () => ({
+        balanceUsdt: '1000',
+        availableUsdt: '1000',
+        realizedDailyPnlUsdt: '0'
+      }),
+      positions: async () => [
+        {
+          positionKey: 'SOLUSDT:ONE_WAY',
+          symbol: 'SOLUSDT',
+          side: 'LONG',
+          qty: '10',
+          entryPrice: '150'
+        }
+      ],
+      submitOrder: async (order) => ({
+        clientOrderId: order.clientOrderId,
+        venueOrderId: 'ord-accepted-1',
+        state: 'ACCEPTED',
+        filledQty: null
+      }),
+      lookupOrder: async (_sym, clientOrderId) => ({
+        clientOrderId,
+        venueOrderId: 'ord-accepted-1',
+        state: 'ACCEPTED',
+        filledQty: null
+      }),
+      cancelEntryOrder: async (_sym, clientOrderId) => ({
+        clientOrderId,
+        venueOrderId: 'ord-accepted-1',
+        state: 'CANCELLED',
+        filledQty: '0'
+      }),
+      readProtection: async (pos) => ({
+        state: 'VERIFIED',
+        coveredQty: pos.qty,
+        stopPrice: '140',
+        reduceOnly: true
+      }),
+      placeProtection: async (pos, stopPrice) => ({
+        state: 'VERIFIED',
+        coveredQty: pos.qty,
+        stopPrice,
+        reduceOnly: true
+      }),
+      closePosition: async (pos, clientOrderId) => ({
+        clientOrderId,
+        venueOrderId: 'close-accepted-1',
+        state: 'ACCEPTED',
+        filledQty: null
+      })
+    };
+
+    const gateway = new ExecutionGateway({
+      store,
+      authority,
+      getTransport: () => pendingTransport,
+      getAccountPolicy: () => ({
+        activeConfigVersion: 1,
+        safetyNetUsdt: '200',
+        maxPositions: 4,
+        dailyLossCapUsdt: '50',
+        minEntryConfidencePct: 60
+      }),
+      readFreshMarket: () => makeFreshMarket('150')
+    });
+
+    const submitReceipt = await gateway.submit({
+      intentId: 'intent-pending-submit-1',
+      accountRef,
+      configVersion: 1,
+      authorityEpoch: epoch,
+      action: 'OPEN',
+      symbol: 'BTCUSDT',
+      side: 'LONG',
+      quantity: '0.01',
+      entry: null,
+      stop: '67000',
+      tp: null,
+      leverage: 5,
+      thesisId: null
+    });
+
+    expect(submitReceipt.orderState).toBe('ACCEPTED');
+    expect(submitReceipt.filledQty).toBeNull();
+    expect(submitReceipt.orderState).not.toBe('FILLED');
+
+    const closeReceipt = await gateway.close({
+      intentId: 'intent-pending-close-1',
+      accountRef,
+      configVersion: 1,
+      authorityEpoch: epoch,
+      symbol: 'SOLUSDT',
+      side: 'LONG',
+      quantity: '10',
+      ownerAuthorized: true
+    });
+
+    expect(closeReceipt.orderState).toBe('ACCEPTED');
+    expect(closeReceipt.filledQty).toBeNull();
+    expect(closeReceipt.orderState).not.toBe('FILLED');
+  });
 });

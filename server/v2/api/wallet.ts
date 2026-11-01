@@ -243,7 +243,61 @@ async function readHyperliquidPublicBalance(
 
 export function mountWalletRoutes(app: express.Express, deps: WalletRouteDeps): void {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const walletService = deps.walletService ?? new WalletService({ fetchImpl });
+  const walletService =
+    deps.walletService ??
+    new WalletService({
+      fetchImpl,
+      persistDelegatedSecret: async (record) => {
+        const isTestnet = record.network === 'testnet';
+        if (record.venue === 'hyperliquid') {
+          const keyName = isTestnet
+            ? 'HYPERLIQUID_TESTNET_ACCOUNT_ADDRESS'
+            : 'HYPERLIQUID_ACCOUNT_ADDRESS';
+          const secretName = isTestnet
+            ? 'HYPERLIQUID_TESTNET_AGENT_PRIVATE_KEY'
+            : 'HYPERLIQUID_AGENT_PRIVATE_KEY';
+          deps.secrets.writeSecrets({
+            [keyName]: record.mainAddress,
+            [secretName]: record.agentPrivateKey
+          });
+        } else if (record.venue === 'aster') {
+          const keyName = isTestnet ? 'ASTER_TESTNET_USER_ADDRESS' : 'ASTER_USER_ADDRESS';
+          const secretName = isTestnet
+            ? 'ASTER_TESTNET_SIGNER_PRIVATE_KEY'
+            : 'ASTER_SIGNER_PRIVATE_KEY';
+          const pinKey = isTestnet
+            ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED'
+            : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
+          deps.secrets.writeSecrets({
+            [keyName]: record.mainAddress,
+            [secretName]: record.agentPrivateKey,
+            [pinKey]: record.agentAddress
+          });
+        }
+      },
+      verifyDelegatedAgent: async ({ venue, network, mainAddress, agentAddress, agentPrivateKey }) => {
+        try {
+          const adapter = getVenueAdapter(venue, {
+            network,
+            credentialRef: `${venue}:${network}`,
+            fetchImpl,
+            readSecret: async () => ({
+              key: mainAddress,
+              secret: agentPrivateKey,
+              verifiedAgentAddress: agentAddress
+            })
+          });
+          const perms = await adapter.permissions();
+          const ok = perms.verified && perms.canTrade && perms.canWithdraw === false;
+          return { ok, detail: perms.detail };
+        } catch (err) {
+          return {
+            ok: false,
+            detail: err instanceof Error ? err.message : 'Venue adapter permission verification failed'
+          };
+        }
+      }
+    });
 
   const getBoundHost = (): string =>
     process.env.HOST && process.env.HOST.trim() !== '' ? process.env.HOST.trim() : '127.0.0.1';

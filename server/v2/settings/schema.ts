@@ -31,11 +31,11 @@ export type ReasoningEffort = (typeof REASONING_LEVELS)[number];
 
 export const TradingFields = z
   .object({
-    dailyLossLimitPct: z.number().finite().min(0.5).max(25),
+    dailyLossLimitPct: z.number().finite().positive().max(100),
     maxLossPerTradePct: z.number().finite().positive().max(100),
     minEntryConfidencePct: z.number().finite().min(0).max(100),
     maxLeverage: z.number().int().min(1).max(100),
-    orderSizePct: z.number().finite().min(1.5).max(100).optional(),
+    orderSizePct: z.number().finite().positive().max(100).optional(),
     defaultStopPct: z.number().finite().positive().lt(100),
     minStopPct: z.number().finite().nonnegative().lt(100),
     takeProfitPct: z.number().finite().positive().optional(),
@@ -43,7 +43,7 @@ export const TradingFields = z
     maxOrderUsdt: z.number().finite().nonnegative().default(0),
     minOrderUsdt: z.number().finite().nonnegative(),
     safetyNet: z.number().finite().nonnegative(),
-    maxPositions: z.number().int().min(1).max(4)
+    maxPositions: z.number().int().min(1).max(100)
   })
   .strict();
 
@@ -160,7 +160,7 @@ export const PreferencesBody = z
     appMode: z.enum(['local', 'grokbot']),
     balance: z.number().finite().nonnegative(),
     safetyNet: z.number().finite().nonnegative(),
-    n: z.number().int().min(1).max(4),
+    n: z.number().int().min(1).max(100),
     dailyLoss: z.number().finite().min(0.1).max(100),
     auto: z.boolean(),
     debateInterval: z.number().int().min(1).max(1440),
@@ -185,7 +185,7 @@ export const PaperSettingsSchema = z
   .object({
     balance: z.number().finite().nonnegative(),
     safetyNet: z.number().finite().nonnegative(),
-    n: z.number().int().min(1).max(4)
+    n: z.number().int().min(1).max(100)
   })
   .strict();
 

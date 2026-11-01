@@ -137,6 +137,30 @@ export interface LocalCliInferenceResult {
   error: string | null;
 }
 
+export function parseLocalCliReply(output: string): string {
+  const texts: string[] = [];
+  try {
+    const obj = JSON.parse(output);
+    if (obj.event === 'result' && typeof obj.result?.response === 'string') return obj.result.response.trim();
+    if (typeof obj.result === 'string') return obj.result.trim();
+    if (typeof obj.response === 'string') return obj.response.trim();
+    if (!obj.type && !obj.event) return output.trim();
+  } catch {}
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj.event === 'result' && typeof obj.result?.response === 'string') return obj.result.response.trim();
+      if (obj.type === 'item.completed' && obj.item?.type === 'agent_message') texts.push(obj.item.text);
+      else if (obj.type === 'text' && typeof obj.part?.text === 'string') texts.push(obj.part.text);
+      else if (obj.type === 'say' && obj.say === 'text' && typeof obj.text === 'string') texts.push(obj.text);
+      else if (obj.type === 'run_result' && typeof obj.text === 'string') return obj.text.trim();
+      else if (obj.type === 'result' && typeof obj.result === 'string') return obj.result.trim();
+    } catch {}
+  }
+  return texts.length ? texts.join('\n').trim() : output.trim();
+}
+
 export async function runLocalCliInference(
   options: LocalCliInferenceOptions
 ): Promise<LocalCliInferenceResult> {
@@ -178,12 +202,66 @@ export async function runLocalCliInference(
 
   try {
     const args: string[] = [];
+    let stdinInput: string | null = null;
+
     if (id === 'claude') {
       args.push('-p', options.prompt);
       if (model !== 'default') args.push('--model', model);
     } else if (id === 'codex') {
       args.push('exec', '--skip-git-repo-check', options.prompt);
       if (model !== 'default') args.push('-m', model);
+    } else if (id === 'antigravity') {
+      args.push(
+        '--print=',
+        '--sandbox',
+        '--disable-slash-commands',
+        '--input-format',
+        'stream-json',
+        '--output-format',
+        'stream-json',
+        '--dangerously-skip-permissions'
+      );
+      if (model !== 'default') args.push('--model', model);
+      stdinInput = JSON.stringify({ event: 'user', message: { content: options.prompt } }) + '\n';
+    } else if (id === 'gemini') {
+      args.push('-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'pi') {
+      args.push('--print', '--mode', 'text', '--no-tools', '--no-extensions', '--no-skills', '--no-session', '-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'kimi') {
+      args.push('-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'kilo') {
+      args.push('--pure', 'run', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'cline') {
+      args.push('-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'grok') {
+      args.push('-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'hermes') {
+      args.push('chat', '-Q', '--safe-mode', '-q', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'openclaw') {
+      args.push('agent', '--local', '-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'copilot') {
+      args.push('-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'cursor') {
+      args.push('-p', options.prompt, '--mode', 'ask', '--output-format', 'json');
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'qwen') {
+      args.push('--approval-mode', 'plan', '-p', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'opencode') {
+      args.push('run', options.prompt);
+      if (model !== 'default') args.push('--model', model);
+    } else if (id === 'muse') {
+      args.push('exec', options.prompt);
+      if (model !== 'default') args.push('--model', model);
     } else {
       args.push(options.prompt);
     }
@@ -193,10 +271,19 @@ export async function runLocalCliInference(
         cwd: tempDir,
         env: cleanEnv,
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe']
       });
       let stdout = '';
+      let stderr = '';
       let killed = false;
+
+      if (stdinInput) {
+        child.stdin?.write(stdinInput);
+        child.stdin?.end();
+      } else {
+        child.stdin?.end();
+      }
+
       const timer = setTimeout(() => {
         killed = true;
         child.kill();
@@ -217,6 +304,12 @@ export async function runLocalCliInference(
         }
       });
 
+      child.stderr?.on('data', (chunk: Buffer) => {
+        if (stderr.length < 4000) {
+          stderr += chunk.toString('utf8').slice(0, 4000 - stderr.length);
+        }
+      });
+
       child.once('error', (err) => {
         clearTimeout(timer);
         options.signal?.removeEventListener('abort', onAbort);
@@ -227,10 +320,12 @@ export async function runLocalCliInference(
         clearTimeout(timer);
         options.signal?.removeEventListener('abort', onAbort);
         if (killed) return;
-        if (code === 0 && stdout.trim()) {
-          resolve(stdout.trim());
+        const cleaned = parseLocalCliReply(stdout);
+        if (code === 0 && cleaned) {
+          resolve(cleaned);
         } else {
-          reject(new Error(`Local CLI ${id} exited with code ${code ?? 'unknown'}`));
+          const detail = stderr.trim() ? `: ${stderr.trim().slice(0, 300)}` : '';
+          reject(new Error(`Local CLI ${id} exited with code ${code ?? 'unknown'}${detail}`));
         }
       });
     });

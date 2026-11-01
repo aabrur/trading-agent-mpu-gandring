@@ -38,6 +38,7 @@ interface Props {
   activeConversationId?: string;
   selectConversation?: (id: string) => void;
   newConversation?: () => Promise<string>;
+  deleteConversation?: (id: string) => Promise<void>;
   cendolBanner?: CendolEvent | null;
   onDismissCendol?: () => void;
 }
@@ -217,7 +218,7 @@ function Agent({
           {a.stance && inDebate && (
             <span className={`stance s-${a.stance}`}>
               {a.stance}
-              {a.confidence != null ? ` ${Math.round(a.confidence * 100)}%` : ''}
+              {a.confidence != null ? ` ${a.confidence > 1 ? Math.round(a.confidence) : Math.round(a.confidence * 100)}%` : ''}
             </span>
           )}
         </div>
@@ -226,7 +227,7 @@ function Agent({
   );
 }
 
-export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, command, children, activeConversationId, selectConversation, newConversation, cendolBanner, onDismissCendol }: Props) {
+export function Office({ state, sceneEvents, speech, fights, reactions, disagreement, selected, spark, onSelect, command, children, activeConversationId, selectConversation, newConversation, deleteConversation, cendolBanner, onDismissCendol }: Props) {
   const { t } = useI18n();
   const [motionPaused, setMotionPaused] = useState(false);
   const officeRef = useRef<HTMLDivElement>(null);
@@ -485,7 +486,7 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
           );
         })}
 
-        <OfficeDiscussion state={state} latest={latestSpeech} onSelect={onSelect} command={command} activeConversationId={activeConversationId} onSelectConversation={selectConversation} onNewConversation={newConversation} />
+        <OfficeDiscussion state={state} latest={latestSpeech} onSelect={onSelect} command={command} activeConversationId={activeConversationId} onSelectConversation={selectConversation} onNewConversation={newConversation} onDeleteConversation={deleteConversation} />
       </div>
     </div>
   );

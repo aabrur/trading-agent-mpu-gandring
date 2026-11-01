@@ -199,12 +199,15 @@ export function mountOperationsRoutes(
       return;
     }
 
+    const orderState = (reply.data?.orderState as string | undefined) ?? 'CLOSED';
+    const isTerminalClose = orderState === 'CLOSED' || orderState === 'FILLED';
+
     res.json({
       ok: true,
       symbol: parsed.data.symbol,
-      closed: true,
-      status: (reply.data?.orderState as string | undefined) ?? 'CLOSED',
-      orderState: (reply.data?.orderState as string | undefined) ?? 'CLOSED'
+      closed: isTerminalClose,
+      status: orderState,
+      orderState
     });
   });
 
@@ -240,7 +243,7 @@ export function mountOperationsRoutes(
 
     const parsed = autoBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
-      res.status(400).json({ ok: false, error: 'Invalid auto configuration. n must be between 1 and 4.' });
+      res.status(400).json({ ok: false, error: 'Invalid auto configuration.' });
       return;
     }
 
@@ -395,7 +398,8 @@ export function mountOperationsRoutes(
       const reply = await runtime.handleCommand({
         text: parsed.data.text,
         agent: parsed.data.agent,
-        clientRequestId: parsed.data.clientRequestId
+        clientRequestId: parsed.data.clientRequestId,
+        conversationId: parsed.data.conversationId
       });
       res.json(reply);
       return;

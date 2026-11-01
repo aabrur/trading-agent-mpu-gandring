@@ -76,14 +76,14 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
     }
 
     if (!parsed.data.verify) {
-      res.json({ ok: true, installed: true, connected: true, state: 'ready' });
+      res.json({ ok: true, installed: true, connected: false, state: 'installed_unverified' });
       return;
     }
 
     const testRes = await runLocalCliInference({
       agentSpec: `${def.id}:default`,
       prompt: 'Reply with only OK.',
-      timeoutMs: 15_000
+      timeoutMs: 60_000
     });
 
     res.json({
@@ -94,10 +94,47 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
     });
   });
 
+  app.post('/api/setup/local-agents/test', async (req, res) => {
+    const rawModel = String(req.body?.model ?? '').trim();
+    if (!rawModel) {
+      res.status(400).json({ ok: false, detail: 'Choose a local agent first.' });
+      return;
+    }
+    const [agentId, ...rest] = rawModel.split(':');
+    const model = rest.join(':') || 'default';
+    const def = LOCAL_CLI_AGENTS.find((a) => a.id === agentId);
+    if (!def) {
+      res.status(400).json({ ok: false, detail: 'Unknown local agent.' });
+      return;
+    }
+    const binPath = findBinPath(def.bin);
+    if (!binPath) {
+      res.status(400).json({ ok: false, detail: `Install ${def.label} (${def.bin}) on PATH first.` });
+      return;
+    }
+    const testRes = await runLocalCliInference({
+      agentSpec: `${def.id}:${model}`,
+      prompt: 'Reply with only OK.',
+      timeoutMs: 90_000
+    });
+    if (testRes.ok) {
+      res.json({
+        ok: true,
+        detail: 'Connection verified: the agent returned a valid model reply.'
+      });
+    } else {
+      res.status(400).json({
+        ok: false,
+        detail: testRes.error ?? 'The agent did not return a valid reply. Check native CLI sign-in.'
+      });
+    }
+  });
+
   app.post('/api/setup/local-agents/connect', async (req, res) => {
     const schema = z.object({
       id: z.string(),
-      assignAll: z.boolean().optional()
+      assignAll: z.boolean().optional(),
+      model: z.string().min(1).max(200).optional()
     });
     const parsed = schema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -111,16 +148,22 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
       return;
     }
 
+    const selectedModel = parsed.data.model?.trim() || 'default';
+    const supportedModelCliIds = ['claude', 'codex', 'antigravity'];
+    if (selectedModel !== 'default' && !supportedModelCliIds.includes(def.id)) {
+      res.status(422).json({ ok: false, active: false, state: 'MODEL NOT VERIFIED', detail: `Explicit model selection is not supported by the ${def.label} launcher yet. Use its default model or add the documented CLI model flag.` });
+      return;
+    }
+
     const binPath = findBinPath(def.bin);
     if (!binPath) {
       res.status(400).json({ ok: false, state: 'NOT INSTALLED', detail: `Install ${def.label} (${def.bin}) on PATH first.` });
       return;
     }
-
     const testRes = await runLocalCliInference({
-      agentSpec: `${def.id}:default`,
+      agentSpec: `${def.id}:${selectedModel}`,
       prompt: 'Reply with only OK.',
-      timeoutMs: 25_000
+      timeoutMs: 90_000
     });
 
     if (!testRes.ok) {
@@ -133,9 +176,9 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
       return;
     }
 
-    const modelString = `${def.id}:default`;
+    const modelString = `${def.id}:${selectedModel}`;
     const nextAgents: Record<string, { provider: 'local'; model: string }> = {};
-    for (const role of ['lead', 'market', 'research', 'strategist', 'risk', 'execution']) {
+    for (const role of parsed.data.assignAll ? ['lead', 'market', 'research', 'strategist', 'risk', 'execution'] : ['lead']) {
       nextAgents[role] = { provider: 'local', model: modelString };
     }
     await deps.settings.apply(
@@ -170,17 +213,25 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
       res.status(400).json({ ok: false, detail: 'Unknown local agent.' });
       return;
     }
+    const binPath = findBinPath(def.bin);
     res.json({
       ok: true,
       discovery: {
+        version: null,
+        completeness: binPath ? 'verified_installed' : 'static_fallback',
+        error: null,
+        authentication: binPath ? 'ready' : 'unverified',
         configuredModel: 'default',
-        models: def.models.map((m) => ({ id: m, reasoningLevels: ['default', 'high'] }))
+        models: def.models.map((m) => ({ id: m, source: 'provider_documented' }))
       }
     });
   });
 
-  app.post('/api/setup/local-agents/settings', (req, res) => {
-    res.json({ ok: true, detail: 'Agent settings saved.', settings: {} });
+  app.post('/api/setup/local-agents/settings', (_req, res) => {
+    res.status(501).json({
+      ok: false,
+      detail: 'Per-CLI settings persistence and runtime model application are not implemented in this endpoint. Choose models in Setup > Models instead.'
+    });
   });
 
   const researchPolicy = {

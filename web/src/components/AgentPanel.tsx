@@ -23,7 +23,7 @@ const QUICK_ID: Record<AgentId, string[]> = {
   execution: ['close all', 'status']
 };
 
-export function AgentPanel({ state, id, onClose, command, conversationId }: { state: DeskState; id: AgentId; onClose: () => void; command: (t: string, a?: AgentId, clientRequestId?: string) => Promise<unknown>; conversationId?: string }) {
+export function AgentPanel({ state, id, onClose, command, conversationId, onNewConversation, onDeleteConversation }: { state: DeskState; id: AgentId; onClose: () => void; command: (t: string, a?: AgentId, clientRequestId?: string) => Promise<unknown>; conversationId?: string; onNewConversation?: () => Promise<string>; onDeleteConversation?: (id: string) => Promise<void> }) {
   const { t, lang } = useI18n();
   const a = state.agents[id];
   const allChat = state.chats[id] ?? [];
@@ -124,6 +124,11 @@ export function AgentPanel({ state, id, onClose, command, conversationId }: { st
         </div>
       </div>
       <div className="ap-history-controls">
+        {onNewConversation && <button type="button" aria-label="New chat" data-rebirth-additive="true" disabled={busy || busyRemote} onClick={() => void onNewConversation().then(() => { setSelected(null); setArchives(null); setRetry(null); }).catch(e => setError(e instanceof Error ? e.message : 'New conversation failed'))}>{lang === 'id' ? '+ Chat baru' : '+ New chat'}</button>}
+        {onDeleteConversation && conversationId && conversationId !== 'office' && <button type="button" aria-label="Delete active chat" data-rebirth-additive="true" disabled={busy || busyRemote} onClick={() => {
+          if (!window.confirm(lang === 'id' ? 'Hapus chat aktif? Catatan trading tetap tersimpan.' : 'Delete active chat? Trading records remain saved.')) return;
+          void onDeleteConversation(conversationId).catch(e => setError(e instanceof Error ? e.message : 'Delete failed'));
+        }}>{lang === 'id' ? 'Hapus chat' : 'Delete chat'}</button>}
         <button ref={historyButton} aria-expanded={archives !== null} disabled={historyBusy} onClick={() => { if (archives) { historyGeneration.current++; setArchives(null); setSelected(null); } else void loadArchives(); }}>{lang === 'id' ? 'Riwayat sesi' : 'Session history'}</button>
         {selected && <button onClick={() => { historyGeneration.current++; setSelected(null); setHistorical([]); setHistoryBusy(false); }}>{lang === 'id' ? 'Kembali ke chat aktif' : 'Back to active chat'}</button>}
         {selected && <button disabled={historyBusy} onClick={() => void deleteArchive(selected)}>{lang === 'id' ? 'Hapus sesi' : 'Delete session'}</button>}

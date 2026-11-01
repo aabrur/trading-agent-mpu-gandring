@@ -128,12 +128,17 @@ describe('T03 versioned settings and secrets coordinator', () => {
     expect(service.current().activeVersion).toBe(before.activeVersion);
 
     let expectedVer = before.activeVersion;
-    for (const validN of [1, 2, 3, 4] as const) {
+    for (const validN of [1, 2, 3, 4, 8, 10] as const) {
       const res = await service.apply({ trading: { maxPositions: validN } }, expectedVer);
       expect(res.applyStatus).toBe('applied');
       expect(service.current().effective.trading.maxPositions).toBe(validN);
       expectedVer = res.activeVersion;
     }
+
+    const lossRes = await service.apply({ trading: { dailyLossLimitPct: 35 } }, expectedVer);
+    expect(lossRes.applyStatus).toBe('applied');
+    expect(service.current().effective.trading.dailyLossLimitPct).toBe(35);
+    expectedVer = lossRes.activeVersion;
 
     // Prepare failure keeps previous activeVersion intact while recording failed candidate
     const prior = service.current();

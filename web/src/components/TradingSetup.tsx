@@ -15,14 +15,14 @@ interface TradingInfo {
 
 function getTradingFields(t: (k: TranslationKey) => string) {
   return [
-    { key: 'dailyLossLimitPct' as const, label: t('tradingDailyLossCap'), min: 0.5, max: 25, help: t('tradingHelpDailyLoss') },
+    { key: 'dailyLossLimitPct' as const, label: t('tradingDailyLossCap'), min: 0.5, max: 100, help: t('tradingHelpDailyLoss') },
     { key: 'minEntryConfidencePct' as const, label: t('tradingMinEntryConfidence'), min: 0, max: 100, help: t('tradingHelpMinEntryConfidence') },
     { key: 'maxLeverage' as const, label: t('tradingMaxLeverage'), min: 1, max: 100, step: 1, help: t('tradingHelpMaxLeverage') },
     { key: 'orderSizePct' as const, label: 'Order size (% of Money Trade)', min: 1.5, max: 100, help: '1.5–100%. Leave empty to divide Money Trade by N.' },
     { key: 'defaultStopPct' as const, label: t('tradingDefaultStop'), min: 0, max: 100, help: t('tradingHelpDefaultStop') },
     { key: 'takeProfitPct' as const, label: t('tradingTakeProfitPct'), min: 0, max: 1000, help: t('tradingHelpTakeProfitPct') },
     { key: 'safetyNet' as const, label: t('tradingSafetyNet'), min: 0, help: t('tradingHelpSafetyNet') },
-    { key: 'maxPositions' as const, label: t('tradingMaxPositions'), min: 1, max: 4, step: 1, help: t('tradingHelpMaxPositions') }
+    { key: 'maxPositions' as const, label: t('tradingMaxPositions'), min: 1, max: 20, step: 1, help: t('tradingHelpMaxPositions') }
   ];
 }
 

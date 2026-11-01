@@ -164,7 +164,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
     const timer = window.setTimeout(async () => {
       for (const [id, started] of Object.entries(waiting)) {
         try {
-          const result = await status(id, false);
+          const result = await status(id, true);
           if (cancelled) return;
           const expired = Date.now() - started > 300_000;
           if (result.connected || result.state === 'finished' || result.state === 'failed' || result.state === 'missing' || expired) {
@@ -240,7 +240,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
     setBusy(id);
     setMessage(old => ({...old, [id]: lang === 'id' ? 'Memeriksa login, model, dan konfigurasi...' : 'Checking authentication, discovering models, and configuring...'}));
     try {
-      const response = await fetch('/api/setup/local-agents/connect', { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, continue: continuation, assignAll: true}) }, 45_000);
+      const response = await fetch('/api/setup/local-agents/connect', { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, continue: continuation, assignAll: true, model: editSettings[id]?.model || settings[id]?.model || 'default'}) }, 45_000);
       const result = await response.json();
       setMessage(old => ({...old, [id]: `${result.state}: ${result.detail || ''}`}));
       setVerified(old => ({...old, [id]: result.active === true}));
@@ -256,8 +256,12 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
       const response = await fetch('/api/setup/local-agents/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) }, 45_000);
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error();
-      setAgents(result.agents);
-      setMessage(old => ({ ...old, [id]: result.discovery.error || result.discovery.completeness }));
+      const discovery = result.discovery as LocalAgent['discovery'];
+      if (!discovery || !Array.isArray(discovery.models)) throw new Error('Invalid CLI model response');
+      setAgents(current => current.map(agent => agent.id === id
+        ? { ...agent, discovery, models: [...new Set([...agent.models, ...discovery.models.map(model => model.id)])] }
+        : agent));
+      setMessage(old => ({ ...old, [id]: discovery.error || discovery.completeness }));
       window.dispatchEvent(new Event('mpu-models-updated'));
     } catch { setMessage(old => ({...old, [id]: lang === 'id' ? 'Gagal menyegarkan model.' : 'Unable to refresh models.'})); }
     finally { setBusy(null); }
@@ -275,7 +279,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
       const d = await r.json();
       if (r.ok && d.ok) {
         setSettings(d.settings || {});
-        setMessage((old) => ({ ...old, [id]: lang === 'id' ? 'Pengaturan agen tersimpan di .env' : 'Agent settings saved to .env' }));
+        setMessage((old) => ({ ...old, [id]: lang === 'id' ? 'Pengaturan agen diterapkan.' : 'Agent settings applied.' }));
       } else {
         setMessage((old) => ({ ...old, [id]: d.detail || 'Failed to save settings' }));
       }

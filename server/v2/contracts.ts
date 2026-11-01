@@ -244,7 +244,7 @@ export interface OfficeRuntime {
   triggerCycle?(symbol?: string, reason?: string): Promise<{ ok: boolean; message: string; cycleId?: string }>;
   updateAutoSettings?(patch: Record<string, unknown>): OfficeState;
   updateState?(mutator: (draft: OfficeState) => OfficeState | void): OfficeState;
-  handleCommand?(input: { text: string; agent?: string; clientRequestId?: string }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
+  handleCommand?(input: { text: string; agent?: string; clientRequestId?: string; conversationId?: string }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
 }
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
