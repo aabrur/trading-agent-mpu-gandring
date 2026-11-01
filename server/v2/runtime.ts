@@ -1863,6 +1863,7 @@ export async function startReplacementServer(
         // Venue polling failure is non-fatal
       }
     };
+    void syncVenueAccount();
     syncTimer = setInterval(syncVenueAccount, 15_000);
     syncTimer.unref();
   }

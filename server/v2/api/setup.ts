@@ -155,21 +155,24 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
 
   app.get('/api/setup/preferences', (_req, res) => {
     const snap = deps.settings.current();
+    const prefs = {
+      appMode: snap.effective.appMode,
+      balance: snap.effective.paper.balance,
+      safetyNet: snap.effective.paper.safetyNet,
+      n: snap.effective.paper.n,
+      dailyLoss: snap.effective.trading.dailyLossLimitPct,
+      auto: snap.effective.auto.on,
+      debateInterval: snap.effective.auto.intervalMin,
+      reportInterval: snap.effective.auto.reportIntervalMin,
+      maxHoldHours: snap.effective.auto.maxHoldHours
+    };
     res.json({
       ok: true,
       savedVersion: snap.savedVersion,
       activeVersion: snap.activeVersion,
-      preferences: {
-        appMode: snap.effective.appMode,
-        balance: snap.effective.paper.balance,
-        safetyNet: snap.effective.paper.safetyNet,
-        n: snap.effective.paper.n,
-        dailyLoss: snap.effective.trading.dailyLossLimitPct,
-        auto: snap.effective.auto.on,
-        debateInterval: snap.effective.auto.intervalMin,
-        reportInterval: snap.effective.auto.reportIntervalMin,
-        maxHoldHours: snap.effective.auto.maxHoldHours
-      }
+      canRestart: true,
+      values: prefs,
+      preferences: prefs
     });
   });
 
@@ -210,7 +213,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       expectedActiveVersion
     );
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', ...result });
+    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Preferences saved.', ...result });
   });
 
   app.get('/api/setup/trading', (_req, res) => {
@@ -313,7 +316,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       expected
     );
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', ...result });
+    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Trading configuration saved.', ...result });
   });
 
   app.get('/api/setup/models', (_req, res) => {
@@ -505,7 +508,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     const patch = { agents: patchedAgents };
     const result = await deps.settings.apply(patch as any, expected);
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', ...result });
+    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Model configuration saved.', ...result });
   });
 
   app.get('/api/setup/jev', (_req, res) => {
@@ -554,7 +557,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       expected
     );
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', ...result });
+    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'JEV configuration saved.', ...result });
   });
 
   app.post('/api/setup/jev/test', (_req, res) => {
@@ -685,7 +688,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       expected
     );
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', ...result });
+    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Data source configuration updated.', ...result });
   });
 
   app.post('/api/setup/keys', (req, res) => {
@@ -775,7 +778,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       expected
     );
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', ...result });
+    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Trading mode updated.', ...result });
   });
 
   app.post('/api/setup/doctor', (_req, res) => {

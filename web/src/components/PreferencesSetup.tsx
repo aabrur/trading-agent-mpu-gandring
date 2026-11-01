@@ -27,11 +27,12 @@ export function PreferencesSetup() {
     fetch('/api/setup/preferences')
       .then((r) => r.json())
       .then((d) => {
-        if (d.ok) {
-          const loaded = { ...d.values, maxHoldHours: d.values.maxHoldHours ?? 0 };
+        const raw = d?.values ?? d?.preferences;
+        if (d?.ok && raw) {
+          const loaded = { ...raw, maxHoldHours: raw.maxHoldHours ?? 0 };
           setValues(loaded);
           setSaved(loaded);
-          setCanRestart(d.canRestart);
+          setCanRestart(Boolean(d.canRestart));
         } else {
           setMessage(lang === 'id' ? 'Pengaturan tidak tersedia.' : 'Settings unavailable.');
         }

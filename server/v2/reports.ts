@@ -2,44 +2,9 @@ import type express from 'express';
 import { safe } from '../redact.js';
 import { isLocalLoopbackClient, type OfficeRuntime } from './contracts.js';
 import { broadcastChannelMessage } from './channels.js';
+import type { Report } from '../../shared/office.js';
 
-export interface ReportPosition {
-  symbol: string;
-  side: string;
-  qty: string;
-  entry: string;
-  stop: string | null;
-  tp: string | null;
-  mark: string;
-  pnl: string | null;
-  openedAt: number;
-}
-
-export interface Report {
-  id: string;
-  at: number;
-  since: number;
-  mode: string;
-  exchange: string | null;
-  balance: number | null;
-  safetyNet: number;
-  moneyTrade: number | null;
-  n: number;
-  perOrder: number | null;
-  equity: number | null;
-  unrealized: number | null;
-  realized: number | null;
-  dailyLoss: { limitPct: number; hit: boolean };
-  auto: { on: boolean; cycles: number; intervalMin: number };
-  positions: ReportPosition[];
-  opened: unknown[];
-  closed: unknown[];
-  skipped: unknown[];
-  scorecard: unknown[];
-  lessons: unknown[];
-  scan: unknown[];
-  text: string;
-}
+export type { Report };
 
 export function formatDeskReportText(params: {
   at: number;
@@ -90,6 +55,12 @@ export class ReportsService {
     this.runtime = runtime;
     if (this.timer) {
       clearInterval(this.timer);
+    }
+    const snap = runtime.snapshot();
+    if ((!snap.reports || snap.reports.length === 0) && this.reports.length > 0 && runtime.updateState) {
+      runtime.updateState((draft) => {
+        draft.reports = [...this.reports];
+      });
     }
     const intervalMs = Math.max(1, intervalMin) * 60_000;
     this.timer = setInterval(() => {
@@ -173,12 +144,12 @@ export class ReportsService {
       since: now - 3600000,
       mode: state.mode,
       exchange: state.venue?.name ?? null,
-      balance: balVal,
+      balance: balVal ?? (state.mode === 'PAPER' ? 1000 : 0),
       safetyNet,
-      moneyTrade,
+      moneyTrade: moneyTrade ?? 0,
       n,
-      perOrder,
-      equity: state.financial.equity.value,
+      perOrder: perOrder ?? 0,
+      equity: state.financial.equity.value ?? (state.mode === 'PAPER' ? 1000 : 0),
       unrealized: 0,
       realized: 0,
       dailyLoss: {
@@ -190,7 +161,17 @@ export class ReportsService {
         cycles: state.auto?.cycles ?? 0,
         intervalMin: state.auto?.intervalMin ?? 15
       },
-      positions: [],
+      positions: (state.paper.positions ?? []).map((p) => ({
+        symbol: p.symbol,
+        side: p.side,
+        qty: Number(p.qty) || 0,
+        entry: Number(p.entry) || 0,
+        stop: Number(p.stop) || 0,
+        tp: p.tp != null ? Number(p.tp) : null,
+        mark: Number(p.mark ?? p.entry) || 0,
+        pnl: Number(p.unrealizedPnl ?? 0) || 0,
+        openedAt: p.openedAt
+      })),
       opened: [],
       closed: [],
       skipped: [],
@@ -203,6 +184,15 @@ export class ReportsService {
     this.reports.unshift(report);
     if (this.reports.length > 50) {
       this.reports.pop();
+    }
+
+    if (runtime.updateState) {
+      runtime.updateState((draft) => {
+        draft.reports.unshift(report);
+        if (draft.reports.length > 50) {
+          draft.reports.pop();
+        }
+      });
     }
 
     // Broadcast report text to channels

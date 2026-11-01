@@ -243,6 +243,7 @@ export interface OfficeRuntime {
   dispatch(input: OfficeCommand): Promise<OfficeReply>;
   triggerCycle?(symbol?: string, reason?: string): Promise<{ ok: boolean; message: string; cycleId?: string }>;
   updateAutoSettings?(patch: Record<string, unknown>): OfficeState;
+  updateState?(mutator: (draft: OfficeState) => OfficeState | void): OfficeState;
   handleCommand?(input: { text: string; agent?: string; clientRequestId?: string }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
 }
 

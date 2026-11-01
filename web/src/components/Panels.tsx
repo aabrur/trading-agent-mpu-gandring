@@ -736,12 +736,12 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
                 <button
                   type="button"
                   className="mini"
-                  onClick={() => {
+                  onClick={async () => {
                     const eq = venueBal.equityUsdt ?? 0;
-                    command(`set balance ${eq}`);
+                    await command(`set balance ${eq}`);
                     if (p.safetyNet >= eq) {
                       const safeNet = Math.max(0, Math.floor(eq * 0.1 * 100) / 100);
-                      command(`set safety ${safeNet}`);
+                      await command(`set safety ${safeNet}`);
                     }
                   }}
                 >
