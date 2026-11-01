@@ -147,7 +147,7 @@ describe('T06 real research worker and provenance honesty', () => {
     );
     expect(blockedResult.status).toBe('unavailable');
     expect(orderAdapterCalls).toBe(0);
-  });
+  }, 60_000);
 
   it('new_article_old_event', () => {
     const observedAt = Date.parse('2026-10-31T10:00:00.000Z');

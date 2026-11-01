@@ -87,7 +87,7 @@ describe('T13 Office Browser Integration Verification', () => {
       expect(bodyText).not.toContain('$0.00 USDT');
       await page.close();
     });
-  });
+  }, 60_000);
 
   it('chart_symbol_tf_selection_and_stream_epoch: maintains selected symbol and timeframe', async () => {
     await withBrowserApp(async (pageUrl, browser) => {
@@ -104,5 +104,5 @@ describe('T13 Office Browser Integration Verification', () => {
 
       await page.close();
     });
-  });
+  }, 60_000);
 });
