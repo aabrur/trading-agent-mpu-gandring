@@ -493,6 +493,8 @@ export interface DeskState {
       lastInputTokens: number | null;
       lastError: string | null;
     };
+    configHealth?: string;
+    remoteHealth?: string;
   };
 }
 

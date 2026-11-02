@@ -33,6 +33,7 @@ export interface TradeIntent {
   thesisId: string | null;
   thesis?: TradeThesis | null;
   orderType?: 'MARKET' | 'LIMIT_GTC';
+  limitPrice?: DecimalString | null;
 }
 
 export interface CloseIntentInput {
@@ -136,6 +137,20 @@ export function deriveClientOrderId(accountRef: string, intentId: string): strin
   return `mpu-${hash}`;
 }
 
+export function convertDailyLossPctToUsdt(basisUsdt: number, limitPct: number): string {
+  const basis = Number.isFinite(basisUsdt) ? Math.max(0, basisUsdt) : 0;
+  const pct = Number.isFinite(limitPct) ? Math.max(0, limitPct) : 0;
+  return (Math.round(((basis * pct) / 100) * 100) / 100).toFixed(2);
+}
+
+export function resolveOwnerPerOrderUsdt(paper: { perOrder: number; moneyTrade: number; n: number }): number {
+  if (Number.isFinite(paper.perOrder) && paper.perOrder > 0) return paper.perOrder;
+  if (paper.n > 0 && Number.isFinite(paper.moneyTrade) && paper.moneyTrade > 0) {
+    return Math.floor((paper.moneyTrade / paper.n) * 100) / 100;
+  }
+  return 0;
+}
+
 export class ExecutionGateway {
   private readonly store: RuntimeStore;
   private readonly authority: ExecutionAuthorityService;
@@ -164,6 +179,10 @@ export class ExecutionGateway {
   clearInMemoryHalt(accountRef: string): void {
     this.globalHaltLatched = false;
     this.inMemoryHalted.delete(accountRef);
+  }
+
+  restorePersistedHalt(accountRef: string): void {
+    this.inMemoryHalted.add(accountRef);
   }
 
   private async withAccountLock<T>(accountRef: string, fn: () => Promise<T>): Promise<T> {
@@ -550,7 +569,10 @@ export class ExecutionGateway {
           symbol: intent.symbol,
           side: intent.side,
           quantity: intent.quantity,
-          entryPrice: intent.entry,
+          entryPrice:
+            (intent.orderType ?? 'MARKET') === 'LIMIT_GTC'
+              ? (intent.limitPrice ?? intent.entry)
+              : intent.entry,
           orderType: intent.orderType ?? 'MARKET',
           leverage: intent.leverage
         });

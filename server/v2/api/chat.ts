@@ -2,7 +2,7 @@ import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { safe } from '../../redact.js';
-import { isLocalLoopbackClient, type OfficeRuntime } from '../contracts.js';
+import { isLocalLoopbackClient, type OfficeRuntime, type OfficeState } from '../contracts.js';
 import type { RuntimeStore } from '../store/database.js';
 
 export interface StudioConversation {
@@ -229,4 +229,91 @@ export function mountChatRoutes(
       cancelled: true
     });
   });
+}
+
+const SECRET_KEY_RE = /(key|secret|token|password|private|authorization|seed|mnemonic|webhook)/i;
+
+export type DeskFreshness = 'live' | 'cached' | 'stale' | 'unavailable';
+
+export interface LiveDeskChatContext {
+  capturedAt: string;
+  informationalOnly: true;
+  tradingProfile: string | null;
+  venueAccount: {
+    name: string | null;
+    mode: string;
+    equity: number | null;
+    available: number | null;
+    freshness: DeskFreshness;
+  };
+  positions: Array<{ symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null }>;
+  restingOrders: Array<{ symbol: string; side: string; status: string }>;
+  watchlistPrices: Array<{ symbol: string; last: number | null; freshness: DeskFreshness; source: string }>;
+  assignedModels: Array<{ role: string; provider: string | null; model: string | null }>;
+  freshness: { positions: DeskFreshness; prices: DeskFreshness };
+}
+
+function classifyFreshness(at: number | null | undefined, now: number): DeskFreshness {
+  if (at == null || at <= 0) return 'unavailable';
+  const age = now - at;
+  if (age <= 15_000) return 'live';
+  if (age <= 120_000) return 'cached';
+  return 'stale';
+}
+
+export function buildLiveDeskChatContext(
+  state: OfficeState,
+  options: { capturedAt?: string; now?: number; secrets?: Record<string, unknown> } = {}
+): LiveDeskChatContext {
+  const now = options.now ?? Date.now();
+  const capturedAt = options.capturedAt ?? new Date(now).toISOString();
+  const posFresh = classifyFreshness(state.venueAccount?.at ?? (state.paper.positions[0]?.openedAt ?? now), now);
+  const prices = Object.values(state.tickers ?? {}).slice(0, 12).map((ticker) => ({
+    symbol: ticker.symbol,
+    last: ticker.last ?? null,
+    freshness: classifyFreshness(ticker.at, now),
+    source: ticker.source ?? 'unknown'
+  }));
+  const context: LiveDeskChatContext = {
+    capturedAt,
+    informationalOnly: true,
+    tradingProfile: state.trading?.profile ?? null,
+    venueAccount: {
+      name: state.venue?.name ?? null,
+      mode: state.mode,
+      equity: state.venueAccount?.equity ?? state.paper.equity ?? null,
+      available: state.venueAccount?.available ?? state.paper.moneyTrade ?? null,
+      freshness: classifyFreshness(state.venueAccount?.at, now)
+    },
+    positions: (state.paper.positions ?? []).slice(0, 8).map((p) => ({
+      symbol: p.symbol,
+      side: p.side,
+      qty: p.qty,
+      entry: p.entry,
+      stop: p.stop,
+      tp: p.tp
+    })),
+    restingOrders: (state.paper.positions ?? [])
+      .filter((p) => Boolean(p.entryStatus) && p.entryStatus !== 'confirmed')
+      .map((p) => ({ symbol: p.symbol, side: p.side, status: String(p.entryStatus) })),
+    watchlistPrices: prices,
+    assignedModels: Object.values(state.agents).map((agent) => ({
+      role: agent.id,
+      provider: agent.provider ?? null,
+      model: agent.model ?? null
+    })),
+    freshness: {
+      positions: posFresh,
+      prices: prices.length ? prices[0]!.freshness : 'unavailable'
+    }
+  };
+  const encoded = JSON.stringify(context);
+  if (options.secrets) {
+    for (const [key, value] of Object.entries(options.secrets)) {
+      if (SECRET_KEY_RE.test(key) && typeof value === 'string' && value && encoded.includes(value)) {
+        throw new Error('Live chat context leaked a secret field');
+      }
+    }
+  }
+  return context;
 }

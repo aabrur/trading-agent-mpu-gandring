@@ -64,6 +64,14 @@ export class JevClient {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private requests = 0;
+  private success = 0;
+  private errors = 0;
+  private timeouts = 0;
+  private lastLatencyMs: number | null = null;
+  private lastError: string | null = null;
+  private lastSource: 'remote' | 'heuristic' | 'disabled' = 'disabled';
+  private lastCost: number | null = null;
 
   constructor(options: JevClientOptions) {
     this.enabled = options.enabled;
@@ -78,9 +86,49 @@ export class JevClient {
     }
   }
 
+  telemetry(): {
+    configHealth: 'off' | 'unconfigured' | 'configured';
+    remoteHealth: 'unused' | 'ok' | 'timeout' | 'error' | 'heuristic';
+    requests: number;
+    success: number;
+    errors: number;
+    timeouts: number;
+    lastLatencyMs: number | null;
+    lastModel: string;
+    lastError: string | null;
+    lastSource: 'remote' | 'heuristic' | 'disabled';
+    lastCost: number | null;
+  } {
+    const configHealth = !this.enabled ? 'off' : this.apiKey ? 'configured' : 'unconfigured';
+    const remoteHealth =
+      this.lastSource === 'disabled'
+        ? 'unused'
+        : this.lastSource === 'heuristic'
+          ? (this.timeouts > 0 && this.lastError?.toLowerCase().includes('timeout') ? 'timeout' : 'heuristic')
+          : this.lastSource === 'remote'
+            ? 'ok'
+            : 'unused';
+    return {
+      configHealth,
+      remoteHealth: this.timeouts > 0 && this.lastSource === 'heuristic' && (this.lastError ?? '').toLowerCase().includes('abort')
+        ? 'timeout'
+        : remoteHealth,
+      requests: this.requests,
+      success: this.success,
+      errors: this.errors,
+      timeouts: this.timeouts,
+      lastLatencyMs: this.lastLatencyMs,
+      lastModel: this.model,
+      lastError: this.lastError,
+      lastSource: this.lastSource,
+      lastCost: this.lastCost
+    };
+  }
+
   async review(input: JevReviewInput): Promise<JevReview> {
     const fallbackId = `jev-${randomUUID()}`;
     if (!this.enabled) {
+      this.lastSource = 'disabled';
       return {
         status: 'disabled',
         reviewId: fallbackId,
@@ -92,7 +140,7 @@ export class JevClient {
     }
 
     if (!this.apiKey) {
-      // Local heuristic fallback if API key is absent but Jev is enabled
+      this.lastSource = 'heuristic';
       return this.evaluateHeuristic(input, fallbackId, 'Jev API key is not configured; using local heuristic');
     }
 
@@ -104,6 +152,8 @@ export class JevClient {
     });
 
     try {
+      this.requests += 1;
+      const started = Date.now();
       const systemPrompt = 'You are Jev, the trading desk objective evidence and market regime reviewer. Analyze market context and role observations. You carry ZERO execution or veto authority. Return JSON with keys: "reviewId", "market_regime" (one of TRENDING_BULL, TRENDING_BEAR, RANGING, VOLATILE, UNCERTAIN), "claimRefs" (array of strings), "contraryRefs" (array of strings), "reason" (concise string).';
 
       const res = await this.fetchImpl(this.endpoint, {
@@ -124,6 +174,10 @@ export class JevClient {
       });
 
       if (!res.ok) {
+        this.errors += 1;
+        this.lastLatencyMs = Date.now() - started;
+        this.lastError = `Jev HTTP ${res.status}`;
+        this.lastSource = 'heuristic';
         return this.evaluateHeuristic(input, fallbackId, `Jev HTTP ${res.status}`);
       }
 
@@ -147,9 +201,17 @@ export class JevClient {
 
       const parsed = RemoteJevPayloadSchema.safeParse(candidate);
       if (!parsed.success) {
+        this.errors += 1;
+        this.lastLatencyMs = Date.now() - started;
+        this.lastError = 'Jev response schema mismatch';
+        this.lastSource = 'heuristic';
         return this.evaluateHeuristic(input, fallbackId, 'Jev response schema mismatch');
       }
 
+      this.success += 1;
+      this.lastLatencyMs = Date.now() - started;
+      this.lastError = null;
+      this.lastSource = 'remote';
       return {
         status: 'completed',
         reviewId: parsed.data.reviewId ?? fallbackId,
@@ -159,7 +221,14 @@ export class JevClient {
         ...(parsed.data.market_regime ? { market_regime: parsed.data.market_regime } : {})
       };
     } catch (err) {
-      return this.evaluateHeuristic(input, fallbackId, safe(err instanceof Error ? err.message : 'Jev request failed'));
+      const message = safe(err instanceof Error ? err.message : 'Jev request failed');
+      const timedOut = /timeout|abort/i.test(message);
+      if (timedOut) this.timeouts += 1;
+      else this.errors += 1;
+      this.lastError = message;
+      this.lastSource = 'heuristic';
+      this.lastLatencyMs = this.timeoutMs;
+      return this.evaluateHeuristic(input, fallbackId, message);
     }
   }
 

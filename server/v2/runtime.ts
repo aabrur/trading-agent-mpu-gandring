@@ -54,9 +54,9 @@ import { RuntimeStore } from './store/database.js';
 import { ExecutionAuthorityService } from './accounts/authority.js';
 import { AccountRegistry } from './accounts/registry.js';
 import { SettingsService } from './settings/service.js';
-import { ExecutionGateway } from './execution/gateway.js';
+import { ExecutionGateway, convertDailyLossPctToUsdt, resolveOwnerPerOrderUsdt } from './execution/gateway.js';
 import { getVenueAdapter, createTransportFromAdapter } from './execution/adapters/factory.js';
-import { ChatService } from './api/chat.js';
+import { ChatService, buildLiveDeskChatContext } from './api/chat.js';
 import { PaperVenue } from './sandbox/paper.js';
 import {
   assertLivePermissionEvidence,
@@ -70,6 +70,7 @@ import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
 import { HELP_TEXT, DiscordGateway } from './channels.js';
 import { formatDeskReportText, ReportsService } from './reports.js';
+import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE } from './kill-file.js';
 function normSymbol(s: string): string {
   const up = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!up) return '';
@@ -309,6 +310,7 @@ export interface ReplacementRuntimeOptions {
   chatService?: ChatService;
   researchHost?: ResearchHost;
   reportsService?: ReportsService;
+  initialKilled?: boolean;
 }
 
 export function createReplacementRuntime(
@@ -321,6 +323,9 @@ export function createReplacementRuntime(
     sessionId: options.sessionId,
     startedAt: options.startedAt
   });
+  if (options.initialKilled) {
+    state = { ...state, killed: true, auto: { ...state.auto, on: false } };
+  }
   if (options.initialMode) {
     state = { ...state, mode: options.initialMode };
   }
@@ -545,9 +550,11 @@ export function createReplacementRuntime(
     mode: jevMode,
     configuredMode: jevMode,
     allowLive: jevAllowLive,
-    health: !jevEnabled ? 'disabled' : (hasJevKey ? 'healthy' : 'unavailable'),
+    health: !jevEnabled ? 'disabled' : (hasJevKey ? 'configured' : 'unavailable'),
     openrouterKeySet: Boolean(options.secrets?.hasProviderKey('openrouter') || env.OPENROUTER_API_KEY),
-    dedicatedKeySet: Boolean(options.secrets?.getSecret('JEV_OPENROUTER_API_KEY') || env.JEV_OPENROUTER_API_KEY)
+    dedicatedKeySet: Boolean(options.secrets?.getSecret('JEV_OPENROUTER_API_KEY') || env.JEV_OPENROUTER_API_KEY),
+    configHealth: !jevEnabled ? 'off' : (hasJevKey ? 'configured' : 'unconfigured'),
+    remoteHealth: 'unused'
   };
 
   const jevClient =
@@ -869,12 +876,26 @@ export function createReplacementRuntime(
         maxPositions: snap.paper.n || 3,
         occupiedPositions: currentPosCount,
         freeSlots: Math.max(0, (snap.paper.n || 3) - currentPosCount)
+      },
+      optionalResearch: {
+        news: { status: 'unavailable', reason: 'not fetched this cycle' },
+        whale: { status: 'unavailable', reason: 'not fetched this cycle' },
+        catalyst: { status: 'unavailable', reason: 'not fetched this cycle' }
       }
     };
 
+    const tv = snap.trading?.values;
     const policy: CyclePolicy = {
-      minEntryConfidencePct: snap.trading?.values?.minEntryConfidencePct ?? 60,
-      requireTwoOfThreeAnalysts: false
+      minEntryConfidencePct: tv?.minEntryConfidencePct ?? 60,
+      requireTwoOfThreeAnalysts: false,
+      maxLeverage: tv?.maxLeverage ?? snap.paper.maxLeverage,
+      defaultStopPct: tv?.defaultStopPct ?? snap.paper.defaultStopPct,
+      takeProfitPct: tv?.takeProfitPct,
+      availableCapitalUsdt: snap.paper.moneyTrade,
+      allocationPerOrderUsdt: resolveOwnerPerOrderUsdt(snap.paper),
+      maxPositions: snap.paper.n,
+      orderSizePct: tv?.orderSizePct ?? null,
+      dailyLossLimitPct: tv?.dailyLossLimitPct
     };
 
     try {
@@ -1103,16 +1124,23 @@ export function createReplacementRuntime(
             });
           }
         } else if (isApproved && out.verdict.thesis) {
-          const entryPrice = Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
           const stopPrice = Number(out.verdict.thesis.stop);
           const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : null;
           const leverage = currentSnap.trading?.values.maxLeverage ?? currentSnap.paper.maxLeverage ?? 5;
-          const perOrder = currentSnap.paper.perOrder || 50;
+          const perOrder = resolveOwnerPerOrderUsdt(currentSnap.paper);
+          const thesisOrderType = out.verdict.thesis.orderType ?? 'MARKET';
+          const thesisLimit = out.verdict.thesis.limitPrice ?? null;
+          const entryPrice = thesisOrderType === 'LIMIT_GTC' && thesisLimit
+            ? Number(thesisLimit)
+            : Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
           const margin = Math.round(perOrder * 100) / 100;
           const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
           const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
 
-          if (currentSnap.mode === 'PAPER') {
+          if (perOrder <= 0) {
+            verdictRecord.executed = false;
+            verdictRecord.reason = 'Owner-derived per-order size is 0; refusing to substitute a fallback size.';
+          } else if (currentSnap.mode === 'PAPER') {
             if (currentSnap.paper.positions.length < currentSnap.paper.n) {
               const positionId = `pos-${Date.now()}-${targetSymbol}`;
 
@@ -1173,7 +1201,9 @@ export function createReplacementRuntime(
                 stop: String(stopPrice),
                 tp: tpPrice ? String(tpPrice) : null,
                 leverage,
-                orderType: 'MARKET'
+                orderType: thesisOrderType,
+                limitPrice: thesisLimit,
+                entry: thesisLimit
               }
             });
 
@@ -1182,9 +1212,13 @@ export function createReplacementRuntime(
               const orderState: string = resData.orderState ?? 'UNKNOWN';
               const isFilled = orderState === 'FILLED';
               const isPartial = orderState === 'PARTIAL';
+              const isPending = ['ACCEPTED', 'PENDING', 'SUBMITTED', 'NEW', 'OPEN'].includes(orderState);
               const clientOrderId = resData.clientOrderId ?? `order-${Date.now()}`;
               verdictRecord.executed = isFilled || isPartial;
               verdictRecord.executionStatus = isFilled ? 'filled' : (isPartial ? 'partial' : undefined);
+              if (isPending && !verdictRecord.executed) {
+                verdictRecord.reason = `Limit order resting (${orderState}), not filled.`;
+              }
               verdictRecord.order = {
                 positionId: clientOrderId,
                 status: isFilled ? 'filled' : (isPartial ? 'partial' : undefined),
@@ -1257,10 +1291,24 @@ export function createReplacementRuntime(
             reviewId: out.jevReview.reviewId,
             reason: out.jevReview.reason,
             interpretation: {
-              marketRegime: (out.jevReview as any).market_regime || 'EVALUATED'
+              marketRegime: (out.jevReview as { market_regime?: string }).market_regime || 'EVALUATED'
             }
           };
-          draft.jev.health = 'healthy';
+          const tel = jevClient.telemetry();
+          draft.jev.configHealth = tel.configHealth;
+          draft.jev.remoteHealth = tel.remoteHealth;
+          draft.jev.health = tel.remoteHealth === 'ok' ? 'healthy' : tel.configHealth === 'off' ? 'disabled' : tel.remoteHealth;
+          draft.jev.metrics = {
+            requests: tel.requests,
+            success: tel.success,
+            errors: tel.errors,
+            timeouts: tel.timeouts,
+            lastLatencyMs: tel.lastLatencyMs,
+            lastModel: tel.lastModel,
+            lastCost: tel.lastCost,
+            lastInputTokens: null,
+            lastError: tel.lastError
+          };
         }
       });
 
@@ -1389,11 +1437,14 @@ export function createReplacementRuntime(
       const roles: RoleId[] = targetRole ? [targetRole] : [...ROLE_IDS];
       const prompt = toAll ? raw.replace(/^@all\s+/i, '') : raw;
       const conversationId = input.conversationId || 'office';
+      const deskSnapshot = buildLiveDeskChatContext(snapshot());
+      const deskContext = `Live desk snapshot (informational only; not an execution command).\n${JSON.stringify(deskSnapshot, null, 2)}`;
       const outcomes = await Promise.allSettled(roles.map(async role => {
         const answer = await roleRunner.chat({
           cycleId: `chat-${randomUUID()}`,
           role,
           prompt,
+          deskContext,
           configVersion: options.settings?.current().activeVersion ?? 1
         });
         return { role, answer: extractCleanAgentReply(String(answer)) };
@@ -1957,6 +2008,11 @@ export function createReplacementRuntime(
       return options.dispatcher(input, snapshot());
     }
     if (input.kind === 'kill') {
+      if (env.KILL_SWITCH_FILE) {
+        try {
+          writeKill(env.KILL_SWITCH_FILE, { at: Date.now(), reason: 'Owner kill switch', source: 'office' });
+        } catch {}
+      }
       updateState((draft) => {
         draft.killed = true;
         draft.auto.on = false;
@@ -1974,6 +2030,17 @@ export function createReplacementRuntime(
           code: 'UNAUTHORIZED',
           message: 'Only local Owner may release the kill switch.'
         };
+      }
+      const killFile = env.KILL_SWITCH_FILE;
+      if (killFile) {
+        try { clearKill(killFile); } catch {}
+        if (readKill(killFile)) {
+          return {
+            ok: false,
+            code: 'REJECTED',
+            message: 'Release failed: persisted halt latch remains active.'
+          };
+        }
       }
       updateState((draft) => {
         draft.killed = false;
@@ -2281,16 +2348,33 @@ export async function startReplacementServer(
     getTransport: () => transport,
     getAccountPolicy: () => {
       const snap = settings.current();
+      const equityBasis = Number(
+        runtimeRef?.snapshot().paper.equity ??
+        runtimeRef?.snapshot().paper.balance ??
+        snap.effective.paper.balance ??
+        0
+      );
       return {
         activeConfigVersion: snap.activeVersion,
         safetyNetUsdt: String(snap.effective.trading.safetyNet),
         maxPositions: snap.effective.trading.maxPositions,
-        dailyLossCapUsdt: String(snap.effective.trading.dailyLossLimitPct),
+        dailyLossCapUsdt: convertDailyLossPctToUsdt(equityBasis, snap.effective.trading.dailyLossLimitPct),
         minEntryConfidencePct: snap.effective.trading.minEntryConfidencePct
       };
     },
     readFreshMarket: (symbol) => marketHub.snapshot(symbol)
   });
+
+  const killFile = env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE;
+  const killRec = readKill(killFile);
+  const authHalt = await authority.current(accountRef);
+  const persistedHalt = Boolean(killRec) || Boolean(authHalt?.haltLatched);
+  if (persistedHalt) {
+    gateway.restorePersistedHalt(accountRef);
+    if (killRec && !authHalt?.haltLatched) {
+      await authority.setHalt(accountRef, true, 'startup', killRec.reason);
+    }
+  }
 
   const equityNum = nativeBalance.equity !== null ? Number(nativeBalance.equity) : null;
   const availNum = nativeBalance.available !== null ? Number(nativeBalance.available) : null;
@@ -2356,6 +2440,13 @@ export async function startReplacementServer(
         draft.killed = true;
         draft.auto.on = false;
       });
+      try {
+        writeKill(env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE, {
+          at: Date.now(),
+          reason: 'Owner kill switch',
+          source: 'office'
+        });
+      } catch {}
       const haltRes = await gateway.halt({
         requestId: `halt-${Date.now()}`,
         source: input.actor,
@@ -2382,7 +2473,17 @@ export async function startReplacementServer(
           message: 'Only local Owner may release the kill switch.'
         };
       }
+      const killFile = env.KILL_SWITCH_FILE || DEFAULT_KILL_FILE;
+      try { clearKill(killFile); } catch {}
       await authority.setHalt(accountRef, false, 'local_owner', 'Owner released kill switch');
+      const persisted = await authority.current(accountRef);
+      if (persisted?.haltLatched || readKill(killFile)) {
+        return {
+          ok: false,
+          code: 'REJECTED',
+          message: 'Release failed: persisted halt latch remains active.'
+        };
+      }
       gateway.clearInMemoryHalt(accountRef);
       runtimeRef?.updateState((draft) => {
         draft.killed = false;
@@ -2403,6 +2504,7 @@ export async function startReplacementServer(
       const tp = p.tp ? String(p.tp) : null;
       const leverage = Number(p.leverage ?? state.trading?.values.maxLeverage ?? state.paper.maxLeverage ?? 5);
       const orderType = (p.orderType as 'MARKET' | 'LIMIT_GTC') ?? 'MARKET';
+      const limitPrice = p.limitPrice != null ? String(p.limitPrice) : (p.entry != null ? String(p.entry) : null);
 
       const receipt = await gateway.submit({
         intentId: `intent-${Date.now()}`,
@@ -2413,12 +2515,13 @@ export async function startReplacementServer(
         symbol,
         side,
         quantity: qty,
-        entry: null,
+        entry: limitPrice,
         stop,
         tp,
         leverage,
         thesisId: null,
-        orderType
+        orderType,
+        limitPrice
       });
 
       return {
@@ -2664,7 +2767,8 @@ export async function startReplacementServer(
     secrets,
     chatService,
     researchHost,
-    reportsService
+    reportsService,
+    initialKilled: persistedHalt
   });
   runtimeRef = runtime;
 
@@ -2769,7 +2873,7 @@ export async function startReplacementServer(
 
   // If AUTO_TRADING is configured in env, activate
   const rawAuto = (env.AUTO_TRADING ?? '').trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(rawAuto)) {
+  if (['1', 'true', 'yes', 'on'].includes(rawAuto) && !runtime.snapshot().killed) {
     const intervalMin = Math.max(1, Number(env.DEBATE_INTERVAL_MIN || 15));
     runtime.updateAutoSettings({ on: true, intervalMin });
   }

@@ -16,6 +16,7 @@ export interface TradeThesis {
   stop: string;
   tp: string | null;
   orderType: 'MARKET' | 'LIMIT_GTC';
+  limitPrice?: string | null;
 }
 
 export interface StructuralBreakFact {
@@ -52,7 +53,8 @@ const RevalidateInputGuardSchema = z
       ),
       stop: DecimalStringSchema,
       tp: DecimalStringSchema.nullable(),
-      orderType: z.enum(['MARKET', 'LIMIT_GTC'])
+      orderType: z.enum(['MARKET', 'LIMIT_GTC']),
+      limitPrice: DecimalStringSchema.nullable().optional()
     }),
     activeConfigVersion: z.number().int().positive(),
     freshMarket: z.custom<MarketFrame>((val) => Boolean(val && typeof val === 'object' && 'evidenceId' in val)),

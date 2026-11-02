@@ -521,8 +521,11 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         category: 'linear',
         symbol: rules.nativeSymbol,
         side: intent.side === 'LONG' ? 'Buy' : 'Sell',
-        orderType: 'Market',
+        orderType: intent.orderType === 'LIMIT_GTC' ? 'Limit' : 'Market',
         qty: prepared.quantity,
+        ...(intent.orderType === 'LIMIT_GTC'
+          ? { price: prepared.limitPrice ?? undefined, timeInForce: 'GTC' }
+          : {}),
         positionIdx,
         orderLinkId: intent.clientOrderId
       });

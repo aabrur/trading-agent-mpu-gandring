@@ -18,7 +18,8 @@ const openBodySchema = z.object({
   stop: z.string().min(1),
   tp: z.string().optional().nullable(),
   leverage: z.number().int().positive().optional(),
-  orderType: z.enum(['MARKET', 'LIMIT_GTC']).default('MARKET')
+  orderType: z.enum(['MARKET', 'LIMIT_GTC']).default('MARKET'),
+  limitPrice: z.string().optional()
 });
 
 const closeBodySchema = z.object({
@@ -128,7 +129,7 @@ export function mountOperationsRoutes(
       return;
     }
 
-    const { symbol, side, qty, stop, tp, leverage, orderType } = parsed.data;
+    const { symbol, side, qty, stop, tp, leverage, orderType, limitPrice } = parsed.data;
     const clientOrderId = `ord-manual-${Date.now()}`;
 
     const reply = await runtime.dispatch({
@@ -143,6 +144,7 @@ export function mountOperationsRoutes(
         tp: tp ?? null,
         leverage: leverage ?? 5,
         orderType,
+        limitPrice: limitPrice ?? null,
         clientOrderId
       }
     });
@@ -327,14 +329,35 @@ export function mountOperationsRoutes(
   app.post('/api/ops/kill', async (req, res) => {
     if (!verifyOwner(req, res)) return;
 
+    const body = req.body ?? {};
+    const isRelease =
+      body.on === false ||
+      body.killed === false ||
+      body.action === 'release' ||
+      body.action === 'unkill';
+
     const reply = await runtime.dispatch({
-      kind: 'kill',
+      kind: isRelease ? 'unkill' : 'kill',
       actor: 'local_owner'
     });
+    const state = runtime.snapshot();
+
+    if (isRelease) {
+      const released = reply.ok && !state.killed;
+      res.status(released ? 200 : 409).json({
+        ok: released,
+        killed: state.killed,
+        autoTrading: 'OFF',
+        message: released
+          ? reply.message
+          : (state.killed ? 'Release failed: persisted halt latch remains active.' : reply.message)
+      });
+      return;
+    }
 
     res.json({
       ok: reply.ok,
-      killed: true,
+      killed: state.killed,
       reason: 'MANUAL_HALT_AND_FLATTEN',
       flatten: reply.data?.flatten ?? 'COMPLETED',
       entryCancellation: reply.data?.entryCancellation ?? 'COMPLETED',
@@ -350,9 +373,10 @@ export function mountOperationsRoutes(
       actor: 'local_owner'
     });
 
+    const state = runtime.snapshot();
     res.json({
       ok: reply.ok,
-      killed: true,
+      killed: state.killed,
       action: 'HALT_AND_FLATTEN',
       flatten: reply.data?.flatten ?? 'COMPLETED',
       entryCancellation: reply.data?.entryCancellation ?? 'COMPLETED',
@@ -367,12 +391,15 @@ export function mountOperationsRoutes(
       kind: 'unkill',
       actor: 'local_owner'
     });
-
-    res.json({
-      ok: reply.ok,
-      killed: false,
+    const state = runtime.snapshot();
+    const released = reply.ok && !state.killed;
+    res.status(released ? 200 : 409).json({
+      ok: released,
+      killed: state.killed,
       autoTrading: 'OFF',
-      message: reply.message
+      message: released
+        ? reply.message
+        : (state.killed ? 'Release failed: persisted halt latch remains active.' : reply.message)
     });
   });
 

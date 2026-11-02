@@ -58,6 +58,7 @@ export interface BaseRoleResult {
   proposedStop?: string | null;
   proposedTp?: string | null;
   proposedOrderType?: 'MARKET' | 'LIMIT_GTC' | null;
+  proposedLimitPrice?: string | null;
   errorReason?: string | null;
 }
 
@@ -124,7 +125,8 @@ const BaseReplySchema = z.object({
   invalidationPredicate: PredicateSchema.nullable().optional(),
   proposedStop: z.string().nullable().optional(),
   proposedTp: z.string().nullable().optional(),
-  proposedOrderType: z.enum(['MARKET', 'LIMIT_GTC']).nullable().optional()
+  proposedOrderType: z.enum(['MARKET', 'LIMIT_GTC']).nullable().optional(),
+  proposedLimitPrice: z.string().nullable().optional()
 });
 
 function validateScaleBounds(scale: ConfidenceScale | null, value: number | null): boolean {
@@ -188,7 +190,8 @@ export function getRoleSchemaInstruction(role: RoleId): string {
   "contraryRefs": [],
   "proposedStop": "optional SL price string",
   "proposedTp": "optional TP price string",
-  "proposedOrderType": "MARKET" | "LIMIT_GTC"
+  "proposedOrderType": "MARKET" | "LIMIT_GTC",
+  "proposedLimitPrice": "optional limit price when LIMIT_GTC"
 }`;
   }
 
@@ -224,8 +227,9 @@ export class RoleRunner {
   }
 
   /** Direct owner chat uses the same typed provider route as strategy roles, without a trade side effect. */
-  async chat(input: { role: RoleId; prompt: string; configVersion: number; cycleId: string }): Promise<string> {
+  async chat(input: { role: RoleId; prompt: string; configVersion: number; cycleId: string; deskContext?: string }): Promise<string> {
     const assignment = this.resolveAssignment(input.role, input.configVersion);
+    const user = input.deskContext ? `${input.deskContext}\n\n${input.prompt}` : input.prompt;
     return this.providerCaller({
       cycleId: input.cycleId,
       role: input.role,
@@ -237,7 +241,7 @@ export class RoleRunner {
       apiKey: assignment.apiKey ?? '',
       baseUrl: assignment.baseUrl,
       system: buildRoleSystemPrompt(input.role),
-      user: input.prompt,
+      user,
       timeoutMs: 120_000,
       reasoningEffort: assignment.reasoningEffort,
       provenOsSandbox: assignment.provenOsSandbox
@@ -637,6 +641,7 @@ export class RoleRunner {
         proposedStop: validated.data.proposedStop ?? null,
         proposedTp: validated.data.proposedTp ?? null,
         proposedOrderType: validated.data.proposedOrderType ?? null,
+        proposedLimitPrice: validated.data.proposedLimitPrice ?? null,
         errorReason: null
       };
 

@@ -3,7 +3,6 @@ import type { RoleId } from '../contracts.js';
 import type { JevClient, JevReview } from '../agents/jev.js';
 import {
   RoleRunner,
-  satisfiesLeadProbabilityThreshold,
   type RiskRoleResult,
   type RoleResult,
   type RoleRoute,
@@ -17,6 +16,14 @@ export type CycleReason = 'owner' | 'schedule' | 'market-event' | 'position-even
 export interface CyclePolicy {
   minEntryConfidencePct: number;
   requireTwoOfThreeAnalysts: boolean;
+  maxLeverage?: number;
+  defaultStopPct?: number;
+  takeProfitPct?: number;
+  availableCapitalUsdt?: number;
+  allocationPerOrderUsdt?: number;
+  maxPositions?: number;
+  orderSizePct?: number | null;
+  dailyLossLimitPct?: number;
 }
 
 export interface RunCycleInput {
@@ -168,46 +175,51 @@ export class CycleRunner {
     );
     roleResults.push(...challengeResults);
 
-    // 4. Risk and Execution feasibility on final phase.
-    const [riskResult, executionResult] = await Promise.all([
-      runRole({
-        cycleId,
-        role: 'risk',
-        phase: 'final',
-        taskAttempt: 1,
-        evidenceId: input.evidenceId,
-        configVersion: input.configVersion,
-        accountRef: input.accountRef,
-        route: routeOf('risk'),
-        deadlineAt,
-        symbol: input.symbol,
-        promptContext: {
-          marketSummary: input.marketSummary,
-          observations: observeResults,
-          challenges: challengeResults,
-          jevReview,
-          policy: input.policy
+    // 4. Execution proposes the candidate order, then Risk evaluates that candidate.
+    const executionResult = await runRole({
+      cycleId,
+      role: 'execution',
+      phase: 'final',
+      taskAttempt: 1,
+      evidenceId: input.evidenceId,
+      configVersion: input.configVersion,
+      accountRef: input.accountRef,
+      route: routeOf('execution'),
+      deadlineAt,
+      symbol: input.symbol,
+      promptContext: {
+        marketSummary: input.marketSummary,
+        observations: observeResults,
+        challenges: challengeResults,
+        jevReview,
+        policy: input.policy
+      }
+    });
+    const riskResult = await runRole({
+      cycleId,
+      role: 'risk',
+      phase: 'final',
+      taskAttempt: 1,
+      evidenceId: input.evidenceId,
+      configVersion: input.configVersion,
+      accountRef: input.accountRef,
+      route: routeOf('risk'),
+      deadlineAt,
+      symbol: input.symbol,
+      promptContext: {
+        marketSummary: input.marketSummary,
+        observations: observeResults,
+        challenges: challengeResults,
+        jevReview,
+        policy: input.policy,
+        candidateOrder: {
+          orderType: executionResult.proposedOrderType ?? null,
+          limitPrice: executionResult.proposedLimitPrice ?? null,
+          stop: executionResult.proposedStop ?? null,
+          tp: executionResult.proposedTp ?? null
         }
-      }),
-      runRole({
-        cycleId,
-        role: 'execution',
-        phase: 'final',
-        taskAttempt: 1,
-        evidenceId: input.evidenceId,
-        configVersion: input.configVersion,
-        accountRef: input.accountRef,
-        route: routeOf('execution'),
-        deadlineAt,
-        symbol: input.symbol,
-        promptContext: {
-          marketSummary: input.marketSummary,
-          observations: observeResults,
-          challenges: challengeResults,
-          jevReview
-        }
-      })
-    ]);
+      }
+    });
     roleResults.push(riskResult, executionResult);
 
     // 5. Desk Lead final synthesis seeing all available role results and Jev review.
@@ -323,29 +335,6 @@ export class CycleRunner {
       };
     }
 
-    if (
-      input.policy.minEntryConfidencePct > 0 &&
-      !satisfiesLeadProbabilityThreshold('lead', leadResult.confidence, input.policy.minEntryConfidencePct)
-    ) {
-      return {
-        cycleId,
-        reason: input.reason,
-        status: 'completed',
-        verdict: {
-          action: 'HOLD',
-          symbol: input.symbol,
-          thesis: null,
-          exit: null,
-          rejectionReason: `Lead probability_0_1 confidence did not meet Owner minimum ${input.policy.minEntryConfidencePct}%`
-        },
-        roleResults,
-        jevReview,
-        jevReviewId,
-        configVersion: input.configVersion,
-        evidenceId: input.evidenceId
-      };
-    }
-
     if (input.policy.requireTwoOfThreeAnalysts) {
       let alignedAnalysts = 0;
       for (const analyst of latestAnalystByRole.values()) {
@@ -418,7 +407,8 @@ export class CycleRunner {
       invalidation: [predicate],
       stop: proposedStop,
       tp: leadResult.proposedTp ?? executionResult.proposedTp ?? null,
-      orderType: leadResult.proposedOrderType ?? executionResult.proposedOrderType ?? 'MARKET'
+      orderType: leadResult.proposedOrderType ?? executionResult.proposedOrderType ?? 'MARKET',
+      limitPrice: leadResult.proposedLimitPrice ?? executionResult.proposedLimitPrice ?? null
     };
 
     return {

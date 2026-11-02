@@ -17,8 +17,15 @@ export function activityParticipants(line: LogLine, agents: DeskState['agents'])
 
 /** Search retained chat and trade records alongside live events, before applying the display limit. */
 export function activityEntries(state: Pick<DeskState, 'logs' | 'roomHistory' | 'chats' | 'paper'>): LogLine[] {
-  const entries = [...state.logs];
-  const ids = new Set(entries.flatMap(line => line.id ? [line.id] : []));
+  const entries: LogLine[] = [];
+  const ids = new Set<string>();
+  for (const line of state.logs) {
+    if (line.id) {
+      if (ids.has(line.id)) continue;
+      ids.add(line.id);
+    }
+    entries.push(line);
+  }
   for (const message of state.roomHistory || []) {
     const id = `room:${message.id}`;
     if (ids.has(id)) continue;
