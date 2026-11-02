@@ -66,6 +66,51 @@ const ANALYST_ROLES: readonly Exclude<RoleId, 'risk' | 'execution' | 'lead'>[] =
   'strategist'
 ];
 
+interface CandidateOrder {
+  side: 'LONG' | 'SHORT' | null;
+  orderType: 'MARKET' | 'LIMIT_GTC' | null;
+  limitPrice: string | null;
+  stop: string | null;
+  tp: string | null;
+  leverage: number | null;
+  allocationPerOrderUsdt: number | null;
+  availableCapitalUsdt: number | null;
+  orderSizePct: number | null;
+  maxPositions: number | null;
+  dailyLossLimitPct: number | null;
+}
+
+function ticketSide(stance: string | null | undefined): 'LONG' | 'SHORT' | null {
+  return stance === 'LONG' || stance === 'SHORT' ? stance : null;
+}
+
+function leadChangedTicket(lead: RoleResult, ticket: CandidateOrder): boolean {
+  const side = ticketSide(lead.stance);
+  if (side && side !== ticket.side) return true;
+  if (lead.proposedOrderType && lead.proposedOrderType !== ticket.orderType) return true;
+  if (lead.proposedLimitPrice !== undefined && lead.proposedLimitPrice !== ticket.limitPrice) return true;
+  if (lead.proposedStop && lead.proposedStop !== ticket.stop) return true;
+  if (lead.proposedTp != null && lead.proposedTp !== ticket.tp) return true;
+  return false;
+}
+
+function reviseTicket(lead: RoleResult, ticket: CandidateOrder): CandidateOrder {
+  const orderType = lead.proposedOrderType ?? ticket.orderType;
+  const limitPrice = orderType === 'MARKET'
+    ? null
+    : lead.proposedLimitPrice === undefined
+      ? ticket.limitPrice
+      : lead.proposedLimitPrice;
+  return {
+    ...ticket,
+    side: ticketSide(lead.stance) ?? ticket.side,
+    orderType,
+    limitPrice,
+    stop: lead.proposedStop ?? ticket.stop,
+    tp: lead.proposedTp ?? ticket.tp
+  };
+}
+
 export interface CycleRunnerOptions {
   roleRunner: RoleRunner;
   jevClient?: JevClient;
@@ -195,6 +240,19 @@ export class CycleRunner {
         policy: input.policy
       }
     });
+    const candidateOrder: CandidateOrder = {
+      side: ticketSide(executionResult.stance),
+      orderType: executionResult.proposedOrderType ?? null,
+      limitPrice: executionResult.proposedLimitPrice ?? null,
+      stop: executionResult.proposedStop ?? null,
+      tp: executionResult.proposedTp ?? null,
+      leverage: input.policy.maxLeverage ?? null,
+      allocationPerOrderUsdt: input.policy.allocationPerOrderUsdt ?? null,
+      availableCapitalUsdt: input.policy.availableCapitalUsdt ?? null,
+      orderSizePct: input.policy.orderSizePct ?? null,
+      maxPositions: input.policy.maxPositions ?? null,
+      dailyLossLimitPct: input.policy.dailyLossLimitPct ?? null
+    };
     const riskResult = await runRole({
       cycleId,
       role: 'risk',
@@ -212,12 +270,7 @@ export class CycleRunner {
         challenges: challengeResults,
         jevReview,
         policy: input.policy,
-        candidateOrder: {
-          orderType: executionResult.proposedOrderType ?? null,
-          limitPrice: executionResult.proposedLimitPrice ?? null,
-          stop: executionResult.proposedStop ?? null,
-          tp: executionResult.proposedTp ?? null
-        }
+        candidateOrder
       }
     });
     roleResults.push(riskResult, executionResult);
@@ -241,7 +294,8 @@ export class CycleRunner {
         riskResult,
         executionResult,
         jevReview,
-        policy: input.policy
+        policy: input.policy,
+        candidateOrder
       }
     });
     roleResults.push(leadResult);
@@ -314,8 +368,8 @@ export class CycleRunner {
       };
     }
 
-    // Entry authorization checks strictly follow active Owner policy and Risk judgment.
-    if (typedRisk.decision !== 'APPROVE') {
+    // Unchanged ticket: first Risk decision stands. A material Lead edit is re-checked below.
+    if (!leadChangedTicket(leadResult, candidateOrder) && typedRisk.decision !== 'APPROVE') {
       return {
         cycleId,
         reason: input.reason,
@@ -363,12 +417,87 @@ export class CycleRunner {
       }
     }
 
-    const proposedStop =
-      leadResult.proposedStop ??
-      executionResult.proposedStop ??
-      latestAnalystByRole.get('strategist')?.proposedStop ??
-      null;
+    let ticket = candidateOrder;
+    let authorizingRisk = typedRisk;
+    if (leadChangedTicket(leadResult, ticket)) {
+      ticket = reviseTicket(leadResult, ticket);
+      const again = await runRole({
+        cycleId,
+        role: 'risk',
+        phase: 'final',
+        taskAttempt: 2,
+        evidenceId: input.evidenceId,
+        configVersion: input.configVersion,
+        accountRef: input.accountRef,
+        route: routeOf('risk'),
+        deadlineAt,
+        symbol: input.symbol,
+        promptContext: {
+          marketSummary: input.marketSummary,
+          observations: observeResults,
+          challenges: challengeResults,
+          jevReview,
+          policy: input.policy,
+          candidateOrder: ticket
+        }
+      });
+      roleResults.push(again);
+      if (again.status !== 'completed' || again.role !== 'risk') {
+        return {
+          cycleId,
+          reason: input.reason,
+          status: 'incomplete',
+          verdict: null,
+          roleResults,
+          jevReview,
+          jevReviewId,
+          configVersion: input.configVersion,
+          evidenceId: input.evidenceId
+        };
+      }
+      authorizingRisk = again;
+    }
+    if (authorizingRisk.decision !== 'APPROVE') {
+      return {
+        cycleId,
+        reason: input.reason,
+        status: 'completed',
+        verdict: {
+          action: 'HOLD',
+          symbol: input.symbol,
+          thesis: null,
+          exit: null,
+          rejectionReason: authorizingRisk.reasoning ?? 'Rejected by Head of Risk'
+        },
+        roleResults,
+        jevReview,
+        jevReviewId,
+        configVersion: input.configVersion,
+        evidenceId: input.evidenceId
+      };
+    }
 
+    const thesisSide = ticket.side;
+    const proposedStop = ticket.stop;
+    if (thesisSide !== 'LONG' && thesisSide !== 'SHORT') {
+      return {
+        cycleId,
+        reason: input.reason,
+        status: 'completed',
+        verdict: {
+          action: 'HOLD',
+          symbol: input.symbol,
+          thesis: null,
+          exit: null,
+          rejectionReason: 'Entry ticket has no side'
+        },
+        roleResults,
+        jevReview,
+        jevReviewId,
+        configVersion: input.configVersion,
+        evidenceId: input.evidenceId
+      };
+    }
     if (!proposedStop) {
       return {
         cycleId,
@@ -390,7 +519,7 @@ export class CycleRunner {
     }
 
     const predicate = leadResult.invalidationPredicate ?? {
-      kind: desiredStance === 'LONG' ? ('PRICE_BELOW' as const) : ('PRICE_ABOVE' as const),
+      kind: thesisSide === 'LONG' ? ('PRICE_BELOW' as const) : ('PRICE_ABOVE' as const),
       level: proposedStop,
       description: `Stop invalidation at ${proposedStop}`
     };
@@ -400,15 +529,15 @@ export class CycleRunner {
       cycleId,
       accountRef: input.accountRef,
       symbol: input.symbol,
-      side: desiredStance,
+      side: thesisSide,
       evidenceId: input.evidenceId,
       configVersion: input.configVersion,
       claims: [...new Set([...leadResult.claimRefs, ...(jevReview?.claimRefs ?? [])])],
       invalidation: [predicate],
       stop: proposedStop,
-      tp: leadResult.proposedTp ?? executionResult.proposedTp ?? null,
-      orderType: leadResult.proposedOrderType ?? executionResult.proposedOrderType ?? 'MARKET',
-      limitPrice: leadResult.proposedLimitPrice ?? executionResult.proposedLimitPrice ?? null
+      tp: ticket.tp,
+      orderType: ticket.orderType ?? 'MARKET',
+      limitPrice: ticket.limitPrice
     };
 
     return {
@@ -416,7 +545,7 @@ export class CycleRunner {
       reason: input.reason,
       status: 'completed',
       verdict: {
-        action: desiredStance === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT',
+        action: thesisSide === 'LONG' ? 'OPEN_LONG' : 'OPEN_SHORT',
         symbol: input.symbol,
         thesis,
         exit: null,

@@ -111,7 +111,7 @@ export function createInitialOfficeState(options: {
   const startedAt = options.startedAt ?? Date.now();
   return {
     runtimeGeneration: 'v2',
-    version: options.version ?? '0.0.0.4.12',
+    version: options.version ?? '0.0.0.4.13',
     app: 'Trading Agent Mpu Gandring',
     mode: 'PAPER',
     appMode: 'local',

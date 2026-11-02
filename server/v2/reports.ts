@@ -1,5 +1,6 @@
 import type express from 'express';
 import { safe } from '../redact.js';
+import { formatReportCard, deskOpenPnl } from './channel-text.js';
 import { isLocalLoopbackClient, type OfficeRuntime } from './contracts.js';
 import { broadcastChannelMessage } from './channels.js';
 import type { Report } from '../../shared/office.js';
@@ -18,26 +19,38 @@ export function formatDeskReportText(params: {
   dailyLossHit: boolean;
   dailyLossLimitPct: number;
   positions: Array<{ symbol: string; side: string; qty?: string | number; entry?: string | number; stop?: string | number; tp?: string | number | null; unrealizedPnl?: number }>;
+  openPnl?: number | null;
+  pnlSource?: string;
+  realized?: number | null;
   autoOn: boolean;
   autoIntervalMin: number;
 }): string {
-  const dt = new Date(params.at).toISOString();
-  const eqStr = params.equity != null ? `${params.equity} USDT` : 'UNAVAILABLE';
-  const balStr = params.balance != null ? `${params.balance}` : '0';
-  const mtStr = params.moneyTrade != null ? `${params.moneyTrade}` : '0';
-  const posCount = params.positions.length;
-  const posLines = posCount > 0
-    ? params.positions.map((p) => `  - ${p.symbol} ${p.side} ${p.qty ?? ''} entry ${p.entry ?? ''} stop ${p.stop ?? 'none'} tp ${p.tp ?? 'none'} pnl ${p.unrealizedPnl ?? 0}`).join('\n')
-    : '  none';
-
-  return [
-    `Desk report ${dt}`,
-    `Mode: ${params.mode}${params.venue ? ` on ${params.venue}` : ''}. Kill switch: ${params.killed ? 'ON' : 'OFF'}. Office: UP.`,
-    `Equity: ${eqStr} (balance ${balStr}, safety net ${params.safetyNet}, Money Trade ${mtStr}). Daily loss stop: ${params.dailyLossHit ? 'HIT' : 'not hit'} (${params.dailyLossLimitPct}% cap).`,
-    `Auto: ${params.autoOn ? `ON (every ${params.autoIntervalMin} min)` : 'OFF'}.`,
-    `Positions (${posCount}):`,
-    posLines
-  ].join('\n');
+  const open = deskOpenPnl({
+    mode: params.mode,
+    paperUnrealized: params.positions.reduce((sum, p) => sum + Number(p.unrealizedPnl ?? 0), 0),
+    venueUnrealized: params.openPnl ?? null,
+    venueStatus: params.pnlSource === 'Exchange' ? 'confirmed' : params.pnlSource === 'Exchange stale' ? 'stale' : null
+  });
+  const openPnl = params.openPnl ?? open.value;
+  const source = params.pnlSource ?? open.source;
+  return formatReportCard({
+    at: params.at,
+    mode: params.mode,
+    venue: params.venue,
+    killed: params.killed,
+    autoOn: params.autoOn,
+    autoIntervalMin: params.autoIntervalMin,
+    equity: params.equity,
+    balance: params.balance,
+    safetyNet: params.safetyNet,
+    moneyTrade: params.moneyTrade,
+    openPnl,
+    pnlSource: source,
+    realized: params.realized ?? null,
+    dailyLossHit: params.dailyLossHit,
+    dailyLossLimitPct: params.dailyLossLimitPct,
+    positions: params.positions
+  });
 }
 
 export class ReportsService {
@@ -122,6 +135,17 @@ export class ReportsService {
     const n = state.paper.n;
     const perOrder = moneyTrade !== null && n > 0 ? Math.floor((moneyTrade / n) * 100) / 100 : null;
 
+    const positions = state.paper.positions ?? [];
+    const open = deskOpenPnl({
+      mode: state.mode,
+      paperUnrealized: state.paper.unrealized,
+      venueUnrealized: state.venueAccount?.unrealized ?? null,
+      venueStatus: state.venueAccount?.status ?? null
+    });
+    const realized = state.financial.realizedPnl.availability === 'AVAILABLE' ? state.financial.realizedPnl.value : null;
+    const positionPnl = positions.reduce((sum, p) => sum + Number(p.unrealizedPnl ?? 0), 0);
+    const openPnl = open.value ?? positionPnl;
+
     const reportText = safe(formatDeskReportText({
       at: now,
       mode: state.mode,
@@ -133,7 +157,10 @@ export class ReportsService {
       moneyTrade,
       dailyLossHit: state.dailyLoss?.hit ?? false,
       dailyLossLimitPct: state.dailyLoss?.limitPct ?? state.trading?.values?.dailyLossLimitPct ?? 10,
-      positions: (state.paper.positions ?? []) as any[],
+      positions,
+      openPnl,
+      pnlSource: open.source,
+      realized,
       autoOn: state.auto?.on ?? false,
       autoIntervalMin: state.auto?.intervalMin ?? 15
     }));
@@ -150,8 +177,8 @@ export class ReportsService {
       n,
       perOrder: perOrder ?? 0,
       equity: state.financial.equity.value ?? (state.mode === 'PAPER' ? 1000 : 0),
-      unrealized: 0,
-      realized: 0,
+      unrealized: openPnl,
+      realized: realized ?? 0,
       dailyLoss: {
         limitPct: state.dailyLoss?.limitPct ?? state.trading?.values?.dailyLossLimitPct ?? 10,
         hit: state.dailyLoss?.hit ?? false

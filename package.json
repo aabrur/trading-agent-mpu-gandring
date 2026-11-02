@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.12",
-  "appVersion": "0.0.0.4.12",
+  "version": "0.4.13",
+  "appVersion": "0.0.0.4.13",
   "changelog": [
+    "v0.0.0.4.13: stop treating historical intents as live position ownership, keep Risk and Lead on one ticket, show only a verified venue stop, preserve the V2 kill audit trail, and make Discord and Telegram /report use the office Open PnL. Owner settings and guards are preserved.",
     "v0.0.0.4.12: Rebirth v2 architecture overhaul with LibSQL SQLite store, Bybit Linear market hub, deterministic decimal indicators, 6-role agent runner with 24 personas, 8 venue adapters, Grok v2 bridge, and ZECUSDT trading support. Owner settings and guards are preserved.",
     "v0.0.0.4.11: resolve the compiled trade launcher root so mpu trade --service starts dist/server/server/index.js and reads the project .env. Windows autostart uses the same root. Ordinary mpu records child exit code, signal, pid, and restart attribution. Owner settings and guards are preserved.",
     "v0.0.0.4.10: show TESTNET and LIVE occupied slots from backend accounting, including a unique pending entry, and label unverified observations. PAPER still counts position rows. Owner settings and guards are preserved.",

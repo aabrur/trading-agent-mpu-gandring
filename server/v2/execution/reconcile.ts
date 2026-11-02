@@ -55,6 +55,7 @@ export interface Reconciliation {
     funding: DecimalString | null;
     availability: Availability;
   };
+  verifiedStops: Record<string, DecimalString | null>;
   unknowns: string[];
   externalCredentialConflict: boolean;
 }
@@ -79,31 +80,28 @@ export async function reconcileAccountState(params: {
   );
 
   const managedRows = await store.execute(
-    `SELECT position_key, symbol, stop_price
+    `SELECT position_key, symbol, side, entry_price, stop_price
      FROM managed_positions
      WHERE account_ref = ? AND state = 'OPEN'`,
     [accountRef]
   );
 
-  const knownSymbols = new Set<string>();
-  const stopBySymbol = new Map<string, string>();
-  for (const row of intentRows.rows) {
-    knownSymbols.add(String(row.symbol));
-    try {
-      const parsed = JSON.parse(String(row.payload_json)) as { stop?: string | null };
-      if (parsed.stop) {
-        stopBySymbol.set(String(row.symbol), parsed.stop);
-      }
-    } catch {
-      // Ignore malformed historical payload metadata.
-    }
-  }
-  for (const row of managedRows.rows) {
-    knownSymbols.add(String(row.symbol));
-    if (row.stop_price !== null) {
-      stopBySymbol.set(String(row.symbol), String(row.stop_price));
-    }
-  }
+  const openManaged = managedRows.rows
+    .map((row) => ({
+      positionKey: String(row.position_key),
+      symbol: String(row.symbol),
+      side: String(row.side),
+      entryPrice: row.entry_price == null ? null : String(row.entry_price),
+      stopPrice: row.stop_price == null ? null : String(row.stop_price)
+    }))
+    .filter((row): row is {
+      positionKey: string;
+      symbol: string;
+      side: 'LONG' | 'SHORT';
+      entryPrice: string | null;
+      stopPrice: string | null;
+    } => row.side === 'LONG' || row.side === 'SHORT');
+  const activeRelations: Array<{ symbol: string; side: 'LONG' | 'SHORT'; stop: string | null }> = [];
 
   // 2. Resolve ambiguous intents via native lookupOrder (zero submit calls).
   const pending: ReconciledPendingIntent[] = [];
@@ -127,6 +125,15 @@ export async function reconcileAccountState(params: {
       orderState === 'ACCEPTED' ||
       orderState === 'PARTIAL'
     ) {
+      let stop: string | null = null;
+      if (side === 'LONG' || side === 'SHORT') {
+        try {
+          const parsed = JSON.parse(String(row.payload_json)) as { stop?: string | null };
+          stop = parsed.stop ? String(parsed.stop) : null;
+        } catch {
+          stop = null;
+        }
+      }
       try {
         const lookedUp = await transport.lookupOrder(symbol, clientOrderId);
         resolvedIntentUpdates.push({
@@ -134,6 +141,13 @@ export async function reconcileAccountState(params: {
           state: lookedUp.state,
           venueOrderId: lookedUp.venueOrderId
         });
+        const filled =
+          (lookedUp.state === 'FILLED' || lookedUp.state === 'PARTIAL') &&
+          lookedUp.filledQty != null &&
+          compareDecimals(lookedUp.filledQty, '0') > 0;
+        if (filled && (side === 'LONG' || side === 'SHORT')) {
+          activeRelations.push({ symbol, side, stop });
+        }
         if (
           lookedUp.state === 'ACCEPTED' ||
           lookedUp.state === 'PARTIAL' ||
@@ -173,40 +187,81 @@ export async function reconcileAccountState(params: {
 
   let externalCredentialConflict = false;
   const protection: Record<string, ProtectionState> = {};
+  const verifiedStops: Record<string, DecimalString | null> = {};
+  const ownedKeys = new Set<string>();
+
+  const claim = (pos: NativeExposurePosition): { owned: boolean; stop: string | null } => {
+    const managed = openManaged.find(
+      (row) => row.positionKey === pos.positionKey && row.side === pos.side
+    );
+    if (managed) {
+      const sameEntry = !managed.entryPrice || compareDecimals(managed.entryPrice, pos.entryPrice) === 0;
+      if (sameEntry) return { owned: true, stop: managed.stopPrice };
+    }
+    const active = activeRelations.find((row) => row.symbol === pos.symbol && row.side === pos.side);
+    if (active) return { owned: true, stop: active.stop };
+    return { owned: false, stop: null };
+  };
+
+  const noteReadback = (pos: NativeExposurePosition, snap: ProtectionSnapshot) => {
+    protection[pos.positionKey] = snap.state;
+    verifiedStops[pos.positionKey] = snap.state === 'VERIFIED' ? snap.stopPrice : null;
+  };
 
   for (const pos of nativePositions) {
     if (compareDecimals(pos.qty, '0') <= 0) continue;
-
-    if (!knownSymbols.has(pos.symbol)) {
+    const relation = claim(pos);
+    if (!relation.owned) {
       externalCredentialConflict = true;
       unknowns.push(
         `External unattributed position detected on ${pos.symbol} (${pos.positionKey}); local lease cannot fence external API writers`
       );
       try {
-        const snap = await transport.readProtection(pos);
-        protection[pos.positionKey] = snap.state;
+        noteReadback(pos, await transport.readProtection(pos));
       } catch {
         protection[pos.positionKey] = 'UNVERIFIED';
+        verifiedStops[pos.positionKey] = null;
       }
       continue;
     }
 
-    const desiredStop = stopBySymbol.get(pos.symbol);
-    if (desiredStop) {
+    ownedKeys.add(pos.positionKey);
+    let observedStop: string | null = null;
+    const readProtection = async (position: NativeExposurePosition) => {
+      const snap = await transport.readProtection(position);
+      if (snap.state === 'VERIFIED' && snap.stopPrice) observedStop = snap.stopPrice;
+      return snap;
+    };
+    const placeProtection = async (position: NativeExposurePosition, stopPrice: DecimalString) => {
+      const snap = await transport.placeProtection(position, stopPrice);
+      if (snap.state === 'VERIFIED' && snap.stopPrice) observedStop = snap.stopPrice;
+      return snap;
+    };
+    if (relation.stop) {
       const prot = await ensureExposureProtection({
         position: pos,
-        desiredStopPrice: desiredStop,
-        readProtection: (p) => transport.readProtection(p),
-        placeProtection: (p, s) => transport.placeProtection(p, s),
+        desiredStopPrice: relation.stop,
+        readProtection,
+        placeProtection,
         emergencyClose: async (p, cid) => {
           await transport.closePosition(p, cid);
         }
       });
       protection[pos.positionKey] = prot.protectionState;
+      try {
+        const snap = await readProtection(pos);
+        if (snap.state === 'VERIFIED' && snap.stopPrice) observedStop = snap.stopPrice;
+      } catch {
+        // Keep the verified snapshot already obtained. Do not substitute the database stop.
+      }
     } else {
-      const snap = await transport.readProtection(pos);
-      protection[pos.positionKey] = snap.state;
+      try {
+        noteReadback(pos, await readProtection(pos));
+      } catch {
+        protection[pos.positionKey] = 'UNVERIFIED';
+      }
     }
+    verifiedStops[pos.positionKey] = observedStop;
   }
 
   // 4. Persist reconciled states in a single short SQL transaction.
@@ -221,9 +276,20 @@ export async function reconcileAccountState(params: {
       );
     }
 
+    for (const row of openManaged) {
+      if (ownedKeys.has(row.positionKey)) continue;
+      await tx.execute(
+        `UPDATE managed_positions
+         SET state = 'CLOSED', closed_at = ?, updated_at = ?
+         WHERE account_ref = ? AND position_key = ? AND state = 'OPEN'`,
+        [nowIso, nowIso, accountRef, row.positionKey]
+      );
+    }
+
     for (const pos of nativePositions) {
-      if (!knownSymbols.has(pos.symbol)) continue;
+      if (!ownedKeys.has(pos.positionKey)) continue;
       const protState = protection[pos.positionKey] ?? 'UNVERIFIED';
+      const relation = claim(pos);
       await tx.execute(
         `INSERT INTO managed_positions (
           account_ref, position_key, native_position_id, symbol, native_instrument,
@@ -244,7 +310,7 @@ export async function reconcileAccountState(params: {
           pos.side,
           pos.qty,
           pos.entryPrice,
-          stopBySymbol.get(pos.symbol) ?? null,
+          relation.stop,
           protState,
           nowIso,
           nowIso
@@ -269,6 +335,7 @@ export async function reconcileAccountState(params: {
       funding: nativeBalance.fundingUsdt ?? null,
       availability: hasFinancial ? 'AVAILABLE' : 'UNAVAILABLE'
     },
+    verifiedStops,
     unknowns,
     externalCredentialConflict
   };

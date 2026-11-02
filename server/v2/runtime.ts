@@ -70,6 +70,15 @@ import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
 import { HELP_TEXT, DiscordGateway } from './channels.js';
 import { formatDeskReportText, ReportsService } from './reports.js';
+import {
+  deskOpenPnl,
+  formatLessonsCard,
+  formatPositionsCard,
+  formatScanCard,
+  formatScorecardCard,
+  formatStatusCard,
+  formatWatchlistCard
+} from './channel-text.js';
 import { readKill, writeKill, clearKill, DEFAULT_KILL_FILE } from './kill-file.js';
 function normSymbol(s: string): string {
   const up = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -313,6 +322,33 @@ export interface ReplacementRuntimeOptions {
   initialKilled?: boolean;
 }
 
+export function ownerAllocationPerOrder(
+  moneyTrade: number,
+  n: number,
+  orderSizePct?: number | null
+): number {
+  if (orderSizePct != null && Number.isFinite(orderSizePct) && orderSizePct > 0) {
+    return Math.floor(((moneyTrade * orderSizePct) / 100) * 100) / 100;
+  }
+  if (n > 0 && Number.isFinite(moneyTrade) && moneyTrade > 0) {
+    return Math.floor((moneyTrade / n) * 100) / 100;
+  }
+  return 0;
+}
+
+export function verifiedVenueStop(input: {
+  protectionState?: string | null;
+  stopPrice?: string | null;
+}): { stop: number; protectionStatus: 'confirmed' | 'missing' | 'unknown' } {
+  if (input.protectionState === 'VERIFIED') {
+    const stop = Number(input.stopPrice);
+    if (Number.isFinite(stop) && stop > 0) return { stop, protectionStatus: 'confirmed' };
+    return { stop: 0, protectionStatus: 'unknown' };
+  }
+  if (input.protectionState === 'MISSING') return { stop: 0, protectionStatus: 'missing' };
+  return { stop: 0, protectionStatus: 'unknown' };
+}
+
 export function createReplacementRuntime(
   options: ReplacementRuntimeOptions = {}
 ): ReplacementRuntimeHandle {
@@ -407,7 +443,8 @@ export function createReplacementRuntime(
   const initN = Math.max(1, Number.isFinite(rawN) ? rawN : 3);
 
   const moneyTrade = Math.round(Math.max(0, initBal - initSafety) * 100) / 100;
-  const perOrder = Math.floor((moneyTrade / initN) * 100) / 100;
+  const orderSizePct = savedTrading?.orderSizePct;
+  const perOrder = ownerAllocationPerOrder(moneyTrade, initN, orderSizePct);
   const canOpen = perOrder > 0 && (options.initialPositions ? options.initialPositions.length < initN : true);
 
   const rawLev = Math.trunc(Number(
@@ -424,6 +461,7 @@ export function createReplacementRuntime(
   state.paper.maxLeverage = initLev;
   state.paper.moneyTrade = moneyTrade;
   state.paper.perOrder = perOrder;
+  state.paper.orderSizePct = orderSizePct;
   state.paper.canOpen = canOpen;
   state.paper.equity = initBal;
 
@@ -1511,10 +1549,37 @@ export function createReplacementRuntime(
 
     if (cleanCmd === 'status') {
       const snap = snapshot();
+      const open = deskOpenPnl({
+        mode: snap.mode,
+        paperUnrealized: snap.paper.unrealized,
+        venueUnrealized: snap.venueAccount?.unrealized ?? null,
+        venueStatus: snap.venueAccount?.status ?? null
+      });
+      const realized = snap.financial.realizedPnl.availability === 'AVAILABLE' ? snap.financial.realizedPnl.value : null;
       return {
         ok: true,
         command: 'status',
-        reply: `Mode: ${snap.mode}. Venue: ${snap.venue?.name ?? 'bybit'}. Auto: ${snap.auto.on ? 'ON' : 'OFF'}. Kill switch: ${snap.killed ? 'ON' : 'OFF'}. Open positions: ${snap.paper.positions.length}/${snap.paper.n}.`
+        reply: formatStatusCard({
+          mode: snap.mode,
+          venue: snap.venue?.name ?? null,
+          killed: snap.killed,
+          paused: snap.paused,
+          autoOn: snap.auto.on,
+          autoIntervalMin: snap.auto.intervalMin,
+          equity: snap.financial.equity.value ?? snap.paper.equity,
+          balance: snap.financial.balance.value ?? snap.paper.balance,
+          safetyNet: snap.paper.safetyNet,
+          moneyTrade: snap.paper.moneyTrade,
+          perOrder: snap.paper.perOrder,
+          openPnl: open.value,
+          pnlSource: open.source,
+          realized,
+          positions: snap.paper.positions.length,
+          slots: snap.paper.n,
+          freeSlots: snap.accountState?.freeSlots ?? Math.max(0, snap.paper.n - snap.paper.positions.length),
+          dailyLossHit: snap.dailyLoss?.hit ?? false,
+          dailyLossLimitPct: snap.dailyLoss?.limitPct ?? 10
+        })
       };
     }
 
@@ -1524,44 +1589,59 @@ export function createReplacementRuntime(
 
     if (cleanCmd === 'report' || cleanCmd.startsWith('report')) {
       const snap = snapshot();
-      const latestReport = snap.reports?.[0]?.text;
-      if (latestReport) {
-        return { ok: true, command: 'report', reply: latestReport };
-      }
-      const generated = formatDeskReportText({
-        at: Date.now(),
+      const open = deskOpenPnl({
         mode: snap.mode,
-        venue: snap.venue?.name ?? null,
-        killed: snap.killed,
-        equity: snap.financial.equity.value,
-        balance: snap.financial.balance.value,
-        safetyNet: snap.paper.safetyNet,
-        moneyTrade: snap.paper.moneyTrade,
-        dailyLossHit: snap.dailyLoss?.hit ?? false,
-        dailyLossLimitPct: snap.dailyLoss?.limitPct ?? 10,
-        positions: (snap.paper.positions ?? []) as any[],
-        autoOn: snap.auto.on,
-        autoIntervalMin: snap.auto.intervalMin
+        paperUnrealized: snap.paper.unrealized,
+        venueUnrealized: snap.venueAccount?.unrealized ?? null,
+        venueStatus: snap.venueAccount?.status ?? null
       });
-      return { ok: true, command: 'report', reply: generated };
+      const realized = snap.financial.realizedPnl.availability === 'AVAILABLE' ? snap.financial.realizedPnl.value : null;
+      return {
+        ok: true,
+        command: 'report',
+        reply: formatDeskReportText({
+          at: Date.now(),
+          mode: snap.mode,
+          venue: snap.venue?.name ?? null,
+          killed: snap.killed,
+          equity: snap.financial.equity.value ?? snap.paper.equity,
+          balance: snap.financial.balance.value ?? snap.paper.balance,
+          safetyNet: snap.paper.safetyNet,
+          moneyTrade: snap.paper.moneyTrade,
+          dailyLossHit: snap.dailyLoss?.hit ?? false,
+          dailyLossLimitPct: snap.dailyLoss?.limitPct ?? 10,
+          positions: snap.paper.positions ?? [],
+          openPnl: open.value,
+          pnlSource: open.source,
+          realized,
+          autoOn: snap.auto.on,
+          autoIntervalMin: snap.auto.intervalMin
+        })
+      };
     }
 
     if (cleanCmd === 'positions') {
       const snap = snapshot();
-      const ps = snap.paper.positions ?? [];
-      const header = `Positions (${ps.length}):`;
-      if (!ps.length) {
-        return { ok: true, command: 'positions', reply: `${header}\n  none` };
-      }
-      const lines = ps.map((p, i) => [
-        `${i + 1}. ${p.symbol} ${p.side} ${p.leverage}x`,
-        `Qty: ${p.qty} | Margin: ${Number(p.margin ?? 0).toFixed(2)} USDT`,
-        `Entry: ${p.entry} | Mark: ${p.mark}`,
-        `SL: ${p.stop ? p.stop : 'NONE (alert)'} | TP: ${p.tp ?? 'Not set'}`,
-        `Protection: ${p.protectionStatus === 'confirmed' ? 'Confirmed at exchange' : 'Local or unverified'}`,
-        `Unrealized PnL: ${Number(p.unrealizedPnl ?? 0) >= 0 ? '+' : ''}${Number(p.unrealizedPnl ?? 0).toFixed(2)} USDT`
-      ].join('\n'));
-      return { ok: true, command: 'positions', reply: safe([header, ...lines].join('\n\n')) };
+      return {
+        ok: true,
+        command: 'positions',
+        reply: safe(formatPositionsCard({
+          mode: snap.mode,
+          positions: (snap.paper.positions ?? []).map((p) => ({
+            symbol: p.symbol,
+            side: p.side,
+            leverage: p.leverage,
+            qty: Number(p.qty) || 0,
+            margin: Number(p.margin) || 0,
+            entry: Number(p.entry) || 0,
+            mark: Number(p.mark) || 0,
+            stop: Number(p.stop) || 0,
+            tp: p.tp,
+            protectionStatus: p.protectionStatus,
+            unrealizedPnl: Number(p.unrealizedPnl) || 0
+          }))
+        }))
+      };
     }
 
     if (cleanCmd === 'scan') {
@@ -1578,10 +1658,7 @@ export function createReplacementRuntime(
       return {
         ok: true,
         command: 'scan',
-        reply: safe([
-          'Proactive scan status:',
-          findings.length === 0 ? 'All positions healthy and protected.' : findings.join('\n')
-        ].join('\n'))
+        reply: safe(formatScanCard(findings.map((line) => line.replace(/^ALERTS: /, '🚨 '))))
       };
     }
 
@@ -1590,32 +1667,20 @@ export function createReplacementRuntime(
       return {
         ok: true,
         command: 'watchlist',
-        reply: `Watchlist (${snap.watchlist.length} symbols, auto every ${snap.auto.intervalMin}m):\n${snap.watchlist.join(', ')}`
+        reply: formatWatchlistCard(snap.watchlist, snap.auto.intervalMin)
       };
     }
 
     if (cleanCmd === 'scorecard' || cleanCmd === 'scores') {
       const snap = snapshot();
       const sc = snap.scorecard ?? [];
-      const header = 'Employee Scorecard:';
-      if (!sc.length) {
-        return { ok: true, command: 'scorecard', reply: `${header}\nNo settled decisions recorded yet.` };
-      }
-      const lines = sc.map(r => `${r.name}: Calls ${r.calls}, Right ${r.right}, Wrong ${r.wrong} (${r.note})`);
-      return { ok: true, command: 'scorecard', reply: [header, ...lines].join('\n') };
+      return { ok: true, command: 'scorecard', reply: formatScorecardCard(sc) };
     }
 
     if (cleanCmd === 'lessons' || cleanCmd === 'learnings') {
       const snap = snapshot();
       const ls = snap.lessons ?? [];
-      if (!ls.length) {
-        return { ok: true, command: 'lessons', reply: 'No lessons recorded yet.' };
-      }
-      return {
-        ok: true,
-        command: 'lessons',
-        reply: `Recent Lessons:\n${ls.slice(-5).map(l => `[${l.role}] ${l.lesson}`).join('\n')}`
-      };
+      return { ok: true, command: 'lessons', reply: formatLessonsCard(ls.slice(-5)) };
     }
 
     if (cleanCmd === 'kill' || cleanCmd.startsWith('kill')) {
@@ -2375,6 +2440,10 @@ export async function startReplacementServer(
       await authority.setHalt(accountRef, true, 'startup', killRec.reason);
     }
   }
+  let startupRecon: Awaited<ReturnType<typeof gateway.reconcile>> | null = null;
+  if (startup.tradingMode !== 'PAPER') {
+    startupRecon = await gateway.reconcile(accountRef).catch(() => null);
+  }
 
   const equityNum = nativeBalance.equity !== null ? Number(nativeBalance.equity) : null;
   const availNum = nativeBalance.available !== null ? Number(nativeBalance.available) : null;
@@ -2393,22 +2462,24 @@ export async function startReplacementServer(
     const entry = Number(p.entryPrice);
     const leverage = p.leverage ?? 5;
     const margin = (qty * entry) / leverage;
-    const defaultStopPct = 0.05;
-    const stop = p.side === 'LONG' ? entry * (1 - defaultStopPct) : entry * (1 + defaultStopPct);
+    const shown = verifiedVenueStop({
+      protectionState: startupRecon?.protection[p.positionKey],
+      stopPrice: startupRecon?.verifiedStops[p.positionKey]
+    });
     return {
       id: `pos-${p.symbol}-${idx}`,
       symbol: p.symbol,
       side: p.side,
       qty,
       entry,
-      stop,
+      stop: shown.stop,
       tp: null,
       mark: entry,
       unrealizedPnl: p.unrealizedPnl ? Number(p.unrealizedPnl) : 0,
       leverage,
       margin,
       openedAt: p.observedAt,
-      protectionStatus: 'unknown',
+      protectionStatus: shown.protectionStatus,
       entryStatus: 'confirmed'
     };
   });
@@ -2928,6 +2999,12 @@ export async function startReplacementServer(
       if (isSyncing) return;
       isSyncing = true;
       try {
+        let recon: Awaited<ReturnType<typeof gateway.reconcile>> | null = null;
+        try {
+          recon = await gateway.reconcile(accountRef);
+        } catch {
+          recon = null;
+        }
         const [bal, posList] = await Promise.all([
           venueAdapter.balance(),
           venueAdapter.positions()
@@ -2967,37 +3044,46 @@ export async function startReplacementServer(
               const existing = d.paper.positions.find(
                 (p) => p.symbol.toUpperCase() === nativePos.symbol.toUpperCase() && p.side === nativePos.side
               );
-              // Preserve existing stop/protection provenance; do not fabricate synthetic 5% stop or confirmed status
-              const stop = existing?.stop ?? 0;
+              // Stop price comes only from a verified native readback. A local number is not a venue stop.
               const upnl = nativePos.unrealizedPnl != null ? Number(nativePos.unrealizedPnl) : (existing?.unrealizedPnl ?? 0);
               const mark = existing?.mark && Math.abs(existing.mark - entry) > 0.0001
                 ? existing.mark
                 : (entry + (nativePos.side === 'LONG' ? 1 : -1) * (qty > 0 ? upnl / qty : 0));
 
+              const shown = verifiedVenueStop({
+                protectionState: recon?.protection[nativePos.positionKey],
+                stopPrice: recon?.verifiedStops?.[nativePos.positionKey]
+              });
               updatedPositions.push({
                 id: existing?.id ?? `pos-${nativePos.symbol}-${idx}`,
                 symbol: nativePos.symbol,
                 side: nativePos.side,
                 qty,
                 entry,
-                stop,
+                stop: shown.stop,
                 tp: existing?.tp ?? null,
                 mark,
                 unrealizedPnl: Math.round(upnl * 100) / 100,
                 leverage,
                 margin,
                 openedAt: existing?.openedAt ?? nativePos.observedAt ?? Date.now(),
-                protectionStatus: existing?.protectionStatus ?? 'unknown',
+                protectionStatus: shown.protectionStatus,
                 entryStatus: 'confirmed'
               });
             }
             d.paper.positions = updatedPositions;
             d.paper.usedMargin = updatedPositions.reduce((sum, p) => sum + p.margin, 0);
 
-            const mt = Math.round(Math.max(0, eq - d.paper.safetyNet) * 100) / 100;
+            const trading = settings.current().effective.trading;
+            const slots = trading.maxPositions ?? d.paper.n;
+            const safety = trading.safetyNet ?? d.paper.safetyNet;
+            const mt = Math.round(Math.max(0, eq - safety) * 100) / 100;
+            d.paper.safetyNet = safety;
+            d.paper.n = slots;
             d.paper.moneyTrade = mt;
-            d.paper.perOrder = Math.floor((mt / d.paper.n) * 100) / 100;
-            d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
+            d.paper.orderSizePct = trading.orderSizePct;
+            d.paper.perOrder = ownerAllocationPerOrder(mt, slots, trading.orderSizePct);
+            d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < slots;
             if (d.accountState) {
               d.accountState.hasTradableCapital = d.paper.canOpen;
               d.accountState.canOpenNewSlot = d.paper.canOpen;

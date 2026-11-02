@@ -124,8 +124,8 @@ export function TopBar({
     ? latestVer
     : (diskVer && runningVer && compareVer(diskVer, runningVer) > 0)
       ? diskVer
-      : (latestVer ?? diskVer ?? '0.0.0.4.12');
-  const ver = diskVer ?? '0.0.0.4.12';
+      : (latestVer ?? diskVer ?? '0.0.0.4.13');
+  const ver = diskVer ?? '0.0.0.4.13';
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {
     try {

@@ -2,6 +2,15 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.13] - 2026-11-02
+
+### Fixed
+- Reconciliation no longer treats historical execution intents as proof that a live position is owned. A stop from a closed position is not applied to a new or external position. Pending-order recovery stays idempotent and does not resubmit.
+- Risk and Desk Lead share one candidate ticket, including side. A material Lead change is re-checked through the existing Risk contract. No new confidence gate.
+- The desk shows a stop as confirmed only from a verified native readback, not a synthetic 5 percent stop. Auto sizing uses the active profile order size when set.
+- The V2 kill file keeps the official sanitized audit trail. Release rules are unchanged.
+- Discord and Telegram command cards use markers, and /report uses the same Open PnL as the office badge.
+
 ## [v0.0.0.4.12] - 2026-10-31
 
 ### Added

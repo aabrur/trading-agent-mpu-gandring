@@ -782,21 +782,21 @@ export class ChannelSupervisor {
 }
 
 export const HELP_TEXT = [
-  'Trading Agent Mpu Gandring Commands:',
-  '• /status: Balance, equity, venue, guards status',
-  '• /positions: Active positions and resting exchange stops',
-  '• /report: Latest performance and execution report',
-  '• /scan: Instant proactive scan for desk alerts',
-  '• /analyze <symbol>: Direct agents to debate & auto-trade (e.g. /analyze BTCUSDT)',
-  '• /ask <question>: Chat with Desk Lead (or /ask <agent> <question>)',
-  '• /set profile <default|balance|profit|aggressive>, /set size <1.5..100>%, /set leverage <1..20>',
-  '• /open long|short <symbol> [size%] [leverage]',
-  '• /close <symbol> or /close all: Execute directly using the active settings',
-  '• /watchlist: Active auto-trading symbols',
-  '• /scorecard: Agent performance & win rate',
-  '• /lessons: Recent self-improving lessons',
-  '• /cautious or /aggressive: Adjust agent risk appetite',
-  '• /kill: Emergency stop (send "kill confirm" to flatten all positions)'
+  '⚡ MPU GANDRING',
+  '────────',
+  '📊 /status  desk, capital, Open PnL',
+  '📌 /positions  stops and position PnL',
+  '📋 /report  same Open PnL as the office',
+  '🔎 /scan  alerts',
+  '👀 /watchlist  auto symbols',
+  '📊 /scorecard  calls',
+  '📘 /lessons  recent notes',
+  '💬 /analyze <symbol>  start a debate',
+  '💬 /ask <question>  Desk Lead',
+  '⚙️ /set profile|size|leverage',
+  '📈 /open long|short <symbol>',
+  '📉 /close <symbol> or /close all',
+  '🛑 /kill  emergency stop, then /kill confirm'
 ].join('\n');
 
 const DISCORD_API = 'https://discord.com/api/v10';
