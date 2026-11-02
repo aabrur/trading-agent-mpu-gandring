@@ -581,6 +581,17 @@ export class BybitMarketHub {
     return this.states.get(clean)?.orderbook.view() ?? null;
   }
 
+  candles(symbol: string, tf: TF = '15m') {
+    const clean = symbol.trim().toUpperCase();
+    const st = this.states.get(clean);
+    if (!st) return null;
+    const snap = st.candles.snapshot();
+    return {
+      closed: snap.closed[tf] ?? [],
+      current: snap.current[tf] ?? null
+    };
+  }
+
   recentTrades(symbol: string): PublicTradeRecord[] {
     const clean = symbol.trim().toUpperCase();
     return [...(this.states.get(clean)?.trades ?? [])];

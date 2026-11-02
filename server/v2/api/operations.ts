@@ -254,7 +254,7 @@ export function mountOperationsRoutes(
         res.status(409).json({ ok: false, error: 'Kill switch is ON. Release it first.' });
         return;
       }
-      const sym = parsed.data.symbols?.[0] ?? snap.auto.symbols?.[0] ?? 'BTCUSDT';
+      const sym = parsed.data.symbols && parsed.data.symbols.length === 1 ? parsed.data.symbols[0] : undefined;
       if (runtime.triggerCycle) {
         void runtime.triggerCycle(sym, 'owner').catch((err) => {
           console.error('[cycle] Trigger error:', err);

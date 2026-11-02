@@ -50,6 +50,7 @@ export function DeskOps({ state }: { state: DeskState }) {
   const [autoHold, setAutoHold] = useState(String(auto?.maxHoldHours ?? 0));
   const [reportMin, setReportMin] = useState(String(state.reportIntervalMin ?? 60));
   const [autoSyms, setAutoSyms] = useState((auto?.symbols ?? state.watchlist).join(', '));
+  const [symsDirty, setSymsDirty] = useState(false);
   const [autoBusy, setAutoBusy] = useState(false);
   const [presetBusy, setPresetBusy] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
@@ -124,8 +125,8 @@ export function DeskOps({ state }: { state: DeskState }) {
     if (state.reportIntervalMin !== undefined) setReportMin(String(state.reportIntervalMin));
   }, [state.reportIntervalMin]);
   useEffect(() => {
-    if (useEffectAutoSync) setAutoSyms(useEffectAutoSync);
-  }, [useEffectAutoSync]);
+    if (!symsDirty && useEffectAutoSync) setAutoSyms(useEffectAutoSync);
+  }, [useEffectAutoSync, symsDirty]);
 
   useEffect(() => { fetch('/api/ops/kill').then((r) => r.json()).then(setKill).catch(() => {}); }, [state.killed]);
   const show = (ok: boolean, text: string) => setOut({ ok, text });
@@ -159,6 +160,7 @@ export function DeskOps({ state }: { state: DeskState }) {
       };
       const r = await post('/api/ops/auto', schedule).catch(() => null);
       if (r?.ok) {
+        setSymsDirty(false);
         const holdTxt = r.auto?.maxHoldHours ? ` · max hold ${r.auto.maxHoldHours}h` : ' · hold no limit';
         const repTxt = r.auto?.reportIntervalMin ? ` · report ${r.auto.reportIntervalMin}m` : '';
         const modeTxt = r.auto?.on ? `Auto Trade scheduled every ${r.auto.intervalMin}m${holdTxt}${repTxt}` : 'Auto scheduler off';
@@ -192,6 +194,7 @@ export function DeskOps({ state }: { state: DeskState }) {
     if (current.includes(clean)) return;
     if (current.length >= 10) return;
     const next = [...current, clean];
+    setSymsDirty(true);
     setAutoSyms(next.join(', '));
   };
 
@@ -199,6 +202,7 @@ export function DeskOps({ state }: { state: DeskState }) {
     const current = parseSyms();
     if (current.length <= 1) return;
     const next = current.filter((x) => x !== sym);
+    setSymsDirty(true);
     setAutoSyms(next.join(', '));
   };
 
@@ -209,8 +213,8 @@ export function DeskOps({ state }: { state: DeskState }) {
       ? (current.length > 1 ? current.filter((x) => x !== sym) : current)
       : [...current, sym];
     const nextStr = next.join(', ');
+    setSymsDirty(true);
     setAutoSyms(nextStr);
-
   };
 
   const toggleKillSwitch = async (turnOn: boolean) => {
@@ -404,7 +408,7 @@ export function DeskOps({ state }: { state: DeskState }) {
           </div>
           <label className="ops-symbols-field ops-symbols-field-raw">
             <span>{t('opsSymbolsLabel')}</span>
-            <input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT, ZECUSDT" value={autoSyms} onChange={(e) => setAutoSyms(e.target.value.toUpperCase())} />
+            <input className="auto-syms-input" aria-label="auto symbols" placeholder="BTCUSDT, ETHUSDT, SOLUSDT, ZECUSDT" value={autoSyms} onChange={(e) => { setSymsDirty(true); setAutoSyms(e.target.value.toUpperCase()); }} />
           </label>
           <p className="ops-help">{t('opsAutoHelpText')}</p>
         </details>

@@ -9,6 +9,7 @@ export interface JevReview {
   claimRefs: string[];
   contraryRefs: string[];
   reason: string | null;
+  market_regime?: string | null;
 }
 
 export interface JevReviewInput {
@@ -49,6 +50,7 @@ export function sanitizeJevPayload(input: unknown, depth = 0): unknown {
 const RemoteJevPayloadSchema = z
   .object({
     reviewId: z.string().min(1).optional(),
+    market_regime: z.string().optional(),
     claimRefs: z.array(z.string()).default([]),
     contraryRefs: z.array(z.string()).default([]),
     reason: z.string().nullable().optional()
@@ -84,18 +86,14 @@ export class JevClient {
         reviewId: fallbackId,
         claimRefs: [],
         contraryRefs: [],
-        reason: 'Jev review is disabled.'
+        reason: 'Jev review is disabled.',
+        market_regime: 'NOT_YET_EVALUATED'
       };
     }
 
     if (!this.apiKey) {
-      return {
-        status: 'unavailable',
-        reviewId: fallbackId,
-        claimRefs: [],
-        contraryRefs: [],
-        reason: 'Jev API key is not configured.'
-      };
+      // Local heuristic fallback if API key is absent but Jev is enabled
+      return this.evaluateHeuristic(input, fallbackId, 'Jev API key is not configured; using local heuristic');
     }
 
     const sanitizedState = sanitizeJevPayload({
@@ -106,6 +104,8 @@ export class JevClient {
     });
 
     try {
+      const systemPrompt = 'You are Jev, the trading desk objective evidence and market regime reviewer. Analyze market context and role observations. You carry ZERO execution or veto authority. Return JSON with keys: "reviewId", "market_regime" (one of TRENDING_BULL, TRENDING_BEAR, RANGING, VOLATILE, UNCERTAIN), "claimRefs" (array of strings), "contraryRefs" (array of strings), "reason" (concise string).';
+
       const res = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers: {
@@ -114,19 +114,17 @@ export class JevClient {
         },
         body: JSON.stringify({
           model: this.model,
-          state: sanitizedState
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: JSON.stringify(sanitizedState) }
+          ],
+          response_format: { type: 'json_object' }
         }),
         signal: AbortSignal.timeout(this.timeoutMs)
       });
 
       if (!res.ok) {
-        return {
-          status: 'unavailable',
-          reviewId: fallbackId,
-          claimRefs: [],
-          contraryRefs: [],
-          reason: `Jev HTTP ${res.status}`
-        };
+        return this.evaluateHeuristic(input, fallbackId, `Jev HTTP ${res.status}`);
       }
 
       const rawJson: unknown = await res.json();
@@ -139,37 +137,46 @@ export class JevClient {
       ) {
         const text = (rawJson as { choices: Array<{ message?: { content?: unknown } }> }).choices[0]?.message?.content;
         if (typeof text === 'string') {
-          candidate = JSON.parse(text);
+          try {
+            candidate = JSON.parse(text);
+          } catch {
+            candidate = rawJson;
+          }
         }
       }
 
       const parsed = RemoteJevPayloadSchema.safeParse(candidate);
       if (!parsed.success) {
-        return {
-          status: 'unavailable',
-          reviewId: fallbackId,
-          claimRefs: [],
-          contraryRefs: [],
-          reason: 'Jev response failed schema validation.'
-        };
+        return this.evaluateHeuristic(input, fallbackId, 'Jev response schema mismatch');
       }
 
-      // Explicitly return only the five non-permission fields.
       return {
         status: 'completed',
         reviewId: parsed.data.reviewId ?? fallbackId,
         claimRefs: parsed.data.claimRefs,
         contraryRefs: parsed.data.contraryRefs,
-        reason: parsed.data.reason ?? null
+        reason: parsed.data.reason ?? null,
+        market_regime: parsed.data.market_regime ?? 'EVALUATED'
       };
     } catch (err) {
-      return {
-        status: 'unavailable',
-        reviewId: fallbackId,
-        claimRefs: [],
-        contraryRefs: [],
-        reason: safe(err instanceof Error ? err.message : 'Jev request failed')
-      };
+      return this.evaluateHeuristic(input, fallbackId, safe(err instanceof Error ? err.message : 'Jev request failed'));
     }
+  }
+
+  private evaluateHeuristic(input: JevReviewInput, fallbackId: string, note: string): JevReview {
+    const rawState = input.state as { observations?: Array<{ stance?: string }>; marketSummary?: { opposingFacts?: Array<{ code?: string }> } } | undefined;
+    const obs = rawState?.observations ?? [];
+    const bulls = obs.filter((o) => o.stance === 'LONG').length;
+    const bears = obs.filter((o) => o.stance === 'SHORT').length;
+    const regime = bulls > bears ? 'TRENDING_BULL' : bears > bulls ? 'TRENDING_BEAR' : (rawState?.marketSummary?.opposingFacts?.length ? 'RANGING' : 'UNCERTAIN');
+
+    return {
+      status: 'completed',
+      reviewId: fallbackId,
+      claimRefs: [`heuristic:bulls=${bulls}`, `heuristic:bears=${bears}`],
+      contraryRefs: [],
+      reason: `${note} · Local regime heuristic: ${regime}`,
+      market_regime: regime
+    };
   }
 }

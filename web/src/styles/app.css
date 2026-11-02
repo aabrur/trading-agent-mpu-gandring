@@ -1071,10 +1071,10 @@ button:disabled { cursor: default; }
 .auto-preset-select:disabled { opacity: 0.6; cursor: default; }
 .auto-preset-select option { background-color: var(--panel); color: var(--text); }
 .auto-preset-chevron { position: absolute; right: 0; pointer-events: none; font-size: 10px; color: var(--text-dim); line-height: 1; }
-.desk-ops .auto-setup-controls { gap: 6px; flex-wrap: wrap; }
-.desk-ops .auto-min-field, .desk-ops .auto-n-field { padding: 0 4px; gap: 3px; }
-.desk-ops .auto-min-field input { width: 35px !important; min-width: 35px !important; }
-.desk-ops .auto-setup-controls > button { margin-left: auto; }
+.desk-ops .auto-setup-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: center; gap: 4px; }
+.desk-ops .auto-min-field, .desk-ops .auto-n-field { padding: 2px 4px; gap: 2px; font-size: 10px; min-height: 26px; justify-content: center; }
+.desk-ops .auto-min-field input { width: 28px !important; min-width: 22px !important; font-size: 11px !important; padding: 1px 2px !important; text-align: center; }
+.desk-ops .auto-setup-controls > button { min-height: 26px; padding: 2px 8px; font-size: 11px; margin-left: 0; }
 .desk-ops .auto-syms-input { width: 100%; min-width: 0 !important; }
 .ops-symbols-field, .ops-market-row label, .ops-side-field, .ops-lesson-row label { display: grid; gap: 3px; min-width: 0; font-size: 11px; color: var(--text-dim); }
 .ops-symbols-field { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; }
@@ -1327,7 +1327,7 @@ button:disabled { cursor: default; }
 .watchlist-max-badge { font-size: 10px; font-weight: 700; color: var(--warn); background: rgba(224, 138, 46, 0.12); padding: 1px 6px; border-radius: var(--radius-sm); border: 1px solid rgba(224, 138, 46, 0.3); }
 .watchlist-hint { font-size: 10px; color: var(--text-dim); }
 .watchlist-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.watchlist-chip { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 999px; padding: 3px 8px 3px 10px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; line-height: 1.2; transition: all 0.12s ease; }
+.watchlist-chip { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 999px; padding: 2px 7px 2px 9px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; line-height: 1.2; min-height: 24px; transition: all 0.12s ease; }
 .watchlist-chip:hover { border-color: var(--teal); }
 .watchlist-chip.pos-long { box-shadow: 0 0 0 1.5px var(--long); }
 .watchlist-chip.pos-short { box-shadow: 0 0 0 1.5px var(--short); }
@@ -1335,10 +1335,11 @@ button:disabled { cursor: default; }
 .chip-remove-btn { background: transparent !important; border: none !important; color: var(--text-dim) !important; padding: 0 3px !important; font-size: 13px !important; line-height: 1 !important; cursor: pointer; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; transition: color 0.12s ease; }
 .chip-remove-btn:hover:not(:disabled) { color: var(--short) !important; background: rgba(230, 80, 80, 0.15) !important; }
 .watchlist-add-wrapper { position: relative; display: inline-flex; align-items: center; }
-.watchlist-add-select { border: 1px dashed var(--teal) !important; background: rgba(0, 168, 150, 0.08) !important; color: var(--teal) !important; border-radius: 999px !important; padding: 3px 10px !important; font-family: var(--font-mono) !important; font-size: 11px !important; font-weight: 800 !important; cursor: pointer; height: 26px; outline: none; transition: all 0.12s ease; }
+.watchlist-add-select { border: 1px dashed var(--teal) !important; background: rgba(0, 168, 150, 0.08) !important; color: var(--teal) !important; border-radius: 999px !important; padding: 2px 8px !important; font-family: var(--font-mono) !important; font-size: 10.5px !important; font-weight: 800 !important; cursor: pointer; height: 24px; min-height: 24px; outline: none; transition: all 0.12s ease; }
 .watchlist-add-select:hover:not(:disabled) { background: rgba(0, 168, 150, 0.18) !important; border-style: solid !important; }
 .watchlist-add-select option { background: var(--panel); color: var(--text); font-family: var(--font-mono); font-size: 12px; }
-.ops-symbols-field-raw { margin-top: 4px; opacity: 0.85; }
+.ops-symbols-field-raw { margin-top: 5px; opacity: 0.85; display: flex !important; flex-direction: column !important; gap: 3px !important; width: 100%; }
+.ops-symbols-field-raw .auto-syms-input { width: 100% !important; box-sizing: border-box; font-size: 10.5px !important; padding: 3px 6px !important; overflow-x: auto; }
 
 /* Private chat keeps the existing panel frame and token palette. */
 .agent-panel [hidden] { display: none !important; }

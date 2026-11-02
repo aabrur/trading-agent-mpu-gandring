@@ -244,6 +244,7 @@ export interface ReplacementRuntimeOptions {
   settings?: SettingsService;
   secrets?: SecretStore;
   chatService?: ChatService;
+  researchHost?: ResearchHost;
 }
 
 export function createReplacementRuntime(
@@ -416,21 +417,47 @@ export function createReplacementRuntime(
       retainedSymbolsProvider: () => state.watchlist
     });
 
-  const jevEnabled = ['true', 'yes', '1', 'on'].includes(
+  const savedJev = options.settings?.current().effective.jev;
+  const jevKey = (
+    options.secrets?.getSecret('JEV_OPENROUTER_API_KEY') ??
+    options.secrets?.getSecret('OPENROUTER_API_KEY') ??
+    env.JEV_OPENROUTER_API_KEY ??
+    env.OPENROUTER_API_KEY ??
+    ''
+  ).trim();
+  const jevEnabled = savedJev?.enabled ?? ['true', 'yes', '1', 'on'].includes(
     (env.JEV_ENABLED ?? '').trim().toLowerCase()
   );
-  const jevKey = (env.JEV_OPENROUTER_API_KEY ?? env.OPENROUTER_API_KEY ?? '').trim();
+  const jevModel = savedJev?.model || env.JEV_MODEL || 'typesafe/jev-1.14';
+  const jevMode = savedJev?.mode || 'off';
+  const jevAllowLive = savedJev?.allowLive ?? false;
+  const hasJevKey = Boolean(options.secrets?.hasProviderKey('openrouter') || jevKey);
+
+  state.jev = {
+    ...state.jev,
+    enabled: jevEnabled,
+    provider: savedJev?.provider || 'openrouter',
+    model: jevModel,
+    mode: jevMode,
+    configuredMode: jevMode,
+    allowLive: jevAllowLive,
+    health: !jevEnabled ? 'disabled' : (hasJevKey ? 'healthy' : 'unavailable'),
+    openrouterKeySet: Boolean(options.secrets?.hasProviderKey('openrouter') || env.OPENROUTER_API_KEY),
+    dedicatedKeySet: Boolean(options.secrets?.getSecret('JEV_OPENROUTER_API_KEY') || env.JEV_OPENROUTER_API_KEY)
+  };
+
   const jevClient =
     options.jevClient ??
     new JevClient({
-      enabled: jevEnabled && Boolean(jevKey),
-      apiKey: jevKey,
-      model: env.JEV_MODEL || 'openai/gpt-5-mini'
+      enabled: jevEnabled,
+      apiKey: jevKey || null,
+      model: jevModel
     });
 
   const roleRunner =
     options.roleRunner ??
     new RoleRunner({
+      researchHost: options.researchHost,
       providerCaller: createOfficialProviderCaller(),
       resolveAssignment: (role, _version) => {
         const settingsSnap = options.settings?.current();
@@ -504,8 +531,8 @@ export function createReplacementRuntime(
       if (patch.maxHoldHours !== undefined) draft.auto.maxHoldHours = patch.maxHoldHours;
       if (patch.reportIntervalMin !== undefined) draft.reportIntervalMin = patch.reportIntervalMin;
       if (patch.symbols !== undefined && patch.symbols.length > 0) {
-        draft.auto.symbols = patch.symbols;
-        draft.watchlist = [...new Set([...draft.watchlist, ...patch.symbols])];
+        draft.auto.symbols = [...patch.symbols];
+        draft.watchlist = [...patch.symbols];
       }
       if (patch.debateMode !== undefined) draft.debateMode = patch.debateMode;
       if (patch.n !== undefined) {
@@ -531,6 +558,12 @@ export function createReplacementRuntime(
 
     scheduleNextAutoCycle();
 
+    if (patch.symbols !== undefined && patch.symbols.length > 0) {
+      void marketHub.configure(patch.symbols).catch((err) => {
+        console.error('[marketHub] Configure error:', err);
+      });
+    }
+
     if (patch.on && !snapshot().auto.running && !snapshot().killed) {
       setTimeout(() => {
         const s = snapshot();
@@ -542,14 +575,16 @@ export function createReplacementRuntime(
 
     if (options.settings) {
       const cur = options.settings.current();
+      const nextSymbols = patch.symbols && patch.symbols.length > 0 ? patch.symbols : cur.effective.auto.symbols;
       void options.settings.apply({
         auto: {
           on: patch.on ?? cur.effective.auto.on,
           intervalMin: patch.intervalMin ?? cur.effective.auto.intervalMin,
           reportIntervalMin: patch.reportIntervalMin ?? cur.effective.auto.reportIntervalMin,
-          maxHoldHours: patch.maxHoldHours ?? cur.effective.auto.maxHoldHours
+          maxHoldHours: patch.maxHoldHours ?? cur.effective.auto.maxHoldHours,
+          symbols: nextSymbols
         },
-        watchlist: patch.symbols && patch.symbols.length > 0 ? [...new Set([...cur.effective.watchlist, ...patch.symbols])] : cur.effective.watchlist,
+        watchlist: nextSymbols,
         ...(patch.n !== undefined ? {
           trading: { maxPositions: patch.n },
           paper: { n: patch.n }
@@ -562,6 +597,9 @@ export function createReplacementRuntime(
       if (patch.on !== undefined) updates.AUTO_TRADING = patch.on ? 'on' : 'off';
       if (patch.intervalMin !== undefined) updates.DEBATE_INTERVAL_MIN = String(patch.intervalMin);
       if (patch.reportIntervalMin !== undefined) updates.REPORT_INTERVAL_MIN = String(patch.reportIntervalMin);
+      if (patch.symbols !== undefined && patch.symbols.length > 0) {
+        updates.WATCHLIST = patch.symbols.join(',');
+      }
       if (patch.n !== undefined) {
         updates.OPEN_ORDERS_N = String(patch.n);
         updates.MAINNET_DESK_OPEN_ORDERS_N = String(patch.n);
@@ -575,24 +613,15 @@ export function createReplacementRuntime(
     return snapshot();
   };
 
-  const triggerCycle = async (
-    symbol?: string,
+  const executeSingleSymbolCycle = async (
+    targetSymbol: string,
     reason: CycleReason = 'owner'
-  ): Promise<{ ok: boolean; message: string; cycleId?: string }> => {
+  ): Promise<{ ok: boolean; message: string; cycleId: string; verdict?: Verdict }> => {
     const snap = snapshot();
-    if (snap.killed) {
-      return { ok: false, message: 'Kill switch is ON. Trading is halted.' };
-    }
-    if (snap.auto.running) {
-      return { ok: false, message: `A cycle is already running for ${snap.debate?.symbol ?? 'symbol'}` };
-    }
-
-    const targetSymbol = (symbol ?? snap.auto.symbols[snap.auto.cycles % (snap.auto.symbols.length || 1)] ?? 'BTCUSDT').toUpperCase();
     const cycleId = `cycle-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const debateId = `debate-${Date.now()}`;
 
     updateState((draft) => {
-      draft.auto.running = true;
       draft.debate = {
         id: debateId,
         symbol: targetSymbol,
@@ -642,13 +671,90 @@ export function createReplacementRuntime(
       };
     }
 
+    const timeframesSummary: Record<string, unknown> = {};
+    if (intelFrame.byTimeframe) {
+      for (const [tf, feat] of Object.entries(intelFrame.byTimeframe)) {
+        if (!feat) continue;
+        const highs = feat.structure?.pivots?.filter((p) => p.kind === 'HIGH') ?? [];
+        const lows = feat.structure?.pivots?.filter((p) => p.kind === 'LOW') ?? [];
+        timeframesSummary[tf] = {
+          momentum: feat.momentumRegime,
+          volatility: feat.volatilityRegime,
+          ema9: feat.ema9?.value ?? null,
+          ema21: feat.ema21?.value ?? null,
+          ema50: feat.ema50?.value ?? null,
+          ema200: feat.ema200?.value ?? null,
+          sma20: feat.sma20?.value ?? null,
+          rsi14: feat.rsi14?.value ?? null,
+          atr14: feat.atr14?.value ?? null,
+          macd: feat.macd?.value ? {
+            line: feat.macd.value.macd,
+            signal: feat.macd.value.signal,
+            histogram: feat.macd.value.histogram
+          } : null,
+          bollinger: feat.bollinger20?.value ? {
+            upper: feat.bollinger20.value.upper,
+            middle: feat.bollinger20.value.middle,
+            lower: feat.bollinger20.value.lower,
+            bandwidth: feat.bollinger20.value.bandwidth
+          } : null,
+          vwapUtc: feat.vwapUtc?.value ?? null,
+          relativeVolume20: feat.relativeVolume20?.value ?? null,
+          structure: {
+            swingHigh: highs[highs.length - 1]?.price ?? null,
+            swingLow: lows[lows.length - 1]?.price ?? null,
+            priorSwingHigh: highs[highs.length - 2]?.price ?? null,
+            priorSwingLow: lows[lows.length - 2]?.price ?? null,
+            bos: feat.structure?.bos ?? null,
+            choch: feat.structure?.choch ?? null,
+            rsiDivergence: feat.structure?.rsiDivergence ?? null
+          }
+        };
+      }
+    }
+
+    const microstructureSummary = {
+      spreadBps: intelFrame.microstructure?.spreadBps?.value ?? null,
+      bookImbalanceTop10: intelFrame.microstructure?.bookImbalanceTop10?.value ?? null,
+      takerFlow: intelFrame.microstructure?.takerFlow?.value ?? null,
+      fundingRate: intelFrame.microstructure?.funding?.value ?? null,
+      openInterest: intelFrame.microstructure?.openInterest?.value ?? null
+    };
+
+    const paperPos = snap.paper.positions.find((p) => p.symbol.toUpperCase() === targetSymbol);
+    const venuePos = snap.venueAccount?.positions?.find((p) => p.symbol.toUpperCase() === targetSymbol);
+    const existingPos = paperPos ?? (venuePos ? {
+      side: venuePos.side,
+      entry: Number(snap.tickers[targetSymbol]?.last ?? 0),
+      qty: venuePos.qty,
+      stop: 0,
+      tp: null,
+      unrealizedPnl: 0
+    } : null);
+    const currentPosCount = snap.mode === 'PAPER' ? snap.paper.positions.length : (snap.venueAccount?.positions?.length || snap.paper.positions.length);
+
     const marketSummary: Record<string, unknown> = {
       symbol: targetSymbol,
       venue: 'bybit',
       category: 'linear',
       lastPrice: snap.tickers[targetSymbol]?.last ? String(snap.tickers[targetSymbol].last) : undefined,
       evidenceId: intelFrame.evidenceId,
-      opposingFacts: intelFrame.opposingFacts
+      timeframes: timeframesSummary,
+      microstructure: microstructureSummary,
+      opposingFacts: intelFrame.opposingFacts,
+      existingPosition: existingPos ? {
+        side: existingPos.side,
+        entryPrice: existingPos.entry,
+        qty: existingPos.qty,
+        stop: existingPos.stop,
+        tp: existingPos.tp,
+        unrealizedPnl: existingPos.unrealizedPnl
+      } : null,
+      deskSlots: {
+        maxPositions: snap.paper.n || 3,
+        occupiedPositions: currentPosCount,
+        freeSlots: Math.max(0, (snap.paper.n || 3) - currentPosCount)
+      }
     };
 
     const policy: CyclePolicy = {
@@ -798,16 +904,50 @@ export function createReplacementRuntime(
           id: `verdict-${Date.now()}`,
           symbol: targetSymbol,
           action,
-          riskDecision: isApproved ? 'APPROVE' : 'HOLD',
+          riskDecision: isApproved ? 'APPROVE' : (action === 'CLOSE' ? 'APPROVE' : 'HOLD'),
           executed: false,
-          reason: out.verdict.rejectionReason ?? (isApproved ? 'Thesis verified and approved by Risk Manager' : 'Consensus synthesis reached HOLD'),
+          reason: out.verdict.rejectionReason ?? (isApproved ? 'Thesis verified and approved by Risk Manager' : (action === 'CLOSE' ? 'Exit criteria met; position closed' : 'Consensus synthesis reached HOLD')),
           disagreement,
           camps: { bull, bear, neutral },
           example: false,
           at: Date.now()
         };
 
-        if (isApproved && out.verdict.thesis) {
+        if (action === 'CLOSE') {
+          if (currentSnap.mode === 'PAPER') {
+            const posIdx = currentSnap.paper.positions.findIndex((p) => p.symbol.toUpperCase() === targetSymbol);
+            if (posIdx >= 0) {
+              const closedPos = currentSnap.paper.positions[posIdx]!;
+              updateState((draft) => {
+                const idx = draft.paper.positions.findIndex((p) => p.symbol.toUpperCase() === targetSymbol);
+                if (idx >= 0) {
+                  draft.paper.positions.splice(idx, 1);
+                  draft.paper.usedMargin = Math.max(0, draft.paper.usedMargin - closedPos.margin);
+                  draft.paper.canOpen = draft.paper.positions.length < draft.paper.n;
+                }
+              });
+              verdictRecord.executed = true;
+              hub.emit('log', {
+                at: Date.now(),
+                kind: 'execution',
+                text: `Closed PAPER position for ${targetSymbol} upon CLOSE verdict`
+              });
+            }
+          } else {
+            const dispatchRes = await dispatch({
+              kind: 'close',
+              actor: 'system',
+              symbol: targetSymbol,
+              payload: { symbol: targetSymbol }
+            });
+            verdictRecord.executed = dispatchRes.ok;
+            hub.emit('log', {
+              at: Date.now(),
+              kind: 'execution',
+              text: `Dispatched close for ${targetSymbol}: ${dispatchRes.message}`
+            });
+          }
+        } else if (isApproved && out.verdict.thesis) {
           const entryPrice = Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
           const stopPrice = Number(out.verdict.thesis.stop);
           const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : null;
@@ -935,13 +1075,6 @@ export function createReplacementRuntime(
       }
 
       updateState((draft) => {
-        draft.debate = null;
-        draft.auto.running = false;
-        draft.auto.lastCycleAt = Date.now();
-        draft.auto.cycles += 1;
-        if (draft.auto.on) {
-          draft.auto.nextAt = Date.now() + draft.auto.intervalMin * 60 * 1000;
-        }
         draft.verdicts = [verdictRecord, ...draft.verdicts.slice(0, 49)];
         draft.lastVerdict = verdictRecord;
         if (!draft.logs) draft.logs = [];
@@ -963,19 +1096,101 @@ export function createReplacementRuntime(
           reasonCode: verdictRecord.riskDecision,
           outcome: verdictRecord.action
         };
+
+        if (out.jevReview && draft.jev) {
+          draft.jev.lastDecision = {
+            reviewId: out.jevReview.reviewId,
+            reason: out.jevReview.reason,
+            interpretation: {
+              marketRegime: (out.jevReview as any).market_regime || 'EVALUATED'
+            }
+          };
+          draft.jev.health = 'healthy';
+        }
       });
 
       hub.emit('verdict', verdictRecord);
       hub.emit('state', snapshot());
-      return { ok: true, message: `Cycle ${cycleId} finished with verdict ${verdictRecord.action}`, cycleId };
+      return { ok: true, message: `Cycle ${cycleId} finished with verdict ${verdictRecord.action}`, cycleId, verdict: verdictRecord };
     } catch (err) {
+      return { ok: false, message: `Cycle failed: ${(err as Error).message}`, cycleId };
+    }
+  };
+
+  const triggerCycle = async (
+    symbol?: string,
+    reason: CycleReason = 'owner'
+  ): Promise<{ ok: boolean; message: string; cycleId?: string }> => {
+    const snap = snapshot();
+    if (snap.killed) {
+      return { ok: false, message: 'Kill switch is ON. Trading is halted.' };
+    }
+    if (snap.auto.running) {
+      return { ok: false, message: `A cycle is already running for ${snap.debate?.symbol ?? 'symbol'}` };
+    }
+
+    updateState((draft) => {
+      draft.auto.running = true;
+    });
+
+    try {
+      if (symbol) {
+        const res = await executeSingleSymbolCycle(symbol.toUpperCase(), reason);
+        return res;
+      }
+
+      // Multi-symbol automated evaluation:
+      // 1. Inspect existing open positions first (for potential revalidation/close).
+      const currentPos = snap.mode === 'PAPER'
+        ? snap.paper.positions
+        : (snap.venueAccount?.positions?.length ? snap.venueAccount.positions : snap.paper.positions);
+      const openSymbols = [...new Set(currentPos.map((p) => p.symbol.toUpperCase()))];
+      const maxN = snap.paper.n || 3;
+      const freeSlots = Math.max(0, maxN - currentPos.length);
+
+      // 2. Select candidates from active watchlist that do not already have open positions.
+      const watchlistCandidates = snap.auto.symbols
+        .map((s) => s.toUpperCase())
+        .filter((s) => !openSymbols.includes(s));
+
+      const symbolsToEvaluate: string[] = [];
+      // Re-evaluate open positions first
+      symbolsToEvaluate.push(...openSymbols);
+      // If slots are available, evaluate candidate symbols
+      if (freeSlots > 0 && watchlistCandidates.length > 0) {
+        symbolsToEvaluate.push(...watchlistCandidates.slice(0, Math.max(freeSlots, snap.auto.symbols.length)));
+      } else if (symbolsToEvaluate.length === 0) {
+        symbolsToEvaluate.push((snap.auto.symbols[0] ?? 'BTCUSDT').toUpperCase());
+      }
+
+      let lastResult: { ok: boolean; message: string; cycleId: string } | null = null;
+      for (const targetSym of symbolsToEvaluate) {
+        if (snapshot().killed) break;
+        const curSnap = snapshot();
+        const activePos = curSnap.mode === 'PAPER'
+          ? curSnap.paper.positions
+          : (curSnap.venueAccount?.positions ?? curSnap.paper.positions);
+        const hasPosition = activePos.some((p) => p.symbol.toUpperCase() === targetSym);
+        if (!hasPosition && activePos.length >= (curSnap.paper.n || 3)) {
+          // All slots occupied; skip further entry scanning
+          continue;
+        }
+
+        lastResult = await executeSingleSymbolCycle(targetSym, reason);
+      }
+
+      return lastResult ?? { ok: true, message: 'All watchlist symbols evaluated successfully.' };
+    } finally {
       updateState((draft) => {
         draft.debate = null;
         draft.auto.running = false;
         draft.auto.lastCycleAt = Date.now();
+        draft.auto.cycles += 1;
+        if (draft.auto.on) {
+          draft.auto.nextAt = Date.now() + draft.auto.intervalMin * 60 * 1000;
+        }
       });
       hub.emit('state', snapshot());
-      return { ok: false, message: `Cycle failed: ${(err as Error).message}`, cycleId };
     }
   };
 
@@ -2071,6 +2286,37 @@ export async function startReplacementServer(
     positions: initialPositions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
   } : null;
 
+  const cryptopanicKey =
+    secrets.getSecret('CRYPTOPANIC_API_KEY') ?? env.CRYPTOPANIC_API_KEY ?? null;
+  const whaleAlertKey =
+    secrets.getSecret('WHALE_ALERT_API_KEY') ?? env.WHALE_ALERT_API_KEY ?? null;
+  const coinmarketcapKey =
+    secrets.getSecret('CMC_API_KEY') ??
+    secrets.getSecret('COINMARKETCAP_API_KEY') ??
+    env.CMC_API_KEY ??
+    env.COINMARKETCAP_API_KEY ??
+    null;
+
+  const researchHost = new ResearchHost({
+    optionalSources: {
+      cryptopanicKey,
+      whaleAlertKey,
+      coinmarketcapKey
+    },
+    readMarketSnapshot: async (sym) => marketHub.snapshot(sym),
+    readOrderbook: async (sym) => marketHub.orderbook(sym),
+    readCandles: async (sym, tf) => marketHub.candles(sym, tf as any),
+    readFundingOi: async (sym) => {
+      const snap = marketHub.snapshot(sym);
+      return { funding: snap.funding, openInterest: snap.openInterest };
+    },
+    readPortfolio: async () => ({
+      positions: runtimeRef?.snapshot().paper.positions ?? [],
+      balance: runtimeRef?.snapshot().paper.balance ?? 0,
+      equity: runtimeRef?.snapshot().paper.equity ?? 0
+    })
+  });
+
   const chatService = new ChatService(store);
   await chatService.hydrateFromStore();
 
@@ -2089,28 +2335,10 @@ export async function startReplacementServer(
     env,
     settings,
     secrets,
-    chatService
+    chatService,
+    researchHost
   });
   runtimeRef = runtime;
-
-  const cryptopanicKey =
-    secrets.getSecret('CRYPTOPANIC_API_KEY') ?? env.CRYPTOPANIC_API_KEY ?? null;
-  const whaleAlertKey =
-    secrets.getSecret('WHALE_ALERT_API_KEY') ?? env.WHALE_ALERT_API_KEY ?? null;
-  const coinmarketcapKey =
-    secrets.getSecret('CMC_API_KEY') ??
-    secrets.getSecret('COINMARKETCAP_API_KEY') ??
-    env.CMC_API_KEY ??
-    env.COINMARKETCAP_API_KEY ??
-    null;
-
-  const researchHost = new ResearchHost({
-    optionalSources: {
-      cryptopanicKey,
-      whaleAlertKey,
-      coinmarketcapKey
-    }
-  });
 
   const grokKey = secrets.getSecret('AGENT_EVENT_SECRET');
   const grokRegistry: KeyRegistry = {

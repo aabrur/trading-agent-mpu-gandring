@@ -516,13 +516,27 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
 
   app.get('/api/setup/jev', (_req, res) => {
     const snap = deps.settings.current();
+    const jev = snap.effective.jev;
+    const dedicatedKeySet = Boolean(deps.secrets.getSecret('JEV_OPENROUTER_API_KEY'));
+    const openrouterKeySet = deps.secrets.hasProviderKey('openrouter');
+    const hasKey = dedicatedKeySet || openrouterKeySet;
+    const health = !jev.enabled ? 'disabled' : (hasKey ? 'healthy' : 'unavailable');
+    const uiMode = jev.mode === 'advisory' ? 'shadow' : jev.mode === 'strict' ? 'assist' : jev.mode;
+
     res.json({
       ok: true,
       savedVersion: snap.savedVersion,
       activeVersion: snap.activeVersion,
-      jev: snap.effective.jev,
-      dedicatedKeySet: Boolean(deps.secrets.getSecret('JEV_OPENROUTER_API_KEY')),
-      openrouterKeySet: deps.secrets.hasProviderKey('openrouter')
+      enabled: jev.enabled,
+      provider: jev.provider || 'openrouter',
+      model: jev.model || 'typesafe/jev-1.14',
+      mode: uiMode,
+      configuredMode: uiMode,
+      allowLive: jev.allowLive,
+      health,
+      dedicatedKeySet,
+      openrouterKeySet,
+      jev
     });
   });
 
@@ -532,7 +546,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
         expectedActiveVersion: z.number().int().positive().optional(),
         enabled: z.boolean().optional(),
         model: z.string().min(1).max(200).optional(),
-        mode: z.enum(['off', 'advisory', 'strict']).optional(),
+        mode: z.enum(['off', 'shadow', 'assist', 'advisory', 'strict']).optional(),
         allowLive: z.boolean().optional(),
         apiKey: z.string().max(400).optional(),
         key: z.string().max(400).optional()
@@ -547,20 +561,45 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     if (keyVal && keyVal.trim().length > 0) {
       deps.secrets.writeSecrets({ JEV_OPENROUTER_API_KEY: keyVal.trim() });
     }
+    const mappedMode = parsed.data.mode === 'shadow'
+      ? 'advisory'
+      : parsed.data.mode === 'assist'
+        ? 'strict'
+        : parsed.data.mode;
+
     const expected = parsed.data.expectedActiveVersion ?? deps.settings.current().activeVersion;
     const result = await deps.settings.apply(
       {
         jev: {
           ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
           ...(parsed.data.model !== undefined ? { model: parsed.data.model } : {}),
-          ...(parsed.data.mode !== undefined ? { mode: parsed.data.mode } : {}),
+          ...(mappedMode !== undefined ? { mode: mappedMode } : {}),
           ...(parsed.data.allowLive !== undefined ? { allowLive: parsed.data.allowLive } : {})
         }
       },
       expected
     );
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'JEV configuration saved.', ...result });
+    const snap = deps.settings.current();
+    const jev = snap.effective.jev;
+    const dedicatedKeySet = Boolean(deps.secrets.getSecret('JEV_OPENROUTER_API_KEY'));
+    const openrouterKeySet = deps.secrets.hasProviderKey('openrouter');
+    const uiMode = jev.mode === 'advisory' ? 'shadow' : jev.mode === 'strict' ? 'assist' : jev.mode;
+
+    res.status(status).json({
+      ok: result.applyStatus === 'applied',
+      detail: 'JEV configuration saved.',
+      enabled: jev.enabled,
+      provider: jev.provider || 'openrouter',
+      model: jev.model || 'typesafe/jev-1.14',
+      mode: uiMode,
+      configuredMode: uiMode,
+      allowLive: jev.allowLive,
+      health: !jev.enabled ? 'disabled' : ((dedicatedKeySet || openrouterKeySet) ? 'healthy' : 'unavailable'),
+      dedicatedKeySet,
+      openrouterKeySet,
+      ...result
+    });
   });
 
   app.post('/api/setup/jev/test', (_req, res) => {
@@ -569,7 +608,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       res.status(400).json({ ok: false, error: 'No Jev or OpenRouter API key configured.' });
       return;
     }
-    res.json({ ok: true, detail: 'Jev connection verified.' });
+    res.json({ ok: true, health: 'healthy', detail: 'Jev credentials verified.' });
   });
 
   app.get('/api/setup/data-sources', (_req, res) => {
