@@ -315,9 +315,20 @@ export function attachOfficeWebSocket(
   server: HttpServer,
   runtime: OfficeRuntime,
   hub: OfficeEventHub,
-  options: { requireLoopback?: boolean } = {}
+  options: { requireLoopback?: boolean; maxBufferedBytes?: number } = {}
 ): WebSocketServer {
   const wss = new WebSocketServer({ server, path: '/ws' });
+  const maxBuffered = options.maxBufferedBytes ?? 1_048_576; // 1 MB backpressure limit
+  let lastEvent: OfficeEvent | null = null;
+  let lastSerialized = '';
+
+  const getSerialized = (event: OfficeEvent): string => {
+    if (event === lastEvent) return lastSerialized;
+    lastEvent = event;
+    lastSerialized = JSON.stringify(event);
+    return lastSerialized;
+  };
+
   wss.on('connection', (socket, req) => {
     if (options.requireLoopback !== false) {
       const check = isLocalLoopbackClient({
@@ -346,7 +357,13 @@ export function attachOfficeWebSocket(
 
     const unsubscribe = hub.subscribe((event) => {
       if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(event));
+        if (socket.bufferedAmount > maxBuffered) {
+          if (event.type === 'state' || event.type === 'execution') {
+            try { socket.close(1008, 'Client buffer overflow; reconnecting for fresh state'); } catch {}
+          }
+          return;
+        }
+        socket.send(getSerialized(event));
       }
     });
 

@@ -377,4 +377,42 @@ describe('T07 six-role integrity, task fencing, confidence scales and non-mock u
     expect(riskRes.confidence.value).toBe(90);
     expect(riskRes.confidence.scale).toBe('score_0_100');
   });
+
+  it('runner_cleans_up_active_attempts_and_bounds_cycles', async () => {
+    const runner = new RoleRunner({
+      providerCaller: async () => JSON.stringify({
+        stance: 'LONG',
+        reasoning: 'Bounded memory cycle',
+        confidence: { value: 0.8, scale: 'probability_0_1' }
+      }),
+      resolveAssignment: () => ({
+        provider: 'xai',
+        model: 'grok-3',
+        apiKey: 'test-key'
+      })
+    });
+
+    for (let i = 0; i < 30; i++) {
+      await runner.run({
+        cycleId: `cycle-mem-${i}`,
+        role: 'lead',
+        phase: 'final',
+        taskAttempt: 1,
+        evidenceId: `ev-${i}`,
+        configVersion: 1,
+        accountRef: 'paper:default',
+        route: 'LOCAL',
+        deadlineAt: Date.now() + 30_000,
+        symbol: 'BTCUSDT'
+      });
+    }
+
+    const metrics = runner.getMetrics();
+    expect(metrics.activeAttemptsCount).toBe(0);
+    expect(metrics.retainedCyclesCount).toBeLessThanOrEqual(20);
+    expect(metrics.acceptedResultsCount).toBeLessThanOrEqual(20);
+
+    runner.cleanupCycle('cycle-mem-29');
+    expect(runner.getAcceptedResult('cycle-mem-29', 'lead', 'final')).toBeUndefined();
+  });
 });

@@ -135,6 +135,7 @@ export function useDesk() {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let retry: number | undefined;
+    let retryDelay = 1500;
     let alive = true;
     let socketFailureReported = false;
     const timers = new Set<number>();
@@ -143,13 +144,13 @@ export function useDesk() {
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/ws`);
-      ws.onopen = () => { socketFailureReported = false; setConnected(true); };
+      ws.onopen = () => { socketFailureReported = false; setConnected(true); retryDelay = 1500; };
       ws.onerror = () => {
         if (!alive || socketFailureReported) return;
         socketFailureReported = true;
         void fetch('/api/logs/client', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: 'websocket', message: 'Office live connection failed; reconnecting.', level: 'warn' }) }).catch(() => {});
       };
-      ws.onclose = () => { setConnected(false); if (alive) retry = window.setTimeout(connect, 1500); };
+      ws.onclose = () => { setConnected(false); if (alive) { retry = window.setTimeout(connect, retryDelay); retryDelay = Math.min(Math.round(retryDelay * 1.5), 15000); } };
       ws.onmessage = (ev) => {
         const { type, payload } = JSON.parse(ev.data);
         if (!alive) return;

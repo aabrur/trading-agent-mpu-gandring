@@ -22,7 +22,8 @@ export function checkTradingMode(env: NodeJS.ProcessEnv, mode: TradingMode): Mod
   if (mode === 'LIVE' && experimental && (env.ALLOW_EXPERIMENTAL_LIVE ?? '').trim() !== 'yes') {
     reasons.push(`the ${ex.name} adapter is experimental and unverified; LIVE on it needs ALLOW_EXPERIMENTAL_LIVE=yes`);
   }
-  const safety = Number(env.SAFETY_NET ?? 200);
+  const rawSafety = (net === 'mainnet' ? env.MAINNET_DESK_SAFETY_NET : env.TESTNET_DESK_SAFETY_NET) ?? env.SAFETY_NET;
+  const safety = rawSafety !== undefined && rawSafety.trim() !== '' ? Number(rawSafety.trim()) : 200;
   if (!(safety > 0)) reasons.push('SAFETY_NET must be above zero outside PAPER');
   return { ok: reasons.length === 0, reasons, exchange: ex.name, experimental };
 }

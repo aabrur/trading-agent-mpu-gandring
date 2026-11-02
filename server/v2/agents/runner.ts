@@ -214,6 +214,8 @@ export class RoleRunner {
   private readonly resolveAssignment: (role: RoleId, configVersion: number) => ProviderAssignment;
   private readonly activeAttempts = new Map<string, { attempt: number; abort: AbortController }>();
   private readonly acceptedResults = new Map<string, RoleResult>();
+  private readonly cycleOrder: string[] = [];
+  private readonly maxRetainedCycles = 20;
 
   constructor(options: RoleRunnerOptions) {
     this.researchHost = options.researchHost;
@@ -248,6 +250,47 @@ export class RoleRunner {
 
   getAcceptedResult(cycleId: string, role: RoleId, phase: RolePhase): RoleResult | undefined {
     return this.acceptedResults.get(this.slotKey(cycleId, role, phase));
+  }
+
+  cleanupCycle(cycleId: string): void {
+    const prefix = `${cycleId}:`;
+    for (const [key, attempt] of this.activeAttempts.entries()) {
+      if (key.startsWith(prefix)) {
+        try { attempt.abort.abort(); } catch {}
+        this.activeAttempts.delete(key);
+      }
+    }
+    for (const key of Array.from(this.acceptedResults.keys())) {
+      if (key.startsWith(prefix)) {
+        this.acceptedResults.delete(key);
+      }
+    }
+    const idx = this.cycleOrder.indexOf(cycleId);
+    if (idx !== -1) {
+      this.cycleOrder.splice(idx, 1);
+    }
+  }
+
+  private registerCycle(cycleId: string): void {
+    const idx = this.cycleOrder.indexOf(cycleId);
+    if (idx !== -1) {
+      this.cycleOrder.splice(idx, 1);
+    }
+    this.cycleOrder.push(cycleId);
+    while (this.cycleOrder.length > this.maxRetainedCycles) {
+      const oldest = this.cycleOrder.shift();
+      if (oldest) {
+        this.cleanupCycle(oldest);
+      }
+    }
+  }
+
+  getMetrics(): { activeAttemptsCount: number; acceptedResultsCount: number; retainedCyclesCount: number } {
+    return {
+      activeAttemptsCount: this.activeAttempts.size,
+      acceptedResultsCount: this.acceptedResults.size,
+      retainedCyclesCount: this.cycleOrder.length
+    };
   }
 
   private makeEmptyResult(
@@ -295,6 +338,7 @@ export class RoleRunner {
   }
 
   async run(task: RoleTask, signal?: AbortSignal): Promise<RoleResult> {
+    this.registerCycle(task.cycleId);
     const key = this.slotKey(task.cycleId, task.role, task.phase);
     const existing = this.activeAttempts.get(key);
     if (existing && existing.attempt > task.taskAttempt) {
@@ -322,9 +366,10 @@ export class RoleRunner {
     const model = assignment.model.trim();
     const toolTraceIds: string[] = [];
 
-    if (combinedSignal.aborted) {
-      return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Task cancelled before start');
-    }
+    try {
+      if (combinedSignal.aborted) {
+        return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Task cancelled before start');
+      }
 
     if (provider === 'mock') {
       return this.makeEmptyResult(
@@ -360,8 +405,7 @@ export class RoleRunner {
       context: task.promptContext ?? {}
     }, null, 2)}`;
 
-    try {
-      let rawText = '';
+    let rawText = '';
       for (let turn = 0; turn < 4; turn += 1) {
         if (combinedSignal.aborted || this.activeAttempts.get(key)?.attempt !== task.taskAttempt) {
           return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Task cancelled or superseded');
@@ -619,6 +663,11 @@ export class RoleRunner {
         toolTraceIds,
         err instanceof Error ? err.message : 'Role task execution failed'
       );
+    } finally {
+      const current = this.activeAttempts.get(key);
+      if (current && current.attempt === task.taskAttempt) {
+        this.activeAttempts.delete(key);
+      }
     }
   }
 }

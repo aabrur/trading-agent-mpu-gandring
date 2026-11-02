@@ -4,6 +4,7 @@ import { createReplacementRuntime } from '../../server/v2/runtime.js';
 import { createReplacementApp } from '../../server/v2/app.js';
 import { RoleRunner } from '../../server/v2/agents/runner.js';
 import { CycleRunner } from '../../server/v2/decision/cycle.js';
+import { ReportsService } from '../../server/v2/reports.js';
 
 describe('Cycle Ops and Command Integration Verification', () => {
   async function withTestApp(fn: (baseUrl: string, runtime: any) => Promise<void>) {
@@ -172,6 +173,64 @@ describe('Cycle Ops and Command Integration Verification', () => {
       const chat = runtime.snapshot().chats.lead;
       expect(chat?.at(-1)?.text).toBe('Aman dan terkendali, **Boss**.');
     } finally {
+      await runtime.stop();
+    }
+  });
+
+  it('command_open_enforces_stop_loss_and_submits', async () => {
+    const runtime = createReplacementRuntime();
+    try {
+      const rejected = await runtime.handleCommand({
+        text: 'open BTCUSDT LONG'
+      });
+      expect(rejected.ok).toBe(false);
+      expect(rejected.error).toContain('Stop loss is required');
+
+      const accepted = await runtime.handleCommand({
+        text: 'open BTCUSDT LONG --stop 60000 --tp 70000'
+      });
+      expect(accepted.ok).toBe(true);
+
+      const snap = runtime.snapshot();
+      const pos = snap.paper.positions.find((p) => p.symbol === 'BTCUSDT');
+      expect(pos).toBeDefined();
+      expect(pos?.side).toBe('LONG');
+      expect(pos?.stop).toBe(60000);
+      expect(pos?.tp).toBe(70000);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it('unsupported_command_returns_truthful_rejection', async () => {
+    const runtime = createReplacementRuntime();
+    try {
+      const res = await runtime.handleCommand({
+        text: 'invalid-command-xyz'
+      });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain('Unsupported command: "invalid-command-xyz"');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it('reconfiguring_report_interval_restarts_reports_service_timer', async () => {
+    const reportsService = new ReportsService();
+    const runtime = createReplacementRuntime({ reportsService });
+    try {
+      reportsService.start(runtime, 60);
+      let startedInterval: number | null = null;
+      const originalStart = reportsService.start.bind(reportsService);
+      reportsService.start = (rt, interval) => {
+        startedInterval = interval;
+        return originalStart(rt, interval);
+      };
+
+      runtime.updateAutoSettings({ reportIntervalMin: 45 });
+      expect(startedInterval).toBe(45);
+    } finally {
+      reportsService.stop();
       await runtime.stop();
     }
   });

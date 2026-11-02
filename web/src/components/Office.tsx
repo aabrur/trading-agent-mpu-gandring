@@ -59,7 +59,7 @@ function useOfficeFight(state: DeskState, fights: Fight[]) {
       document.removeEventListener('visibilitychange', update);
     };
   }, [debating]);
-  if (!debating || !/^round \d+$/.test(state.debate?.phase ?? '') || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
+  if (!debating || (!/^round \d+$/.test(state.debate?.phase ?? '') && !state.debate?.phase.startsWith("challenge") && state.debate?.phase !== "debate") || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
   const recent = fights.at(-1);
   return recent && clock.now >= recent.at && clock.now - recent.at < 2400 ? recent : heatedDebateFight(state, clock.now) ?? undefined;
 }

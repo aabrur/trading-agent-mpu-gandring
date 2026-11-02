@@ -1,9 +1,34 @@
 /** Report failure metadata only; never send request bodies, headers or URL queries. */
 export function installDiagnostics() {
   const originalFetch = window.fetch;
+  let offlineUntil = 0;
+  const lastReported = new Map<string, number>();
+
   const report = (event: 'error' | 'unhandledrejection' | 'request', message: string) => {
-    void originalFetch('/api/logs/client', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event, message: message.slice(0, 1000), level: 'error' }) }).catch(() => {});
+    const now = Date.now();
+    if (now < offlineUntil) return;
+    const key = `${event}:${message.slice(0, 100)}`;
+    const prev = lastReported.get(key);
+    if (prev && now - prev < 10_000) return;
+    lastReported.set(key, now);
+    if (lastReported.size > 50) {
+      const oldestKey = lastReported.keys().next().value;
+      if (oldestKey) lastReported.delete(oldestKey);
+    }
+
+    void originalFetch('/api/logs/client', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event, message: message.slice(0, 1000), level: 'error' })
+    })
+      .then((res) => {
+        if (!res.ok) offlineUntil = Date.now() + 15_000;
+      })
+      .catch(() => {
+        offlineUntil = Date.now() + 15_000;
+      });
   };
+
   const onError = (event: ErrorEvent) => report('error', event.message || 'Browser script or resource failed');
   const onRejection = (event: PromiseRejectionEvent) => report('unhandledrejection', event.reason instanceof Error ? event.reason.message : 'Unhandled browser promise rejection');
   const instrumentedFetch: typeof fetch = async (input, init) => {

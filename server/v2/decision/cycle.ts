@@ -100,8 +100,9 @@ export class CycleRunner {
       return res;
     };
 
-    // 1. Observe phase across the 3 analyst roles.
-    const observeResults = await Promise.all(
+    try {
+      // 1. Observe phase across the 3 analyst roles.
+      const observeResults = await Promise.all(
       ANALYST_ROLES.map((role) =>
         runRole({
           cycleId,
@@ -437,5 +438,8 @@ export class CycleRunner {
       configVersion: input.configVersion,
       evidenceId: input.evidenceId
     };
+    } finally {
+      this.roleRunner.cleanupCycle(cycleId);
+    }
   }
 }

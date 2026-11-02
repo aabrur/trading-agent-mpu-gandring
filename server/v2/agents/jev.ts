@@ -171,7 +171,7 @@ export class JevClient {
     const regime = bulls > bears ? 'TRENDING_BULL' : bears > bulls ? 'TRENDING_BEAR' : (rawState?.marketSummary?.opposingFacts?.length ? 'RANGING' : 'UNCERTAIN');
 
     return {
-      status: 'completed',
+      status: 'unavailable',
       reviewId: fallbackId,
       claimRefs: [`heuristic:bulls=${bulls}`, `heuristic:bears=${bears}`],
       contraryRefs: [],

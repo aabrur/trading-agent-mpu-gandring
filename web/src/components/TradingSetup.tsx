@@ -47,7 +47,7 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
       if (!r.ok || !d.ok) { setMessage(d.detail || t('tradingUnavailableMsg')); return; }
       const next = d as TradingInfo; setInfo(next);
       const fallbackValues = next.values ?? (state.trading?.values as TradingSettings) ?? {
-        dailyLossLimitPct: 10, maxLossPerTradePct: 20, minEntryConfidencePct: 60, maxLeverage: 5, defaultStopPct: 20, minStopPct: 0, takeProfitPct: 60, takeProfitR: 3, maxPositions: 3, safetyNet: 0
+        dailyLossLimitPct: 10, maxLossPerTradePct: 20, minEntryConfidencePct: 60, maxLeverage: 5, defaultStopPct: 20, minStopPct: 0, takeProfitPct: 60, takeProfitR: 3, maxPositions: 3, safetyNet: 200
       };
       setDrafts((previous) => {
         const testnetVals = next.networks?.testnet?.values ?? fallbackValues;

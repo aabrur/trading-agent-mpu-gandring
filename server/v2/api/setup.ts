@@ -7,6 +7,7 @@ import {
   ROLE_IDS,
   TRADING_MODES,
   type Network,
+  type OfficeRuntime,
   type VenueId
 } from '../contracts.js';
 import { venueCredentialEnvNames } from '../runtime.js';
@@ -55,6 +56,7 @@ export interface SetupApiDeps {
   secrets: SecretStore;
   accounts: AccountRegistry;
   fetchImpl?: typeof fetch;
+  runtime?: OfficeRuntime;
 }
 
 export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): void {
@@ -306,6 +308,35 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       },
       expected
     );
+    if (result.applyStatus === 'applied') {
+      const updates: Record<string, string> = {};
+      if (nextValues.maxLeverage !== undefined) {
+        updates.MAX_LEVERAGE = String(nextValues.maxLeverage);
+        updates.MAINNET_DESK_MAX_LEVERAGE = String(nextValues.maxLeverage);
+      }
+      if (nextValues.maxPositions !== undefined) {
+        updates.OPEN_ORDERS_N = String(nextValues.maxPositions);
+        updates.MAINNET_DESK_OPEN_ORDERS_N = String(nextValues.maxPositions);
+      }
+      if (nextValues.safetyNet !== undefined) {
+        updates.SAFETY_NET = String(nextValues.safetyNet);
+        updates.MAINNET_DESK_SAFETY_NET = String(nextValues.safetyNet);
+      }
+      if (Object.keys(updates).length > 0) {
+        deps.secrets.writeSecrets(updates);
+      }
+      deps.runtime?.updateState?.((draft) => {
+        const net = draft.mode === 'LIVE' ? 'mainnet' : draft.mode === 'TESTNET' ? 'testnet' : null;
+        draft.trading = {
+          network: net,
+          profile: parsed.data.profile,
+          values: nextValues
+        };
+        draft.paper.maxLeverage = nextValues.maxLeverage;
+        if (nextValues.maxPositions !== undefined) draft.paper.n = nextValues.maxPositions;
+        if (nextValues.safetyNet !== undefined) draft.paper.safetyNet = nextValues.safetyNet;
+      });
+    }
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
     res.status(status).json({ ok: result.applyStatus === 'applied', ...result, values: deps.settings.current().effective.trading });
   });
@@ -355,9 +386,25 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
         updates.SAFETY_NET = String(parsed.data.safetyNet);
         updates.MAINNET_DESK_SAFETY_NET = String(parsed.data.safetyNet);
       }
+      if (parsed.data.maxLeverage !== undefined) {
+        updates.MAX_LEVERAGE = String(parsed.data.maxLeverage);
+        updates.MAINNET_DESK_MAX_LEVERAGE = String(parsed.data.maxLeverage);
+      }
       if (Object.keys(updates).length > 0) {
         deps.secrets.writeSecrets(updates);
       }
+      deps.runtime?.updateState?.((draft) => {
+        const net = draft.mode === 'LIVE' ? 'mainnet' : draft.mode === 'TESTNET' ? 'testnet' : null;
+        const currentTrading = deps.settings.current().effective.trading;
+        draft.trading = {
+          network: net,
+          profile: chosenProfile,
+          values: currentTrading
+        };
+        if (currentTrading.maxLeverage !== undefined) draft.paper.maxLeverage = currentTrading.maxLeverage;
+        if (currentTrading.maxPositions !== undefined) draft.paper.n = currentTrading.maxPositions;
+        if (currentTrading.safetyNet !== undefined) draft.paper.safetyNet = currentTrading.safetyNet;
+      });
     }
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
     res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Trading configuration saved.', ...result });
@@ -602,13 +649,25 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     });
   });
 
-  app.post('/api/setup/jev/test', (_req, res) => {
+  app.post('/api/setup/jev/test', async (_req, res) => {
     const key = deps.secrets.getSecret('JEV_OPENROUTER_API_KEY') ?? deps.secrets.getSecret('OPENROUTER_API_KEY');
     if (!key) {
       res.status(400).json({ ok: false, error: 'No Jev or OpenRouter API key configured.' });
       return;
     }
-    res.json({ ok: true, health: 'healthy', detail: 'Jev credentials verified.' });
+    try {
+      const resp = await fetch('https://openrouter.ai/api/v1/auth/key', {
+        headers: { authorization: `Bearer ${key.trim()}` },
+        signal: AbortSignal.timeout(10_000)
+      });
+      if (!resp.ok) {
+        res.status(400).json({ ok: false, health: 'unhealthy', error: `Jev/OpenRouter authentication failed: HTTP ${resp.status}` });
+        return;
+      }
+      res.json({ ok: true, health: 'healthy', detail: 'Jev credentials verified.' });
+    } catch (err) {
+      res.status(400).json({ ok: false, health: 'unhealthy', error: `Jev connection failed: ${(err as Error).message}` });
+    }
   });
 
   app.get('/api/setup/data-sources', (_req, res) => {
@@ -819,6 +878,21 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       },
       expected
     );
+    if (result.applyStatus === 'applied') {
+      const modeUpdates: Record<string, string> = {
+        TRADING_MODE: parsed.data.mode
+      };
+      if (parsed.data.mode === 'LIVE' && confirmation) {
+        modeUpdates.LIVE_CONFIRMED = confirmation;
+      }
+      deps.secrets.writeSecrets(modeUpdates);
+      deps.runtime?.updateState?.((draft) => {
+        draft.mode = parsed.data.mode;
+        if (draft.trading) {
+          draft.trading.network = parsed.data.mode === 'LIVE' ? 'mainnet' : parsed.data.mode === 'TESTNET' ? 'testnet' : null;
+        }
+      });
+    }
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
     res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Trading mode updated.', ...result });
   });

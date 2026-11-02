@@ -244,9 +244,12 @@ if (first === 'restart' || isOutdated) {
   process.exit(0);
 }
 let child, stopping = false, restart = false, opened = false;
+let crashAttempts = 0;
+let backoffMs = 2000;
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { stopping = true; child?.kill(signal); });
 do {
   restart = false;
+  const startedAt = Date.now();
   child = spawn(process.execPath, [serverFile], { cwd: root, env: { ...process.env, NODE_ENV: 'production', MPU_MANAGED: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: true });
   let exited = false;
   let exitCode = null, exitSignal = null, spawnError = null;
@@ -256,12 +259,51 @@ do {
     child.once('exit', (code, signal) => { exitCode = code; exitSignal = signal; exited = true; resolve(code ?? 1); });
   });
   for (let i = 0; i < 120 && !exited; i++) {
-    if (await getRunningHealth()) { console.log(`Office ready: ${target}`); if (!opened) { open(); opened = true; } break; }
+    if (await getRunningHealth()) {
+      console.log(`Office ready: ${target}`);
+      if (!opened) { open(); opened = true; }
+      break;
+    }
     await new Promise((r) => setTimeout(r, 500));
   }
   const code = await done;
-  const facts = { at: new Date().toISOString(), code: exitCode, signal: exitSignal, pid: child.pid ?? null, restartRequested: restart, stopping, spawnError };
-  if (!stopping && !restart && (code !== 0 || spawnError)) console.error(`[mpu] backend ended: code=${facts.code ?? '-'} signal=${facts.signal ?? '-'} pid=${facts.pid ?? '-'} restart=${restart}`);
-  try { recordDiagnostic({ source: 'launcher:mpu', category: 'SESSION', eventName: 'child.exited', status: String(facts.code ?? facts.signal ?? 'spawn-error'), message: spawnError ? `Backend spawn failed: ${spawnError}` : 'Backend process exited', details: facts }); } catch { /* Observational only. */ }
-  if (!restart || stopping) process.exit(stopping ? 0 : code);
+  const uptimeMs = Date.now() - startedAt;
+  if (uptimeMs > 600_000) {
+    crashAttempts = 0;
+    backoffMs = 2000;
+  }
+  const facts = { at: new Date().toISOString(), code: exitCode, signal: exitSignal, pid: child.pid ?? null, restartRequested: restart, stopping, spawnError, uptimeMs, crashAttempts };
+  try {
+    recordDiagnostic({
+      source: 'launcher:mpu',
+      category: 'SESSION',
+      eventName: 'child.exited',
+      status: String(facts.code ?? facts.signal ?? 'spawn-error'),
+      message: spawnError ? `Backend spawn failed: ${spawnError}` : 'Backend process exited',
+      details: facts
+    });
+  } catch { /* Observational only. */ }
+
+  if (stopping) {
+    process.exit(0);
+  }
+  if (restart) {
+    crashAttempts = 0;
+    backoffMs = 2000;
+    continue;
+  }
+  if (code === 0) {
+    process.exit(0);
+  }
+  if (code === 2) {
+    console.error('[mpu] backend refused to start (safety/config guard failed). Run "mpu paper" to reset to PAPER or "mpu setup" to configure keys/safety net.');
+    process.exit(2);
+  }
+
+  // Unexpected exit (134, 0xC0000409, 1, or native abort)
+  crashAttempts += 1;
+  const waitSec = Math.round(backoffMs / 1000);
+  console.error(`[mpu] backend crashed unexpectedly (code=${facts.code ?? '-'} signal=${facts.signal ?? '-'} pid=${facts.pid ?? '-'} attempt=${crashAttempts}). Recovering in ${waitSec}s...`);
+  await new Promise((r) => setTimeout(r, backoffMs));
+  backoffMs = Math.min(backoffMs * 2, 30_000);
 } while (!stopping);

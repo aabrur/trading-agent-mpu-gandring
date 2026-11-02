@@ -36,6 +36,17 @@ export interface AgentView {
   desk: { x: number; y: number };
   provider: string;
   model: string;
+  configuredProvider?: string;
+  configuredModel?: string;
+  invokedProvider?: string;
+  invokedModel?: string;
+  actualModel?: string | null;
+  route?: string;
+  executionStatus?: 'IDLE' | 'THINKING' | 'ACTIVE' | 'OBSERVING' | 'ERROR' | 'UNAVAILABLE';
+  lastAttemptAt?: number | null;
+  lastSuccessAt?: number | null;
+  lastError?: string | null;
+  fallbackReason?: string | null;
   fellBackToMock: boolean;
   status: AgentStatus;
   mood: number;

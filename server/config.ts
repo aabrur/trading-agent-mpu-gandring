@@ -86,7 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (mode !== 'PAPER') {
     const check = checkTradingMode(env, mode as TradingMode);
     if (!check.ok) {
-      throw new ConfigError(`TRADING_MODE=${mode} cannot start, refusing. Fix this or go back to PAPER (npm run setup):\n  - ${check.reasons.join('\n  - ')}`, 2);
+      throw new ConfigError(`TRADING_MODE=${mode} cannot start, refusing. Fix this with "mpu setup" or go back to PAPER with "mpu paper":\n  - ${check.reasons.join('\n  - ')}`, 2);
     }
     live = { exchange: check.exchange!, network: mode === 'LIVE' ? 'mainnet' : 'testnet', experimental: ADAPTER_STATUS[check.exchange!] === 'experimental' };
   }

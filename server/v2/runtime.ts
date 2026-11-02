@@ -40,7 +40,15 @@ import { JevClient } from './agents/jev.js';
 import { createOfficialProviderCaller } from './agents/providers.js';
 import { resolveCanonicalRole } from './agents/roles.js';
 import { PROVIDER_KEY_ENV, SecretStore } from './settings/secrets.js';
-import type { ApiProviderId } from './settings/schema.js';
+import {
+  DEFAULT_TRADING_SETTINGS,
+  resolveTradingPresetValues,
+  TRADING_PRESET_IDS,
+  TRADING_PROFILES,
+  type ApiProviderId,
+  type TradingPresetId,
+  type TradingProfile
+} from './settings/schema.js';
 import type { Position, Stance, Verdict } from '../../shared/office.js';
 import { RuntimeStore } from './store/database.js';
 import { ExecutionAuthorityService } from './accounts/authority.js';
@@ -61,7 +69,8 @@ import { ResearchHost } from './research/host.js';
 import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
 import { HELP_TEXT, DiscordGateway } from './channels.js';
-import { formatDeskReportText } from './reports.js';
+import { formatDeskReportText, ReportsService } from './reports.js';
+import { normSymbol } from '../commands.js';
 
 export class StartupValidationError extends Error {
   constructor(message: string, public readonly exitCode = 2) {
@@ -113,6 +122,55 @@ export interface StartupEnvCheck {
   network: Network | null;
 }
 
+export function resolveEffectiveSafetyNet(
+  env: NodeJS.ProcessEnv = process.env,
+  network: Network | null = null,
+  savedValue?: number | null
+): { value: number; source: string; isExplicitZero: boolean; isValidPositive: boolean } {
+  if (savedValue !== undefined && savedValue !== null && Number.isFinite(savedValue)) {
+    return {
+      value: savedValue,
+      source: 'saved_settings',
+      isExplicitZero: savedValue === 0,
+      isValidPositive: savedValue > 0
+    };
+  }
+
+  const networkKey = network === 'mainnet' ? 'MAINNET_DESK_SAFETY_NET' : network === 'testnet' ? 'TESTNET_DESK_SAFETY_NET' : null;
+  const netRaw = networkKey ? env[networkKey] : undefined;
+  if (netRaw !== undefined && netRaw.trim() !== '') {
+    const parsed = Number(netRaw.trim());
+    if (Number.isFinite(parsed)) {
+      return {
+        value: parsed,
+        source: networkKey!,
+        isExplicitZero: parsed === 0,
+        isValidPositive: parsed > 0
+      };
+    }
+  }
+
+  const globalRaw = env.SAFETY_NET;
+  if (globalRaw !== undefined && globalRaw.trim() !== '') {
+    const parsed = Number(globalRaw.trim());
+    if (Number.isFinite(parsed)) {
+      return {
+        value: parsed,
+        source: 'SAFETY_NET',
+        isExplicitZero: parsed === 0,
+        isValidPositive: parsed > 0
+      };
+    }
+  }
+
+  return {
+    value: 200,
+    source: 'default',
+    isExplicitZero: false,
+    isValidPositive: true
+  };
+}
+
 export function validateStartupEnvironment(env: NodeJS.ProcessEnv = process.env): StartupEnvCheck {
   const rawMode = (env.TRADING_MODE ?? 'PAPER').trim().toUpperCase();
   if (rawMode !== 'PAPER' && rawMode !== 'TESTNET' && rawMode !== 'LIVE') {
@@ -156,13 +214,13 @@ export function validateStartupEnvironment(env: NodeJS.ProcessEnv = process.env)
         reasons.push(`the ${venue} adapter is experimental and unverified; LIVE on it needs ALLOW_EXPERIMENTAL_LIVE=yes`);
       }
     }
-    const safetyNet = Number(env.SAFETY_NET ?? 200);
-    if (!(safetyNet > 0)) {
-      reasons.push('SAFETY_NET must be above zero outside PAPER');
+    const resolvedSafety = resolveEffectiveSafetyNet(env, network);
+    if (!resolvedSafety.isValidPositive) {
+      reasons.push(`SAFETY_NET must be above zero outside PAPER (resolved ${resolvedSafety.value} from ${resolvedSafety.source})`);
     }
     if (reasons.length > 0) {
       throw new StartupValidationError(
-        `TRADING_MODE=${tradingMode} cannot start, refusing. Fix this or go back to PAPER (npm run setup):\n  - ${reasons.join('\n  - ')}`,
+        `TRADING_MODE=${tradingMode} cannot start, refusing. Fix this with "mpu setup" or go back to PAPER with "mpu paper":\n  - ${reasons.join('\n  - ')}`,
         2
       );
     }
@@ -219,6 +277,7 @@ export interface ReplacementRuntimeHandle extends OfficeRuntime {
     clientRequestId?: string;
     conversationId?: string;
   }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
+  readonly reportsService?: ReportsService;
   stop(): Promise<void>;
 }
 
@@ -245,6 +304,7 @@ export interface ReplacementRuntimeOptions {
   secrets?: SecretStore;
   chatService?: ChatService;
   researchHost?: ResearchHost;
+  reportsService?: ReportsService;
 }
 
 export function createReplacementRuntime(
@@ -285,6 +345,33 @@ export function createReplacementRuntime(
     state.accountState = options.accountState;
   }
 
+  const effectiveAgents = options.settings?.current().effective.agents;
+  if (effectiveAgents) {
+    for (const role of ROLE_IDS) {
+      const conf = effectiveAgents[role];
+      if (conf) {
+        state.agents[role].provider = conf.provider;
+        state.agents[role].model = conf.model;
+        state.agents[role].configuredProvider = conf.provider;
+        state.agents[role].configuredModel = conf.model;
+        state.agents[role].invokedProvider = conf.provider;
+        state.agents[role].invokedModel = conf.model;
+        state.agents[role].executionStatus = 'IDLE';
+        state.agents[role].lastLine = `Configured for ${conf.provider}/${conf.model}.`;
+      }
+    }
+  }
+
+  state.conversations = options.chatService?.listConversations() ?? [
+    {
+      id: 'office',
+      title: 'Main Office',
+      createdAt: Date.now() - 3600000,
+      updatedAt: Date.now(),
+      messageCount: 0
+    }
+  ];
+
   const savedPaper = options.settings?.current().effective.paper;
   const savedTrading = options.settings?.current().effective.trading;
 
@@ -294,14 +381,12 @@ export function createReplacementRuntime(
     ? finBal
     : (Number.isFinite(rawPaperBal) ? rawPaperBal : 1000);
 
-  const rawSafety = Number(
-    savedTrading?.safetyNet ??
-    savedPaper?.safetyNet ??
-    (state.mode === 'LIVE' ? env.MAINNET_DESK_SAFETY_NET : env.TESTNET_DESK_SAFETY_NET) ??
-    env.SAFETY_NET ??
-    200
+  const resolvedSafety = resolveEffectiveSafetyNet(
+    env,
+    state.mode === 'LIVE' ? 'mainnet' : state.mode === 'TESTNET' ? 'testnet' : null,
+    savedTrading?.safetyNet ?? savedPaper?.safetyNet
   );
-  const initSafety = Number.isFinite(rawSafety) && rawSafety >= 0 ? rawSafety : 200;
+  const initSafety = resolvedSafety.value >= 0 ? resolvedSafety.value : 200;
 
   const rawN = Math.trunc(Number(
     savedTrading?.maxPositions ??
@@ -316,9 +401,18 @@ export function createReplacementRuntime(
   const perOrder = Math.floor((moneyTrade / initN) * 100) / 100;
   const canOpen = perOrder > 0 && (options.initialPositions ? options.initialPositions.length < initN : true);
 
+  const rawLev = Math.trunc(Number(
+    savedTrading?.maxLeverage ??
+    (state.mode === 'LIVE' ? env.MAINNET_DESK_MAX_LEVERAGE : undefined) ??
+    env.MAX_LEVERAGE ??
+    5
+  ));
+  const initLev = Math.max(1, Math.min(100, Number.isFinite(rawLev) ? rawLev : 5));
+
   state.paper.balance = initBal;
   state.paper.safetyNet = initSafety;
   state.paper.n = initN;
+  state.paper.maxLeverage = initLev;
   state.paper.moneyTrade = moneyTrade;
   state.paper.perOrder = perOrder;
   state.paper.canOpen = canOpen;
@@ -395,12 +489,15 @@ export function createReplacementRuntime(
     }
   }
   if (savedTrading && state.trading) {
+    state.trading.profile = options.settings?.current().effective.tradingProfile ?? 'manual';
     state.trading.values = {
       ...state.trading.values,
       ...savedTrading,
       maxPositions: initN,
-      safetyNet: initSafety
+      safetyNet: initSafety,
+      maxLeverage: initLev
     };
+    state.paper.maxLeverage = state.trading.values.maxLeverage;
   }
 
   const snapshot = (): OfficeState => structuredClone(state);
@@ -560,6 +657,17 @@ export function createReplacementRuntime(
     });
 
     scheduleNextAutoCycle();
+
+    if (patch.reportIntervalMin !== undefined && options.reportsService) {
+      options.reportsService.start({
+        snapshot,
+        updateState,
+        dispatch,
+        triggerCycle,
+        updateAutoSettings,
+        handleCommand
+      }, patch.reportIntervalMin);
+    }
 
     if (patch.symbols !== undefined && patch.symbols.length > 0) {
       void marketHub.configure(patch.symbols).catch((err) => {
@@ -777,14 +885,39 @@ export function createReplacementRuntime(
         marketSummary,
         deadlineMs: 360_000,
         onRoleStart: (task) => {
+          const assignment = options.settings?.current().effective.agents[task.role as RoleId];
           updateState((draft) => {
             const agentView = draft.agents[task.role as RoleId];
             if (agentView) {
               agentView.status =
                 task.phase === 'observe' ? 'reading' : task.phase === 'challenge' ? 'arguing' : 'thinking';
+              if (assignment) {
+                agentView.provider = assignment.provider;
+                agentView.model = assignment.model;
+                agentView.configuredProvider = assignment.provider;
+                agentView.configuredModel = assignment.model;
+                agentView.invokedProvider = assignment.provider;
+                agentView.invokedModel = assignment.model;
+              }
+              agentView.lastAttemptAt = Date.now();
+              agentView.executionStatus = task.phase === 'observe' ? 'OBSERVING' : 'THINKING';
             }
             if (draft.debate) {
-              draft.debate.phase = `${task.phase} (${task.role})`;
+              draft.debate.phase =
+                task.phase === 'challenge'
+                  ? 'round 1'
+                  : task.phase === 'observe'
+                  ? 'gathering'
+                  : task.role === 'risk'
+                  ? 'risk gate'
+                  : task.role === 'execution'
+                  ? 'execution review'
+                  : task.role === 'lead'
+                  ? 'verdict'
+                  : task.phase;
+              if (task.phase === 'challenge') {
+                draft.debate.round = 1;
+              }
             }
           });
           hub.emit('status', { agent: task.role, status: snapshot().agents[task.role as RoleId]?.status ?? 'thinking' });
@@ -806,6 +939,21 @@ export function createReplacementRuntime(
 
           updateState((draft) => {
             draft.agents[res.role].status = 'idle';
+            if (res.provider) {
+              draft.agents[res.role].provider = res.provider;
+              draft.agents[res.role].invokedProvider = res.provider;
+            }
+            if (res.model) {
+              draft.agents[res.role].model = res.model;
+              draft.agents[res.role].invokedModel = res.model;
+            }
+            if (res.status === 'completed') {
+              draft.agents[res.role].lastSuccessAt = at;
+              draft.agents[res.role].executionStatus = 'IDLE';
+            } else {
+              draft.agents[res.role].lastError = res.errorReason ?? res.status;
+              draft.agents[res.role].executionStatus = 'ERROR';
+            }
             if (res.stance) draft.agents[res.role].stance = res.stance as Stance;
             if (res.confidence?.value !== null && res.confidence?.value !== undefined) {
               draft.agents[res.role].confidence =
@@ -954,7 +1102,7 @@ export function createReplacementRuntime(
           const entryPrice = Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
           const stopPrice = Number(out.verdict.thesis.stop);
           const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : null;
-          const leverage = currentSnap.paper.maxLeverage || 5;
+          const leverage = currentSnap.trading?.values.maxLeverage ?? currentSnap.paper.maxLeverage ?? 5;
           const perOrder = currentSnap.paper.perOrder || 50;
           const margin = Math.round(perOrder * 100) / 100;
           const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
@@ -1229,6 +1377,7 @@ export function createReplacementRuntime(
     const raw = input.text.trim();
     if (!raw) return { ok: false, error: 'empty command' };
     const cmd = raw.toLowerCase();
+    const cleanCmd = cmd.replace(/^\//, '');
     const toAll = /^@all\s+/i.test(raw);
     const targetRole = input.agent ? resolveCanonicalRole(input.agent) : null;
 
@@ -1289,7 +1438,7 @@ export function createReplacementRuntime(
       };
     }
 
-    if (cmd.startsWith('analyze ') || cmd.startsWith('debate ')) {
+    if (cleanCmd.startsWith('analyze ') || cleanCmd.startsWith('debate ')) {
       const sym = raw.split(/\s+/)[1]?.toUpperCase();
       if (!sym) {
         return { ok: false, error: 'Symbol required for analyze command' };
@@ -1305,7 +1454,7 @@ export function createReplacementRuntime(
       return { ok: true, command: 'analyze', reply: `Starting debate for ${sym}...` };
     }
 
-    if (cmd === 'status') {
+    if (cleanCmd === 'status') {
       const snap = snapshot();
       return {
         ok: true,
@@ -1314,11 +1463,11 @@ export function createReplacementRuntime(
       };
     }
 
-    if (cmd === 'help') {
+    if (cleanCmd === 'help') {
       return { ok: true, command: 'help', reply: HELP_TEXT };
     }
 
-    if (cmd === 'report' || cmd.startsWith('report')) {
+    if (cleanCmd === 'report' || cleanCmd.startsWith('report')) {
       const snap = snapshot();
       const latestReport = snap.reports?.[0]?.text;
       if (latestReport) {
@@ -1342,7 +1491,7 @@ export function createReplacementRuntime(
       return { ok: true, command: 'report', reply: generated };
     }
 
-    if (cmd === 'positions') {
+    if (cleanCmd === 'positions') {
       const snap = snapshot();
       const ps = snap.paper.positions ?? [];
       const header = `Positions (${ps.length}):`;
@@ -1360,7 +1509,7 @@ export function createReplacementRuntime(
       return { ok: true, command: 'positions', reply: safe([header, ...lines].join('\n\n')) };
     }
 
-    if (cmd === 'scan') {
+    if (cleanCmd === 'scan') {
       const snap = snapshot();
       const ps = snap.paper.positions ?? [];
       const unprot = ps.filter(p => !p.stop || p.stop <= 0);
@@ -1381,7 +1530,7 @@ export function createReplacementRuntime(
       };
     }
 
-    if (cmd === 'watchlist' || cmd === 'tokens') {
+    if (cleanCmd === 'watchlist' || cleanCmd === 'tokens') {
       const snap = snapshot();
       return {
         ok: true,
@@ -1390,7 +1539,7 @@ export function createReplacementRuntime(
       };
     }
 
-    if (cmd === 'scorecard' || cmd === 'scores') {
+    if (cleanCmd === 'scorecard' || cleanCmd === 'scores') {
       const snap = snapshot();
       const sc = snap.scorecard ?? [];
       const header = 'Employee Scorecard:';
@@ -1401,7 +1550,7 @@ export function createReplacementRuntime(
       return { ok: true, command: 'scorecard', reply: [header, ...lines].join('\n') };
     }
 
-    if (cmd === 'lessons' || cmd === 'learnings') {
+    if (cleanCmd === 'lessons' || cleanCmd === 'learnings') {
       const snap = snapshot();
       const ls = snap.lessons ?? [];
       if (!ls.length) {
@@ -1414,7 +1563,7 @@ export function createReplacementRuntime(
       };
     }
 
-    if (cmd === 'kill' || cmd.startsWith('kill')) {
+    if (cleanCmd === 'kill' || cleanCmd.startsWith('kill')) {
       const confirm = /confirm|yes/i.test(raw);
       if (!confirm) {
         return {
@@ -1431,16 +1580,16 @@ export function createReplacementRuntime(
       };
     }
 
-    if (cmd === 'pause') {
+    if (cleanCmd === 'pause') {
       updateState((d) => { d.paused = true; });
       return { ok: true, command: 'pause', reply: 'Desk paused.' };
     }
-    if (cmd === 'resume') {
+    if (cleanCmd === 'resume') {
       updateState((d) => { d.paused = false; });
       return { ok: true, command: 'resume', reply: 'Desk resumed.' };
     }
 
-    if (cmd.startsWith('close')) {
+    if (cleanCmd.startsWith('close')) {
       const parts = raw.split(/\s+/);
       const target = (parts[1] ?? 'all').toUpperCase();
       const currentSnap = snapshot();
@@ -1508,7 +1657,95 @@ export function createReplacementRuntime(
       return { ok: true, command: 'close', reply: `Closed ${closedCount} position(s).` };
     }
 
-    const balanceMatch = raw.match(/^(?:set\s+)?(?:balance|saldo)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i);
+    if (/^(?:open|buy|sell)\b/i.test(cleanCmd) && !/^open\s+orders?\b/i.test(cleanCmd)) {
+      const stopMatch = raw.match(/--stop(?:=|\s+)(\d+(?:\.\d+)?)/i);
+      const tpMatch = raw.match(/--tp(?:=|\s+)(\d+(?:\.\d+)?)/i);
+      const qtyMatch = raw.match(/--qty(?:=|\s+)(\d+(?:\.\d+)?)/i);
+      const levMatch = raw.match(/(?:--leverage(?:=|\s+)|-l\s+)(\d+)/i) ?? raw.match(/\b(\d+)x\b/i);
+
+      if (!stopMatch) {
+        return {
+          ok: false,
+          command: 'open',
+          error: 'Stop loss is required for open command. Usage: open <symbol> <LONG|SHORT> --stop <price> [--tp <price>]'
+        };
+      }
+      const stopPrice = Number(stopMatch[1]);
+      if (!Number.isFinite(stopPrice) || stopPrice <= 0) {
+        return {
+          ok: false,
+          command: 'open',
+          error: 'Invalid stop price. Must be a positive number.'
+        };
+      }
+
+      const positional = cleanCmd
+        .replace(/--stop(?:=|\s+)\S+/gi, '')
+        .replace(/--tp(?:=|\s+)\S+/gi, '')
+        .replace(/--qty(?:=|\s+)\S+/gi, '')
+        .replace(/(?:--leverage(?:=|\s+)|-l\s+)\S+/gi, '')
+        .replace(/\b\d+x\b/gi, '')
+        .trim()
+        .split(/\s+/);
+
+      let side: 'LONG' | 'SHORT' | null = null;
+      let targetSym = '';
+
+      if (positional[0] === 'buy') {
+        side = 'LONG';
+        targetSym = positional[1] ?? '';
+      } else if (positional[0] === 'sell') {
+        side = 'SHORT';
+        targetSym = positional[1] ?? '';
+      } else if (positional[0] === 'open') {
+        const arg1 = (positional[1] ?? '').toUpperCase();
+        const arg2 = (positional[2] ?? '').toUpperCase();
+        if (arg1 === 'LONG' || arg1 === 'SHORT') {
+          side = arg1;
+          targetSym = arg2;
+        } else if (arg2 === 'LONG' || arg2 === 'SHORT') {
+          side = arg2;
+          targetSym = arg1;
+        }
+      }
+
+      if (!side || !targetSym) {
+        return {
+          ok: false,
+          command: 'open',
+          error: 'Usage: open <symbol> <LONG|SHORT> --stop <price> [--tp <price>]'
+        };
+      }
+
+      const symbol = normSymbol(targetSym);
+      const snap = snapshot();
+      if (snap.killed) {
+        return { ok: false, command: 'open', error: 'Kill switch is ON. Release it first.' };
+      }
+
+      const dispatchRes = await dispatch({
+        kind: 'open',
+        actor: 'local_owner',
+        symbol,
+        payload: {
+          symbol,
+          side,
+          stop: stopPrice,
+          tp: tpMatch ? Number(tpMatch[1]) : null,
+          qty: qtyMatch ? qtyMatch[1] : undefined,
+          leverage: levMatch ? Number(levMatch[1]) : undefined
+        }
+      });
+
+      return {
+        ok: dispatchRes.ok,
+        command: 'open',
+        reply: dispatchRes.message,
+        error: dispatchRes.ok ? undefined : dispatchRes.message
+      };
+    }
+
+    const balanceMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?(?:balance|saldo)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i);
     if (balanceMatch) {
       const val = Number(balanceMatch[1]);
       if (Number.isFinite(val) && val >= 0) {
@@ -1618,13 +1855,89 @@ export function createReplacementRuntime(
       return { ok: false, error: 'N must be an integer between 1 and 100.' };
     }
 
-    if (cmd === 'sync' || cmd === 'sync balance' || cmd === 'sync to book' || cmd === 'refresh balance') {
+    const leverageMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?(?:leverage|lev|pengali)\s*(?:=|to|:)?\s*(\d+)(?:x)?\b/i);
+    if (leverageMatch) {
+      const val = Number(leverageMatch[1]);
+      if (Number.isInteger(val) && val >= 1 && val <= 100) {
+        updateState((d) => {
+          d.paper.maxLeverage = val;
+          if (d.trading) {
+            d.trading.values.maxLeverage = val;
+          }
+        });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                trading: { maxLeverage: val }
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
+        if (options.secrets) {
+          options.secrets.writeSecrets({
+            MAX_LEVERAGE: String(val),
+            MAINNET_DESK_MAX_LEVERAGE: String(val)
+          });
+        }
+        hub.emit('state', snapshot());
+        return { ok: true, command: 'set_leverage', reply: `Max leverage set to ${val}x.` };
+      }
+      return { ok: false, error: 'Leverage must be an integer between 1 and 100.' };
+    }
+
+    const profileMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?profile\s+(\S+)$/i);
+    if (profileMatch) {
+      const prof = profileMatch[1].toLowerCase();
+      if ((TRADING_PROFILES as readonly string[]).includes(prof as any)) {
+        const snap = snapshot();
+        const baseVals = snap.trading?.values ?? DEFAULT_TRADING_SETTINGS;
+        const nextVals = (TRADING_PRESET_IDS as readonly string[]).includes(prof as any)
+          ? resolveTradingPresetValues(prof as TradingPresetId, baseVals)
+          : baseVals;
+
+        updateState((d) => {
+          if (d.trading) {
+            d.trading.profile = prof as TradingProfile;
+            d.trading.values = { ...d.trading.values, ...nextVals };
+          }
+          if (nextVals.maxLeverage) d.paper.maxLeverage = nextVals.maxLeverage;
+        });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                tradingProfile: prof as TradingProfile,
+                trading: nextVals
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
+        if (options.secrets && nextVals.maxLeverage) {
+          options.secrets.writeSecrets({
+            MAX_LEVERAGE: String(nextVals.maxLeverage),
+            MAINNET_DESK_MAX_LEVERAGE: String(nextVals.maxLeverage)
+          });
+        }
+        hub.emit('state', snapshot());
+        return { ok: true, command: 'set_profile', reply: `Trading profile set to ${prof} (leverage ${nextVals.maxLeverage}x, SL ${nextVals.defaultStopPct}%, TP ${nextVals.takeProfitPct}%).` };
+      }
+      return { ok: false, error: `Profile must be one of: ${TRADING_PROFILES.join(', ')}` };
+    }
+
+    if (cleanCmd === 'sync' || cleanCmd === 'sync balance' || cleanCmd === 'sync to book' || cleanCmd === 'refresh balance') {
       const snap = snapshot();
       hub.emit('state', snap);
       return { ok: true, command: 'sync', reply: `Synced book. Balance: ${snap.paper.balance} USDT, Safety net: ${snap.paper.safetyNet} USDT, Money trade: ${snap.paper.moneyTrade} USDT.` };
     }
 
-    return { ok: true, command: cmd, reply: `Command acknowledged: "${safe(raw)}"` };
+    return {
+      ok: false,
+      command: cmd,
+      error: `Unsupported command: "${safe(raw)}". Type "help" for available commands.`
+    };
   };
 
   const stop = async (): Promise<void> => {
@@ -1674,7 +1987,7 @@ export function createReplacementRuntime(
       const qty = Number(p.qty ?? '0.01');
       const stop = p.stop ? Number(p.stop) : null;
       const tp = p.tp ? Number(p.tp) : null;
-      const leverage = Number(p.leverage ?? 5);
+      const leverage = Number(p.leverage ?? state.trading?.values.maxLeverage ?? state.paper.maxLeverage ?? 5);
       const entry = Number(p.entry ?? 65000);
       const margin = (qty * entry) / leverage;
 
@@ -1815,6 +2128,7 @@ export function createReplacementRuntime(
     triggerCycle,
     updateAutoSettings,
     handleCommand,
+    reportsService: options.reportsService,
     stop,
     dispatch
   };
@@ -2083,7 +2397,7 @@ export async function startReplacementServer(
       const qty = String(p.qty ?? '0');
       const stop = p.stop ? String(p.stop) : null;
       const tp = p.tp ? String(p.tp) : null;
-      const leverage = Number(p.leverage ?? 5);
+      const leverage = Number(p.leverage ?? state.trading?.values.maxLeverage ?? state.paper.maxLeverage ?? 5);
       const orderType = (p.orderType as 'MARKET' | 'LIMIT_GTC') ?? 'MARKET';
 
       const receipt = await gateway.submit({
@@ -2181,23 +2495,26 @@ export async function startReplacementServer(
           draft.paper.positions = freshPositions.map((p, idx) => {
             const qty = Number(p.qty);
             const entry = Number(p.entryPrice);
-            const leverage = 5;
+            const existing = draft.paper.positions.find(
+              (pos) => pos.symbol.toUpperCase() === p.symbol.toUpperCase() && pos.side === p.side
+            );
+            const leverage = existing?.leverage ?? 5;
             const margin = (qty * entry) / leverage;
-            const stop = entry * (p.side === 'LONG' ? 0.95 : 1.05);
+            const stop = existing?.stop ?? 0;
             return {
-              id: `pos-${p.symbol}-${idx}`,
+              id: existing?.id ?? `pos-${p.symbol}-${idx}`,
               symbol: p.symbol,
               side: p.side,
               qty,
               entry,
               stop,
-              tp: null,
-              mark: entry,
-              unrealizedPnl: 0,
+              tp: existing?.tp ?? null,
+              mark: existing?.mark ?? entry,
+              unrealizedPnl: existing?.unrealizedPnl ?? 0,
               leverage,
               margin,
-              openedAt: Date.now(),
-              protectionStatus: 'confirmed',
+              openedAt: existing?.openedAt ?? Date.now(),
+              protectionStatus: existing?.protectionStatus ?? 'unknown',
               entryStatus: 'confirmed'
             };
           });
@@ -2324,6 +2641,8 @@ export async function startReplacementServer(
   const chatService = new ChatService(store);
   await chatService.hydrateFromStore();
 
+  const reportsService = new ReportsService();
+
   const runtime = createReplacementRuntime({
     sessionId: sessionLogger?.session.sessionId ?? null,
     initialMode: startup.tradingMode,
@@ -2340,7 +2659,8 @@ export async function startReplacementServer(
     settings,
     secrets,
     chatService,
-    researchHost
+    researchHost,
+    reportsService
   });
   runtimeRef = runtime;
 
@@ -2364,6 +2684,7 @@ export async function startReplacementServer(
   const app = createReplacementApp(runtime, {
     sessionLogger,
     chatService,
+    reportsService,
     setupDeps: { settings, secrets, accounts },
     researchDeps: { host: researchHost, activeAccountRef: () => accountRef },
     grokBridge,
@@ -2494,7 +2815,10 @@ export async function startReplacementServer(
 
   let syncTimer: NodeJS.Timeout | null = null;
   if (startup.tradingMode !== 'PAPER') {
+    let isSyncing = false;
     const syncVenueAccount = async () => {
+      if (isSyncing) return;
+      isSyncing = true;
       try {
         const [bal, posList] = await Promise.all([
           venueAdapter.balance(),
@@ -2520,9 +2844,10 @@ export async function startReplacementServer(
               status: 'confirmed',
               positions: posList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) }))
             };
-            d.paper.balance = eq;
+            d.paper.balance = av ?? eq;
             d.paper.unrealized = totalUnrealized;
-            d.paper.equity = Math.round((eq + totalUnrealized) * 100) / 100;
+            // Venue equity is authoritative and already includes unrealized PnL; avoid double counting.
+            d.paper.equity = eq;
 
             const updatedPositions: Position[] = [];
             for (let idx = 0; idx < posList.length; idx++) {
@@ -2534,7 +2859,8 @@ export async function startReplacementServer(
               const existing = d.paper.positions.find(
                 (p) => p.symbol.toUpperCase() === nativePos.symbol.toUpperCase() && p.side === nativePos.side
               );
-              const stop = existing?.stop ?? (nativePos.side === 'LONG' ? entry * 0.95 : entry * 1.05);
+              // Preserve existing stop/protection provenance; do not fabricate synthetic 5% stop or confirmed status
+              const stop = existing?.stop ?? 0;
               const upnl = nativePos.unrealizedPnl != null ? Number(nativePos.unrealizedPnl) : (existing?.unrealizedPnl ?? 0);
               const mark = existing?.mark && Math.abs(existing.mark - entry) > 0.0001
                 ? existing.mark
@@ -2553,7 +2879,7 @@ export async function startReplacementServer(
                 leverage,
                 margin,
                 openedAt: existing?.openedAt ?? nativePos.observedAt ?? Date.now(),
-                protectionStatus: existing?.protectionStatus ?? 'confirmed',
+                protectionStatus: existing?.protectionStatus ?? 'unknown',
                 entryStatus: 'confirmed'
               });
             }
@@ -2575,6 +2901,8 @@ export async function startReplacementServer(
         }
       } catch {
         // Venue polling failure is non-fatal
+      } finally {
+        isSyncing = false;
       }
     };
     void syncVenueAccount();

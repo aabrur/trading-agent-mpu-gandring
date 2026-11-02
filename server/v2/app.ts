@@ -165,7 +165,7 @@ export function createReplacementApp(
   });
 
   if (options.setupDeps) {
-    mountSetupApiRoutes(app, options.setupDeps);
+    mountSetupApiRoutes(app, { ...options.setupDeps, runtime });
     mountLocalAgentsRoutes(app, options.setupDeps);
   }
 

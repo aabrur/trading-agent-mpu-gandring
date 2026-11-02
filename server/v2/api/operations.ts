@@ -39,7 +39,7 @@ const autoBodySchema = z.object({
   reportIntervalMin: z.number().int().min(1).max(1440).optional(),
   symbols: z.array(z.string()).optional(),
   symbolsOverride: z.array(z.string()).optional(),
-  n: z.number().int().min(1).max(4).optional(),
+  n: z.number().int().min(1).max(100).optional(),
   debateMode: z.enum(['normal', 'fast']).optional()
 });
 
@@ -200,8 +200,8 @@ export function mountOperationsRoutes(
       return;
     }
 
-    const orderState = (reply.data?.orderState as string | undefined) ?? 'CLOSED';
-    const isTerminalClose = orderState === 'CLOSED' || orderState === 'FILLED';
+    const orderState = (reply.data?.orderState as string | undefined) ?? (reply.ok ? 'CLOSED' : 'UNKNOWN');
+    const isTerminalClose = (orderState === 'CLOSED' || orderState === 'FILLED') && reply.ok;
 
     res.json({
       ok: true,
