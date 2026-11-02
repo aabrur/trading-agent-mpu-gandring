@@ -156,7 +156,7 @@ export class JevClient {
         claimRefs: parsed.data.claimRefs,
         contraryRefs: parsed.data.contraryRefs,
         reason: parsed.data.reason ?? null,
-        market_regime: parsed.data.market_regime ?? 'EVALUATED'
+        ...(parsed.data.market_regime ? { market_regime: parsed.data.market_regime } : {})
       };
     } catch (err) {
       return this.evaluateHeuristic(input, fallbackId, safe(err instanceof Error ? err.message : 'Jev request failed'));
