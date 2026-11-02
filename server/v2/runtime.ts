@@ -70,7 +70,11 @@ import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
 import { HELP_TEXT, DiscordGateway } from './channels.js';
 import { formatDeskReportText, ReportsService } from './reports.js';
-import { normSymbol } from '../commands.js';
+function normSymbol(s: string): string {
+  const up = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!up) return '';
+  return /USDT$|USDC$|USD$/.test(up) ? up : `${up}USDT`;
+}
 
 export class StartupValidationError extends Error {
   constructor(message: string, public readonly exitCode = 2) {

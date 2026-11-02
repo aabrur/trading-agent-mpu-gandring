@@ -39,7 +39,7 @@ const autoBodySchema = z.object({
   reportIntervalMin: z.number().int().min(1).max(1440).optional(),
   symbols: z.array(z.string()).optional(),
   symbolsOverride: z.array(z.string()).optional(),
-  n: z.number().int().min(1).max(100).optional(),
+  n: z.number().int().min(1).max(4).optional(),
   debateMode: z.enum(['normal', 'fast']).optional()
 });
 
