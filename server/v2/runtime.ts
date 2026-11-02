@@ -268,6 +268,9 @@ export function createReplacementRuntime(
   }
   if (options.initialPositions) {
     state.paper.positions = options.initialPositions;
+    const initialUpnl = options.initialPositions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0);
+    state.paper.unrealized = initialUpnl;
+    state.paper.equity = state.paper.balance + initialUpnl;
   }
   if (options.venue) {
     state.venue = options.venue;
@@ -2277,10 +2280,11 @@ export async function startReplacementServer(
     };
   };
 
+  const initialUnrealized = initialPositions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0);
   const initialVenueAccount = equityNum !== null ? {
     equity: equityNum,
     available: availNum ?? equityNum,
-    unrealized: 0,
+    unrealized: initialUnrealized,
     at: Date.now(),
     status: 'confirmed' as const,
     positions: initialPositions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
@@ -2406,14 +2410,34 @@ export async function startReplacementServer(
       }
       lastTickerUpdateBySymbol.set(frame.symbol, { price: lastPrice, at: now });
       runtime.updateState((draft) => {
+        const rawPcnt = frame.price24hPcnt != null ? Number(frame.price24hPcnt) * 100 : 0;
         draft.tickers[frame.symbol] = {
           symbol: frame.symbol,
           last: lastPrice,
-          change24hPct: 0,
+          change24hPct: Number.isFinite(rawPcnt) ? Math.round(rawPcnt * 100) / 100 : 0,
           source: 'bybit.v5.linear',
           example: false,
           at: now
         };
+        let posChanged = false;
+        if (Array.isArray(draft.paper.positions)) {
+          for (const pos of draft.paper.positions) {
+            if (pos.symbol.toUpperCase() === frame.symbol.toUpperCase()) {
+              pos.mark = lastPrice;
+              const mult = pos.side === 'LONG' ? 1 : -1;
+              pos.unrealizedPnl = Math.round(mult * (lastPrice - pos.entry) * pos.qty * 100) / 100;
+              posChanged = true;
+            }
+          }
+        }
+        if (posChanged) {
+          const totalUpnl = Math.round(draft.paper.positions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0) * 100) / 100;
+          draft.paper.unrealized = totalUpnl;
+          draft.paper.equity = Math.round((draft.paper.balance + totalUpnl) * 100) / 100;
+          if (draft.venueAccount) {
+            draft.venueAccount.unrealized = totalUpnl;
+          }
+        }
       });
     }
   });
@@ -2485,16 +2509,57 @@ export async function startReplacementServer(
             if (av !== null && Number.isFinite(av)) {
               d.financial.availableBalance = availableFinancialField(av);
             }
+            const totalUnrealized = Math.round(
+              posList.reduce((sum, p) => sum + (p.unrealizedPnl ? Number(p.unrealizedPnl) : 0), 0) * 100
+            ) / 100;
             d.venueAccount = {
               equity: eq,
               available: av ?? eq,
-              unrealized: d.paper.unrealized ?? 0,
+              unrealized: totalUnrealized,
               at: Date.now(),
               status: 'confirmed',
               positions: posList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) }))
             };
             d.paper.balance = eq;
-            d.paper.equity = eq + (d.paper.unrealized ?? 0);
+            d.paper.unrealized = totalUnrealized;
+            d.paper.equity = Math.round((eq + totalUnrealized) * 100) / 100;
+
+            const updatedPositions: Position[] = [];
+            for (let idx = 0; idx < posList.length; idx++) {
+              const nativePos = posList[idx];
+              const qty = Number(nativePos.qty);
+              const entry = Number(nativePos.entryPrice);
+              const leverage = nativePos.leverage ?? 5;
+              const margin = (qty * entry) / leverage;
+              const existing = d.paper.positions.find(
+                (p) => p.symbol.toUpperCase() === nativePos.symbol.toUpperCase() && p.side === nativePos.side
+              );
+              const stop = existing?.stop ?? (nativePos.side === 'LONG' ? entry * 0.95 : entry * 1.05);
+              const upnl = nativePos.unrealizedPnl != null ? Number(nativePos.unrealizedPnl) : (existing?.unrealizedPnl ?? 0);
+              const mark = existing?.mark && Math.abs(existing.mark - entry) > 0.0001
+                ? existing.mark
+                : (entry + (nativePos.side === 'LONG' ? 1 : -1) * (qty > 0 ? upnl / qty : 0));
+
+              updatedPositions.push({
+                id: existing?.id ?? `pos-${nativePos.symbol}-${idx}`,
+                symbol: nativePos.symbol,
+                side: nativePos.side,
+                qty,
+                entry,
+                stop,
+                tp: existing?.tp ?? null,
+                mark,
+                unrealizedPnl: Math.round(upnl * 100) / 100,
+                leverage,
+                margin,
+                openedAt: existing?.openedAt ?? nativePos.observedAt ?? Date.now(),
+                protectionStatus: existing?.protectionStatus ?? 'confirmed',
+                entryStatus: 'confirmed'
+              });
+            }
+            d.paper.positions = updatedPositions;
+            d.paper.usedMargin = updatedPositions.reduce((sum, p) => sum + p.margin, 0);
+
             const mt = Math.round(Math.max(0, eq - d.paper.safetyNet) * 100) / 100;
             d.paper.moneyTrade = mt;
             d.paper.perOrder = Math.floor((mt / d.paper.n) * 100) / 100;

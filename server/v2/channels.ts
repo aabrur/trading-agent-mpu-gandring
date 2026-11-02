@@ -279,11 +279,66 @@ export const NOT_SHIPPED = {
   email: 'Sending needs an SMTP client dependency or a provider-specific API, and inbound email cannot be authenticated well enough to accept commands. Use a channel above; most of them also notify by email or phone.'
 };
 
+const discordOption = (name: string, description: string, required = false, type = 3) => ({
+  name,
+  description,
+  type,
+  required
+});
+
 export const DISCORD_COMMANDS = [
-  { name: 'status', description: 'Desk status (read only)', type: 1 },
-  { name: 'report', description: 'Latest desk report (read only)', type: 1 },
-  { name: 'positions', description: 'Open positions and stops (read only)', type: 1 },
-  { name: 'kill', description: 'Kill switch (requires confirmation)', type: 1 }
+  ...['status', 'report', 'positions', 'scan', 'watchlist', 'scorecard', 'lessons', 'help'].map((name) => ({
+    name,
+    description: `${name} from the desk`,
+    type: 1
+  })),
+  {
+    name: 'analyze',
+    description: 'Analyze a configured symbol',
+    type: 1,
+    options: [discordOption('symbol', 'Symbol', true)]
+  },
+  {
+    name: 'ask',
+    description: 'Ask an agent or Desk Lead',
+    type: 1,
+    options: [
+      discordOption('text', 'Question', true),
+      discordOption('agent', 'lead, market, research, strategist, risk, execution', false)
+    ]
+  },
+  {
+    name: 'open',
+    description: 'Existing Owner open command',
+    type: 1,
+    options: [
+      discordOption('side', 'long or short', true),
+      discordOption('symbol', 'Symbol', true),
+      discordOption('size', 'Order size percentage', false, 10),
+      discordOption('leverage', 'Leverage', false, 10)
+    ]
+  },
+  {
+    name: 'close',
+    description: 'Existing Owner close command',
+    type: 1,
+    options: [discordOption('symbol', 'Symbol or all', true)]
+  },
+  {
+    name: 'set',
+    description: 'Existing Owner settings command',
+    type: 1,
+    options: [
+      discordOption('setting', 'profile, size, leverage, n, safety', true),
+      discordOption('value', 'Setting value', true)
+    ]
+  },
+  {
+    name: 'kill',
+    description: 'Existing kill confirmation flow',
+    type: 1,
+    options: [discordOption('confirm', 'Type confirm to execute', false)]
+  }
 ];
 
 export function discordRegisterCommand(appIdVar = '$DISCORD_APPLICATION_ID', tokenVar = '$DISCORD_BOT_TOKEN'): string {
@@ -794,10 +849,41 @@ export interface DiscordInteraction {
 
 export function discordCommandText(data: DiscordInteraction['data']): string {
   if (!data?.name) return 'help';
-  const cmd = data.name.toLowerCase();
-  const group = (data.options ?? []).find((o) => o.options && o.options.length > 0);
-  if (group && group.name) {
+  if (data.name === 'mpu') {
+    const group = data.options?.[0];
+    if (!group?.name) return 'help';
     return discordCommandText({ name: group.name, options: group.options });
+  }
+  const cmd = data.name.toLowerCase();
+  const values = Object.fromEntries((data.options ?? []).map((o) => [o.name, o.value]));
+  if (cmd === 'open') {
+    return [
+      'open',
+      values.side,
+      values.symbol,
+      ...(values.size === undefined ? [] : [`${values.size}%`]),
+      ...(values.leverage === undefined ? [] : [`${values.leverage}x`])
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (cmd === 'set') {
+    let val = values.value !== undefined ? String(values.value) : '';
+    if (values.setting === 'size' && val && !val.endsWith('%')) val = `${val}%`;
+    return ['set', values.setting, val].filter(Boolean).join(' ');
+  }
+  if (cmd === 'ask') {
+    if (values.agent) return `ask ${values.agent} ${values.text ?? ''}`.trim();
+    return `ask ${values.text ?? ''}`.trim();
+  }
+  if (cmd === 'analyze') {
+    return `analyze ${values.symbol ?? ''}`.trim();
+  }
+  if (cmd === 'close') {
+    return `close ${values.symbol ?? ''}`.trim();
+  }
+  if (cmd === 'kill') {
+    return values.confirm ? `kill ${values.confirm}` : 'kill';
   }
   return [
     cmd,
@@ -996,7 +1082,12 @@ export class DiscordGateway {
           signal: AbortSignal.timeout(2500)
         }
       );
-      if (!response.ok || refusal) return;
+      if (!response.ok || refusal) {
+        if (!response.ok) {
+          console.error(`[channels:discord] Callback HTTP ${response.status}: ${await response.text().catch(() => '')}`);
+        }
+        return;
+      }
 
       let content: string;
       const cmdText = discordCommandText(interaction.data);
@@ -1007,12 +1098,13 @@ export class DiscordGateway {
         } else {
           content = `Executed: ${cmdText}`;
         }
-      } catch {
+      } catch (err) {
+        console.error(`[channels:discord] Execution error for "${cmdText}": ${(err as Error).message}`);
         content = 'The desk could not complete this command.';
       }
 
       if (appId) {
-        await this.fetchImpl(
+        const patchRes = await this.fetchImpl(
           `${DISCORD_API}/webhooks/${appId}/${interaction.token}/messages/@original`,
           {
             method: 'PATCH',
@@ -1024,9 +1116,13 @@ export class DiscordGateway {
             signal: AbortSignal.timeout(8000)
           }
         );
+        if (!patchRes.ok) {
+          console.error(`[channels:discord] Patch original message HTTP ${patchRes.status}: ${await patchRes.text().catch(() => '')}`);
+        }
       }
-    } catch {
+    } catch (err) {
       this.status = 'interaction_failed';
+      console.error(`[channels:discord] Interaction error: ${(err as Error).message}`);
     }
   }
 }

@@ -165,6 +165,7 @@ export interface MarketFrame {
   bookEvidenceId: string | null;
   funding: Evidence<DecimalString>;
   openInterest: Evidence<DecimalString>;
+  price24hPcnt?: string | null;
 }
 
 export const CONFIDENCE_SCALES = ['probability_0_1', 'ordinal_1_5', 'score_0_100'] as const;

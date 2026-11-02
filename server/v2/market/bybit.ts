@@ -634,7 +634,8 @@ export class BybitMarketHub {
         tradesEvidenceId: null,
         bookEvidenceId: null,
         funding: unavailableEvidence('bybit.linear.tickers', reason, now, 'ratio'),
-        openInterest: unavailableEvidence('bybit.linear.tickers', reason, now, inst?.baseCoin ?? null)
+        openInterest: unavailableEvidence('bybit.linear.tickers', reason, now, inst?.baseCoin ?? null),
+        price24hPcnt: null
       };
     }
 
@@ -710,7 +711,8 @@ export class BybitMarketHub {
         ticker?.sourceAt,
         ticker?.observedAt,
         inst.baseCoin
-      )
+      ),
+      price24hPcnt: ticker?.price24hPcnt ?? null
     };
   }
 

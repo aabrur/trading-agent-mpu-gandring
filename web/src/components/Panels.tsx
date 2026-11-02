@@ -543,11 +543,22 @@ export function TickerStrip({ state }: { state: DeskState }) {
 export function FightMeter({ state, meter, fighting = false }: { state: DeskState; meter: { weighted: number; disagreement: number } | null; fighting?: boolean }) {
   const { t } = useI18n();
   const d = state.debate;
-  const dis = meter?.disagreement ?? d?.disagreement ?? 0;
-  const w = meter?.weighted ?? d?.weighted ?? 0;
-  const camps = d?.camps ?? { bull: [], bear: [], neutral: [] };
+  const latestVerdict = state.verdicts?.[0];
+  const dis = meter?.disagreement ?? d?.disagreement ?? latestVerdict?.disagreement ?? 0;
+  const camps = d?.camps ?? latestVerdict?.camps ?? { bull: [], bear: [], neutral: [] };
+  const totalCampCount = camps.bull.length + camps.bear.length + camps.neutral.length;
+  const fallbackWeighted = totalCampCount > 0 ? (camps.bull.length - camps.bear.length) / totalCampCount : 0;
+  const w = meter?.weighted ?? d?.weighted ?? fallbackWeighted;
   const opposing = camps.bull.length > 0 && camps.bear.length > 0;
-  const rawKey = fighting ? 'full-brawl' : !d ? 'quiet' : dis >= state.fightThreshold && opposing ? 'fists-out' : dis > 0.25 ? 'heated' : 'mostly-agree';
+  const rawKey = fighting
+    ? 'full-brawl'
+    : dis >= state.fightThreshold && opposing
+      ? 'fists-out'
+      : dis > 0.25
+        ? 'heated'
+        : dis > 0 || opposing || camps.bull.length > 0 || camps.bear.length > 0
+          ? 'mostly-agree'
+          : 'quiet';
   const label = rawKey === 'full-brawl' ? t('fullBrawl') : rawKey === 'fists-out' ? t('meterHeatedViews') : rawKey === 'heated' ? (opposing ? t('meterOpposingViews') : t('meterGeneralTension')) : rawKey === 'mostly-agree' ? t('mostlyAgree') : t('quiet');
   return (
     <section className="panel meter">
