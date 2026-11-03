@@ -18,7 +18,6 @@ function getTradingFields(t: (k: TranslationKey) => string) {
     { key: 'dailyLossLimitPct' as const, label: t('tradingDailyLossCap'), min: 0.5, max: 100, help: t('tradingHelpDailyLoss') },
     { key: 'minEntryConfidencePct' as const, label: t('tradingMinEntryConfidence'), min: 0, max: 100, help: t('tradingHelpMinEntryConfidence') },
     { key: 'maxLeverage' as const, label: t('tradingMaxLeverage'), min: 1, max: 100, step: 1, help: t('tradingHelpMaxLeverage') },
-    { key: 'orderSizePct' as const, label: 'Order size (% of Money Trade)', min: 1.5, max: 100, help: '1.5–100%. Leave empty to divide Money Trade by N.' },
     { key: 'defaultStopPct' as const, label: t('tradingDefaultStop'), min: 0, max: 100, help: t('tradingHelpDefaultStop') },
     { key: 'takeProfitPct' as const, label: t('tradingTakeProfitPct'), min: 0, max: 1000, help: t('tradingHelpTakeProfitPct') },
     { key: 'safetyNet' as const, label: t('tradingSafetyNet'), min: 0, help: t('tradingHelpSafetyNet') },
@@ -136,11 +135,11 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
     <p className="setup-guide-note">{t('tradingSavedProfilePrefix')} {network}: <b>{savedLabel}</b>. {isPreset ? `${lang === 'id' ? 'Tinjau preset' : 'Review the'} ${TRADING_PRESETS[profile as TradingPresetId].name} ${t('tradingPresetBanner')}` : (lang === 'id' ? 'Edit hanya nilai yang ingin kamu ubah. Nilai manual sebelumnya disimpan terpisah untuk tiap jaringan.' : 'Edit only the values you want to change. The previous manual values are retained separately for each network.')}</p>
     <p className="field-help">{isPreset ? (lang === 'id' ? 'Nilai preset ditetapkan oleh Owner. SL dan TP dihitung dari margin order. Dana aman dan nominal minimal order mengikuti konfigurasi akun kamu.' : 'Preset values are set by the Owner. SL and TP are percentages of order margin. Capital reserves and order minimums reflect your network configuration.') : (lang === 'id' ? 'Semua kolom manual wajib diisi.' : 'All manual fields are required.')}</p>
     <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
-      <div className="settings-grid">{fields.map((f) => <label key={f.key}>{f.label}<input aria-label={f.label} type="number" required={f.key !== 'orderSizePct'} min={f.min} max={f.max} step={f.step ?? 'any'} disabled={busy} value={values[f.key] ?? ''} onChange={(e) => {
+      <div className="settings-grid">{fields.map((f) => <label key={f.key}>{f.label}<input aria-label={f.label} type="number" required min={f.min} max={f.max} step={f.step ?? 'any'} disabled={busy} value={values[f.key] ?? ''} onChange={(e) => {
         const val = Number(e.target.value);
         setDrafts((old) => {
           if (!old) return old;
-          const current = { ...old[network], [f.key]: f.key === 'orderSizePct' && e.target.value === '' ? null : val };
+          const current = { ...old[network], [f.key]: val };
           if (f.key === 'takeProfitPct' && current.defaultStopPct > 0) {
             current.takeProfitR = Math.round((val / current.defaultStopPct) * 100) / 100;
           } else if (f.key === 'defaultStopPct' && (current.takeProfitPct ?? 0) > 0) {

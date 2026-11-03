@@ -116,7 +116,8 @@ export function resolveTradingPreset(preset: TradingPresetId, base: TradingSetti
     maxOrderUsdt: base.maxOrderUsdt ?? 0,
     minOrderUsdt: base.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
     safetyNet: base.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet,
-    ...(base.orderSizePct != null ? { orderSizePct: base.orderSizePct } : {})
+    maxPositions: Math.max(1, Math.min(4, Math.floor(values.maxPositions ?? base.maxPositions ?? 3))),
+    ...(base.orderSizePct != null && base.orderSizePct !== 1.5 ? { orderSizePct: base.orderSizePct } : {})
   });
 }
 

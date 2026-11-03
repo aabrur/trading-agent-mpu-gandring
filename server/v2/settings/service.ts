@@ -230,7 +230,7 @@ export class SettingsService {
       maxLossPerTradePct: numOr(env.MAX_LOSS_PER_TRADE_PCT, DEFAULT_TRADING_SETTINGS.maxLossPerTradePct),
       minEntryConfidencePct: numOr(env.MIN_ENTRY_CONFIDENCE_PCT, DEFAULT_TRADING_SETTINGS.minEntryConfidencePct),
       maxLeverage: Math.trunc(numOr(env.MAX_LEVERAGE, DEFAULT_TRADING_SETTINGS.maxLeverage)),
-      ...(env.ORDER_SIZE_PCT ? { orderSizePct: numOr(env.ORDER_SIZE_PCT, 10) } : {}),
+      ...(env.ORDER_SIZE_PCT && numOr(env.ORDER_SIZE_PCT, 0) !== 1.5 ? { orderSizePct: numOr(env.ORDER_SIZE_PCT, 10) } : {}),
       defaultStopPct: numOr(env.DEFAULT_STOP_PCT, DEFAULT_TRADING_SETTINGS.defaultStopPct),
       minStopPct: numOr(env.MIN_STOP_PCT, DEFAULT_TRADING_SETTINGS.minStopPct),
       ...(env.TAKE_PROFIT_PCT !== ''
@@ -393,6 +393,15 @@ export class SettingsService {
     if (existing.rows.length > 0) {
       const row = existing.rows[0]!;
       const effective = OwnerSettingsSchema.parse(JSON.parse(String(row.payload_json)));
+      if (effective.trading && (effective.trading.orderSizePct === 1.5 || effective.trading.orderSizePct == null)) {
+        delete (effective.trading as any).orderSizePct;
+      }
+      if (effective.networkProfiles?.testnet && (effective.networkProfiles.testnet.orderSizePct === 1.5 || effective.networkProfiles.testnet.orderSizePct == null)) {
+        delete (effective.networkProfiles.testnet as any).orderSizePct;
+      }
+      if (effective.networkProfiles?.mainnet && (effective.networkProfiles.mainnet.orderSizePct === 1.5 || effective.networkProfiles.mainnet.orderSizePct == null)) {
+        delete (effective.networkProfiles.mainnet as any).orderSizePct;
+      }
       const appliedAt = Date.parse(String(row.updated_at));
       const service = new SettingsService(
         store,

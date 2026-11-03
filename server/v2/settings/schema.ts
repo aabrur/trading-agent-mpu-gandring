@@ -151,7 +151,8 @@ export function resolveTradingPresetValues(
     maxOrderUsdt: savedBase.maxOrderUsdt ?? 0,
     minOrderUsdt: savedBase.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
     safetyNet: savedBase.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet,
-    ...(savedBase.orderSizePct != null ? { orderSizePct: savedBase.orderSizePct } : {})
+    maxPositions: Math.max(1, Math.min(4, Math.floor(presetValues.maxPositions ?? savedBase.maxPositions ?? 3))),
+    ...(savedBase.orderSizePct != null && savedBase.orderSizePct !== 1.5 ? { orderSizePct: savedBase.orderSizePct } : {})
   });
 }
 

@@ -327,11 +327,12 @@ export function ownerAllocationPerOrder(
   n: number,
   orderSizePct?: number | null
 ): number {
-  if (orderSizePct != null && Number.isFinite(orderSizePct) && orderSizePct > 0) {
+  if (orderSizePct != null && Number.isFinite(orderSizePct) && orderSizePct > 0 && orderSizePct !== 1.5) {
     return Math.floor(((moneyTrade * orderSizePct) / 100) * 100) / 100;
   }
-  if (n > 0 && Number.isFinite(moneyTrade) && moneyTrade > 0) {
-    return Math.floor((moneyTrade / n) * 100) / 100;
+  const slots = Math.max(1, Math.min(4, Math.floor(n || 1)));
+  if (slots > 0 && Number.isFinite(moneyTrade) && moneyTrade > 0) {
+    return Math.floor((moneyTrade / slots) * 100) / 100;
   }
   return 0;
 }
@@ -443,7 +444,7 @@ export function createReplacementRuntime(
   const initN = Math.max(1, Number.isFinite(rawN) ? rawN : 3);
 
   const moneyTrade = Math.round(Math.max(0, initBal - initSafety) * 100) / 100;
-  const orderSizePct = savedTrading?.orderSizePct;
+  const orderSizePct = savedTrading?.orderSizePct === 1.5 ? null : (savedTrading?.orderSizePct ?? null);
   const perOrder = ownerAllocationPerOrder(moneyTrade, initN, orderSizePct);
   const canOpen = perOrder > 0 && (options.initialPositions ? options.initialPositions.length < initN : true);
 
@@ -3139,8 +3140,9 @@ export async function startReplacementServer(
             d.paper.safetyNet = safety;
             d.paper.n = slots;
             d.paper.moneyTrade = mt;
-            d.paper.orderSizePct = trading.orderSizePct;
-            d.paper.perOrder = ownerAllocationPerOrder(mt, slots, trading.orderSizePct);
+            const effectiveOrderSizePct = trading.orderSizePct === 1.5 ? null : (trading.orderSizePct ?? null);
+            d.paper.orderSizePct = effectiveOrderSizePct;
+            d.paper.perOrder = ownerAllocationPerOrder(mt, slots, effectiveOrderSizePct);
             d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < slots;
             if (d.accountState) {
               d.accountState.hasTradableCapital = d.paper.canOpen;
