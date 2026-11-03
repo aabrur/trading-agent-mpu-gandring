@@ -223,7 +223,7 @@ describe('T04 Bybit linear realtime hub', () => {
     const ws = sockets[0]!;
 
     expect(SUPPORTED_TIMEFRAMES).toEqual(['1m', '5m', '15m', '1h', '4h', '1d']);
-    expect(CORE_ANALYSIS_TIMEFRAMES).toEqual(['1m', '5m', '1h', '4h', '1d']);
+    expect(CORE_ANALYSIS_TIMEFRAMES).toEqual(['1m', '5m', '15m', '1h', '4h', '1d']);
 
     const initial = hub.snapshot('BTCUSDT');
     expect(Object.keys(initial.closed)).toEqual(['1m', '5m', '15m', '1h', '4h', '1d']);

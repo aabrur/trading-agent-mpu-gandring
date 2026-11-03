@@ -13,6 +13,10 @@ import {
   type ResearchFinding
 } from './provenance.js';
 import { computeWhaleIntelligence } from '../market/whale.js';
+import type { BybitMarketHub } from '../market/bybit.js';
+import { getLiveAnnouncementsResult } from '../../market/live-news.js';
+import { getCoinMarketCapSummary } from '../../market/coinmarketcap.js';
+import { getNewsFor } from '../../market/index.js';
 
 export const HOST_TOOL_NAMES = [
   'search_web',
@@ -89,6 +93,7 @@ export interface ResearchHostOptions {
   browserWorker?: BrowserResearchWorker;
   urlPolicy?: ResearchUrlPolicy;
   optionalSources?: OptionalResearchSources;
+  marketHub?: BybitMarketHub;
   readMarketSnapshot?: (symbol: string) => Promise<unknown>;
   readOrderbook?: (symbol: string) => Promise<unknown>;
   readCandles?: (symbol: string, tf?: string) => Promise<unknown>;
@@ -526,21 +531,47 @@ export class ResearchHost {
         if (!parsed.success) {
           return finish('error', null, [], 'Expected structured { url } argument');
         }
+        let finalUrl = parsed.data.url;
+        let text = '';
+        let title: string | null = null;
+        let publishedAt: number | null = null;
+        let eventAt: number | null = null;
+        let blockedSubrequests: string[] = [];
+
         const extracted = await this.browserWorker.extractPage({
           url: parsed.data.url,
           clickSelector: parsed.data.clickSelector,
           waitForSelector: parsed.data.waitForSelector
         });
-        if (!extracted.ok) {
-          return finish('unavailable', null, [], extracted.error, extracted.finalUrl);
+
+        if (extracted.ok) {
+          finalUrl = extracted.finalUrl;
+          text = extracted.text;
+          title = extracted.title;
+          publishedAt = extracted.publishedAt;
+          eventAt = extracted.eventAt;
+          blockedSubrequests = extracted.blockedSubrequests;
+        } else {
+          // Fallback to safeFetchUrl + extractHtmlMetadata if browser worker fails
+          const fetched = await this.safeFetchUrl(parsed.data.url);
+          if (!fetched.ok) {
+            return finish('unavailable', null, [], extracted.error || fetched.error, extracted.finalUrl || fetched.finalUrl);
+          }
+          finalUrl = fetched.finalUrl;
+          const meta = extractHtmlMetadata(fetched.body);
+          text = meta.text || fetched.body;
+          title = meta.title;
+          publishedAt = meta.publishedAt;
+          eventAt = meta.eventAt;
         }
-        const rawSanitized = sanitizeUntrusted(extracted.text, 8000);
+
+        const rawSanitized = sanitizeUntrusted(text, 8000);
         const finding = normalizeResearchFinding({
           claim: rawSanitized.text,
-          url: extracted.finalUrl,
-          publisher: extracted.title,
-          publishedAt: extracted.publishedAt,
-          eventAt: extracted.eventAt,
+          url: finalUrl,
+          publisher: title ?? undefined,
+          publishedAt,
+          eventAt,
           observedAt: Date.now(),
           certainty: 'REPORTED'
         });
@@ -550,13 +581,13 @@ export class ResearchHost {
           {
             untrusted: true,
             injectionFlagged: rawSanitized.flagged,
-            blockedSubrequests: extracted.blockedSubrequests,
-            fenced: fenceData(extracted.finalUrl, { title: extracted.title, claim: finding.claim }),
+            blockedSubrequests,
+            fenced: fenceData(finalUrl, { title, claim: finding.claim }),
             finding
           },
-          [finding.id, extracted.finalUrl],
+          [finding.id, finalUrl],
           null,
-          extracted.finalUrl,
+          finalUrl,
           finding.excerptHash
         );
       }
@@ -570,9 +601,14 @@ export class ResearchHost {
         const whaleReport = await computeWhaleIntelligence({
           symbol: parsed.data.symbol,
           apiKey: this.options.optionalSources?.whaleAlertKey,
-          fetchImpl: this.options.fetchImpl
+          fetchImpl: this.options.fetchImpl,
+          marketHub: this.options.marketHub
         });
-        if (optionalProviders.whaleAlert === 'UNCONFIGURED' && whaleReport.onchain.status === 'UNCONFIGURED') {
+        if (
+          optionalProviders.whaleAlert === 'UNCONFIGURED' &&
+          whaleReport.onchain.status === 'UNCONFIGURED' &&
+          whaleReport.exchange.status !== 'AVAILABLE'
+        ) {
           return finish(
             'unavailable',
             {
@@ -587,8 +623,9 @@ export class ResearchHost {
             'Optional on-chain provider is unconfigured'
           );
         }
+        const isAvailable = whaleReport.exchange.status === 'AVAILABLE' || whaleReport.onchain.status !== 'UNAVAILABLE';
         return finish(
-          whaleReport.onchain.status === 'UNAVAILABLE' ? 'unavailable' : 'ok',
+          isAvailable ? 'ok' : 'unavailable',
           {
             symbol: parsed.data.symbol,
             veto: false,
@@ -596,8 +633,8 @@ export class ResearchHost {
             report: whaleReport,
             items: whaleReport.onchain.events
           },
-          ['whale-alert'],
-          whaleReport.onchain.status === 'UNAVAILABLE' ? whaleReport.onchain.summary : null
+          ['whale-alert', 'whale-exchange'],
+          isAvailable ? null : whaleReport.onchain.summary
         );
       }
 
@@ -653,10 +690,76 @@ export class ResearchHost {
       evidenceId: `query:${query.symbol}`
     };
 
-    for (const url of query.urls ?? []) {
-      const res = await this.run({ name: 'search_web', args: { url } }, ctx);
-      if (res.status === 'ok' && res.data && typeof res.data === 'object' && 'finding' in res.data) {
-        collected.push((res.data as { finding: ResearchFinding }).finding);
+    if (query.urls && query.urls.length > 0) {
+      for (const url of query.urls) {
+        const res = await this.run({ name: 'search_web', args: { url } }, ctx);
+        if (res.status === 'ok' && res.data && typeof res.data === 'object' && 'finding' in res.data) {
+          collected.push((res.data as { finding: ResearchFinding }).finding);
+        }
+      }
+    } else {
+      // Auto-fetch if no URLs provided
+      try {
+        const ann = await getLiveAnnouncementsResult(query.symbol, this.fetchImpl);
+        for (const item of (ann.items ?? []).slice(0, 5)) {
+          const rawSanitized = sanitizeUntrusted(`${item.headline}\n${item.body ?? ''}`, 4000);
+          const finding = normalizeResearchFinding({
+            claim: rawSanitized.text,
+            url: (item as any).url || (item as any).sourceUrl || 'https://announcements.bybit.com',
+            publisher: item.source || 'Bybit Announcements',
+            publishedAt: item.publishedAt ?? null,
+            eventAt: null,
+            observedAt: item.observedAt ?? Date.now(),
+            certainty: 'REPORTED'
+          });
+          this.findings.set(finding.id, finding);
+          collected.push(finding);
+        }
+      } catch {}
+
+      if (this.options.optionalSources?.cryptopanicKey) {
+        try {
+          const cpItems = await getNewsFor(query.symbol, {
+            news: {
+              provider: 'cryptopanic',
+              key: this.options.optionalSources.cryptopanicKey,
+              baseUrl: 'https://cryptopanic.com/api/v1/posts/'
+            }
+          }, this.fetchImpl);
+          for (const item of (cpItems ?? []).slice(0, 5)) {
+            const rawSanitized = sanitizeUntrusted(`${item.headline}\n${item.body ?? ''}`, 4000);
+            const finding = normalizeResearchFinding({
+              claim: rawSanitized.text,
+              url: (item as any).url || (item as any).sourceUrl || 'https://cryptopanic.com',
+              publisher: item.source || 'CryptoPanic',
+              publishedAt: item.publishedAt ?? null,
+              eventAt: null,
+              observedAt: Date.now(),
+              certainty: 'REPORTED'
+            });
+            this.findings.set(finding.id, finding);
+            collected.push(finding);
+          }
+        } catch {}
+      }
+
+      if (this.options.optionalSources?.coinmarketcapKey) {
+        try {
+          const cmc = await getCoinMarketCapSummary(query.symbol);
+          if (cmc?.momentum) {
+            const finding = normalizeResearchFinding({
+              claim: `CMC 24h Vol: ${cmc.momentum.volume24h}, Vol Change: ${cmc.momentum.volumeChange24hPct}%, Dominance: ${cmc.global?.btcDominance ?? 'N/A'}%`,
+              url: 'https://coinmarketcap.com',
+              publisher: 'CoinMarketCap',
+              publishedAt: cmc.fetchedAt,
+              eventAt: null,
+              observedAt: Date.now(),
+              certainty: 'REPORTED'
+            });
+            this.findings.set(finding.id, finding);
+            collected.push(finding);
+          }
+        } catch {}
       }
     }
 

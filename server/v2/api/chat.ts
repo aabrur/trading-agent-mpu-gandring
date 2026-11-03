@@ -2,8 +2,11 @@ import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { safe } from '../../redact.js';
-import { isLocalLoopbackClient, type OfficeRuntime, type OfficeState } from '../contracts.js';
+import { isLocalLoopbackClient, type OfficeRuntime, type OfficeState, type TF } from '../contracts.js';
 import type { RuntimeStore } from '../store/database.js';
+import type { BybitMarketHub } from '../market/bybit.js';
+import { computeIntelligence } from '../market/intelligence.js';
+import { liveAnnouncementObservation } from '../../market/live-news.js';
 
 export interface StudioConversation {
   id: string;
@@ -267,6 +270,19 @@ export interface LiveDeskChatContext {
   watchlistPrices: Array<{ symbol: string; last: number | null; freshness: DeskFreshness; source: string }>;
   assignedModels: Array<{ role: string; provider: string | null; model: string | null }>;
   freshness: { positions: DeskFreshness; prices: DeskFreshness };
+  marketIntelligenceBySymbol?: Record<string, {
+    timeframes: Record<string, unknown>;
+    microstructure: {
+      spreadBps: number | null;
+      bookImbalanceTop10: number | null;
+      takerFlow: unknown | null;
+      fundingRate: number | null;
+      openInterest: number | null;
+    };
+    whaleExchangeFlow?: unknown;
+    liveNews?: unknown;
+  }>;
+  extraFeeds?: Record<string, unknown>;
 }
 
 function classifyFreshness(at: number | null | undefined, now: number): DeskFreshness {
@@ -279,7 +295,13 @@ function classifyFreshness(at: number | null | undefined, now: number): DeskFres
 
 export function buildLiveDeskChatContext(
   state: OfficeState,
-  options: { capturedAt?: string; now?: number; secrets?: Record<string, unknown> } = {}
+  options: {
+    capturedAt?: string;
+    now?: number;
+    secrets?: Record<string, unknown>;
+    marketHub?: BybitMarketHub;
+    extraFeeds?: Record<string, unknown>;
+  } = {}
 ): LiveDeskChatContext {
   const now = options.now ?? Date.now();
   const capturedAt = options.capturedAt ?? new Date(now).toISOString();
@@ -290,6 +312,107 @@ export function buildLiveDeskChatContext(
     freshness: classifyFreshness(ticker.at, now),
     source: ticker.source ?? 'unknown'
   }));
+
+  const marketIntelligenceBySymbol: Record<string, any> = {};
+  if (options.marketHub) {
+    const rawSymbols = (state.watchlist && state.watchlist.length > 0)
+      ? state.watchlist
+      : Object.keys(state.tickers ?? {});
+    const activeSymbols = Array.from(new Set(rawSymbols)).slice(0, 8);
+
+    for (const sym of activeSymbols) {
+      try {
+        const frame = options.marketHub.snapshot(sym);
+        const book = options.marketHub.orderbook(sym);
+        const trades = options.marketHub.recentTrades(sym);
+        const intel = computeIntelligence(frame, { orderbook: book, trades });
+
+        const tfSummary: Record<string, any> = {};
+        for (const [tf, feat] of Object.entries(intel.byTimeframe ?? {})) {
+          if (!feat) continue;
+          const highs = feat.structure?.pivots?.filter((p) => p.kind === 'HIGH') ?? [];
+          const lows = feat.structure?.pivots?.filter((p) => p.kind === 'LOW') ?? [];
+          const closed = frame.closed[tf as TF]?.filter((b) => b.confirmed) ?? [];
+          const recentCandles = closed.slice(-5).map((b) => ({
+            t: b.startAt,
+            o: b.open,
+            h: b.high,
+            l: b.low,
+            c: b.close,
+            v: b.volume,
+            dir: Number(b.close) >= Number(b.open) ? 'BULL' : 'BEAR'
+          }));
+
+          tfSummary[tf] = {
+            momentum: feat.momentumRegime,
+            volatility: feat.volatilityRegime,
+            ema9: feat.ema9?.value ?? null,
+            ema21: feat.ema21?.value ?? null,
+            ema50: feat.ema50?.value ?? null,
+            ema200: feat.ema200?.value ?? null,
+            rsi14: feat.rsi14?.value ?? null,
+            atr14: feat.atr14?.value ?? null,
+            macd: feat.macd?.value ? { line: feat.macd.value.macd, signal: feat.macd.value.signal, histogram: feat.macd.value.histogram } : null,
+            vwapUtc: feat.vwapUtc?.value ?? null,
+            relativeVolume20: feat.relativeVolume20?.value ?? null,
+            structure: {
+              swingHigh: highs[highs.length - 1]?.price ?? null,
+              swingLow: lows[lows.length - 1]?.price ?? null,
+              bos: feat.structure?.bos ?? null,
+              choch: feat.structure?.choch ?? null,
+              rsiDivergence: feat.structure?.rsiDivergence ?? null
+            },
+            recentCandles
+          };
+        }
+
+        const tradesList = options.marketHub.recentTrades(sym) ?? [];
+        let largeBuyVol = 0;
+        let largeSellVol = 0;
+        const exchangeTrades: any[] = [];
+        for (const t of tradesList) {
+          const p = Number(t.price);
+          const s = Number(t.size);
+          const usd = p * s;
+          if (usd >= 50_000) {
+            const side = t.side === 'Buy' ? 'BUY' : 'SELL';
+            if (side === 'BUY') largeBuyVol += usd;
+            else largeSellVol += usd;
+            exchangeTrades.push({ side, price: p, quantity: s, usdValue: usd, time: t.sourceAt || t.observedAt });
+          }
+        }
+        let obImbalance: number | null = null;
+        if (book && book.bids.length && book.asks.length) {
+          const topBids = book.bids.slice(0, 20).reduce((acc: number, b) => acc + (Number(b.price) * Number(b.size)), 0);
+          const topAsks = book.asks.slice(0, 20).reduce((acc: number, a) => acc + (Number(a.price) * Number(a.size)), 0);
+          const tot = topBids + topAsks;
+          obImbalance = tot > 0 ? (topBids - topAsks) / tot : 0;
+        }
+
+        marketIntelligenceBySymbol[sym] = {
+          timeframes: tfSummary,
+          microstructure: {
+            spreadBps: intel.microstructure?.spreadBps?.value ?? null,
+            bookImbalanceTop10: intel.microstructure?.bookImbalanceTop10?.value ?? null,
+            takerFlow: intel.microstructure?.takerFlow?.value ?? null,
+            fundingRate: intel.microstructure?.funding?.value ?? null,
+            openInterest: intel.microstructure?.openInterest?.value ?? null
+          },
+          whaleExchangeFlow: {
+            status: 'AVAILABLE',
+            largeTradesCount: exchangeTrades.length,
+            largeBuyVolumeUsd: largeBuyVol,
+            largeSellVolumeUsd: largeSellVol,
+            netWhaleDeltaUsd: largeBuyVol - largeSellVol,
+            orderbookImbalanceRatio: obImbalance,
+            recentLargeTrades: exchangeTrades.slice(0, 5)
+          },
+          liveNews: liveAnnouncementObservation(sym) ?? null
+        };
+      } catch {}
+    }
+  }
+
   const context: LiveDeskChatContext = {
     capturedAt,
     informationalOnly: true,
@@ -337,7 +460,9 @@ export function buildLiveDeskChatContext(
     freshness: {
       positions: posFresh,
       prices: prices.length ? prices[0]!.freshness : 'unavailable'
-    }
+    },
+    marketIntelligenceBySymbol: Object.keys(marketIntelligenceBySymbol).length > 0 ? marketIntelligenceBySymbol : undefined,
+    extraFeeds: options.extraFeeds
   };
   const encoded = JSON.stringify(context);
   if (options.secrets) {

@@ -58,6 +58,19 @@ import { ExecutionGateway, convertDailyLossPctToUsdt, resolveOwnerPerOrderUsdt }
 import { getVenueAdapter, createTransportFromAdapter } from './execution/adapters/factory.js';
 import { ChatService, buildLiveDeskChatContext } from './api/chat.js';
 import { PaperVenue } from './sandbox/paper.js';
+import { analyzeSMC } from '../market/smc.js';
+import {
+  fetchL2Orderbook,
+  fetchDerivatives,
+  getNewsFor,
+  getLiveAnnouncementsResult,
+  buildNewsBriefing,
+  normalizeLegacyItem,
+  getCoinMarketCapSummary
+} from '../market/index.js';
+import { computeWhaleIntelligence } from './market/whale.js';
+import type { VenueAdapter } from './execution/adapters/types.js';
+import type { MarketFrame, TF } from './contracts.js';
 import {
   assertLivePermissionEvidence,
   type PermissionEvidence,
@@ -314,6 +327,7 @@ export interface ReplacementRuntimeOptions {
   runtimeIdentity?: OfficeState['runtimeIdentity'];
   accountState?: OfficeState['accountState'];
   executionGateway?: ExecutionGateway;
+  venueAdapter?: VenueAdapter;
   settings?: SettingsService;
   secrets?: SecretStore;
   chatService?: ChatService;
@@ -806,8 +820,9 @@ export function createReplacementRuntime(
     });
 
     let intelFrame: IntelligenceFrame;
+    let marketFrame: MarketFrame | undefined;
     try {
-      const marketFrame = marketHub.snapshot(targetSymbol);
+      marketFrame = marketHub.snapshot(targetSymbol);
       const book = marketHub.orderbook(targetSymbol);
       const trades = marketHub.recentTrades(targetSymbol);
       intelFrame = computeIntelligence(marketFrame, { orderbook: book, trades });
@@ -838,6 +853,45 @@ export function createReplacementRuntime(
         if (!feat) continue;
         const highs = feat.structure?.pivots?.filter((p) => p.kind === 'HIGH') ?? [];
         const lows = feat.structure?.pivots?.filter((p) => p.kind === 'LOW') ?? [];
+
+        // 8 closed bars
+        const closedBars = marketFrame?.closed[tf as TF]?.filter((b) => b.confirmed) ?? [];
+        const recentCandles = closedBars.slice(-8).map((b) => ({
+          t: b.startAt,
+          o: b.open,
+          h: b.high,
+          l: b.low,
+          c: b.close,
+          v: b.volume,
+          dir: Number(b.close) >= Number(b.open) ? 'BULL' : 'BEAR'
+        }));
+
+        // SMC analysis for 5m, 15m, 1h, 4h
+        let smcData: unknown = null;
+        if (['5m', '15m', '1h', '4h'].includes(tf) && closedBars.length > 0) {
+          try {
+            const smcRes = analyzeSMC(closedBars.map((b) => ({
+              timestamp: b.startAt,
+              open: Number(b.open),
+              high: Number(b.high),
+              low: Number(b.low),
+              close: Number(b.close),
+              volume: Number(b.volume)
+            })));
+            if (smcRes) {
+              smcData = {
+                marketTrend: smcRes.marketTrend,
+                lastBreak: smcRes.lastBreak,
+                activeFVGs: smcRes.activeFVGs,
+                activeOrderBlocks: smcRes.activeOrderBlocks,
+                premiumDiscountZone: smcRes.premiumDiscountZone
+              };
+            }
+          } catch {
+            smcData = null;
+          }
+        }
+
         timeframesSummary[tf] = {
           momentum: feat.momentumRegime,
           volatility: feat.volatilityRegime,
@@ -869,7 +923,9 @@ export function createReplacementRuntime(
             bos: feat.structure?.bos ?? null,
             choch: feat.structure?.choch ?? null,
             rsiDivergence: feat.structure?.rsiDivergence ?? null
-          }
+          },
+          recentCandles,
+          ...(smcData ? { smc: smcData } : {})
         };
       }
     }
@@ -894,6 +950,93 @@ export function createReplacementRuntime(
     } : null);
     const currentPosCount = snap.mode === 'PAPER' ? snap.paper.positions.length : (snap.venueAccount?.positions?.length || snap.paper.positions.length);
 
+    // Fetch multi-venue quotes, whale intelligence, news, and catalysts in parallel with safe error isolation
+    const venueName = (snap.venue?.name as any) || 'aster';
+    const whaleKey = options.secrets?.getSecret('WHALE_ALERT_API_KEY') ?? env.WHALE_ALERT_API_KEY ?? undefined;
+    const cryptopanicKey = options.secrets?.getSecret('CRYPTOPANIC_API_KEY') ?? env.CRYPTOPANIC_API_KEY ?? undefined;
+
+    const [
+      venueObRes,
+      venueDerivsRes,
+      bybitDerivsRes,
+      hlObRes,
+      nativeQuoteRes,
+      whaleRes,
+      newsRes,
+      liveAnnounceRes,
+      catalystRes
+    ] = await Promise.allSettled([
+      fetchL2Orderbook(targetSymbol, venueName, venueName, snap.venueAccount?.status ? 'mainnet' : 'testnet'),
+      fetchDerivatives(targetSymbol, venueName, Number(snap.tickers[targetSymbol]?.last ?? 0)),
+      fetchDerivatives(targetSymbol, 'bybit', Number(snap.tickers[targetSymbol]?.last ?? 0)),
+      fetchL2Orderbook(targetSymbol, 'hyperliquid', 'hyperliquid'),
+      options.venueAdapter?.quote ? options.venueAdapter.quote(targetSymbol) : Promise.resolve(null),
+      computeWhaleIntelligence({ symbol: targetSymbol, apiKey: whaleKey, marketHub }),
+      getNewsFor(targetSymbol, {
+        tradingMode: snap.mode,
+        news: {
+          provider: cryptopanicKey ? 'cryptopanic' : 'sample',
+          key: cryptopanicKey ?? '',
+          baseUrl: 'https://cryptopanic.com/api/v1/posts/'
+        }
+      }),
+      getLiveAnnouncementsResult(targetSymbol),
+      getCoinMarketCapSummary(targetSymbol)
+    ]);
+
+    const venueOb = venueObRes.status === 'fulfilled' ? venueObRes.value : null;
+    const venueDerivs = venueDerivsRes.status === 'fulfilled' ? venueDerivsRes.value : null;
+    const bybitDerivs = bybitDerivsRes.status === 'fulfilled' ? bybitDerivsRes.value : null;
+    const hlOb = hlObRes.status === 'fulfilled' ? hlObRes.value : null;
+    const nativeQuote = nativeQuoteRes.status === 'fulfilled' ? nativeQuoteRes.value : null;
+    const whaleReport = whaleRes.status === 'fulfilled' ? whaleRes.value : null;
+    const newsItems = newsRes.status === 'fulfilled' ? (newsRes.value ?? []) : [];
+    const liveAnnouncements = liveAnnounceRes.status === 'fulfilled' ? (liveAnnounceRes.value?.items ?? []) : [];
+    const combinedNews = [...liveAnnouncements, ...newsItems];
+    const normalizedItems = combinedNews.map((item) => normalizeLegacyItem(item, targetSymbol));
+    const newsBriefing = buildNewsBriefing(targetSymbol, normalizedItems, cryptopanicKey || liveAnnouncements.length > 0 ? 'CONFIGURED_LIVE' : 'UNCONFIGURED');
+    const cmcSummary = catalystRes.status === 'fulfilled' ? catalystRes.value : null;
+
+    const multiVenue = {
+      preferredVenue: snap.venue?.name ?? 'bybit',
+      nativeQuote: nativeQuote ? {
+        last: nativeQuote.last,
+        bid: nativeQuote.bid,
+        ask: nativeQuote.ask,
+        ageMs: nativeQuote.ageMs
+      } : null,
+      venues: {
+        bybit: {
+          last: snap.tickers[targetSymbol]?.last ?? null,
+          bid: intelFrame.microstructure?.spreadBps ? marketFrame?.bid.value : null,
+          ask: intelFrame.microstructure?.spreadBps ? marketFrame?.ask.value : null,
+          spreadBps: intelFrame.microstructure?.spreadBps?.value ?? null,
+          fundingRate: intelFrame.microstructure?.funding?.value ?? bybitDerivs?.fundingRate ?? null,
+          openInterest: intelFrame.microstructure?.openInterest?.value ?? bybitDerivs?.openInterest ?? null
+        },
+        aster: {
+          last: venueOb?.microPrice ?? null,
+          bid: venueOb?.bids?.[0]?.[0] ?? null,
+          ask: venueOb?.asks?.[0]?.[0] ?? null,
+          spreadBps: venueOb?.spreadBps ?? null,
+          fundingRate: venueDerivs?.fundingRate ?? null,
+          openInterest: venueDerivs?.openInterest ?? null
+        },
+        hyperliquid: {
+          last: hlOb?.microPrice ?? null,
+          bid: hlOb?.bids?.[0]?.[0] ?? null,
+          ask: hlOb?.asks?.[0]?.[0] ?? null,
+          spreadBps: hlOb?.spreadBps ?? null,
+          fundingRate: venueDerivs?.multiVenueFunding?.hyperliquid?.fundingRate ?? null,
+          openInterest: null
+        }
+      }
+    };
+
+    const recentTvAlert = (snap.tradingview as any)?.recentAlerts?.find(
+      (a: any) => a.symbol === targetSymbol && Date.now() - a.receivedAt < 30 * 60 * 1000
+    ) ?? ((snap.tradingview as any)?.lastAlert?.symbol === targetSymbol ? (snap.tradingview as any)?.lastAlert : null);
+
     const marketSummary: Record<string, unknown> = {
       symbol: targetSymbol,
       venue: 'bybit',
@@ -902,6 +1045,13 @@ export function createReplacementRuntime(
       evidenceId: intelFrame.evidenceId,
       timeframes: timeframesSummary,
       microstructure: microstructureSummary,
+      multiVenue,
+      tradingviewAlert: recentTvAlert ? {
+        action: recentTvAlert.action,
+        price: recentTvAlert.price,
+        note: recentTvAlert.note,
+        receivedAt: recentTvAlert.receivedAt
+      } : null,
       opposingFacts: intelFrame.opposingFacts,
       existingPosition: existingPos ? {
         side: existingPos.side,
@@ -916,10 +1066,28 @@ export function createReplacementRuntime(
         occupiedPositions: currentPosCount,
         freeSlots: Math.max(0, (snap.paper.n || 3) - currentPosCount)
       },
+      intelligenceFeeds: {
+        whale: whaleReport,
+        news: newsBriefing,
+        catalyst: cmcSummary?.momentum ?? null
+      },
       optionalResearch: {
-        news: { status: 'unconfigured', reason: 'optional provider not configured (no confidence penalty)' },
-        whale: { status: 'unconfigured', reason: 'optional provider not configured (no confidence penalty)' },
-        catalyst: { status: 'unconfigured', reason: 'optional provider not configured (no confidence penalty)' }
+        news: {
+          status: newsBriefing.events.length > 0 ? 'available' : 'no_events',
+          providerStatus: newsBriefing.providerStatus,
+          instruction: 'NO_VETO: If no high-impact breaking news exists, do NOT penalize confidence.',
+          items: newsBriefing.events.slice(0, 5)
+        },
+        whale: {
+          status: whaleReport && (whaleReport.exchange.largeTrades.length > 0 || whaleReport.onchain.events.length > 0) ? 'available' : 'no_events',
+          instruction: 'NO_VETO: If no massive whale transaction detected, do NOT penalize confidence.',
+          report: whaleReport
+        },
+        catalyst: {
+          status: cmcSummary?.momentum?.sourceStatus === 'live' ? 'available' : (cmcSummary ? 'cached' : 'no_events'),
+          instruction: 'NO_VETO: If external catalyst feed has no update, do NOT penalize confidence.',
+          momentum: cmcSummary?.momentum ?? null
+        }
       }
     };
 
@@ -1479,7 +1647,7 @@ export function createReplacementRuntime(
       const roles: RoleId[] = targetRole ? [targetRole] : [...ROLE_IDS];
       const prompt = toAll ? raw.replace(/^@all\s+/i, '') : raw;
       const conversationId = input.conversationId || 'office';
-      const deskSnapshot = buildLiveDeskChatContext(snapshot());
+      const deskSnapshot = buildLiveDeskChatContext(snapshot(), { marketHub });
       const deskContext = `Live desk snapshot (informational only; not an execution command).\n${JSON.stringify(deskSnapshot, null, 2)}`;
       const outcomes = await Promise.allSettled(roles.map(async role => {
         const answer = await roleRunner.chat({
@@ -1489,7 +1657,7 @@ export function createReplacementRuntime(
           deskContext,
           configVersion: options.settings?.current().activeVersion ?? 1
         });
-        return { role, answer: extractCleanAgentReply(String(answer)) };
+        return { role, answer: extractCleanAgentReply(String(answer)), rawAnswer: String(answer) };
       }));
       const results = outcomes.flatMap((item) => item.status === 'fulfilled' ? [item.value] : []);
       const failures = outcomes.length - results.length;
@@ -1524,6 +1692,21 @@ export function createReplacementRuntime(
             role,
             text: answer
           });
+        }
+      }
+
+      for (const { rawAnswer } of results) {
+        if (!rawAnswer) continue;
+        try {
+          const parsed = JSON.parse(rawAnswer);
+          if (parsed && typeof parsed === 'object' && typeof parsed.commandToExecute === 'string' && parsed.commandToExecute.trim()) {
+            void handleCommand({ text: parsed.commandToExecute.trim(), conversationId }).catch(console.error);
+          }
+        } catch {
+          const match = rawAnswer.match(/"commandToExecute"\s*:\s*"([^"]+)"/i);
+          if (match && match[1]) {
+            void handleCommand({ text: match[1].trim(), conversationId }).catch(console.error);
+          }
         }
       }
       return {
@@ -2861,6 +3044,7 @@ export async function startReplacementServer(
       whaleAlertKey,
       coinmarketcapKey
     },
+    marketHub,
     readMarketSnapshot: async (sym) => marketHub.snapshot(sym),
     readOrderbook: async (sym) => marketHub.orderbook(sym),
     readCandles: async (sym, tf) => marketHub.candles(sym, tf as any),
@@ -2892,6 +3076,7 @@ export async function startReplacementServer(
     venueAccount: initialVenueAccount,
     runtimeIdentity: initialIdentity,
     executionGateway: gateway,
+    venueAdapter,
     env,
     settings,
     secrets,

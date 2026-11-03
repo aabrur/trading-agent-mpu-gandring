@@ -251,6 +251,19 @@ export function createReplacementApp(
       return;
     }
 
+    runtime.updateState?.((draft: any) => {
+      draft.tradingview = draft.tradingview ?? {};
+      const alertData = {
+        symbol: rawSym,
+        action,
+        price: Number.isFinite(price) && price > 0 ? price : null,
+        note,
+        receivedAt: Date.now()
+      };
+      draft.tradingview.lastAlert = alertData;
+      draft.tradingview.recentAlerts = [alertData, ...(draft.tradingview.recentAlerts ?? [])].slice(0, 20);
+    });
+
     void runtime.triggerCycle?.(rawSym, 'signal')?.catch(console.error);
 
     res.json({

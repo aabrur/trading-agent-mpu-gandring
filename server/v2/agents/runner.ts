@@ -229,23 +229,66 @@ export class RoleRunner {
   /** Direct owner chat uses the same typed provider route as strategy roles, without a trade side effect. */
   async chat(input: { role: RoleId; prompt: string; configVersion: number; cycleId: string; deskContext?: string }): Promise<string> {
     const assignment = this.resolveAssignment(input.role, input.configVersion);
-    const user = input.deskContext ? `${input.deskContext}\n\n${input.prompt}` : input.prompt;
-    return this.providerCaller({
-      cycleId: input.cycleId,
-      role: input.role,
-      phase: 'final',
-      taskAttempt: 1,
-      turn: 0,
-      provider: assignment.provider.trim().toLowerCase(),
-      model: assignment.model.trim(),
-      apiKey: assignment.apiKey ?? '',
-      baseUrl: assignment.baseUrl,
-      system: buildRoleSystemPrompt(input.role),
-      user,
-      timeoutMs: 120_000,
-      reasoningEffort: assignment.reasoningEffort,
-      provenOsSandbox: assignment.provenOsSandbox
-    });
+    let user = input.deskContext ? `${input.deskContext}\n\n${input.prompt}` : input.prompt;
+    const system = buildRoleSystemPrompt(input.role);
+    let rawText = '';
+
+    for (let turn = 0; turn < 2; turn += 1) {
+      rawText = await this.providerCaller({
+        cycleId: input.cycleId,
+        role: input.role,
+        phase: 'final',
+        taskAttempt: 1,
+        turn,
+        provider: assignment.provider.trim().toLowerCase(),
+        model: assignment.model.trim(),
+        apiKey: assignment.apiKey ?? '',
+        baseUrl: assignment.baseUrl,
+        system,
+        user,
+        timeoutMs: 120_000,
+        reasoningEffort: assignment.reasoningEffort,
+        provenOsSandbox: assignment.provenOsSandbox
+      });
+
+      if (!this.researchHost) {
+        break;
+      }
+
+      let maybeToolObj: unknown = null;
+      try {
+        maybeToolObj = tryParseJson(rawText);
+      } catch {
+        break;
+      }
+
+      const toolParsed = ToolCallEnvelopeSchema.safeParse(maybeToolObj);
+      if (!toolParsed.success || toolParsed.data.toolCalls.length === 0) {
+        break;
+      }
+
+      const toolOutputs: unknown[] = [];
+      for (const call of toolParsed.data.toolCalls) {
+        const res = await this.researchHost.run(call, {
+          role: input.role,
+          cycleId: input.cycleId,
+          accountRef: 'chat:owner',
+          evidenceId: `chat-${input.cycleId}`
+        });
+        toolOutputs.push({
+          tool: call.name,
+          traceId: res.traceId,
+          status: res.status,
+          sourceRefs: res.sourceRefs,
+          data: res.data,
+          error: res.error
+        });
+      }
+
+      user = `${user}\n\n${fenceData('host_tool_results', toolOutputs)}`;
+    }
+
+    return rawText;
   }
 
   private slotKey(cycleId: string, role: RoleId, phase: RolePhase): string {

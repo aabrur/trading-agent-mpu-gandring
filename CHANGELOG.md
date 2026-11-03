@@ -2,6 +2,20 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.17] - 2026-11-04
+
+### Added & Fixed
+- Activated 6 core timeframes (1m, 5m, 15m, 1h, 4h, 1d) with Smart Money Concepts (SMC) trend, BOS/ChoCH break detection, active Fair Value Gaps (FVG), Order Blocks (OB), and premium/discount zone evaluation.
+- Added recent closed candle bars (last 8 bars) directly into deliberation timeframes summary and chat context.
+- Parallel multi-venue quote and depth comparison across Bybit, Aster DEX, and Hyperliquid with spread, funding rate, and open interest diagnostics.
+- Webhook alert bridge: TradingView alerts stored in runtime state and correlated with active deliberation cycles.
+- Live intelligence feeds: connected real-time exchange tape whale flow (>= $50k blocks), live Bybit announcements and CryptoPanic news briefing, and CoinMarketCap momentum metrics.
+- Eliminated unconfigured research hardcodes and enforced strict NO_VETO rules for empty external event feeds.
+- Expanded live desk chat context with comprehensive multi-timeframe indicators, microstructure orderflow, and live announcements.
+- Interactive role runner chat: added 2-turn tool calling loop enabling agents in chat to query orderbook, candles, news, and external pages interactively.
+- Automatic execution of agent-proposed commandToExecute from chat.
+- Fallback in BrowserResearchWorker to safeFetchUrl and HTML metadata extraction when headless browser binary is missing.
+
 ## [v0.0.0.4.15] - 2026-11-03
 
 ### Fixed

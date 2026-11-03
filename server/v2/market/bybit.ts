@@ -22,7 +22,7 @@ import {
 import { LocalOrderbook, type OrderbookView } from './orderbook.js';
 
 export const SUPPORTED_TIMEFRAMES: readonly TF[] = TIMEFRAMES;
-export const CORE_ANALYSIS_TIMEFRAMES: readonly TF[] = ['1m', '5m', '1h', '4h', '1d'] as const;
+export const CORE_ANALYSIS_TIMEFRAMES: readonly TF[] = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
 
 export interface PublicTradeRecord {
   tradeId: string;
