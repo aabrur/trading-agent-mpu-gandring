@@ -116,6 +116,9 @@ function mergeSettings(base: OwnerSettings, patch: OwnerSettingsPatch): OwnerSet
     ...base.trading,
     ...(patch.trading ?? {})
   };
+  if (patch.trading && 'orderSizePct' in patch.trading && (patch.trading.orderSizePct === null || patch.trading.orderSizePct === undefined)) {
+    delete (nextTrading as any).orderSizePct;
+  }
   const nextPaper = {
     ...base.paper,
     ...(patch.paper ?? {})
@@ -139,12 +142,18 @@ function mergeSettings(base: OwnerSettings, patch: OwnerSettingsPatch): OwnerSet
       ...(base.networkProfiles.testnet ?? nextTrading),
       ...patch.networkProfiles.testnet
     };
+    if ('orderSizePct' in patch.networkProfiles.testnet && (patch.networkProfiles.testnet.orderSizePct === null || patch.networkProfiles.testnet.orderSizePct === undefined)) {
+      delete (nextNetworkProfiles.testnet as any).orderSizePct;
+    }
   }
   if (patch.networkProfiles?.mainnet) {
     nextNetworkProfiles.mainnet = {
       ...(base.networkProfiles.mainnet ?? nextTrading),
       ...patch.networkProfiles.mainnet
     };
+    if ('orderSizePct' in patch.networkProfiles.mainnet && (patch.networkProfiles.mainnet.orderSizePct === null || patch.networkProfiles.mainnet.orderSizePct === undefined)) {
+      delete (nextNetworkProfiles.mainnet as any).orderSizePct;
+    }
   }
 
   return OwnerSettingsSchema.parse({

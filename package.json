@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.13",
-  "appVersion": "0.0.0.4.13",
+  "version": "0.4.15",
+  "appVersion": "0.0.0.4.15",
   "changelog": [
+    "v0.0.0.4.15: sovereign capital sizing contract (Money Trade / N with dynamic slots max 4), live book Aster DEX balance reconciliation, enriched live desk chat context with active trading values and money split, resolved candidate trade consensus in deliberation cycle, and venue lot-size adaptation. Owner settings and guards are preserved.",
     "v0.0.0.4.13: stop treating historical intents as live position ownership, keep Risk and Lead on one ticket, show only a verified venue stop, preserve the V2 kill audit trail, and make Discord and Telegram /report use the office Open PnL. Owner settings and guards are preserved.",
     "v0.0.0.4.12: Rebirth v2 architecture overhaul with LibSQL SQLite store, Bybit Linear market hub, deterministic decimal indicators, 6-role agent runner with 24 personas, 8 venue adapters, Grok v2 bridge, and ZECUSDT trading support. Owner settings and guards are preserved.",
     "v0.0.0.4.11: resolve the compiled trade launcher root so mpu trade --service starts dist/server/server/index.js and reads the project .env. Windows autostart uses the same root. Ordinary mpu records child exit code, signal, pid, and restart attribution. Owner settings and guards are preserved.",

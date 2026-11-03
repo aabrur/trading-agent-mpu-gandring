@@ -229,8 +229,8 @@ export function validateStartupEnvironment(env: NodeJS.ProcessEnv = process.env)
       }
     }
     const resolvedSafety = resolveEffectiveSafetyNet(env, network);
-    if (!resolvedSafety.isValidPositive) {
-      reasons.push(`SAFETY_NET must be above zero outside PAPER (resolved ${resolvedSafety.value} from ${resolvedSafety.source})`);
+    if (resolvedSafety.value < 0) {
+      reasons.push(`SAFETY_NET cannot be negative (resolved ${resolvedSafety.value} from ${resolvedSafety.source})`);
     }
     if (reasons.length > 0) {
       throw new StartupValidationError(
@@ -695,7 +695,7 @@ export function createReplacementRuntime(
         }
         const mt = Math.max(0, draft.paper.balance - draft.paper.safetyNet);
         draft.paper.moneyTrade = mt;
-        draft.paper.perOrder = Math.floor((mt / patch.n) * 100) / 100;
+        draft.paper.perOrder = ownerAllocationPerOrder(mt, patch.n, draft.paper.orderSizePct);
         draft.paper.canOpen = draft.paper.perOrder > 0 && draft.paper.positions.length < patch.n;
       }
       if (draft.auto.on) {
@@ -916,9 +916,9 @@ export function createReplacementRuntime(
         freeSlots: Math.max(0, (snap.paper.n || 3) - currentPosCount)
       },
       optionalResearch: {
-        news: { status: 'unavailable', reason: 'not fetched this cycle' },
-        whale: { status: 'unavailable', reason: 'not fetched this cycle' },
-        catalyst: { status: 'unavailable', reason: 'not fetched this cycle' }
+        news: { status: 'unconfigured', reason: 'optional provider not configured (no confidence penalty)' },
+        whale: { status: 'unconfigured', reason: 'optional provider not configured (no confidence penalty)' },
+        catalyst: { status: 'unconfigured', reason: 'optional provider not configured (no confidence penalty)' }
       }
     };
 
@@ -1452,7 +1452,10 @@ export function createReplacementRuntime(
           if (typeof parsed.content === 'string' && parsed.content) return parsed.content;
         }
       } catch {
-        // Fall back to raw string if JSON parsing fails
+        const fieldMatch = candidate.match(/"(?:reply|text|message|content)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*$)/i);
+        if (fieldMatch && fieldMatch[1]) {
+          return fieldMatch[1].replace(/\\"/g, '"');
+        }
       }
     }
     return raw;
@@ -1885,7 +1888,7 @@ export function createReplacementRuntime(
           };
           const mt = Math.round(Math.max(0, val - d.paper.safetyNet) * 100) / 100;
           d.paper.moneyTrade = mt;
-          d.paper.perOrder = Math.floor((mt / d.paper.n) * 100) / 100;
+          d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, d.paper.orderSizePct);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
           if (d.accountState) {
             d.accountState.hasTradableCapital = d.paper.canOpen;
@@ -1914,7 +1917,7 @@ export function createReplacementRuntime(
           }
           const mt = Math.round(Math.max(0, d.paper.balance - val) * 100) / 100;
           d.paper.moneyTrade = mt;
-          d.paper.perOrder = Math.floor((mt / d.paper.n) * 100) / 100;
+          d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, d.paper.orderSizePct);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
           if (d.accountState) {
             d.accountState.hasTradableCapital = d.paper.canOpen;
@@ -1949,7 +1952,7 @@ export function createReplacementRuntime(
           }
           const mt = Math.round(Math.max(0, d.paper.balance - d.paper.safetyNet) * 100) / 100;
           d.paper.moneyTrade = mt;
-          d.paper.perOrder = Math.floor((mt / count) * 100) / 100;
+          d.paper.perOrder = ownerAllocationPerOrder(mt, count, d.paper.orderSizePct);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < count;
           if (d.accountState) {
             d.accountState.maxPositions = count;
@@ -2005,6 +2008,61 @@ export function createReplacementRuntime(
         return { ok: true, command: 'set_leverage', reply: `Max leverage set to ${val}x.` };
       }
       return { ok: false, error: 'Leverage must be an integer between 1 and 100.' };
+    }
+
+    const sizeMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?size\s*(?:=|to|:)?\s*(\S+)\b/i);
+    if (sizeMatch) {
+      const valStr = sizeMatch[1].toLowerCase().replace(/%$/, '');
+      if (valStr === 'off' || valStr === 'auto' || valStr === 'none' || valStr === '0') {
+        updateState((d) => {
+          d.paper.orderSizePct = null;
+          if (d.trading) {
+            d.trading.values.orderSizePct = null;
+          }
+          const mt = Math.round(Math.max(0, d.paper.balance - d.paper.safetyNet) * 100) / 100;
+          d.paper.moneyTrade = mt;
+          d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, null);
+          d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
+        });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                trading: { orderSizePct: null }
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
+        hub.emit('state', snapshot());
+        return { ok: true, command: 'set_size', reply: `Dynamic order size set to auto (Money Trade / N = ${snapshot().paper.perOrder} USDT).` };
+      }
+      const valNum = Number(valStr);
+      if (Number.isFinite(valNum) && valNum > 0 && valNum <= 100) {
+        updateState((d) => {
+          d.paper.orderSizePct = valNum;
+          if (d.trading) {
+            d.trading.values.orderSizePct = valNum;
+          }
+          const mt = Math.round(Math.max(0, d.paper.balance - d.paper.safetyNet) * 100) / 100;
+          d.paper.moneyTrade = mt;
+          d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, valNum);
+          d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
+        });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                trading: { orderSizePct: valNum }
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
+        hub.emit('state', snapshot());
+        return { ok: true, command: 'set_size', reply: `Order size set to ${valNum}% of Money Trade (${snapshot().paper.perOrder} USDT per order).` };
+      }
+      return { ok: false, error: 'Size must be a percentage between 1 and 100, or "auto" / "off".' };
     }
 
     const profileMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?profile\s+(\S+)$/i);
@@ -3029,7 +3087,7 @@ export async function startReplacementServer(
               status: 'confirmed',
               positions: posList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) }))
             };
-            d.paper.balance = av ?? eq;
+            d.paper.balance = eq;
             d.paper.unrealized = totalUnrealized;
             // Venue equity is authoritative and already includes unrealized PnL; avoid double counting.
             d.paper.equity = eq;
@@ -3075,7 +3133,7 @@ export async function startReplacementServer(
             d.paper.usedMargin = updatedPositions.reduce((sum, p) => sum + p.margin, 0);
 
             const trading = settings.current().effective.trading;
-            const slots = trading.maxPositions ?? d.paper.n;
+            const slots = Math.max(1, Math.min(4, Math.floor(trading.maxPositions ?? d.paper.n ?? 1)));
             const safety = trading.safetyNet ?? d.paper.safetyNet;
             const mt = Math.round(Math.max(0, eq - safety) * 100) / 100;
             d.paper.safetyNet = safety;

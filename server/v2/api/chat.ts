@@ -239,6 +239,22 @@ export interface LiveDeskChatContext {
   capturedAt: string;
   informationalOnly: true;
   tradingProfile: string | null;
+  tradingValues?: {
+    maxLeverage: number;
+    defaultStopPct: number;
+    takeProfitPct?: number;
+    safetyNet: number;
+    maxPositions: number;
+    orderSizePct?: number | null;
+  } | null;
+  moneySplit?: {
+    balance: number;
+    equity: number;
+    safetyNet: number;
+    moneyTrade: number;
+    perOrder: number;
+    slotsN: number;
+  };
   venueAccount: {
     name: string | null;
     mode: string;
@@ -278,6 +294,22 @@ export function buildLiveDeskChatContext(
     capturedAt,
     informationalOnly: true,
     tradingProfile: state.trading?.profile ?? null,
+    tradingValues: state.trading?.values ? {
+      maxLeverage: state.trading.values.maxLeverage,
+      defaultStopPct: state.trading.values.defaultStopPct,
+      takeProfitPct: state.trading.values.takeProfitPct,
+      safetyNet: state.trading.values.safetyNet,
+      maxPositions: state.trading.values.maxPositions,
+      orderSizePct: state.trading.values.orderSizePct ?? null
+    } : null,
+    moneySplit: {
+      balance: state.paper.balance,
+      equity: state.paper.equity,
+      safetyNet: state.paper.safetyNet,
+      moneyTrade: state.paper.moneyTrade,
+      perOrder: state.paper.perOrder,
+      slotsN: state.paper.n
+    },
     venueAccount: {
       name: state.venue?.name ?? null,
       mode: state.mode,

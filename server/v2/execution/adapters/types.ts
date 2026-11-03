@@ -9,7 +9,7 @@ import {
   type Network,
   type Venue
 } from '../../contracts.js';
-import { compareDecimals, mulDecimals, quantize } from '../decimal.js';
+import { compareDecimals, divDecimals, mulDecimals, quantize } from '../decimal.js';
 
 export const VENUE_STATUS: Record<Venue, 'implemented' | 'experimental'> = {
   bybit: 'implemented',
@@ -306,7 +306,8 @@ export function assertLivePermissionEvidence(evidence: PermissionEvidence): void
 export function prepareNativeOrderQuantities(
   order: NativeOrder,
   rules: NativeRules,
-  referencePrice: DecimalString
+  referencePrice: DecimalString,
+  options?: { adjustToVenueMinimum?: boolean }
 ): { quantity: DecimalString; limitPrice: DecimalString | null } {
   const checked = NativeOrderSchema.parse(order);
 
@@ -331,11 +332,15 @@ export function prepareNativeOrderQuantities(
     throw new AdapterCapabilityError('ONE_WAY order must not specify a hedgeLeg');
   }
 
-  const flooredQty = quantize(checked.quantity, rules.qtyStep, 'floor');
+  let flooredQty = quantize(checked.quantity, rules.qtyStep, 'floor');
   if (compareDecimals(flooredQty, rules.minQty) < 0) {
-    throw new AdapterCapabilityError(
-      `Quantized quantity ${flooredQty} is below venue minQty ${rules.minQty}`
-    );
+    if (options?.adjustToVenueMinimum && compareDecimals(checked.quantity, '0') > 0) {
+      flooredQty = quantize(rules.minQty, rules.qtyStep, 'ceil');
+    } else {
+      throw new AdapterCapabilityError(
+        `Quantized quantity ${flooredQty} is below venue minQty ${rules.minQty}`
+      );
+    }
   }
   if (rules.maxQty !== null && compareDecimals(flooredQty, rules.maxQty) > 0) {
     throw new AdapterCapabilityError(
@@ -357,14 +362,36 @@ export function prepareNativeOrderQuantities(
   }
 
   const effectivePrice = limitPrice ?? referencePrice;
-  const effectiveExposure = mulDecimals(
+  let effectiveExposure = mulDecimals(
     mulDecimals(flooredQty, rules.contractMultiplier),
     effectivePrice
   );
   if (rules.minNotional !== null && compareDecimals(effectiveExposure, rules.minNotional) < 0) {
-    throw new AdapterCapabilityError(
-      `Order notional ${effectiveExposure} is below venue minNotional ${rules.minNotional}`
-    );
+    if (options?.adjustToVenueMinimum && compareDecimals(effectivePrice, '0') > 0) {
+      const requiredQtyForMinNotional = quantize(
+        divDecimals(rules.minNotional, mulDecimals(rules.contractMultiplier, effectivePrice)),
+        rules.qtyStep,
+        'ceil'
+      );
+      if (
+        rules.maxQty === null ||
+        compareDecimals(requiredQtyForMinNotional, rules.maxQty) <= 0
+      ) {
+        flooredQty = requiredQtyForMinNotional;
+        effectiveExposure = mulDecimals(
+          mulDecimals(flooredQty, rules.contractMultiplier),
+          effectivePrice
+        );
+      } else {
+        throw new AdapterCapabilityError(
+          `Order notional ${effectiveExposure} is below venue minNotional ${rules.minNotional}`
+        );
+      }
+    } else {
+      throw new AdapterCapabilityError(
+        `Order notional ${effectiveExposure} is below venue minNotional ${rules.minNotional}`
+      );
+    }
   }
 
   return { quantity: flooredQty, limitPrice };

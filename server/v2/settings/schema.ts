@@ -35,7 +35,7 @@ export const TradingFields = z
     maxLossPerTradePct: z.number().finite().positive().max(100),
     minEntryConfidencePct: z.number().finite().min(0).max(100),
     maxLeverage: z.number().int().min(1).max(100),
-    orderSizePct: z.number().finite().positive().max(100).optional(),
+    orderSizePct: z.number().finite().positive().max(100).nullable().optional(),
     defaultStopPct: z.number().finite().positive().lt(100),
     minStopPct: z.number().finite().nonnegative().lt(100),
     takeProfitPct: z.number().finite().positive().optional(),
@@ -151,7 +151,7 @@ export function resolveTradingPresetValues(
     maxOrderUsdt: savedBase.maxOrderUsdt ?? 0,
     minOrderUsdt: savedBase.minOrderUsdt ?? DEFAULT_TRADING_SETTINGS.minOrderUsdt,
     safetyNet: savedBase.safetyNet ?? DEFAULT_TRADING_SETTINGS.safetyNet,
-    ...(savedBase.orderSizePct !== undefined ? { orderSizePct: savedBase.orderSizePct } : {})
+    ...(savedBase.orderSizePct != null ? { orderSizePct: savedBase.orderSizePct } : {})
   });
 }
 

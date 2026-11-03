@@ -383,26 +383,6 @@ export function mountWalletRoutes(app: express.Express, deps: WalletRouteDeps): 
       }
     }
 
-    if (venue === 'aster' && address) {
-      const pub = await readAsterPublicBalance(fetchImpl, address);
-      if (pub) {
-        res.json({
-          ok: true,
-          venue,
-          label,
-          kind: 'DEX',
-          network,
-          configured: true,
-          address,
-          equityUsdt: pub.equityUsdt,
-          availableUsdt: pub.availableUsdt,
-          depositUrl,
-          note: 'Public Aster balance. Approve agent key to trade.'
-        });
-        return;
-      }
-    }
-
     try {
       const adapter = getVenueAdapter(venue, {
         network,
@@ -433,8 +413,27 @@ export function mountWalletRoutes(app: express.Express, deps: WalletRouteDeps): 
         depositUrl
       });
       return;
-    } catch (err) {
-      const note = safe((err as Error).message);
+    } catch (adapterErr) {
+      if (venue === 'aster' && address) {
+        const pub = await readAsterPublicBalance(fetchImpl, address);
+        if (pub) {
+          res.json({
+            ok: true,
+            venue,
+            label,
+            kind: 'DEX',
+            network,
+            configured: true,
+            address,
+            equityUsdt: pub.equityUsdt,
+            availableUsdt: pub.availableUsdt,
+            depositUrl,
+            note: 'Public Aster balance. Approve agent key to trade.'
+          });
+          return;
+        }
+      }
+      const note = safe((adapterErr as Error).message);
       res.json({
         ok: true,
         venue,

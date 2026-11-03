@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createReplacementRuntime } from '../../server/v2/runtime.js';
+import { createReplacementRuntime, ownerAllocationPerOrder } from '../../server/v2/runtime.js';
 import { createReplacementApp } from '../../server/v2/app.js';
 import { RuntimeStore } from '../../server/v2/store/database.js';
 import { AccountRegistry } from '../../server/v2/accounts/registry.js';
@@ -417,6 +417,53 @@ describe('Repair F: Jev telemetry', () => {
     expect(tel.requests).toBe(1);
     expect(tel.timeouts + tel.errors).toBeGreaterThan(0);
     expect(tel.lastSource).toBe('heuristic');
+  });
+});
+
+describe('Forensic audit repairs: Sizing, Chat Context, and Gateway', () => {
+  it('ownerAllocationPerOrder calculates Money Trade / N when orderSizePct is null', () => {
+    // 8.39 USDT, 3 slots, orderSizePct = null -> exactly 2.79 USDT
+    const perOrder = ownerAllocationPerOrder(8.39, 3, null);
+    expect(perOrder).toBe(2.79);
+    // 8.39 USDT, 2 slots -> 4.19 USDT
+    expect(ownerAllocationPerOrder(8.39, 2, null)).toBe(4.19);
+    // 8.39 USDT, 1 slot -> 8.39 USDT
+    expect(ownerAllocationPerOrder(8.39, 1, null)).toBe(8.39);
+  });
+
+  it('handleCommand supports set size off / auto and recalculates perOrder', async () => {
+    const runtime = createReplacementRuntime();
+    await runtime.handleCommand({ text: 'set balance 8.39' });
+    await runtime.handleCommand({ text: 'set safety 0' });
+    await runtime.handleCommand({ text: 'set n 3' });
+    const res = await runtime.handleCommand({ text: 'set size auto' });
+    expect(res.ok).toBe(true);
+    const snap = runtime.snapshot();
+    expect(snap.paper.orderSizePct).toBeNull();
+    // Default N = 3, perOrder = 8.39 / 3 = 2.79
+    expect(snap.paper.perOrder).toBe(2.79);
+
+    const resPct = await runtime.handleCommand({ text: 'set size 25%' });
+    expect(resPct.ok).toBe(true);
+    const snapPct = runtime.snapshot();
+    expect(snapPct.paper.orderSizePct).toBe(25);
+    expect(snapPct.paper.perOrder).toBe(2.09);
+  });
+
+  it('buildLiveDeskChatContext supplies tradingValues and moneySplit for live agent awareness', async () => {
+    const runtime = createReplacementRuntime();
+    await runtime.handleCommand({ text: 'set balance 8.39' });
+    await runtime.handleCommand({ text: 'set safety 0' });
+    await runtime.handleCommand({ text: 'set n 3' });
+    const state = runtime.snapshot();
+    const ctx = buildLiveDeskChatContext(state);
+    expect(ctx.moneySplit).toBeDefined();
+    expect(ctx.moneySplit?.balance).toBe(8.39);
+    expect(ctx.moneySplit?.safetyNet).toBe(0);
+    expect(ctx.moneySplit?.moneyTrade).toBe(8.39);
+    expect(ctx.moneySplit?.perOrder).toBe(2.79);
+    expect(ctx.moneySplit?.slotsN).toBe(3);
+    expect(ctx.tradingValues).toBeDefined();
   });
 });
 

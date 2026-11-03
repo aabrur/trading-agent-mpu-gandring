@@ -240,12 +240,34 @@ export class CycleRunner {
         policy: input.policy
       }
     });
+    const executionSide = ticketSide(executionResult.stance);
+    let resolvedCandidateSide = executionSide;
+    if (!resolvedCandidateSide) {
+      let longVotes = 0;
+      let shortVotes = 0;
+      for (const r of [...challengeResults, ...observeResults]) {
+        if (r.stance === 'LONG') longVotes++;
+        if (r.stance === 'SHORT') shortVotes++;
+      }
+      if (longVotes > shortVotes && longVotes >= 2) resolvedCandidateSide = 'LONG';
+      else if (shortVotes > longVotes && shortVotes >= 2) resolvedCandidateSide = 'SHORT';
+    }
+
+    const fallbackStop =
+      challengeResults.find((r) => r.proposedStop)?.proposedStop ??
+      observeResults.find((r) => r.proposedStop)?.proposedStop ??
+      null;
+    const fallbackTp =
+      challengeResults.find((r) => r.proposedTp)?.proposedTp ??
+      observeResults.find((r) => r.proposedTp)?.proposedTp ??
+      null;
+
     const candidateOrder: CandidateOrder = {
-      side: ticketSide(executionResult.stance),
-      orderType: executionResult.proposedOrderType ?? null,
+      side: resolvedCandidateSide,
+      orderType: executionResult.proposedOrderType ?? 'MARKET',
       limitPrice: executionResult.proposedLimitPrice ?? null,
-      stop: executionResult.proposedStop ?? null,
-      tp: executionResult.proposedTp ?? null,
+      stop: executionResult.proposedStop ?? fallbackStop,
+      tp: executionResult.proposedTp ?? fallbackTp,
       leverage: input.policy.maxLeverage ?? null,
       allocationPerOrderUsdt: input.policy.allocationPerOrderUsdt ?? null,
       availableCapitalUsdt: input.policy.availableCapitalUsdt ?? null,

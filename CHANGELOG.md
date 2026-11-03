@@ -2,6 +2,17 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.15] - 2026-11-03
+
+### Fixed
+- Sovereign capital sizing contract enforced: Per Order is strictly `(total saldo - safety net) / N`, where N is dynamic open positions per profile or user setup (max 4 positions). Removed persistent rollback to 0.12 USDT by allowing null/auto values for order size percentage.
+- Added `set size auto` / `set size off` and `set size <pct>` commands in runtime and office command bar to clear or adjust percentage locks safely.
+- Real-time synchronization of Live Book and Aster DEX card: card reads authoritative live WebSocket stream state.venueAccount for balance and equity instead of stale public RPC cache.
+- Live desk chat context enriched: agents now receive active trading values (maxLeverage, defaultStopPct, takeProfitPct, safetyNet, maxPositions) and money split (balance, equity, safetyNet, moneyTrade, perOrder, slotsN) for full market and risk situational awareness.
+- Deliberation cycle candidate resolution: candidate order side is derived from analyst consensus when Execution Trader does not propose a side, preventing ungrounded risk vetoes.
+- Venue lot-size adaptation: `prepareNativeOrderQuantities` supports `adjustToVenueMinimum` so micro-notional orders are safely aligned with venue lot filters within available margin headroom.
+- Gateway balance check accepts zero safety net (`safetyNetUsdt === '0'`) when balance is positive.
+
 ## [v0.0.0.4.13] - 2026-11-02
 
 ### Fixed

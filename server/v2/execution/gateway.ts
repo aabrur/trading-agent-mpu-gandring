@@ -366,7 +366,9 @@ export class ExecutionGateway {
 
       if (
         balanceSnap.balanceUsdt === null ||
-        compareDecimals(balanceSnap.balanceUsdt, policy.safetyNetUsdt) <= 0
+        compareDecimals(balanceSnap.balanceUsdt, '0') <= 0 ||
+        (compareDecimals(policy.safetyNetUsdt, '0') > 0 &&
+          compareDecimals(balanceSnap.balanceUsdt, policy.safetyNetUsdt) <= 0)
       ) {
         return {
           intentId: intent.intentId,

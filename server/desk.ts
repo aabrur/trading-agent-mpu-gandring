@@ -2006,8 +2006,8 @@ export class Desk extends EventEmitter {
     return this.exclusive(async () => {
       if (this.cfg.live?.network !== network || this.cfg.tradingMode !== (network === 'mainnet' ? 'LIVE' : 'TESTNET')) return false;
       const { safetyNet, maxPositions, ...risk } = values;
-      this.cfg.risk = { ...this.cfg.risk, ...risk, orderSizePct: risk.orderSizePct }; this.cfg.tradingProfile = profile;
-      this.book.orderSizePct = risk.orderSizePct;
+      this.cfg.risk = { ...this.cfg.risk, ...risk, orderSizePct: risk.orderSizePct ?? undefined }; this.cfg.tradingProfile = profile;
+      this.book.orderSizePct = risk.orderSizePct ?? undefined;
       this.book.safetyNet = this.cfg.paper.safetyNet = safetyNet;
       this.book.n = this.cfg.paper.n = maxPositions as 1 | 2 | 3 | 4;
       this.checkDay(); this.changed();
@@ -2347,9 +2347,9 @@ export class Desk extends EventEmitter {
         else setEnv(this.opts.settingsFile, { PAPER_TRADING_PROFILE: profile, ORDER_SIZE_PCT: '', ...Object.fromEntries(Object.entries(values).filter(([, value]) => value != null).map(([key, value]) => [TRADING_ENV[key as keyof TradingSettings], String(value)])) });
       }
       const { safetyNet, maxPositions, ...risk } = values;
-      this.cfg.risk = { ...this.cfg.risk, ...risk, orderSizePct: risk.orderSizePct };
+      this.cfg.risk = { ...this.cfg.risk, ...risk, orderSizePct: risk.orderSizePct ?? undefined };
       this.cfg.tradingProfile = profile;
-      this.book.orderSizePct = risk.orderSizePct;
+      this.book.orderSizePct = risk.orderSizePct ?? undefined;
       this.book.safetyNet = this.cfg.paper.safetyNet = safetyNet;
       this.book.n = this.cfg.paper.n = maxPositions;
       this.checkDay();

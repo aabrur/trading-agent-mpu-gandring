@@ -5,7 +5,7 @@ export const TradingFields = z.object({
   maxLossPerTradePct: z.number().finite().positive().max(100),
   minEntryConfidencePct: z.number().finite().min(0).max(100),
   maxLeverage: z.number().int().min(1).max(100),
-  orderSizePct: z.number().finite().min(1.5).max(100).optional(),
+  orderSizePct: z.number().finite().positive().max(100).nullable().optional(),
   defaultStopPct: z.number().finite().positive().lt(100),
   minStopPct: z.number().finite().nonnegative().lt(100),
   takeProfitPct: z.number().finite().positive().optional(),

@@ -140,7 +140,7 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
         const val = Number(e.target.value);
         setDrafts((old) => {
           if (!old) return old;
-          const current = { ...old[network], [f.key]: f.key === 'orderSizePct' && e.target.value === '' ? undefined : val };
+          const current = { ...old[network], [f.key]: f.key === 'orderSizePct' && e.target.value === '' ? null : val };
           if (f.key === 'takeProfitPct' && current.defaultStopPct > 0) {
             current.takeProfitR = Math.round((val / current.defaultStopPct) * 100) / 100;
           } else if (f.key === 'defaultStopPct' && (current.takeProfitPct ?? 0) > 0) {

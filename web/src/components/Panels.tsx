@@ -124,8 +124,8 @@ export function TopBar({
     ? latestVer
     : (diskVer && runningVer && compareVer(diskVer, runningVer) > 0)
       ? diskVer
-      : (latestVer ?? diskVer ?? '0.0.0.4.13');
-  const ver = diskVer ?? '0.0.0.4.13';
+      : (latestVer ?? diskVer ?? '0.0.0.4.15');
+  const ver = diskVer ?? '0.0.0.4.15';
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {
     try {
@@ -685,7 +685,13 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   const bookTitle = state.mode === 'PAPER' ? t('paperBook') : state.mode === 'LIVE' ? t('liveBook') : t('testnetBook');
   const currentVenue = ALL_VENUES.find((v) => v.venue === selectedVenue) ?? ALL_VENUES[0];
   const activeDepositUrl = venueBal?.depositUrl || currentVenue.depositUrl;
-  const isVenueConnected = Boolean(venueBal && venueBal.equityUsdt != null && Number.isFinite(venueBal.equityUsdt));
+  const hasLiveVenueSync = state.venue?.name === selectedVenue && state.venueAccount && state.venueAccount.status === 'confirmed';
+  const displayEquity = hasLiveVenueSync && state.venueAccount?.equity != null ? state.venueAccount.equity : (venueBal?.equityUsdt ?? 0);
+  const displayAvailable = hasLiveVenueSync && state.venueAccount?.available != null ? state.venueAccount.available : venueBal?.availableUsdt;
+  const isVenueConnected = Boolean(
+    (hasLiveVenueSync && displayEquity != null && Number.isFinite(displayEquity)) ||
+    (venueBal && venueBal.equityUsdt != null && Number.isFinite(venueBal.equityUsdt))
+  );
 
   return (
     <section className="panel portfolio">
@@ -733,27 +739,29 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
           <a className="badge deposit-link-btn" href={activeDepositUrl} target="_blank" rel="noreferrer">
             {t('depositOfficial')} ↗
           </a>
-          {isVenueConnected && venueBal && (
+          {isVenueConnected && (
             <span className="badge venue-conn-pill">
-              ● {venueBal.network.toUpperCase()} {venueBal.address ? `${venueBal.address.slice(0, 6)}...${venueBal.address.slice(-4)}` : 'Connected'}
+              ● {(venueBal?.network ?? (state.mode === 'LIVE' ? 'MAINNET' : 'TESTNET')).toUpperCase()} {venueBal?.address ? `${venueBal.address.slice(0, 6)}...${venueBal.address.slice(-4)}` : 'Connected'}
             </span>
           )}
         </div>
         <div className="venue-balance-status-row">
-          {isVenueConnected && venueBal ? (
+          {isVenueConnected ? (
             <div className="venue-balance-stats">
-              <span>{t('equityUsdt')}: <b>{fmt(venueBal.equityUsdt ?? 0)} USDT</b>{curOpt.code !== 'USDT' ? ` (${formatCurrencyValue(venueBal.equityUsdt ?? 0, curOpt)})` : ''}</span>
-              <span>{t('availableUsdt')}: <b>{venueBal.availableUsdt == null ? 'unavailable' : fmt(venueBal.availableUsdt)} USDT</b></span>
-              {(venueBal.equityUsdt ?? 0) > 0 && Math.abs((venueBal.equityUsdt ?? 0) - p.balance) > 0.01 && (
+              <span>{t('equityUsdt')}: <b>{fmt(displayEquity)} USDT</b>{curOpt.code !== 'USDT' ? ` (${formatCurrencyValue(displayEquity, curOpt)})` : ''}</span>
+              <span>{t('availableUsdt')}: <b>{displayAvailable == null ? 'unavailable' : fmt(displayAvailable)} USDT</b></span>
+              {displayEquity > 0 && Math.abs(displayEquity - p.balance) > 0.01 && (
                 <button
                   type="button"
                   className="mini"
                   onClick={async () => {
-                    const eq = venueBal.equityUsdt ?? 0;
-                    await command(`set balance ${eq}`);
-                    if (p.safetyNet >= eq) {
-                      const safeNet = Math.max(0, Math.floor(eq * 0.1 * 100) / 100);
-                      await command(`set safety ${safeNet}`);
+                    if (command) {
+                      const eq = displayEquity;
+                      await command(`set balance ${eq}`);
+                      if (p.safetyNet >= eq) {
+                        const safeNet = Math.max(0, Math.floor(eq * 0.1 * 100) / 100);
+                        await command(`set safety ${safeNet}`);
+                      }
                     }
                   }}
                 >

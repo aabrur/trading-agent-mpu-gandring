@@ -17,7 +17,7 @@ export interface TradingSettingsDto {
   maxLossPerTradePct: number;
   minEntryConfidencePct: number;
   maxLeverage: number;
-  orderSizePct?: number;
+  orderSizePct?: number | null;
   defaultStopPct: number;
   minStopPct: number;
   takeProfitPct?: number;
@@ -439,7 +439,7 @@ export interface DeskState {
     n: number;
     moneyTrade: number;
     perOrder: number;
-    orderSizePct?: number;
+    orderSizePct?: number | null;
     canOpen: boolean;
     usedMargin: number;
     unrealized: number;
