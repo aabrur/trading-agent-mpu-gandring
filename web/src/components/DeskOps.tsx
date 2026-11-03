@@ -347,10 +347,19 @@ export function DeskOps({ state }: { state: DeskState }) {
         <details className="ops-details">
           <summary>{lang === 'id' ? 'Jadwal & simbol' : 'Schedule & symbols'}</summary>
           <div className="auto-setup-controls">
-            <label className="auto-min-field"><span>{t('opsEveryLabel')}</span><input type="number" min={1} max={1440} aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} /><span>{t('opsMinUnit')}</span></label>
-            <label className="auto-min-field auto-hold-field" title={lang === 'id' ? 'Batas umur posisi sebelum ditutup otomatis. 0 = mati (hold terus sampai SL/TP)' : 'Maximum position duration before auto-close. 0 = disabled (hold until SL/TP)'}><span>{lang === 'id' ? 'Batas Hold' : 'Max Hold'}</span><input type="number" min={0} max={720} aria-label="auto max hold hours" placeholder="0" value={autoHold} onChange={(e) => setAutoHold(e.target.value)} /><span>{lang === 'id' ? 'jam' : 'hrs'}</span></label>
-            <label className="auto-min-field auto-report-field" title={lang === 'id' ? 'Interval pengiriman laporan berkala ke channel (menit)' : 'Periodic report delivery interval to channels (minutes)'}><span>{lang === 'id' ? 'Laporan' : 'Report'}</span><input type="number" data-rebirth-additive="true" min={1} max={1440} aria-label="auto report interval minutes" value={reportMin} onChange={(e) => setReportMin(e.target.value)} /><span>{t('opsMinUnit')}</span></label>
-            <button type="button" className="mini" disabled={autoBusy} onClick={() => void updateAuto({})}>{t('autoSaveBtn')}</button>
+            <label className="auto-min-field" title={lang === 'id' ? 'Interval siklus debat dan scan pasar (menit)' : 'Market scan and debate interval (minutes)'}>
+              <span className="auto-field-label">{lang === 'id' ? 'Setiap (menit)' : 'Every (min)'}</span>
+              <input type="number" min={1} max={1440} className="auto-num-input" aria-label="auto interval minutes" value={autoMin} onChange={(e) => setAutoMin(e.target.value)} />
+            </label>
+            <label className="auto-min-field auto-hold-field" title={lang === 'id' ? 'Batas umur posisi sebelum ditutup otomatis. 0 = mati (hold terus sampai SL/TP)' : 'Maximum position duration before auto-close. 0 = disabled (hold until SL/TP)'}>
+              <span className="auto-field-label">{lang === 'id' ? 'Batas Hold (jam)' : 'Max Hold (hrs)'}</span>
+              <input type="number" min={0} max={720} className="auto-num-input" aria-label="auto max hold hours" placeholder="0" value={autoHold} onChange={(e) => setAutoHold(e.target.value)} />
+            </label>
+            <label className="auto-min-field auto-report-field" title={lang === 'id' ? 'Interval pengiriman laporan berkala ke channel (menit)' : 'Periodic report delivery interval to channels (minutes)'}>
+              <span className="auto-field-label">{lang === 'id' ? 'Laporan (menit)' : 'Report (min)'}</span>
+              <input type="number" data-rebirth-additive="true" min={1} max={1440} className="auto-num-input" aria-label="auto report interval minutes" value={reportMin} onChange={(e) => setReportMin(e.target.value)} />
+            </label>
+            <button type="button" className="mini auto-save-btn" disabled={autoBusy} onClick={() => void updateAuto({})}>{t('autoSaveBtn')}</button>
           </div>
           <div className="watchlist-builder">
             <div className="watchlist-header">

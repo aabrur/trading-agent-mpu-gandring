@@ -858,9 +858,11 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .auto-toggle-seg button { padding: 3px 10px !important; font-size: 11px !important; }
 .auto-toggle-seg button.auto-on-btn.on { background: var(--long) !important; color: #fff !important; }
 .auto-toggle-seg button.auto-off-btn.on { background: var(--wood-dark) !important; color: #fff !important; }
-.auto-setup-controls { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-.auto-min-field { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: var(--text-dim); background: var(--bg); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 2px 6px; flex-shrink: 0; }
-.auto-min-field input { width: 42px !important; min-width: 42px !important; border: 0 !important; padding: 2px !important; text-align: center; background: transparent !important; font-size: 11.5px !important; }
+.auto-setup-controls { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.auto-min-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; color: var(--text-dim); }
+.auto-field-label { font-size: 11px; font-weight: 700; color: var(--text-dim); white-space: nowrap; line-height: 1.2; }
+.auto-num-input { height: 32px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 4px 6px; text-align: center; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 13px; font-weight: 800; box-sizing: border-box; }
+.auto-num-input:focus { border-color: var(--terracotta); outline: none; }
 .auto-n-field { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 800; color: var(--text-dim); background: var(--bg); border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: 2px 5px; flex-shrink: 0; }
 .auto-n-seg button { padding: 2px 6px !important; font-size: 10.5px !important; font-family: var(--font-mono); }
 .auto-syms-input { flex: 1; min-width: 90px !important; padding: 4px 7px !important; font-size: 11px !important; }
@@ -1071,10 +1073,12 @@ button:disabled { cursor: default; }
 .auto-preset-select:disabled { opacity: 0.6; cursor: default; }
 .auto-preset-select option { background-color: var(--panel); color: var(--text); }
 .auto-preset-chevron { position: absolute; right: 0; pointer-events: none; font-size: 10px; color: var(--text-dim); line-height: 1; }
-.desk-ops .auto-setup-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: center; gap: 4px; }
-.desk-ops .auto-min-field, .desk-ops .auto-n-field { padding: 2px 4px; gap: 2px; font-size: 10px; min-height: 26px; justify-content: center; }
-.desk-ops .auto-min-field input { width: 28px !important; min-width: 22px !important; font-size: 11px !important; padding: 1px 2px !important; text-align: center; }
-.desk-ops .auto-setup-controls > button { min-height: 26px; padding: 2px 8px; font-size: 11px; margin-left: 0; }
+.desk-ops .auto-setup-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: flex-end; gap: 8px; margin-bottom: 8px; }
+.desk-ops .auto-min-field { display: flex !important; flex-direction: column !important; gap: 4px !important; padding: 0 !important; border: 0 !important; background: transparent !important; min-height: 0 !important; }
+.desk-ops .auto-min-field .auto-field-label { font-size: 11px !important; font-weight: 700 !important; color: var(--text-dim) !important; white-space: nowrap !important; line-height: 1.2 !important; }
+.desk-ops .auto-min-field input, .desk-ops .auto-num-input { width: 100% !important; min-width: 0 !important; height: 32px !important; border: 1.5px solid var(--line) !important; border-radius: var(--radius-sm) !important; background: var(--bg) !important; color: var(--text) !important; font-size: 13px !important; font-family: var(--font-mono) !important; font-weight: 800 !important; padding: 4px 6px !important; text-align: center !important; box-sizing: border-box !important; outline: none !important; transition: border-color 0.15s ease; }
+.desk-ops .auto-min-field input:focus, .desk-ops .auto-num-input:focus { border-color: var(--terracotta) !important; outline: none !important; }
+.desk-ops .auto-setup-controls > button, .desk-ops .auto-save-btn { height: 32px !important; min-height: 32px !important; padding: 0 14px !important; font-size: 11.5px !important; font-weight: 800 !important; border-radius: var(--radius-sm) !important; margin-left: 0 !important; align-self: flex-end !important; white-space: nowrap !important; cursor: pointer !important; }
 .desk-ops .auto-syms-input { width: 100%; min-width: 0 !important; }
 .ops-symbols-field, .ops-market-row label, .ops-side-field, .ops-lesson-row label { display: grid; gap: 3px; min-width: 0; font-size: 11px; color: var(--text-dim); }
 .ops-symbols-field { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; }
@@ -1171,8 +1175,8 @@ button:disabled { cursor: default; }
   .desk-ops { --ops-control-height: 44px; }
   .desk-ops .token-chip { min-height: 44px; }
   .desk-ops input { font-size: 16px !important; }
-  .desk-ops .auto-setup-controls { flex-wrap: wrap; }
-  .desk-ops .auto-min-field input { width: 46px !important; }
+  .desk-ops .auto-setup-controls { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 6px; }
+  .desk-ops .auto-min-field input { width: 100% !important; min-width: 0 !important; font-size: 15px !important; }
   .desk-ops .auto-n-seg button { min-width: 44px; }
   .desk-ops .ticket-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .office-hud { margin: 6px; }

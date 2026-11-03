@@ -39,7 +39,7 @@
 .dashboard .tool-flyout .setup-summary { margin: 6px 0; gap: 4px 12px; }
 .dashboard .tool-flyout .setup-summary > div { padding: 5px 0; }
 .dashboard .tool-flyout .setup-summary :is(dt, dd) { font-size: 12px; margin: 0; }
-.dashboard .tool-flyout .auto-setup-controls { align-items: center; flex-wrap: wrap; }
+.dashboard .tool-flyout .auto-setup-controls { align-items: flex-end; flex-wrap: wrap; }
 .dashboard .tool-flyout :is(.auto-cycle-meta, .ops-help, .account-note) { font-size: 12px; line-height: 1.45; margin: 6px 0; overflow-wrap: anywhere; }
 .dashboard .tool-flyout .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .dashboard .tool-flyout .stat { padding: 8px; border-width: 1px; border-radius: 8px; min-width: 0; }
