@@ -27,7 +27,8 @@ export interface ReconcileVenueTransport {
   readProtection: (position: NativeExposurePosition) => Promise<ProtectionSnapshot>;
   placeProtection: (
     position: NativeExposurePosition,
-    stopPrice: DecimalString
+    stopPrice: DecimalString,
+    tpPrice?: DecimalString | null
   ) => Promise<ProtectionSnapshot>;
   closePosition: (
     position: NativeExposurePosition,
@@ -80,7 +81,7 @@ export async function reconcileAccountState(params: {
   );
 
   const managedRows = await store.execute(
-    `SELECT position_key, symbol, side, entry_price, stop_price
+    `SELECT position_key, symbol, side, entry_price, stop_price, tp_price
      FROM managed_positions
      WHERE account_ref = ? AND state = 'OPEN'`,
     [accountRef]
@@ -92,7 +93,8 @@ export async function reconcileAccountState(params: {
       symbol: String(row.symbol),
       side: String(row.side),
       entryPrice: row.entry_price == null ? null : String(row.entry_price),
-      stopPrice: row.stop_price == null ? null : String(row.stop_price)
+      stopPrice: row.stop_price == null ? null : String(row.stop_price),
+      tpPrice: row.tp_price == null ? null : String(row.tp_price)
     }))
     .filter((row): row is {
       positionKey: string;
@@ -100,8 +102,9 @@ export async function reconcileAccountState(params: {
       side: 'LONG' | 'SHORT';
       entryPrice: string | null;
       stopPrice: string | null;
+      tpPrice: string | null;
     } => row.side === 'LONG' || row.side === 'SHORT');
-  const activeRelations: Array<{ symbol: string; side: 'LONG' | 'SHORT'; stop: string | null }> = [];
+  const activeRelations: Array<{ symbol: string; side: 'LONG' | 'SHORT'; stop: string | null; tp: string | null }> = [];
 
   // 2. Resolve ambiguous intents via native lookupOrder (zero submit calls).
   const pending: ReconciledPendingIntent[] = [];
@@ -126,12 +129,15 @@ export async function reconcileAccountState(params: {
       orderState === 'PARTIAL'
     ) {
       let stop: string | null = null;
+      let tp: string | null = null;
       if (side === 'LONG' || side === 'SHORT') {
         try {
-          const parsed = JSON.parse(String(row.payload_json)) as { stop?: string | null };
+          const parsed = JSON.parse(String(row.payload_json)) as { stop?: string | null; tp?: string | null };
           stop = parsed.stop ? String(parsed.stop) : null;
+          tp = parsed.tp ? String(parsed.tp) : null;
         } catch {
           stop = null;
+          tp = null;
         }
       }
       try {
@@ -146,7 +152,7 @@ export async function reconcileAccountState(params: {
           lookedUp.filledQty != null &&
           compareDecimals(lookedUp.filledQty, '0') > 0;
         if (filled && (side === 'LONG' || side === 'SHORT')) {
-          activeRelations.push({ symbol, side, stop });
+          activeRelations.push({ symbol, side, stop, tp });
         }
         if (
           lookedUp.state === 'ACCEPTED' ||
@@ -190,17 +196,17 @@ export async function reconcileAccountState(params: {
   const verifiedStops: Record<string, DecimalString | null> = {};
   const ownedKeys = new Set<string>();
 
-  const claim = (pos: NativeExposurePosition): { owned: boolean; stop: string | null } => {
+  const claim = (pos: NativeExposurePosition): { owned: boolean; stop: string | null; tp: string | null } => {
     const managed = openManaged.find(
       (row) => row.positionKey === pos.positionKey && row.side === pos.side
     );
     if (managed) {
       const sameEntry = !managed.entryPrice || compareDecimals(managed.entryPrice, pos.entryPrice) === 0;
-      if (sameEntry) return { owned: true, stop: managed.stopPrice };
+      if (sameEntry) return { owned: true, stop: managed.stopPrice, tp: managed.tpPrice };
     }
     const active = activeRelations.find((row) => row.symbol === pos.symbol && row.side === pos.side);
-    if (active) return { owned: true, stop: active.stop };
-    return { owned: false, stop: null };
+    if (active) return { owned: true, stop: active.stop, tp: active.tp };
+    return { owned: false, stop: null, tp: null };
   };
 
   const noteReadback = (pos: NativeExposurePosition, snap: ProtectionSnapshot) => {
@@ -232,8 +238,8 @@ export async function reconcileAccountState(params: {
       if (snap.state === 'VERIFIED' && snap.stopPrice) observedStop = snap.stopPrice;
       return snap;
     };
-    const placeProtection = async (position: NativeExposurePosition, stopPrice: DecimalString) => {
-      const snap = await transport.placeProtection(position, stopPrice);
+    const placeProtection = async (position: NativeExposurePosition, stopPrice: DecimalString, tpPrice?: DecimalString | null) => {
+      const snap = await transport.placeProtection(position, stopPrice, tpPrice);
       if (snap.state === 'VERIFIED' && snap.stopPrice) observedStop = snap.stopPrice;
       return snap;
     };
@@ -241,6 +247,7 @@ export async function reconcileAccountState(params: {
       const prot = await ensureExposureProtection({
         position: pos,
         desiredStopPrice: relation.stop,
+        desiredTpPrice: relation.tp,
         readProtection,
         placeProtection,
         emergencyClose: async (p, cid) => {
@@ -295,10 +302,11 @@ export async function reconcileAccountState(params: {
           account_ref, position_key, native_position_id, symbol, native_instrument,
           position_mode, side, qty, entry_price, stop_price, tp_price, leverage,
           ownership, protection_state, thesis_json, state, opened_at, updated_at, closed_at
-        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, 1, 'MANAGED', ?, '{}', 'OPEN', ?, ?, NULL)
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'MANAGED', ?, '{}', 'OPEN', ?, ?, NULL)
         ON CONFLICT(account_ref, position_key) DO UPDATE SET
           qty = excluded.qty,
           entry_price = excluded.entry_price,
+          tp_price = COALESCE(excluded.tp_price, managed_positions.tp_price),
           protection_state = excluded.protection_state,
           updated_at = excluded.updated_at`,
         [
@@ -311,6 +319,7 @@ export async function reconcileAccountState(params: {
           pos.qty,
           pos.entryPrice,
           relation.stop,
+          relation.tp,
           protState,
           nowIso,
           nowIso

@@ -21,11 +21,13 @@ export interface ProtectionSnapshot {
 export interface EnsureExposureProtectionInput {
   position: NativeExposurePosition;
   desiredStopPrice: DecimalString;
+  desiredTpPrice?: DecimalString | null;
   maxRepairAttempts?: number;
   readProtection: (position: NativeExposurePosition) => Promise<ProtectionSnapshot>;
   placeProtection: (
     position: NativeExposurePosition,
-    stopPrice: DecimalString
+    stopPrice: DecimalString,
+    tpPrice?: DecimalString | null
   ) => Promise<ProtectionSnapshot>;
   emergencyClose: (
     position: NativeExposurePosition,
@@ -85,7 +87,7 @@ export async function ensureExposureProtection(
   const maxAttempts = input.maxRepairAttempts ?? 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const placed = await input.placeProtection(position, desiredStopPrice);
+      const placed = await input.placeProtection(position, desiredStopPrice, input.desiredTpPrice);
       if (isSnapshotCoveringExposure(placed, position.qty)) {
         return {
           protectionState: 'VERIFIED',

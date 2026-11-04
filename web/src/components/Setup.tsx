@@ -40,13 +40,13 @@ interface SetupInfo {
 interface Guide { note: string | null; steps: Step[]; fields: Field[]; venues?: VenueFieldRow[]; connectWallet: boolean; docs: Link[] }
 interface DoctorLine { ok: boolean | null; label: string; detail: string }
 
-type SetupTab = 'desk' | 'trading' | 'models' | 'local' | 'exchange' | 'channels';
+type SetupTab = 'trading' | 'models' | 'local' | 'exchange' | 'channels';
 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 
 export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskState; onClose: () => void; tradingProfile?: 'default' | 'manual' }) {
   const { t, lang } = useI18n();
-  const [activeTab, setActiveTab] = useState<SetupTab>(tradingProfile ? 'trading' : 'desk');
+  const [activeTab, setActiveTab] = useState<SetupTab>('trading');
   useEffect(() => { if (tradingProfile) setActiveTab('trading'); }, [tradingProfile]);
   const [info, setInfo] = useState<SetupInfo | null>(null);
   const [venue, setVenue] = useState('');
@@ -148,13 +148,6 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
             <button type="button" className={`setup-tab-btn ${activeTab === 'trading' ? 'active' : ''}`} onClick={() => setActiveTab('trading')}><span>{t('setupTabTrading')}</span></button>
             <button
               type="button"
-              className={`setup-tab-btn ${activeTab === 'desk' ? 'active' : ''}`}
-              onClick={() => setActiveTab('desk')}
-            >
-              <span>{t('setupTabDesk')}</span>
-            </button>
-            <button
-              type="button"
               className={`setup-tab-btn ${activeTab === 'models' ? 'active' : ''}`}
               onClick={() => setActiveTab('models')}
             >
@@ -184,9 +177,14 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
           </nav>
 
           <main className="setup-content"><div className="setup-guide-note">{t('setupGuideNote')}</div>
-            <section className="setup-pane" hidden={activeTab !== 'trading'}><div className="pane-header"><h3>{t('setupTabTrading')}</h3><p className="wallet-note">{lang === 'id' ? 'Profil terpisah untuk testnet dan mainnet. Tinjau nilai bawaan atau edit pengaturan manual kamu.' : 'Separate testnet and mainnet profiles. Review defaults or edit your manual settings.'}</p></div><TradingSetup state={state} initialProfile={tradingProfile} /></section>
-            <section className="setup-pane" hidden={activeTab !== 'desk'}>
-                <div className="pane-header">
+            <section className="setup-pane" hidden={activeTab !== 'trading'}>
+              <div className="pane-header">
+                <h3>{t('setupTabTrading')}</h3>
+                <p className="wallet-note">{lang === 'id' ? 'Profil trading, parameter risiko, preferensi meja, dan koneksi sumber data.' : 'Trading profiles, risk parameters, desk preferences, and data source connections.'}</p>
+              </div>
+              <TradingSetup state={state} initialProfile={tradingProfile} />
+              <div style={{ marginTop: '24px', borderTop: '1px solid var(--line)', paddingTop: '20px' }}>
+                <div className="pane-header" style={{ marginBottom: '16px' }}>
                   <h3>{t('setupDeskTitle')}</h3>
                   <p className="wallet-note">{t('setupDeskRunningPrefix')} <b>{info.running.mode}</b> · {info.running.appMode}. {t('setupDeskSavedModePrefix')} {info.status.tradingMode} · {t('setupDeskVenuePrefix')} {info.status.exchange}. {t('setupDeskSavingNotice')}</p>
                 </div>
@@ -196,7 +194,8 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
                 <div style={{ marginTop: '16px', borderTop: '1px solid var(--line)', paddingTop: '16px' }}>
                   <DataSourcesSetup available={info.keyEntry.available} />
                 </div>
-              </section>
+              </div>
+            </section>
 
             <section className="setup-pane" hidden={activeTab !== 'models'}>
                 <div className="pane-header">

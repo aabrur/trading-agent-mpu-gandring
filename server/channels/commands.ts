@@ -34,6 +34,7 @@ export const HELP_TEXT = [
   '• /analyze <symbol>: Direct agents to debate & auto-trade (e.g. /analyze BTCUSDT)',
   '• /ask <question>: Chat with Desk Lead (or /ask <agent> <question>)',
   '• /set profile <default|balance|profit|aggressive>, /set size <1.5..100>%, /set leverage <1..20>',
+  '• /set cycle <minutes>, /run cycle (run now), /set report <minutes>',
   '• /open long|short <symbol> [size%] [leverage], /buy <symbol>, /sell <symbol>',
   '• /close <symbol> or /close all: Execute directly using the active settings',
   '• /watchlist: Active auto-trading symbols',
@@ -51,7 +52,7 @@ export function parseCommand(text: string): Parsed {
   const t = String(text ?? '').trim().replace(/^\/?(desk|mpu)\s+/i, '').replace(/^\//, '').replace(/^([a-z-]+)@\S+/i, '$1');
   const owner = parseOwnerCommand(t);
   if (owner.type === 'invalid') return { ok: false, reply: owner.reason };
-  if (['set_profile', 'set_size', 'set_leverage', 'set_n', 'set_safety', 'open', 'close', 'close_all'].includes(owner.type)) return { ok: true, cmd: 'owner', text: t };
+  if (['set_profile', 'set_size', 'set_leverage', 'set_n', 'set_safety', 'set_cycle', 'run_cycle', 'set_report_interval', 'open', 'close', 'close_all'].includes(owner.type)) return { ok: true, cmd: 'owner', text: t };
   if (/^(long|short|size|leverage)\b/i.test(t)) return { ok: false, reply: 'Usage: open long|short <symbol> [size%] [leverage], set size <percent>%, or set leverage <value>.' };
   const [rawWord = '', ...rest] = t.split(/\s+/);
   const word = rawWord.toLowerCase();

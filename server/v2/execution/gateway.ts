@@ -106,7 +106,8 @@ export interface GatewayVenueTransport {
   readProtection: (position: NativeExposurePosition) => Promise<ProtectionSnapshot>;
   placeProtection: (
     position: NativeExposurePosition,
-    stopPrice: DecimalString
+    stopPrice: DecimalString,
+    tpPrice?: DecimalString | null
   ) => Promise<ProtectionSnapshot>;
   closePosition: (
     position: NativeExposurePosition,
@@ -619,8 +620,9 @@ export class ExecutionGateway {
         const protOutcome = await ensureExposureProtection({
           position: positionObj,
           desiredStopPrice: intent.stop,
+          desiredTpPrice: intent.tp,
           readProtection: (p) => transport.readProtection(p),
-          placeProtection: (p, s) => transport.placeProtection(p, s),
+          placeProtection: (p, s, tp) => transport.placeProtection(p, s, tp),
           emergencyClose: async (p, cid) => {
             await transport.closePosition(p, cid);
           }

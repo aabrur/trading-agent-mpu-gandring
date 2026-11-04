@@ -193,8 +193,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       takerFee: num(env, 'TAKER_FEE', 0.00055),
       takeProfitPct: num(env, 'TAKE_PROFIT_PCT', 60),
       takeProfitR: Math.max(0, num(env, 'TAKE_PROFIT_R', 3)),
-      // Daily loss follows the selected profile, including Aggressive's 25%.
-      dailyLossLimitPct: Math.min(25, Math.max(0.5, num(env, 'DAILY_LOSS_LIMIT_PCT', DEFAULT_TRADING_SETTINGS.dailyLossLimitPct)))
+      // Daily loss follows the selected profile or manual limit up to 100%.
+      dailyLossLimitPct: Math.min(100, Math.max(0.5, num(env, 'DAILY_LOSS_LIMIT_PCT', DEFAULT_TRADING_SETTINGS.dailyLossLimitPct)))
     },
     debate: {
       rounds: Math.min(4, Math.max(1, num(env, 'DEBATE_ROUNDS', 2))),

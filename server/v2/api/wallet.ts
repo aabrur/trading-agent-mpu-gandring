@@ -332,7 +332,7 @@ export function mountWalletRoutes(app: express.Express, deps: WalletRouteDeps): 
       available: access.ok,
       reason: access.reason,
       appMode: snap.effective.appMode,
-      current: snap.effective.venue,
+      current: snap.effective.venue?.exchange ?? 'bybit',
       experimental: true,
       venues: EXCHANGES.map((v) => ({
         ...walletInfo(v as any),
@@ -345,8 +345,9 @@ export function mountWalletRoutes(app: express.Express, deps: WalletRouteDeps): 
     if (!requireAccess(req, res)) return;
 
     const snap = deps.settings.current();
-    const rawVenue = String(req.query.venue ?? snap.effective.venue).toLowerCase();
-    const venue = (EXCHANGES.includes(rawVenue as VenueId) ? rawVenue : snap.effective.venue) as VenueId;
+    const effectiveExchange = snap.effective.venue?.exchange ?? 'bybit';
+    const rawVenue = String(req.query.venue ?? effectiveExchange).toLowerCase();
+    const venue = (EXCHANGES.includes(rawVenue as VenueId) ? rawVenue : effectiveExchange) as VenueId;
     const network: Network =
       req.query.network === 'mainnet' || (req.query.network !== 'testnet' && snap.effective.mode === 'LIVE')
         ? 'mainnet'

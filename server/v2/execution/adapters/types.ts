@@ -184,7 +184,9 @@ export const ProtectionEvidenceSchema = z.object({
   reduceOnlyOrPositionBound: z.boolean(),
   state: z.enum(['VERIFIED', 'UNVERIFIED', 'MISSING']),
   observedAt: z.number().int().nonnegative(),
-  reason: z.string().nullable()
+  reason: z.string().nullable(),
+  stopOrderId: z.string().nullable().optional(),
+  tpOrderId: z.string().nullable().optional()
 });
 export type ProtectionEvidence = z.infer<typeof ProtectionEvidenceSchema>;
 
@@ -408,6 +410,8 @@ export function evaluateProtectionCoverage(input: {
   reduceOnlyOrPositionBound: boolean;
   observedAt: number;
   netPositionBound?: boolean;
+  stopOrderId?: string | null;
+  tpOrderId?: string | null;
 }): ProtectionEvidence {
   if (!input.stopPrice || compareDecimals(input.stopPrice, '0') <= 0) {
     return {
@@ -421,7 +425,9 @@ export function evaluateProtectionCoverage(input: {
       reduceOnlyOrPositionBound: input.reduceOnlyOrPositionBound,
       state: 'MISSING',
       observedAt: input.observedAt,
-      reason: 'No active stop trigger price resting on venue'
+      reason: 'No active stop trigger price resting on venue',
+      stopOrderId: null,
+      tpOrderId: input.tpOrderId ?? null
     };
   }
 
@@ -437,7 +443,9 @@ export function evaluateProtectionCoverage(input: {
       reduceOnlyOrPositionBound: false,
       state: 'UNVERIFIED',
       observedAt: input.observedAt,
-      reason: 'Stop order is neither reduce-only nor position-bound'
+      reason: 'Stop order is neither reduce-only nor position-bound',
+      stopOrderId: input.stopOrderId ?? null,
+      tpOrderId: input.tpOrderId ?? null
     };
   }
 
@@ -454,7 +462,9 @@ export function evaluateProtectionCoverage(input: {
       reduceOnlyOrPositionBound: true,
       state: 'MISSING',
       observedAt: input.observedAt,
-      reason: 'Stop trigger covers zero quantity'
+      reason: 'Stop trigger covers zero quantity',
+      stopOrderId: input.stopOrderId ?? null,
+      tpOrderId: input.tpOrderId ?? null
     };
   }
 
@@ -470,7 +480,9 @@ export function evaluateProtectionCoverage(input: {
       reduceOnlyOrPositionBound: true,
       state: 'MISSING',
       observedAt: input.observedAt,
-      reason: `Stop coverage ${effectiveCovered} is less than native exposure ${input.requiredQty}`
+      reason: `Stop coverage ${effectiveCovered} is less than native exposure ${input.requiredQty}`,
+      stopOrderId: input.stopOrderId ?? null,
+      tpOrderId: input.tpOrderId ?? null
     };
   }
 
@@ -485,7 +497,9 @@ export function evaluateProtectionCoverage(input: {
     reduceOnlyOrPositionBound: true,
     state: 'VERIFIED',
     observedAt: input.observedAt,
-    reason: null
+    reason: null,
+    stopOrderId: input.stopOrderId ?? null,
+    tpOrderId: input.tpOrderId ?? null
   };
 }
 

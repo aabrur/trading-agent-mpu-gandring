@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const TradingFields = z.object({
-  dailyLossLimitPct: z.number().finite().min(0.5).max(25),
+  dailyLossLimitPct: z.number().finite().positive().max(100),
   maxLossPerTradePct: z.number().finite().positive().max(100),
   minEntryConfidencePct: z.number().finite().min(0).max(100),
   maxLeverage: z.number().int().min(1).max(100),
@@ -13,7 +13,7 @@ export const TradingFields = z.object({
   maxOrderUsdt: z.number().finite().nonnegative().default(0),
   minOrderUsdt: z.number().finite().nonnegative(),
   safetyNet: z.number().finite().nonnegative(),
-  maxPositions: z.number().int().min(1).max(4)
+  maxPositions: z.number().int().min(1).max(100)
 }).strict();
 
 // Legacy sizing fields remain readable in saved profiles; execution uses margin SL/TP.
@@ -28,18 +28,18 @@ export const TRADING_PROFILES: readonly TradingProfile[] = ['current', 'default'
 export type TradingNetwork = 'testnet' | 'mainnet';
 
 export const DEFAULT_TRADING_SETTINGS: Readonly<TradingSettings> = Object.freeze({
-  dailyLossLimitPct: 10,
+  dailyLossLimitPct: 100,
   maxLossPerTradePct: 20,
-  minEntryConfidencePct: 60,
+  minEntryConfidencePct: 65,
   maxLeverage: 5,
   defaultStopPct: 20,
   minStopPct: 0,
-  takeProfitPct: 60,
-  takeProfitR: 3.0,
+  takeProfitPct: 50,
+  takeProfitR: 2.5,
   minOrderUsdt: 0,
   maxOrderUsdt: 0,
   safetyNet: 8,
-  maxPositions: 3
+  maxPositions: 1
 });
 
 export const TRADING_PRESETS: Record<TradingPresetId, {
@@ -49,24 +49,24 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
 }> = {
   default: {
     name: 'Default',
-    description: 'Baseline auto-trading mode with TP 60% and SL 20%.',
+    description: 'Baseline auto-trading mode with TP 50%, SL 20%, daily loss 20%, 5x leverage, min confidence 65%, 1 slot.',
     values: {
-      dailyLossLimitPct: 10,
+      dailyLossLimitPct: 20,
       maxLossPerTradePct: 20,
-      minEntryConfidencePct: 60,
+      minEntryConfidencePct: 65,
       maxLeverage: 5,
       defaultStopPct: 20,
       minStopPct: 0,
-      takeProfitPct: 60,
-      takeProfitR: 3.0,
-      maxPositions: 3
+      takeProfitPct: 50,
+      takeProfitR: 2.5,
+      maxPositions: 1
     }
   },
   balance: {
     name: 'Balance',
-    description: 'Balanced auto-trading mode with TP 60% and SL 30%.',
+    description: 'Balanced auto-trading mode with TP 60%, SL 30%, daily loss 30%, 10x leverage, min confidence 60%, 2 slots.',
     values: {
-      dailyLossLimitPct: 15,
+      dailyLossLimitPct: 30,
       maxLossPerTradePct: 30,
       minEntryConfidencePct: 60,
       maxLeverage: 10,
@@ -74,43 +74,43 @@ export const TRADING_PRESETS: Record<TradingPresetId, {
       minStopPct: 0,
       takeProfitPct: 60,
       takeProfitR: 2.0,
-      maxPositions: 3
+      maxPositions: 2
     }
   },
   profit: {
     name: 'Profit',
-    description: 'Profit momentum mode with TP 70% and SL 40% of margin.',
+    description: 'Profit momentum mode with TP 70%, SL 40%, daily loss 40%, 15x leverage, min confidence 55%, 3 slots.',
     values: {
-      dailyLossLimitPct: 20,
+      dailyLossLimitPct: 40,
       maxLossPerTradePct: 40,
-      minEntryConfidencePct: 60,
+      minEntryConfidencePct: 55,
       maxLeverage: 15,
       defaultStopPct: 40,
       minStopPct: 0,
       takeProfitPct: 70,
       takeProfitR: 1.75,
-      maxPositions: 2
+      maxPositions: 3
     }
   },
   aggressive: {
     name: 'Aggressive',
-    description: 'High risk high reward mode with TP 80% and SL 50%.',
+    description: 'High risk high reward mode with TP 80%, SL 50%, daily loss 50%, 20x leverage, min confidence 50%, 4 slots.',
     values: {
-      dailyLossLimitPct: 25,
+      dailyLossLimitPct: 50,
       maxLossPerTradePct: 50,
-      minEntryConfidencePct: 60,
+      minEntryConfidencePct: 50,
       maxLeverage: 20,
       defaultStopPct: 50,
       minStopPct: 0,
       takeProfitPct: 80,
       takeProfitR: 1.6,
-      maxPositions: 2
+      maxPositions: 4
     }
   }
 };
 
 export function resolveTradingPreset(preset: TradingPresetId, base: TradingSettings): TradingSettings {
-  const values = preset === 'default' ? { ...DEFAULT_TRADING_SETTINGS } : { ...TRADING_PRESETS[preset].values };
+  const values = { ...TRADING_PRESETS[preset].values };
   return TradingSettingsSchema.parse({
     ...values,
     maxOrderUsdt: base.maxOrderUsdt ?? 0,

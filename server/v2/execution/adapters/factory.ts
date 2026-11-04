@@ -119,10 +119,10 @@ export function createTransportFromAdapter(adapter: VenueAdapter): GatewayVenueT
         reduceOnly: prot.reduceOnlyOrPositionBound
       };
     },
-    placeProtection: async (position, stopPrice): Promise<ProtectionSnapshot> => {
+    placeProtection: async (position, stopPrice, tpPrice): Promise<ProtectionSnapshot> => {
       const prot = await adapter.protect(toNativePosition(position), {
         stopPrice,
-        tpPrice: null,
+        tpPrice: tpPrice ?? null,
         triggerBy: 'MARK_PRICE',
         clientOrderId: `prot-${Date.now()}`
       });

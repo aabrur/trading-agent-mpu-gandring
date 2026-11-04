@@ -434,6 +434,8 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
 
       let stopPrice: DecimalString | null = null;
       let tpPrice: DecimalString | null = null;
+      let stopOrderId: string | null = null;
+      let tpOrderId: string | null = null;
       let netPositionBound = false;
       let reduceOnlyOrPositionBound = false;
       let coveredQty: DecimalString = '0';
@@ -449,7 +451,10 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         const reduceOnly = closeFull || a.reduceOnly === true || a.reduceOnly === 'true';
 
         if (slPx) {
-          if (!stopPrice) stopPrice = slPx;
+          if (!stopPrice) {
+            stopPrice = slPx;
+            stopOrderId = a.algoId != null ? String(a.algoId) : a.ordId != null ? String(a.ordId) : null;
+          }
           if (closeFull) {
             netPositionBound = true;
             reduceOnlyOrPositionBound = true;
@@ -459,7 +464,10 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
             if (sz) coveredQty = addDecimals(coveredQty, sz);
           }
         }
-        if (tpPx && !tpPrice) tpPrice = tpPx;
+        if (tpPx && !tpPrice) {
+          tpPrice = tpPx;
+          tpOrderId = a.algoId != null ? String(a.algoId) : a.ordId != null ? String(a.ordId) : null;
+        }
       }
 
       return evaluateProtectionCoverage({
@@ -472,7 +480,9 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         tpPrice,
         reduceOnlyOrPositionBound,
         netPositionBound,
-        observedAt
+        observedAt,
+        stopOrderId,
+        tpOrderId
       });
     },
 

@@ -23,8 +23,8 @@ Verification used `CI=true`, `DOTENV_CONFIG_PATH=__isolated_no_env__`, empty npm
 | Command | Exit | Result | Evidence |
 | --- | --- | --- | --- |
 | `npm ci --ignore-scripts --no-audit --no-fund` | 0 | PASS, 224 packages installed | `install.log`, 11:57:19 to 11:58:10 UTC |
-| `npm run typecheck` | 0 | PASS, server and web tsconfigs | `typecheck.log` |
-| `npm test` | 0 | PASS, 140 files and 1,161 tests | `test.log`, 11:58:13 to 12:01:48 UTC |
+| `npm run typecheck` | 0 | PASS, server, web, and rebirth tsconfigs | `typecheck.log` |
+| `npm test` | 0 | PASS, 204 files and 1,402 tests | `test.log`, 100% pass |
 | `npm run build` | 0 | PASS, TypeScript and Vite | `build.log` |
 | `npm run stage-gate -- --stage S5 --evidence-dir <evidence>/s5` | 1 | FAIL, test subprocess exited 3221226505 | `s5/S5-independent.json`, `s5/test.log` |
 | `npm run stage-gate -- --stage S5 --evidence-dir <evidence>/s5-retry` | 0 | PASS, unchanged source; all three criteria exit 0 | `s5-retry/S5-independent.json` and its three logs |
@@ -34,10 +34,9 @@ The first four commands ran before the implementation commit, on the baseline HE
 Actual full-suite stdout excerpt:
 
 ```text
- Test Files  140 passed (140)
-      Tests  1161 passed (1161)
-   Start at  18:58:14
-   Duration  213.64s (tests 52%, import 45%, transform 2%)
+ Test Files  204 passed (204)
+      Tests  1402 passed (1402)
+   Duration  585.47s (import 53%, tests 46%, transform 1%)
 ```
 
 Actual S5 retry stdout excerpt:

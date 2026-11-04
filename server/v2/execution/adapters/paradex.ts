@@ -541,6 +541,8 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
 
       let stopPrice: DecimalString | null = null;
       let tpPrice: DecimalString | null = null;
+      let stopOrderId: string | null = null;
+      let tpOrderId: string | null = null;
       let coveredQty: DecimalString = '0';
       let reduceOnlyOrPositionBound = false;
 
@@ -550,9 +552,13 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         const oType = String(o.type ?? '').toUpperCase();
         const flags = Array.isArray(o.flags) ? (o.flags as string[]) : [];
         const reduceOnly = flags.includes('REDUCE_ONLY');
+        const id = o.id != null ? String(o.id) : null;
 
         if (oType.includes('STOP') && trigPx) {
-          if (!stopPrice) stopPrice = trigPx;
+          if (!stopPrice) {
+            stopPrice = trigPx;
+            stopOrderId = id;
+          }
           if (reduceOnly) {
             reduceOnlyOrPositionBound = true;
             const sz = parsePositiveDecimalOrNull(o.size);
@@ -560,6 +566,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
           }
         } else if (oType.includes('TAKE_PROFIT') && trigPx && !tpPrice) {
           tpPrice = trigPx;
+          tpOrderId = id;
         }
       }
 
@@ -571,6 +578,8 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         coveredQty,
         stopPrice,
         tpPrice,
+        stopOrderId,
+        tpOrderId,
         reduceOnlyOrPositionBound,
         observedAt
       });

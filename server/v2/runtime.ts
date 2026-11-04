@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { AgentId, RoomMessage } from '../types.js';
 import { log, safe } from '../redact.js';
 import { configurationFingerprint } from '../session-entry.js';
 import {
@@ -1910,7 +1911,7 @@ export function createReplacementRuntime(
           slots: snap.paper.n,
           freeSlots: snap.accountState?.freeSlots ?? Math.max(0, snap.paper.n - snap.paper.positions.length),
           dailyLossHit: snap.dailyLoss?.hit ?? false,
-          dailyLossLimitPct: snap.dailyLoss?.limitPct ?? 10
+          dailyLossLimitPct: snap.trading?.values?.dailyLossLimitPct ?? snap.dailyLoss?.limitPct ?? 10
         })
       };
     }
@@ -1941,7 +1942,7 @@ export function createReplacementRuntime(
           safetyNet: snap.paper.safetyNet,
           moneyTrade: snap.paper.moneyTrade,
           dailyLossHit: snap.dailyLoss?.hit ?? false,
-          dailyLossLimitPct: snap.dailyLoss?.limitPct ?? 10,
+          dailyLossLimitPct: snap.trading?.values?.dailyLossLimitPct ?? snap.dailyLoss?.limitPct ?? 10,
           positions: snap.paper.positions ?? [],
           openPnl: open.value,
           pnlSource: open.source,
@@ -2301,6 +2302,12 @@ export function createReplacementRuntime(
             )
             .catch(() => {});
         }
+        if (options.secrets) {
+          options.secrets.writeSecrets({
+            OPEN_ORDERS_N: String(count),
+            MAINNET_DESK_OPEN_ORDERS_N: String(count)
+          });
+        }
         hub.emit('state', snapshot());
         return { ok: true, command: 'set_n', reply: `Slots N set to ${count}.` };
       }
@@ -2394,7 +2401,7 @@ export function createReplacementRuntime(
       return { ok: false, error: 'Size must be a percentage between 1 and 100, or "auto" / "off".' };
     }
 
-    const profileMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?profile\s+(\S+)$/i);
+    const profileMatch = raw.replace(/^\//, '').match(/^(?:(?:set\s+)?profile|(?:atur|ubah)\s+profil)\s+(\S+)$/i);
     if (profileMatch) {
       const prof = profileMatch[1].toLowerCase();
       if ((TRADING_PROFILES as readonly string[]).includes(prof as any)) {
@@ -2408,6 +2415,9 @@ export function createReplacementRuntime(
           if (d.trading) {
             d.trading.profile = prof as TradingProfile;
             d.trading.values = { ...d.trading.values, ...nextVals };
+          }
+          if (d.dailyLoss && nextVals.dailyLossLimitPct) {
+            d.dailyLoss.limitPct = nextVals.dailyLossLimitPct;
           }
           if (nextVals.maxLeverage) d.paper.maxLeverage = nextVals.maxLeverage;
         });
@@ -2429,9 +2439,81 @@ export function createReplacementRuntime(
           });
         }
         hub.emit('state', snapshot());
-        return { ok: true, command: 'set_profile', reply: `Trading profile set to ${prof} (leverage ${nextVals.maxLeverage}x, SL ${nextVals.defaultStopPct}%, TP ${nextVals.takeProfitPct}%).` };
+        return { ok: true, command: 'set_profile', reply: `Trading profile set to ${prof} (leverage ${nextVals.maxLeverage}x, SL ${nextVals.defaultStopPct}%, TP ${nextVals.takeProfitPct}%, Daily Loss ${nextVals.dailyLossLimitPct}%).` };
       }
       return { ok: false, error: `Profile must be one of: ${TRADING_PROFILES.join(', ')}` };
+    }
+
+    const cycleMatch = raw.replace(/^\//, '').match(/^(?:(?:set\s+)?cycle(?:\s+interval)?|(?:atur|ubah)\s+cycle(?:\s+interval)?)\s*(?:=|to|:)?\s*(\d+)\b/i);
+    if (cycleMatch) {
+      const min = Number(cycleMatch[1]);
+      if (Number.isInteger(min) && min >= 1 && min <= 1440) {
+        updateState((d) => {
+          d.auto.intervalMin = min;
+        });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                auto: { intervalMin: min }
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
+        if (options.secrets) {
+          options.secrets.writeSecrets({
+            DEBATE_INTERVAL_MIN: String(min),
+            MAINNET_DESK_DEBATE_INTERVAL_MIN: String(min)
+          });
+        }
+        hub.emit('state', snapshot());
+        return { ok: true, command: 'set_cycle', reply: `Auto trading cycle interval set to ${min} minute(s).` };
+      }
+      return { ok: false, error: 'Cycle interval must be an integer between 1 and 1440 minutes.' };
+    }
+
+    if (/^(?:run\s+cycle|cycle\s+now|start\s+cycle|jalankan\s+cycle|mulai\s+cycle)$/i.test(cleanCmd)) {
+      const snap = snapshot();
+      if (snap.killed) {
+        return { ok: false, error: 'Kill switch is ON. Release it first.' };
+      }
+      if (snap.auto.running) {
+        return { ok: false, error: `A cycle is already running for ${snap.debate?.symbol ?? 'symbol'}` };
+      }
+      const symbols = snap.watchlist?.length ? snap.watchlist : snap.auto.symbols;
+      const targetSym = symbols[0] ?? 'BTCUSDT';
+      void triggerCycle(targetSym, 'owner').catch(console.error);
+      return { ok: true, command: 'run_cycle', reply: `Triggered auto cycle immediately on ${targetSym} (watchlist: ${symbols.join(', ')})...` };
+    }
+
+    const reportIntervalMatch = raw.replace(/^\//, '').match(/^(?:(?:set\s+)?report(?:\s+interval)?|(?:atur|ubah)\s+report(?:\s+interval)?)\s*(?:=|to|:)?\s*(\d+)\b/i);
+    if (reportIntervalMatch) {
+      const min = Number(reportIntervalMatch[1]);
+      if (Number.isInteger(min) && min >= 1 && min <= 1440) {
+        updateState((d) => {
+          d.reportIntervalMin = min;
+        });
+        if (options.settings) {
+          void options.settings
+            .apply(
+              {
+                auto: { reportIntervalMin: min }
+              },
+              options.settings.current().activeVersion
+            )
+            .catch(() => {});
+        }
+        if (options.secrets) {
+          options.secrets.writeSecrets({
+            REPORT_INTERVAL_MIN: String(min),
+            MAINNET_DESK_REPORT_INTERVAL_MIN: String(min)
+          });
+        }
+        hub.emit('state', snapshot());
+        return { ok: true, command: 'set_report_interval', reply: `Desk report interval set to ${min} minute(s).` };
+      }
+      return { ok: false, error: 'Report interval must be an integer between 1 and 1440 minutes.' };
     }
 
     if (cleanCmd === 'sync' || cleanCmd === 'sync balance' || cleanCmd === 'sync to book' || cleanCmd === 'refresh balance') {
@@ -3231,6 +3313,87 @@ export async function startReplacementServer(
     initialKilled: persistedHalt
   });
   runtimeRef = runtime;
+
+  if (store) {
+    try {
+      const msgRes = await store.execute(
+        `SELECT message_id, conversation_id, role, text, created_at FROM chat_messages ORDER BY created_at DESC LIMIT 100`
+      );
+      if (msgRes.rows.length > 0) {
+        const rows = [...msgRes.rows].reverse();
+        runtime.updateState((draft) => {
+          if (!draft.roomHistory) draft.roomHistory = [];
+          for (const r of rows) {
+            const role = String(r.role);
+            const text = String(r.text);
+            const at = new Date(String(r.created_at)).getTime() || Date.now();
+            const id = String(r.message_id);
+            const conversationId = String(r.conversation_id);
+            const isOwner = role === 'owner';
+            const isAgent = ['lead', 'market', 'research', 'strategist', 'risk', 'execution'].includes(role);
+            if (!isOwner && !isAgent) continue;
+
+            const fromVal: AgentId | 'owner' = isOwner ? 'owner' : (role as AgentId);
+            const toVal: AgentId | 'all' | 'owner' = isOwner ? 'all' : 'owner';
+
+            const roomMsg: RoomMessage = {
+              id,
+              conversationId,
+              at,
+              from: fromVal,
+              to: toVal,
+              text
+            };
+            if (!draft.roomHistory.some((m) => m.id === id)) {
+              draft.roomHistory.push(roomMsg);
+            }
+            if (!isOwner && isAgent && role in draft.chats) {
+              const roleKey = role as keyof typeof draft.chats;
+              if (!draft.chats[roleKey].some((c) => c.text === text && Math.abs(c.at - at) < 1000)) {
+                draft.chats[roleKey].push({ from: role as AgentId, text, at, conversationId });
+              }
+            }
+          }
+          draft.roomHistory = draft.roomHistory.slice(-100);
+          for (const k of Object.keys(draft.chats) as Array<keyof typeof draft.chats>) {
+            draft.chats[k] = draft.chats[k].slice(-50);
+          }
+        });
+      }
+
+      const eventRes = await store.execute(
+        `SELECT event_id, kind, created_at, payload_json FROM events ORDER BY seq DESC LIMIT 50`
+      );
+      if (eventRes.rows.length > 0) {
+        const evtRows = [...eventRes.rows].reverse();
+        runtime.updateState((draft) => {
+          if (!draft.logs) draft.logs = [];
+          for (const er of evtRows) {
+            const at = new Date(String(er.created_at)).getTime() || Date.now();
+            const id = String(er.event_id);
+            const kind = String(er.kind);
+            let text = `[EVENT] ${kind}`;
+            try {
+              const p = JSON.parse(String(er.payload_json));
+              if (p.reason) text += `: ${p.reason}`;
+              else if (p.message) text += `: ${p.message}`;
+              else if (p.action && p.symbol) text += `: ${p.action} on ${p.symbol}`;
+            } catch {}
+            if (!draft.logs.some((l) => l.id === id)) {
+              draft.logs.push({
+                id,
+                conversationId: 'office',
+                at,
+                kind,
+                text
+              });
+            }
+          }
+          draft.logs = draft.logs.slice(-500);
+        });
+      }
+    } catch {}
+  }
 
   const grokKey = secrets.getSecret('AGENT_EVENT_SECRET');
   const grokRegistry: KeyRegistry = {

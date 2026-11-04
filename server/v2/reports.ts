@@ -156,7 +156,7 @@ export class ReportsService {
       safetyNet,
       moneyTrade,
       dailyLossHit: state.dailyLoss?.hit ?? false,
-      dailyLossLimitPct: state.dailyLoss?.limitPct ?? state.trading?.values?.dailyLossLimitPct ?? 10,
+      dailyLossLimitPct: state.trading?.values?.dailyLossLimitPct ?? state.dailyLoss?.limitPct ?? 10,
       positions,
       openPnl,
       pnlSource: open.source,
@@ -180,7 +180,7 @@ export class ReportsService {
       unrealized: openPnl,
       realized: realized ?? 0,
       dailyLoss: {
-        limitPct: state.dailyLoss?.limitPct ?? state.trading?.values?.dailyLossLimitPct ?? 10,
+        limitPct: state.trading?.values?.dailyLossLimitPct ?? state.dailyLoss?.limitPct ?? 10,
         hit: state.dailyLoss?.hit ?? false
       },
       auto: {

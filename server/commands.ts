@@ -11,6 +11,9 @@ export type Command =
   | { type: 'set_n'; n: number }
   | { type: 'set_safety'; value: number }
   | { type: 'set_balance'; value: number }
+  | { type: 'set_cycle'; intervalMin: number }
+  | { type: 'run_cycle' }
+  | { type: 'set_report_interval'; intervalMin: number }
   | { type: 'close_all' }
   | { type: 'close'; symbol: string }
   | { type: 'mood'; delta: number | 'reset' }
@@ -39,7 +42,7 @@ export function extractMentions(input: string): { mentions: (import('./types.js'
 export function parseCommand(input: string): Command {
   const t = input.trim().replace(/^\//, '');
   let m: RegExpMatchArray | null;
-  if ((m = t.match(/^set\s+profile\s+(\S+)$/i))) {
+  if ((m = t.match(/^(?:set\s+)?profile\s+(\S+)$/i) || t.match(/^(?:atur|ubah)\s+profil\s+(\S+)$/i))) {
     const profile = m[1].toLowerCase() as TradingPresetId;
     return TRADING_PRESET_IDS.includes(profile) ? { type: 'set_profile', profile } : { type: 'invalid', reason: 'Profile must be default, balance, profit or aggressive.' };
   }
@@ -60,6 +63,17 @@ export function parseCommand(input: string): Command {
   if ((m = t.match(/^(?:set\s+)?(?:n|orders?|open\s+orders?|order)\s*(?:=|to|:)?\s*(\d+)\b/i))) return { type: 'set_n', n: Number(m[1]) };
   if ((m = t.match(/^(?:set\s+)?(?:safety(?:\s*net)?|sn)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i))) return { type: 'set_safety', value: Number(m[1]) };
   if ((m = t.match(/^(?:set\s+)?(?:balance|saldo)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i))) return { type: 'set_balance', value: Number(m[1]) };
+  if (/^(?:run\s+cycle|cycle\s+now|start\s+cycle|jalankan\s+cycle|mulai\s+cycle)$/i.test(t)) return { type: 'run_cycle' };
+  if ((m = t.match(/^(?:set\s+)?cycle(?:\s+interval)?\s*(?:=|to|:)?\s*(\d+)\b/i) || t.match(/^(?:atur|ubah)\s+cycle(?:\s+interval)?\s*(?:=|to|:)?\s*(\d+)\b/i))) {
+    const min = Number(m[1]);
+    if (Number.isInteger(min) && min >= 1 && min <= 1440) return { type: 'set_cycle', intervalMin: min };
+    return { type: 'invalid', reason: 'Cycle interval must be between 1 and 1440 minutes.' };
+  }
+  if ((m = t.match(/^(?:set\s+)?report(?:\s+interval)?\s*(?:=|to|:)?\s*(\d+)\b/i) || t.match(/^(?:atur|ubah)\s+report(?:\s+interval)?\s*(?:=|to|:)?\s*(\d+)\b/i))) {
+    const min = Number(m[1]);
+    if (Number.isInteger(min) && min >= 1 && min <= 1440) return { type: 'set_report_interval', intervalMin: min };
+    return { type: 'invalid', reason: 'Report interval must be between 1 and 1440 minutes.' };
+  }
   if (/^(close|tutup)\s+(all|semua|everything)$/i.test(t)) return { type: 'close_all' };
   if ((m = t.match(/^(?:close|tutup)\s+([a-z0-9]{2,15})$/i))) return { type: 'close', symbol: normSymbol(m[1]) };
   if (/^(close|tutup)\b/i.test(t)) return { type: 'invalid', reason: 'Usage: close <symbol> or close all.' };
@@ -72,7 +86,7 @@ export function parseCommand(input: string): Command {
   return { type: 'chat', text: t, ...(mentions.length ? { mentions } : {}) };
 }
 
-export const HELP = 'Commands: analyze ETHUSDT, set profile default|balance|profit|aggressive, set size 5%, set leverage 10, open long BTC [size%] [leverage], open short BTC [size%] [leverage], buy BTC, sell BTC, close BTC, close all, pause, resume, set n 3, set safety 20, set balance 100, be more cautious, be more aggressive, calm down, status.';
+export const HELP = 'Commands: analyze ETHUSDT, set profile default|balance|profit|aggressive, set cycle 60, run cycle, set report 60, set size 5%, set leverage 10, open long BTC [size%] [leverage], open short BTC [size%] [leverage], buy BTC, sell BTC, close BTC, close all, pause, resume, set n 3, set safety 20, set balance 100, be more cautious, be more aggressive, calm down, status.';
 
 /** Model output is a proposal. Only a matching instruction in this owner's current message authorizes it. */
 export function authorizedChatCommand(message: string, proposed: string): Command | null {
@@ -84,6 +98,6 @@ export function authorizedChatCommand(message: string, proposed: string): Comman
   const prefix = message.slice(0, match.index).trim();
   if (prefix && !/^(?:(?:please|tolong|boss(?:\s+says)?|owner|hey|hi|okay|ok|now|langsung|sekarang|lead|market|research|strategist|risk|execution|i want you to|nice work|thanks|thank you)[\s,:!]*)+$/i.test(prefix)) return null;
   const intent = parseCommand(match[0]);
-  const permitted = ['set_profile', 'set_size', 'set_leverage', 'open', 'close', 'close_all'];
+  const permitted = ['set_profile', 'set_size', 'set_leverage', 'set_cycle', 'run_cycle', 'set_report_interval', 'open', 'close', 'close_all'];
   return permitted.includes(command.type) && JSON.stringify(command) === JSON.stringify(intent) ? command : null;
 }

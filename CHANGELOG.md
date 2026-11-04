@@ -2,6 +2,20 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.20] - 2026-11-05
+
+### Added & Fixed
+- Added engine and chat commands (`set profile <name>`, `set cycle <min>`, `run cycle`, `set report <min>`) with Indonesian aliases (`atur profil`, `atur cycle`, `jalankan cycle`, `atur report`).
+- Fixed daily loss cap reporting in chat channels to accurately display active profile percentage (e.g. 30% for balance profile instead of static 10%).
+- Enriched `ProtectionEvidence` across all 8 venues (Aster, Hyperliquid, dYdX v4, Paradex, Orderly, Bybit, Binance, OKX) to capture native exchange order IDs (`stopOrderId`, `tpOrderId`).
+- Added Decrypt RSS feed to `ResearchHost` alongside CoinTelegraph for real-time crypto news and catalyst discovery without external API keys.
+- Cleaned legacy `commandToExecute` mentions from 6 agent persona prompts (lead, market, research, strategist, risk, execution).
+- Hydrated room history, chats, and activity logs on startup from persistent SQLite database (`chat_messages` and `events`), preserving UI continuity across server restarts.
+- Unified "Trading & Risk" and "Desk Settings" into one cohesive "Trading & Desk Settings" tab in web UI.
+- Upgraded allocation bar chart in web UI with exact 2-decimal precision and automatic indicator when order margin adjusts to venue minimum lot constraints.
+- Updated `.env` safety net configurations (`SAFETY_NET=2`, `MAINNET_DESK_SAFETY_NET=2`), ensuring `npm run doctor` passes cleanly.
+- Updated `TEST_RESULTS.md` documenting 204 passed test files and 1,402 passing tests (100%).
+
 ## [v0.0.0.4.19] - 2026-11-04
 
 ### Added & Fixed

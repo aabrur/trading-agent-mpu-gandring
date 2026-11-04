@@ -54,7 +54,7 @@ describe('Owner profile margin protection', () => {
     snap.candles = Array.from({ length: 70 }, (_, i) => ({ t: Date.now() - (71 - i) * 900_000, o: 100 + i, h: 102 + i, l: 99 + i, c: 101 + i, v: 100 }));
     snap.last = 170; snap.bid = 170; snap.ask = 170; snap.fetchedAt = Date.now();
     const spy = vi.spyOn(market, 'getSnapshot').mockResolvedValue(snap);
-    const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', DEBATE_ROUNDS: '1', TAKER_FEE: '0' });
+    const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEBATE_PACE_MS: '0', DEBATE_ROUNDS: '1', TAKER_FEE: '0', MIN_ENTRY_CONFIDENCE_PCT: '60' });
     const base = makeCaller(cfg);
     const caller = vi.fn((request: Parameters<typeof base>[0]) => request.task === 'lead' ? Promise.resolve(JSON.stringify({ action: 'OPEN_LONG', confidence: 0.6, reason: 'Uptrend confirmed.' })) : base(request));
     const desk = new Desk(cfg, caller, { reportsDir: null, killFile: null, learningsPath: null });

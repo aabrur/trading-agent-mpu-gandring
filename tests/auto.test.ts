@@ -66,7 +66,7 @@ describe('AUTO scheduler (fake exchange, no approval step)', () => {
     expect(a.placed).toHaveLength(0);
   });
   it('daily loss stop pauses new orders until the next UTC day', async () => {
-    const { a, desk, auto } = mk();
+    const { a, desk, auto } = mk({ DAILY_LOSS_LIMIT_PCT: '20' });
     await desk.syncLive();
     vi.spyOn(a, 'balance').mockResolvedValue({ equityUsdt: 670, availableUsdt: 670 });
     armOpening(desk, a);

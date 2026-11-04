@@ -44,7 +44,7 @@ describe('Owner commands', () => {
   it('uses the same parser for channel actions and persists explicitly changed settings', async () => {
     const { desk, cfg } = fixture();
     await runCommand(desk, channelCommand('/set profile aggressive'));
-    expect(cfg.risk).toMatchObject({ minEntryConfidencePct: 60, maxLossPerTradePct: 50, maxLeverage: 20 });
+    expect(cfg.risk).toMatchObject({ minEntryConfidencePct: 50, maxLossPerTradePct: 50, maxLeverage: 20 });
     await runCommand(desk, channelCommand('/set size 1.5%'));
     expect(desk.book.split().perOrder).toBe(12);
     await runCommand(desk, channelCommand('/set leverage 10'));

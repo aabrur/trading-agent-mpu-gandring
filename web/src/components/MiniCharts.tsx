@@ -5,9 +5,10 @@ import { useI18n } from '../i18n';
 
 // Equity over time. Plain SVG with gridlines, axis labels, safety net line and a hover readout.
 export function EquityChart({ state }: { state: DeskState }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const pts = state.equityHistory.length ? state.equityHistory : [{ t: Date.now(), equity: state.paper.equity, balance: state.paper.balance }];
   const [hi, setHi] = useState<number | null>(null);
+
   const W = 340, H = 130, L = 52, R = 10, T = 12, B = 22;
   const vals = pts.map((p) => p.equity);
   const net = state.paper.safetyNet;
@@ -49,7 +50,7 @@ export function EquityChart({ state }: { state: DeskState }) {
 
 // Money Trade split into N slots. Each bar is one order's allocation; the fill is margin in use.
 export function AllocationBars({ state }: { state: DeskState }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const p = state.paper;
   const W = 340, H = 140, L = 44, R = 8, T = 14, B = 30;
   const slots = Array.from({ length: p.n }, (_, i) => p.positions[i] ?? null);
@@ -58,6 +59,7 @@ export function AllocationBars({ state }: { state: DeskState }) {
   const gap = (W - L - R - bw * p.n) / (p.n + 1);
   const y = (v: number) => T + (1 - v / max) * (H - T - B);
   const [hi, setHi] = useState<number | null>(null);
+
   return (
     <figure className="mini-chart">
       <figcaption><span>{t('allocationPerOrder')}</span><b>{fmt(p.moneyTrade)} / {p.n} = {fmt(p.perOrder)} USDT</b></figcaption>
@@ -77,15 +79,20 @@ export function AllocationBars({ state }: { state: DeskState }) {
               {pos && <rect x={x0 + 3} y={y(used)} width={bw - 6} height={Math.max(0, H - B - y(used) - 2)} rx="5" className={`slot-fill ${pos.side}`} />}
               <text x={x0 + bw / 2} y={H - B + 14} textAnchor="middle" className="axis strong">#{i + 1}</text>
               <text x={x0 + bw / 2} y={H - B + 26} textAnchor="middle" className="axis">{pos ? pos.symbol.replace('USDT', '') : t('slotFree')}</text>
-              {(hi === i || pos) && <text x={x0 + bw / 2} y={y(pos ? used : p.perOrder) - 5} textAnchor="middle" className="axis strong">{fmt(pos ? pos.margin : p.perOrder, 0)}</text>}
+              {(hi === i || pos) && <text x={x0 + bw / 2} y={y(pos ? used : p.perOrder) - 5} textAnchor="middle" className="axis strong">{fmt(pos ? pos.margin : p.perOrder, 2)}</text>}
             </g>
           );
         })}
       </svg>
       <div className="safety-strip" title="Balance split: safety net stays untouched">
-        <span className="sn" style={{ flex: Math.max(p.safetyNet, 0.0001) }}>net {fmt(p.safetyNet, 0)}</span>
-        <span className="mt" style={{ flex: Math.max(p.moneyTrade, 0.0001) }}>Money Trade {fmt(p.moneyTrade, 0)}</span>
+        <span className="sn" style={{ flex: Math.max(p.safetyNet, 0.0001) }}>net {fmt(p.safetyNet, 2)}</span>
+        <span className="mt" style={{ flex: Math.max(p.moneyTrade, 0.0001) }}>Money Trade {fmt(p.moneyTrade, 2)}</span>
       </div>
+      {p.positions.some((pos) => pos.margin > p.perOrder * 1.05) && (
+        <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px', textAlign: 'center' }}>
+          * {lang === 'id' ? 'Margin disesuaikan dengan batas minimum lot bursa' : 'Margin adjusted to venue min lot constraint'}
+        </div>
+      )}
     </figure>
   );
 }

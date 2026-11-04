@@ -653,6 +653,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
       const expectedExitSide = position.side === 'LONG' ? 'Sell' : 'Buy';
       let coveredQty: DecimalString = '0';
       let activeStopPrice: DecimalString | null = null;
+      let stopOrderId: string | null = null;
       let anyReduceOnly = false;
 
       for (const order of stopList) {
@@ -668,7 +669,10 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
           anyReduceOnly = true;
           coveredQty = addDecimals(coveredQty, qty);
         }
-        if (!activeStopPrice) activeStopPrice = triggerPx;
+        if (!activeStopPrice) {
+          activeStopPrice = triggerPx;
+          stopOrderId = order.orderId != null ? String(order.orderId) : null;
+        }
       }
 
       return evaluateProtectionCoverage({
@@ -680,7 +684,8 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         stopPrice: activeStopPrice,
         tpPrice: posTp,
         reduceOnlyOrPositionBound: anyReduceOnly,
-        observedAt
+        observedAt,
+        stopOrderId
       });
     },
 
