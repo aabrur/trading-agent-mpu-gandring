@@ -205,7 +205,7 @@ export const JevSettingsSchema = z
   .object({
     enabled: z.boolean(),
     provider: z.string().min(1).default('openrouter'),
-    model: z.string().min(1).default('openai/gpt-5-mini'),
+    model: z.string().min(1).default('typesafe/jev-1.14'),
     mode: z.enum(['off', 'advisory', 'strict']).default('off'),
     allowLive: z.boolean().default(false)
   })

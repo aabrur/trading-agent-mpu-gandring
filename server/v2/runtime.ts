@@ -592,7 +592,7 @@ export function createReplacementRuntime(
       ? ['true', 'yes', '1', 'on'].includes((env.JEV_ENABLED ?? '').trim().toLowerCase())
       : true
   );
-  const jevModel = savedJev?.model || env.JEV_MODEL || 'typesafe/jev-1.14';
+  const jevModel = (savedJev?.model && savedJev.model !== 'openai/gpt-5-mini' ? savedJev.model : null) || env.JEV_MODEL || 'typesafe/jev-1.14';
   const jevMode = savedJev?.mode || 'off';
   const jevAllowLive = savedJev?.allowLive ?? false;
   const hasJevKey = Boolean(options.secrets?.hasProviderKey('openrouter') || jevKey);

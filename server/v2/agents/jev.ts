@@ -78,8 +78,14 @@ export class JevClient {
   constructor(options: JevClientOptions) {
     this.enabled = options.enabled;
     this.apiKey = options.apiKey?.trim() || null;
-    this.endpoint = (options.endpoint ?? 'https://openrouter.ai/api/v1/chat/completions').trim();
-    this.model = (options.model ?? 'openai/gpt-5-mini').trim();
+    this.model = (options.model ?? 'typesafe/jev-1.14').trim();
+    if (!options.endpoint) {
+      this.endpoint = this.model.startsWith('typesafe/jev')
+        ? 'https://openrouter.ai/api/alpha/decisions'
+        : 'https://openrouter.ai/api/v1/chat/completions';
+    } else {
+      this.endpoint = options.endpoint.trim();
+    }
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.fallbackCaller = options.fallbackCaller;
@@ -160,7 +166,45 @@ export class JevClient {
     try {
       this.requests += 1;
       const started = Date.now();
+      const isDecisions = this.endpoint.includes('/decisions') || this.model.startsWith('typesafe/jev');
       const systemPrompt = 'You are Jev, the trading desk objective evidence and market regime reviewer. Analyze market context and role observations. You carry ZERO execution or veto authority. Return JSON with keys: "reviewId", "market_regime" (one of TRENDING_BULL, TRENDING_BEAR, RANGING, VOLATILE, UNCERTAIN), "claimRefs" (array of strings), "contraryRefs" (array of strings), "reason" (concise string).';
+
+      const reqBody = isDecisions
+        ? JSON.stringify({
+            model: this.model,
+            state: [
+              typeof sanitizedState === 'string' ? sanitizedState : JSON.stringify(sanitizedState)
+            ],
+            questions: {
+              market_regime: {
+                type: 'choice',
+                instructions: 'Which market regime best describes the current market condition?',
+                criteria: {
+                  TRENDING_BULL: 'Strong upward trend with higher highs and higher lows',
+                  TRENDING_BEAR: 'Strong downward trend with lower highs and lower lows',
+                  RANGING: 'Sideways or consolidating between support and resistance',
+                  VOLATILE: 'High volatility with erratic expansion wicks',
+                  UNCERTAIN: 'Conflicting or low-liquidity signals'
+                }
+              },
+              contrary_risk: {
+                type: 'noul',
+                instructions: 'Is entering the current move high risk due to support/resistance exhaustion or reversal divergence?',
+                criteria: {
+                  true: 'High risk of adverse move or trapped entry',
+                  false: 'Clean edge or continuation opportunity'
+                }
+              }
+            }
+          })
+        : JSON.stringify({
+            model: this.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: JSON.stringify(sanitizedState) }
+            ],
+            response_format: { type: 'json_object' }
+          });
 
       const res = await this.fetchImpl(this.endpoint, {
         method: 'POST',
@@ -168,14 +212,7 @@ export class JevClient {
           'content-type': 'application/json',
           authorization: `Bearer ${this.apiKey}`
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: JSON.stringify(sanitizedState) }
-          ],
-          response_format: { type: 'json_object' }
-        }),
+        body: reqBody,
         signal: AbortSignal.timeout(this.timeoutMs)
       });
 
@@ -191,6 +228,38 @@ export class JevClient {
       }
 
       const rawJson: unknown = await res.json();
+      if (rawJson && typeof rawJson === 'object' && 'answers' in rawJson) {
+        const answers = (rawJson as {
+          id?: string;
+          answers?: {
+            market_regime?: { choice?: string; confidence?: number };
+            contrary_risk?: { noul?: number };
+          };
+          usage?: { cost?: number };
+        }).answers;
+        const regimeChoice = answers?.market_regime?.choice || 'UNCERTAIN';
+        const regimeConf = typeof answers?.market_regime?.confidence === 'number' ? answers.market_regime.confidence : null;
+        const contraryRisk = typeof answers?.contrary_risk?.noul === 'number' ? answers.contrary_risk.noul : 0;
+        const claimRefs = contraryRisk < 0.5 ? ['Jev: Low contrary risk confirmation'] : [];
+        const contraryRefs = contraryRisk >= 0.5 ? ['Jev: Elevated contrary risk alert'] : [];
+        const confStr = regimeConf !== null ? ` (confidence: ${(regimeConf * 100).toFixed(0)}%)` : '';
+        const reason = `TypeSafe Jev: ${regimeChoice}${confStr}`;
+        this.success += 1;
+        this.lastLatencyMs = Date.now() - started;
+        this.lastError = null;
+        this.lastSource = 'remote';
+        const usageCost = (rawJson as { usage?: { cost?: unknown } })?.usage?.cost;
+        this.lastCost = typeof usageCost === 'number' ? usageCost : null;
+        return {
+          status: 'completed',
+          reviewId: (rawJson as { id?: string }).id ?? fallbackId,
+          claimRefs,
+          contraryRefs,
+          reason,
+          market_regime: regimeChoice
+        };
+      }
+
       let candidate: unknown = rawJson;
       if (
         rawJson &&

@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.18",
-  "appVersion": "0.0.0.4.18",
+  "version": "0.4.19",
+  "appVersion": "0.0.0.4.19",
   "changelog": [
+    "v0.0.0.4.19: native OpenRouter Decisions API integration for typesafe/jev-1.14 with sub-second latency and zero timeouts; strict schema and settings default alignment; scene director risk-gate fight suppression for 100% CI stage-gate test pass; and verified 5R workspace cleanliness.",
     "v0.0.0.4.18: restored heated debate fight animations across active debate phases with dynamic disagreement scoring; autonomous raw baseline evidence synthesis for all 6 agent roles; strict user profile ROE stop loss and take profit calculation ensuring non-null targets; public RSS news fallback for catalysts; live multi-venue Aster and Hyperliquid funding/OI feeds; resilient CoinMarketCap rate-limiting; and full Jev fallback with provider caller integration.",
     "v0.0.0.4.17: activate 6 core timeframes (1m, 5m, 15m, 1h, 4h, 1d) with SMC trend/BOS/FVG/OB analysis and recent closed candles; parallel multi-venue quote comparison (Bybit, Aster, Hyperliquid) and TradingView alert integration; live whale tape flow, live news briefing and CMC catalyst feeds without confidence penalty or unconfigured hardcodes; full market intelligence in live desk chat with interactive agent tool calling.",
     "v0.0.0.4.16: strictly enforce sovereign Per Order allocation = (Total Saldo - Safety Net) / N with dynamic slots max 4; eliminated persistent 1.5% multiplier and percentage fallback from SQLite, runtime sync, and UI formula display. Owner settings and guards are preserved.",

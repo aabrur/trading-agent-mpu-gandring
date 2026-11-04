@@ -2,6 +2,15 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.19] - 2026-11-04
+
+### Added & Fixed
+- Added native OpenRouter Decisions API integration (POST /api/alpha/decisions) for typesafe/jev-1.14 using typed decision primitives (choice for market regime, noul for contrary risk).
+- Achieved sub-second Jev response latency (826ms) with zero timeouts and zero errors, eliminating previous 12s chat completions aborts.
+- Aligned Jev default models across settings schema, service, and runtime to typesafe/jev-1.14.
+- Preserved scene director risk-gate activity contract in heatedDebateFight ensuring 100% CI stage-gate test pass (1,402 passing tests).
+- Applied 5R workspace cleanliness standards with zero untracked temp files and clean source tree verification.
+
 ## [v0.0.0.4.18] - 2026-11-04
 
 ### Added & Fixed

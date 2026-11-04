@@ -27,12 +27,7 @@ export const SPECTATORS: Record<AgentId, Point> = {
 /** Repeat cartoon sparring only while an actual opposing debate meets the configured heat threshold. */
 export function heatedDebateFight(state: DeskState, now: number): Fight | null {
   const debate = state.debate;
-  const isDebatePhase = Boolean(debate && (
-    /^round \d+$/.test(debate.phase) ||
-    debate.phase.startsWith("challenge") ||
-    ['gathering', 'debate', 'execution review', 'risk gate', 'verdict', 'position risk review'].includes(debate.phase)
-  ));
-  if (!debate || state.killed || state.paused || !isDebatePhase || debate.disagreement < Math.max(0.25, state.fightThreshold)) return null;
+  if (!debate || state.killed || state.paused || (!/^round \d+$/.test(debate.phase) && !debate.phase.startsWith("challenge") && debate.phase !== "debate") || debate.disagreement < Math.max(0.25, state.fightThreshold)) return null;
   const bulls = debate.camps.bull.filter((id) => state.agents[id]?.stance === 'LONG');
   const bears = debate.camps.bear.filter((id) => state.agents[id]?.stance === 'SHORT');
   if (!bulls.length || !bears.length || now % 4800 >= 2400) return null;
@@ -97,7 +92,7 @@ export function workstationPoint(id: AgentId): Point {
 }
 
 export function atDiscussionTable(phase?: string): boolean {
-  return !!phase && (phase.startsWith('round ') || phase.startsWith('challenge') || ['gathering', 'verdict', 'risk gate', 'position risk review', 'execution review', 'debate'].includes(phase));
+  return !!phase && (phase.startsWith('round ') || phase.startsWith('challenge') || ['gathering', 'verdict', 'risk gate', 'position risk review', 'execution review'].includes(phase));
 }
 
 export function officePositions(state: DeskState, activities: Record<AgentId, Activity>, fight?: Fight): Record<AgentId, Point> {

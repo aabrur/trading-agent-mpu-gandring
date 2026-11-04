@@ -329,7 +329,7 @@ export class SettingsService {
       jev: {
         enabled: boolOr(env.JEV_ENABLED, false),
         provider: 'openrouter',
-        model: (env.JEV_MODEL ?? 'openai/gpt-5-mini').trim() || 'openai/gpt-5-mini',
+        model: (env.JEV_MODEL ?? 'typesafe/jev-1.14').trim() || 'typesafe/jev-1.14',
         mode:
           env.JEV_MODE === 'advisory' || env.JEV_MODE === 'strict'
             ? env.JEV_MODE
