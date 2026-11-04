@@ -28,7 +28,7 @@ interface VenueInfo { venue: string; label: string; kind: 'CEX' | 'DEX'; support
 interface WalletState { available: boolean; reason: string; appMode: string; current: string | null; venues: VenueInfo[] }
 interface VenueBalance { ok: boolean; venue: string; label: string; kind: 'CEX' | 'DEX'; network: string; configured: boolean; address: string | null; equityUsdt: number | null; availableUsdt: number | null; depositUrl: string; note?: string; error?: string }
 
-export function WalletPanel({ state, embedded = false }: { state: DeskState; embedded?: boolean }) {
+export function WalletPanel({ state, embedded = false }: { state: DeskState | null; embedded?: boolean }) {
   const { t } = useI18n();
   const [info, setInfo] = useState<WalletState | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -39,7 +39,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
   const [network, setNetwork] = useState<'testnet' | 'mainnet'>(() => {
     try {
       const saved = localStorage.getItem('mg-wallet-network');
-      return saved === 'mainnet' || saved === 'testnet' ? saved : state.mode === 'LIVE' ? 'mainnet' : 'testnet';
+      return saved === 'mainnet' || saved === 'testnet' ? saved : (state?.mode ?? 'PAPER') === 'LIVE' ? 'mainnet' : 'testnet';
     } catch { return 'testnet'; }
   });
   const address = useWalletSession();
@@ -205,7 +205,7 @@ export function WalletPanel({ state, embedded = false }: { state: DeskState; emb
       )}
       <details className="wallet-help"><summary>Setup &amp; safety</summary><p className="wallet-note">{t('walletSafetyNote')} {t('revokeAnyTime')} <a href={v.revokeUrl ?? v.docsUrl} target="_blank" rel="noreferrer">{v.label} API wallets</a>.</p><ol className="wallet-steps">{v.steps.map((s, i) => <li key={i}>{s}</li>)}</ol></details>
       {v.support !== 'signature' && <p className="wallet-note">{v.label} {t('walletKeysAppNote')} <a href={v.docsUrl} target="_blank" rel="noreferrer">{t('officialDocs')}</a> · <a href={v.depositUrl} target="_blank" rel="noreferrer">{t('depositOfficial')}</a></p>}
-      {state.appMode === 'grokbot' && <p className="wallet-note">{t('walletGrokbotSecretNote')}</p>}
+      {state?.appMode === 'grokbot' && <p className="wallet-note">{t('walletGrokbotSecretNote')}</p>}
       {msg && <p role={msg.ok ? 'status' : 'alert'} className={`wallet-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.text}</p>}
     </div>
   );

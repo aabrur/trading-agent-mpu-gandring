@@ -44,20 +44,20 @@ type SetupTab = 'trading' | 'models' | 'local' | 'exchange' | 'channels';
 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 
-export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskState; onClose: () => void; tradingProfile?: 'default' | 'manual' }) {
+export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskState | null; onClose: () => void; tradingProfile?: 'default' | 'manual' }) {
   const { t, lang } = useI18n();
   const [activeTab, setActiveTab] = useState<SetupTab>('trading');
   useEffect(() => { if (tradingProfile) setActiveTab('trading'); }, [tradingProfile]);
   const [info, setInfo] = useState<SetupInfo | null>(null);
   const [venue, setVenue] = useState('');
-  const [network, setNetwork] = useState<'testnet' | 'mainnet'>(state.mode === 'LIVE' ? 'mainnet' : 'testnet');
+  const [network, setNetwork] = useState<'testnet' | 'mainnet'>((state?.mode ?? 'PAPER') === 'LIVE' ? 'mainnet' : 'testnet');
   const [guide, setGuide] = useState<Guide | null>(null);
   const [at, setAt] = useState(0);
   const [vals, setVals] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [doc, setDoc] = useState<DoctorLine[] | null>(null);
-  const [mode, setMode] = useState(state.mode);
+  const [mode, setMode] = useState(state?.mode ?? 'PAPER');
   const [confirm, setConfirm] = useState('');
   const [editingExchange, setEditingExchange] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
@@ -65,7 +65,12 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => previous?.focus();
   }, []);
-  useEffect(() => { if (info) dialog.current?.querySelector<HTMLButtonElement>('button')?.focus(); }, [!!info]);
+  useEffect(() => {
+    if (info) {
+      const target = dialog.current?.querySelector<HTMLButtonElement>('.setup-tab-btn.active') ?? dialog.current?.querySelector<HTMLButtonElement>('.setup-tab-btn');
+      target?.focus();
+    }
+  }, [!!info]);
 
   const load = () => fetch('/api/setup').then((r) => r.json()).then((d: SetupInfo) => { setInfo(d); if (d.ok) setVenue((v) => v || (d.status.exchange !== 'none' ? d.status.exchange : 'bybit')); }).catch(() => setInfo({ ok: false, error: 'office backend not reachable' } as SetupInfo));
   useEffect(() => { void load(); }, []);
@@ -189,7 +194,7 @@ export function SetupWizard({ state, onClose, tradingProfile }: { state: DeskSta
                   <p className="wallet-note">{t('setupDeskRunningPrefix')} <b>{info.running.mode}</b> · {info.running.appMode}. {t('setupDeskSavedModePrefix')} {info.status.tradingMode} · {t('setupDeskVenuePrefix')} {info.status.exchange}. {t('setupDeskSavingNotice')}</p>
                 </div>
                 {info.status.forbidden.length > 0 && <p className="wallet-msg bad">{t('setupDeskRemoveForbidden')} ({info.status.forbidden.join(', ')})</p>}
-                {state.killed && <p className="wallet-msg bad">{t('setupDeskKillSwitchAlert')} <code>{info.unkill}</code>{t('setupDeskThenRestart')}</p>}
+                {Boolean(state?.killed) && <p className="wallet-msg bad">{t('setupDeskKillSwitchAlert')} <code>{info.unkill}</code>{t('setupDeskThenRestart')}</p>}
                 <PreferencesSetup />
                 <div style={{ marginTop: '16px', borderTop: '1px solid var(--line)', paddingTop: '16px' }}>
                   <DataSourcesSetup available={info.keyEntry.available} />

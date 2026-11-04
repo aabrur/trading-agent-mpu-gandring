@@ -238,7 +238,7 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
     enabled: true,
     autoResearch: false,
     maxDepth: 1,
-    mcpTools: [] as string[]
+    mcpTools: {} as Record<string, string[]>
   };
 
   app.get('/api/setup/local-agents/research', (_req, res) => {
@@ -255,6 +255,9 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
     if (typeof body.autoResearch === 'boolean') researchPolicy.autoResearch = body.autoResearch;
     if (typeof body.enabled === 'boolean') researchPolicy.enabled = body.enabled;
     if (typeof body.maxDepth === 'number') researchPolicy.maxDepth = body.maxDepth;
+    if (body.mcpTools && typeof body.mcpTools === 'object' && !Array.isArray(body.mcpTools)) {
+      researchPolicy.mcpTools = body.mcpTools as Record<string, string[]>;
+    }
     res.json({ ok: true, detail: 'Research settings saved.', policy: researchPolicy });
   });
 }

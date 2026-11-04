@@ -7,6 +7,8 @@ import type { SessionLogger } from '../session-log.js';
 import { safe } from '../redact.js';
 import { sanitizeUntrusted } from '../untrusted.js';
 import type { OfficeRuntime } from './contracts.js';
+import { isLocalLoopbackClient } from './contracts.js';
+import { checkUpdate, applyUpdate } from '../updater.js';
 import { mountStateRoutes } from './api/state.js';
 import { mountOperationsRoutes } from './api/operations.js';
 import { ChatService, mountChatRoutes } from './api/chat.js';
@@ -274,6 +276,42 @@ export function createReplacementApp(
       note,
       at: Date.now()
     });
+  });
+
+  app.get('/api/update/status', async (_req, res) => {
+    try {
+      res.json(await checkUpdate());
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/update/apply', (req, res) => {
+    const loopback = isLocalLoopbackClient({
+      remoteAddress: req.socket.remoteAddress,
+      hostHeader: req.headers.host,
+      origin: req.get('origin')
+    });
+    if (!loopback.ok) {
+      res.status(403).json({ ok: false, error: loopback.reason });
+      return;
+    }
+    const force = Boolean(req.body && typeof req.body === 'object' && (req.body as { force?: boolean }).force);
+    res.json(applyUpdate(process.cwd(), undefined, { force }));
+  });
+
+  app.get('/api/trakteer/config', (req, res) => {
+    const loopback = isLocalLoopbackClient({
+      remoteAddress: req.socket.remoteAddress,
+      hostHeader: req.headers.host,
+      origin: req.get('origin')
+    });
+    if (!loopback.ok) {
+      res.status(403).json({ ok: false, error: loopback.reason });
+      return;
+    }
+    const trakteerChannelId = options.setupDeps?.secrets.getSecret('TRAKTEER_CHANNEL_ID') ?? process.env.TRAKTEER_CHANNEL_ID ?? '';
+    res.json({ ok: true, channelId: trakteerChannelId });
   });
 
   options.mountAdditionalRoutes?.(app, runtime);

@@ -18,7 +18,8 @@ const ALLOWED_EXACT = new Set([
   'server/untrusted.ts',
   'server/money.ts',
   'server/strategy.ts',
-  'server/types.ts'
+  'server/types.ts',
+  'server/updater.ts'
 ]);
 
 const ALLOWED_PREFIXES = [

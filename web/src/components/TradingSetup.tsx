@@ -31,11 +31,11 @@ function profileName(profile: TradingProfile, lang: string) {
   return profile;
 }
 
-export function TradingSetup({ state, initialProfile }: { state: DeskState; initialProfile?: TradingProfile }) {
+export function TradingSetup({ state, initialProfile }: { state: DeskState | null; initialProfile?: TradingProfile }) {
   const { t, lang } = useI18n();
   const fields = getTradingFields(t);
   const [info, setInfo] = useState<TradingInfo | null>(null);
-  const [network, setNetwork] = useState<TradingNetwork>(state.mode === 'LIVE' ? 'mainnet' : 'testnet');
+  const [network, setNetwork] = useState<TradingNetwork>((state?.mode ?? 'PAPER') === 'LIVE' ? 'mainnet' : 'testnet');
   const [profile, setProfile] = useState<TradingProfile>(initialProfile ?? 'manual');
   const [drafts, setDrafts] = useState<Record<TradingNetwork, TradingSettings> | null>(null);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
@@ -45,7 +45,7 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
       const r = await fetch('/api/setup/trading'), d = await r.json();
       if (!r.ok || !d.ok) { setMessage(d.detail || t('tradingUnavailableMsg')); return; }
       const next = d as TradingInfo; setInfo(next);
-      const fallbackValues = next.values ?? (state.trading?.values as TradingSettings) ?? {
+      const fallbackValues = next.values ?? (state?.trading?.values as TradingSettings) ?? {
         dailyLossLimitPct: 10, maxLossPerTradePct: 20, minEntryConfidencePct: 60, maxLeverage: 5, defaultStopPct: 20, minStopPct: 0, takeProfitPct: 60, takeProfitR: 3, maxPositions: 3, safetyNet: 200
       };
       setDrafts((previous) => {
@@ -71,7 +71,7 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
   if (!info || !drafts) return <div className="wallet-note" role="status"><p>{message || t('tradingLoadingProfiles')}</p>{message && <button onClick={() => void load()}>{t('tradingRetryBtn')}</button>}</div>;
   const isPreset = profile in TRADING_PRESETS;
   const values = drafts[network];
-  const active = info.running ? info.running.network === network : (state.mode === 'LIVE' ? network === 'mainnet' : network === 'testnet');
+  const active = info.running ? info.running.network === network : ((state?.mode ?? 'PAPER') === 'LIVE' ? network === 'mainnet' : network === 'testnet');
   async function save() {
     setBusy(true); setMessage('');
     try {
@@ -101,8 +101,8 @@ export function TradingSetup({ state, initialProfile }: { state: DeskState; init
   const runningLabel = profileName(info.running?.profile ?? savedProfile, lang);
   const draftDirty = draftProfile(savedProfile) !== profile;
   return <section className="trading-setup">
-    <p className="wallet-note">{lang === 'id' ? 'Berjalan:' : 'Running:'} <b>{info.running?.mode ?? state.mode}</b>{info.running?.network ? ` · ${info.running.network}` : ''} · {runningLabel}. {lang === 'id' ? 'Testnet menggunakan dana tes; mainnet LIVE menggunakan uang sungguhan. Memilih profil tidak mengganti mode atau menyambungkan bursa.' : 'Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.'}</p>
-    <p className="setup-guide-note"><b>{t('tradingAppliedToDesk')}</b>: {info.running?.mode ?? state.mode}{info.running?.network ? ` · ${info.running.network}` : ''} · {runningLabel}</p>
+    <p className="wallet-note">{lang === 'id' ? 'Berjalan:' : 'Running:'} <b>{info.running?.mode ?? state?.mode ?? 'PAPER'}</b>{info.running?.network ? ` · ${info.running.network}` : ''} · {runningLabel}. {lang === 'id' ? 'Testnet menggunakan dana tes; mainnet LIVE menggunakan uang sungguhan. Memilih profil tidak mengganti mode atau menyambungkan bursa.' : 'Testnet uses test funds; mainnet LIVE uses real funds. Selecting a profile does not change mode or connect an exchange.'}</p>
+    <p className="setup-guide-note"><b>{t('tradingAppliedToDesk')}</b>: {info.running?.mode ?? state?.mode ?? 'PAPER'}{info.running?.network ? ` · ${info.running.network}` : ''} · {runningLabel}</p>
     <p className="setup-guide-note"><b>{t('tradingSavedForNextStart')}</b> ({network}): {savedLabel}</p>
     {draftDirty && <p className="field-help">{t('tradingDraftProfile')}: {profileName(profile, lang)}</p>}
     {profile === 'manual' && info.running?.profile !== 'manual' && active && <p className="field-help">{lang === 'id' ? 'Nilai manual ini belum aktif. Simpan dan terapkan untuk mengganti preset yang berjalan.' : 'These manual values are not active. Save and apply to replace the running preset.'}</p>}

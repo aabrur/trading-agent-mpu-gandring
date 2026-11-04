@@ -30,6 +30,7 @@ export function UpdateModal({
 
   const cur = info?.currentVersion ?? '0.0.0.4.20';
   const latest = info?.latestVersion ?? cur;
+  const hasUpdate = Boolean(info?.updateAvailable && cur !== latest);
 
   const checkNow = async () => {
     setChecking(true);
@@ -68,8 +69,8 @@ export function UpdateModal({
       <div className="panel setup update-modal">
         <div className="panel-head">
           <h2>{t('versionModalTitle')}</h2>
-          <span className="badge update-avail-badge">
-            <i className="update-notif-dot" /> {info?.updateAvailable ? t('updateAvailable') : `v${latest} · ${t('updateAvailable')}`}
+          <span className={`badge update-avail-badge ${hasUpdate ? 'warn' : ''}`}>
+            <i className="update-notif-dot" /> {hasUpdate ? `v${latest} · ${t('updateAvailable')}` : `v${cur} · ${t('upToDate')}`}
           </span>
           <button autoFocus onClick={onClose}>{t('closeModal')}</button>
         </div>
@@ -98,8 +99,8 @@ export function UpdateModal({
           <button onClick={checkNow} disabled={checking || busy}>
             {checking ? '...' : t('checkUpdateBtn')}
           </button>
-          <button className="primary" onClick={() => applyNow(false)} disabled={busy}>
-            {busy ? t('updatingBtn') : `${t('applyUpdateBtn')} v${latest}`}
+          <button className="primary" onClick={() => applyNow(false)} disabled={busy || !hasUpdate}>
+            {busy ? t('updatingBtn') : hasUpdate ? `${t('applyUpdateBtn')} v${latest}` : t('upToDate')}
           </button>
           <button type="button" onClick={restartDesk} disabled={busy}>
             Restart Desk

@@ -79,7 +79,13 @@ function status() {
 }
 
 async function wizard() {
-  const nonInteractive = flag('yes') || !isInteractive();
+  if (!isInteractive() && !flag('yes')) {
+    console.error('\nTrading Agent Mpu Gandring setup requires an interactive terminal (TTY).');
+    console.error('To run non-interactively with defaults or specific flags, pass --yes.');
+    console.error('Example: npm run setup -- --yes --trading-mode paper\n');
+    process.exit(1);
+  }
+  const nonInteractive = flag('yes');
   const env = currentEnv();
   // LIVE_CONFIRMED (old unlock) and AGENT_REVIEWER_* (old 7th agent, now part of the Desk Lead) are cleaned up.
   const up: Record<string, string | null> = { LIVE_CONFIRMED: null, AGENT_REVIEWER_PROVIDER: null, AGENT_REVIEWER_MODEL: null };

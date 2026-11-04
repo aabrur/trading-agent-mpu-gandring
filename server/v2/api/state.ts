@@ -14,11 +14,12 @@ import {
 import { isLocalLoopbackClient, TIMEFRAMES, type OfficeRuntime } from '../contracts.js';
 
 const clientLogBodySchema = z.object({
-  level: z.enum(['DEBUG', 'INFO', 'WARN', 'ERROR']).optional(),
+  level: z.string().transform((s) => s.toUpperCase()).pipe(z.enum(['DEBUG', 'INFO', 'WARN', 'ERROR'])).optional(),
   eventName: z.string().max(120).optional(),
+  event: z.string().max(120).optional(),
   message: z.string().max(4000),
   details: z.record(z.string(), z.unknown()).optional()
-}).strict();
+}).passthrough();
 
 const sessionEventsQuerySchema = z.object({
   q: z.string().max(300).optional(),
@@ -198,7 +199,7 @@ export function mountStateRoutes(
       source: 'web-client',
       category: 'CLIENT',
       level: parsed.data.level ?? 'INFO',
-      eventName: parsed.data.eventName ?? 'client.log',
+      eventName: parsed.data.eventName ?? parsed.data.event ?? 'client.log',
       message: parsed.data.message,
       details: parsed.data.details
     });
