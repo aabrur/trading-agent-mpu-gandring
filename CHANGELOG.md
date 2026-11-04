@@ -2,6 +2,18 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.21] - 2026-11-05
+
+### Added & Fixed
+- Fixed Setup modal auto-closing on fresh installations by redirecting initial dialog autofocus from Close button to the active tab button.
+- Hardened `Setup.tsx`, `TradingSetup.tsx`, and `Wallet.tsx` with comprehensive null safety against uninitialized or partial desk states, preventing React error boundary unmounts.
+- Mounted missing Express V2 routes (`GET /api/update/status`, `POST /api/update/apply`, `GET /api/trakteer/config`) with local loopback protection, fixing the 503 endpoint error in the Version & Update Adapter modal.
+- Fixed UpdateModal false positive "Update available" badge when already running latest release, dynamically showing "v0.0.0.4.21 · Up to date" and disabling apply action.
+- Added TTY terminal requirement to `cli/setup.ts` preventing non-interactive execution from overriding `.env` configuration without explicit `--yes`.
+- Made client diagnostics logger resilient with case-insensitive log level validation and schema passthrough.
+- Initialized Codex Research policy `mcpTools` as object dictionary, fixing `mcpTools.join is not a function` error.
+- Verified 204 test files and 1,402 passing tests with full stage-gate integrity.
+
 ## [v0.0.0.4.20] - 2026-11-05
 
 ### Added & Fixed
