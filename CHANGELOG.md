@@ -2,6 +2,19 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.18] - 2026-11-04
+
+### Added & Fixed
+- Restored animated debate fights across all active debate phases with dynamic disagreement scoring (2 vs 1 produces 0.67 and 1 vs 1 produces 1.0, cleanly exceeding fight threshold 0.35).
+- Integrated CLOSE stance as a directional dispute trigger and added a 2500ms debounce guard before debate cleanup so punch animations complete smoothly.
+- Declared technical indicators, orderbook imbalance, whale flow, and news briefings as raw baseline evidence across all 6 agent personas and system prompts, removing artificial HOLD biases.
+- Enforced User Setup Profile parameters (ROE stop loss and take profit calculation based on active leverage: price distance % = pct / leverage) with deterministic baseline SL/TP prices, guaranteeing candidate orders and execution theses never have null take profit targets.
+- Enriched live desk chat context with comprehensive profile parameters (takeProfitR, dailyLossLimitPct, maxLossPerTradePct, minEntryConfidencePct, sizingMode) and open position protection statuses (confirmed, missing, unknown).
+- Added public RSS news fallback (CoinTelegraph, Decrypt) in research host so agents receive macro and crypto catalysts even without external news API keys.
+- Populated Aster DEX and Hyperliquid funding rates and open interest into multi-venue market intelligence.
+- Handled CoinMarketCap 429 rate limit errors gracefully with browser fallback isolation, preventing loop termination.
+- Defaulted Jev to active and added desk provider fallback caller when OpenRouter API keys are absent or encounter network errors.
+
 ## [v0.0.0.4.17] - 2026-11-04
 
 ### Added & Fixed

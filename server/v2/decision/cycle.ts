@@ -19,11 +19,18 @@ export interface CyclePolicy {
   maxLeverage?: number;
   defaultStopPct?: number;
   takeProfitPct?: number;
+  takeProfitR?: number;
   availableCapitalUsdt?: number;
   allocationPerOrderUsdt?: number;
   maxPositions?: number;
   orderSizePct?: number | null;
   dailyLossLimitPct?: number;
+  maxLossPerTradePct?: number;
+  safetyNet?: number;
+  sizingMode?: 'FIXED_PCT_OF_MONEY_TRADE' | 'AUTO_EQUAL_SLOTS_MONEY_TRADE_DIV_N';
+  tradingProfile?: string;
+  profileBaselineStopPrice?: { long: string | null; short: string | null };
+  profileBaselineTpPrice?: { long: string | null; short: string | null };
 }
 
 export interface RunCycleInput {
@@ -78,6 +85,17 @@ interface CandidateOrder {
   orderSizePct: number | null;
   maxPositions: number | null;
   dailyLossLimitPct: number | null;
+}
+
+function resolveBaselinePrice(
+  baseline: { long: string | null; short: string | null } | string | null | undefined,
+  side: 'LONG' | 'SHORT' | null | undefined
+): string | null {
+  if (!baseline) return null;
+  if (typeof baseline === 'string') return baseline;
+  if (side === 'LONG') return baseline.long;
+  if (side === 'SHORT') return baseline.short;
+  return null;
 }
 
 function ticketSide(stance: string | null | undefined): 'LONG' | 'SHORT' | null {
@@ -253,14 +271,16 @@ export class CycleRunner {
       else if (shortVotes > longVotes && shortVotes >= 2) resolvedCandidateSide = 'SHORT';
     }
 
+    const baselineStop = resolveBaselinePrice(input.policy.profileBaselineStopPrice, resolvedCandidateSide);
+    const baselineTp = resolveBaselinePrice(input.policy.profileBaselineTpPrice, resolvedCandidateSide);
     const fallbackStop =
       challengeResults.find((r) => r.proposedStop)?.proposedStop ??
       observeResults.find((r) => r.proposedStop)?.proposedStop ??
-      null;
+      baselineStop;
     const fallbackTp =
       challengeResults.find((r) => r.proposedTp)?.proposedTp ??
       observeResults.find((r) => r.proposedTp)?.proposedTp ??
-      null;
+      baselineTp;
 
     const candidateOrder: CandidateOrder = {
       side: resolvedCandidateSide,
@@ -500,7 +520,10 @@ export class CycleRunner {
     }
 
     const thesisSide = ticket.side;
-    const proposedStop = ticket.stop;
+    const baselineThesisStop = resolveBaselinePrice(input.policy.profileBaselineStopPrice, thesisSide);
+    const baselineThesisTp = resolveBaselinePrice(input.policy.profileBaselineTpPrice, thesisSide);
+    const proposedStop = ticket.stop ?? baselineThesisStop;
+    const proposedTp = ticket.tp ?? baselineThesisTp;
     if (thesisSide !== 'LONG' && thesisSide !== 'SHORT') {
       return {
         cycleId,
@@ -557,7 +580,7 @@ export class CycleRunner {
       claims: [...new Set([...leadResult.claimRefs, ...(jevReview?.claimRefs ?? [])])],
       invalidation: [predicate],
       stop: proposedStop,
-      tp: ticket.tp,
+      tp: proposedTp,
       orderType: ticket.orderType ?? 'MARKET',
       limitPrice: ticket.limitPrice
     };

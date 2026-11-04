@@ -78,7 +78,7 @@ import {
   type NativeBalance,
   type NativePosition
 } from './execution/adapters/types.js';
-import { ResearchHost } from './research/host.js';
+import { ResearchHost, fetchPublicCryptoNews } from './research/host.js';
 import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
 import { HELP_TEXT, DiscordGateway } from './channels.js';
@@ -587,8 +587,10 @@ export function createReplacementRuntime(
     env.OPENROUTER_API_KEY ??
     ''
   ).trim();
-  const jevEnabled = savedJev?.enabled ?? ['true', 'yes', '1', 'on'].includes(
-    (env.JEV_ENABLED ?? '').trim().toLowerCase()
+  const jevEnabled = savedJev?.enabled ?? (
+    env.JEV_ENABLED !== undefined
+      ? ['true', 'yes', '1', 'on'].includes((env.JEV_ENABLED ?? '').trim().toLowerCase())
+      : true
   );
   const jevModel = savedJev?.model || env.JEV_MODEL || 'typesafe/jev-1.14';
   const jevMode = savedJev?.mode || 'off';
@@ -603,26 +605,55 @@ export function createReplacementRuntime(
     mode: jevMode,
     configuredMode: jevMode,
     allowLive: jevAllowLive,
-    health: !jevEnabled ? 'disabled' : (hasJevKey ? 'configured' : 'unavailable'),
+    health: !jevEnabled ? 'disabled' : (hasJevKey ? 'configured' : 'fallback_ready'),
     openrouterKeySet: Boolean(options.secrets?.hasProviderKey('openrouter') || env.OPENROUTER_API_KEY),
     dedicatedKeySet: Boolean(options.secrets?.getSecret('JEV_OPENROUTER_API_KEY') || env.JEV_OPENROUTER_API_KEY),
-    configHealth: !jevEnabled ? 'off' : (hasJevKey ? 'configured' : 'unconfigured'),
+    configHealth: !jevEnabled ? 'off' : (hasJevKey ? 'configured' : 'fallback'),
     remoteHealth: 'unused'
   };
 
+  const providerCaller = createOfficialProviderCaller();
   const jevClient =
     options.jevClient ??
     new JevClient({
       enabled: jevEnabled,
       apiKey: jevKey || null,
-      model: jevModel
+      model: jevModel,
+      fallbackCaller: async (prompt, systemPrompt) => {
+        try {
+          const settingsSnap = options.settings?.current();
+          const defaultAgent = settingsSnap?.effective?.agents?.lead;
+          const upper = 'LEAD';
+          const rawProv = (defaultAgent?.provider ?? env[`AGENT_${upper}_PROVIDER`] ?? env.DEFAULT_PROVIDER ?? '').trim().toLowerCase();
+          const provider = rawProv || 'mock';
+          const model = (defaultAgent?.model ?? env[`AGENT_${upper}_MODEL`] ?? env.DEFAULT_MODEL ?? 'default').trim();
+          const envKey = PROVIDER_KEY_ENV[provider as keyof typeof PROVIDER_KEY_ENV];
+          const secretKey = envKey ? (options.secrets?.getSecret(envKey) ?? env[envKey]) : undefined;
+          const raw = await providerCaller({
+            cycleId: 'jev-fallback',
+            role: 'lead',
+            phase: 'final',
+            taskAttempt: 1,
+            turn: 1,
+            provider,
+            model,
+            apiKey: secretKey ?? '',
+            system: systemPrompt ?? 'You are Jev, market regime reviewer.',
+            user: prompt,
+            timeoutMs: 15_000
+          });
+          return raw;
+        } catch {
+          return null;
+        }
+      }
     });
 
   const roleRunner =
     options.roleRunner ??
     new RoleRunner({
       researchHost: options.researchHost,
-      providerCaller: createOfficialProviderCaller(),
+      providerCaller,
       resolveAssignment: (role, _version) => {
         const settingsSnap = options.settings?.current();
         const configuredAgent = settingsSnap?.effective?.agents?.[role];
@@ -654,6 +685,7 @@ export function createReplacementRuntime(
       jevClient
     });
 
+  let lastFightAt = 0;
   let autoTimer: NodeJS.Timeout | null = null;
 
   const scheduleNextAutoCycle = () => {
@@ -955,6 +987,7 @@ export function createReplacementRuntime(
     const whaleKey = options.secrets?.getSecret('WHALE_ALERT_API_KEY') ?? env.WHALE_ALERT_API_KEY ?? undefined;
     const cryptopanicKey = options.secrets?.getSecret('CRYPTOPANIC_API_KEY') ?? env.CRYPTOPANIC_API_KEY ?? undefined;
 
+    const isTestEnv = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
     const [
       venueObRes,
       venueDerivsRes,
@@ -964,8 +997,20 @@ export function createReplacementRuntime(
       whaleRes,
       newsRes,
       liveAnnounceRes,
-      catalystRes
-    ] = await Promise.allSettled([
+      catalystRes,
+      publicNewsRes
+    ] = isTestEnv ? await Promise.allSettled([
+      Promise.resolve(null),
+      Promise.resolve(null),
+      Promise.resolve(null),
+      Promise.resolve(null),
+      options.venueAdapter?.quote ? options.venueAdapter.quote(targetSymbol) : Promise.resolve(null),
+      Promise.resolve(null),
+      Promise.resolve([]),
+      Promise.resolve({ items: [] } as any),
+      Promise.resolve(null),
+      Promise.resolve([])
+    ]) : await Promise.allSettled([
       fetchL2Orderbook(targetSymbol, venueName, venueName, snap.venueAccount?.status ? 'mainnet' : 'testnet'),
       fetchDerivatives(targetSymbol, venueName, Number(snap.tickers[targetSymbol]?.last ?? 0)),
       fetchDerivatives(targetSymbol, 'bybit', Number(snap.tickers[targetSymbol]?.last ?? 0)),
@@ -981,7 +1026,8 @@ export function createReplacementRuntime(
         }
       }),
       getLiveAnnouncementsResult(targetSymbol),
-      getCoinMarketCapSummary(targetSymbol)
+      getCoinMarketCapSummary(targetSymbol),
+      fetchPublicCryptoNews(targetSymbol, fetch)
     ]);
 
     const venueOb = venueObRes.status === 'fulfilled' ? venueObRes.value : null;
@@ -992,9 +1038,26 @@ export function createReplacementRuntime(
     const whaleReport = whaleRes.status === 'fulfilled' ? whaleRes.value : null;
     const newsItems = newsRes.status === 'fulfilled' ? (newsRes.value ?? []) : [];
     const liveAnnouncements = liveAnnounceRes.status === 'fulfilled' ? (liveAnnounceRes.value?.items ?? []) : [];
-    const combinedNews = [...liveAnnouncements, ...newsItems];
+    const publicNews = publicNewsRes.status === 'fulfilled' ? publicNewsRes.value : [];
+    const publicNewsNormalized = publicNews.map((pn, i) => ({
+      id: `public-news-${Date.now()}-${i}`,
+      symbol: targetSymbol,
+      headline: pn.title,
+      body: pn.body,
+      source: pn.publisher,
+      sourceUrl: pn.url,
+      sentiment: 'neutral' as const,
+      example: false,
+      publishedAt: pn.publishedAt ?? null,
+      observedAt: Date.now()
+    }));
+    const combinedNews = [...liveAnnouncements, ...newsItems, ...publicNewsNormalized];
     const normalizedItems = combinedNews.map((item) => normalizeLegacyItem(item, targetSymbol));
-    const newsBriefing = buildNewsBriefing(targetSymbol, normalizedItems, cryptopanicKey || liveAnnouncements.length > 0 ? 'CONFIGURED_LIVE' : 'UNCONFIGURED');
+    const newsBriefing = buildNewsBriefing(
+      targetSymbol,
+      normalizedItems,
+      cryptopanicKey || liveAnnouncements.length > 0 || publicNews.length > 0 ? 'CONFIGURED_LIVE' : 'UNCONFIGURED'
+    );
     const cmcSummary = catalystRes.status === 'fulfilled' ? catalystRes.value : null;
 
     const multiVenue = {
@@ -1019,8 +1082,8 @@ export function createReplacementRuntime(
           bid: venueOb?.bids?.[0]?.[0] ?? null,
           ask: venueOb?.asks?.[0]?.[0] ?? null,
           spreadBps: venueOb?.spreadBps ?? null,
-          fundingRate: venueDerivs?.fundingRate ?? null,
-          openInterest: venueDerivs?.openInterest ?? null
+          fundingRate: venueDerivs?.fundingRate ?? venueDerivs?.multiVenueFunding?.aster?.fundingRate ?? null,
+          openInterest: venueDerivs?.openInterest ?? venueDerivs?.multiVenueFunding?.aster?.openInterest ?? null
         },
         hyperliquid: {
           last: hlOb?.microPrice ?? null,
@@ -1028,7 +1091,7 @@ export function createReplacementRuntime(
           ask: hlOb?.asks?.[0]?.[0] ?? null,
           spreadBps: hlOb?.spreadBps ?? null,
           fundingRate: venueDerivs?.multiVenueFunding?.hyperliquid?.fundingRate ?? null,
-          openInterest: null
+          openInterest: venueDerivs?.multiVenueFunding?.hyperliquid?.openInterest ?? null
         }
       }
     };
@@ -1053,6 +1116,7 @@ export function createReplacementRuntime(
         receivedAt: recentTvAlert.receivedAt
       } : null,
       opposingFacts: intelFrame.opposingFacts,
+      jevReview: snap.jev?.lastDecision ?? null,
       existingPosition: existingPos ? {
         side: existingPos.side,
         entryPrice: existingPos.entry,
@@ -1092,17 +1156,45 @@ export function createReplacementRuntime(
     };
 
     const tv = snap.trading?.values;
+    const currentPrice = Number(snap.tickers[targetSymbol]?.last ?? 0);
+    const activeLev = tv?.maxLeverage ?? snap.paper.maxLeverage ?? 1;
+    const stopPctRoe = tv?.defaultStopPct ?? snap.paper.defaultStopPct ?? 30;
+    const stopPricePct = (stopPctRoe / Math.max(1, activeLev)) / 100;
+    const tpPctRoe = tv?.takeProfitPct ?? (stopPctRoe * (tv?.takeProfitR ?? 2));
+    const tpPricePct = (tpPctRoe / Math.max(1, activeLev)) / 100;
+
+    let profileBaselineStopPrice: { long: string | null; short: string | null } | undefined = undefined;
+    let profileBaselineTpPrice: { long: string | null; short: string | null } | undefined = undefined;
+
+    if (currentPrice > 0) {
+      profileBaselineStopPrice = {
+        long: (currentPrice * (1 - stopPricePct)).toFixed(4),
+        short: (currentPrice * (1 + stopPricePct)).toFixed(4)
+      };
+      profileBaselineTpPrice = {
+        long: (currentPrice * (1 + tpPricePct)).toFixed(4),
+        short: (currentPrice * (1 - tpPricePct)).toFixed(4)
+      };
+    }
+
     const policy: CyclePolicy = {
       minEntryConfidencePct: tv?.minEntryConfidencePct ?? 60,
       requireTwoOfThreeAnalysts: false,
-      maxLeverage: tv?.maxLeverage ?? snap.paper.maxLeverage,
-      defaultStopPct: tv?.defaultStopPct ?? snap.paper.defaultStopPct,
-      takeProfitPct: tv?.takeProfitPct,
+      maxLeverage: activeLev,
+      defaultStopPct: stopPctRoe,
+      takeProfitPct: tpPctRoe,
+      takeProfitR: tv?.takeProfitR ?? 2,
       availableCapitalUsdt: snap.paper.moneyTrade,
       allocationPerOrderUsdt: resolveOwnerPerOrderUsdt(snap.paper),
       maxPositions: snap.paper.n,
       orderSizePct: tv?.orderSizePct ?? null,
-      dailyLossLimitPct: tv?.dailyLossLimitPct
+      dailyLossLimitPct: tv?.dailyLossLimitPct,
+      maxLossPerTradePct: tv?.maxLossPerTradePct,
+      safetyNet: snap.paper.safetyNet,
+      sizingMode: (tv?.orderSizePct ?? null) !== null ? 'FIXED_PCT_OF_MONEY_TRADE' : 'AUTO_EQUAL_SLOTS_MONEY_TRADE_DIV_N',
+      tradingProfile: snap.trading?.profile,
+      profileBaselineStopPrice,
+      profileBaselineTpPrice
     };
 
     try {
@@ -1169,6 +1261,16 @@ export function createReplacementRuntime(
             symbol: targetSymbol
           };
 
+          const fightHolder: {
+            current?: {
+              from: RoleId;
+              to: RoleId;
+              intensity: number;
+              punches: number;
+              at: number;
+            };
+          } = {};
+
           updateState((draft) => {
             draft.agents[res.role].status = 'idle';
             if (res.provider) {
@@ -1210,38 +1312,57 @@ export function createReplacementRuntime(
             });
             draft.logs = draft.logs.slice(-500);
 
-            const bull = Object.values(draft.agents).filter((a) => a.stance === 'LONG').map((a) => a.id);
-            const bear = Object.values(draft.agents).filter((a) => a.stance === 'SHORT').map((a) => a.id);
-            const neutral = Object.values(draft.agents).filter((a) => a.stance !== 'LONG' && a.stance !== 'SHORT').map((a) => a.id);
-            const disagreement = Math.min(bull.length, bear.length) > 0 ? (Math.min(bull.length, bear.length) * 2) / 6 : 0;
+            const bull = Object.values(draft.agents).filter((a) => (a.stance as string) === 'LONG').map((a) => a.id);
+            const bear = Object.values(draft.agents).filter((a) => (a.stance as string) === 'SHORT').map((a) => a.id);
+            const closers = Object.values(draft.agents).filter((a) => (a.stance as string) === 'CLOSE').map((a) => a.id);
+            const neutral = Object.values(draft.agents).filter((a) => (a.stance as string) !== 'LONG' && (a.stance as string) !== 'SHORT' && (a.stance as string) !== 'CLOSE').map((a) => a.id);
+            const activeDirectional = bull.length + bear.length;
+            let disagreement = 0;
+            let fightFrom: RoleId | null = null;
+            let fightTo: RoleId | null = null;
+
+            if (bull.length > 0 && bear.length > 0) {
+              disagreement = Math.min(1, (Math.min(bull.length, bear.length) * 2) / Math.max(2, activeDirectional));
+              fightFrom = bull[Math.floor(Math.random() * bull.length)]!;
+              fightTo = bear[Math.floor(Math.random() * bear.length)]!;
+            } else if (closers.length > 0 && activeDirectional > 0) {
+              const directionalCamp = bull.length >= bear.length ? bull : bear;
+              disagreement = Math.min(1, (Math.min(closers.length, directionalCamp.length) * 2) / Math.max(2, closers.length + directionalCamp.length));
+              fightFrom = directionalCamp[Math.floor(Math.random() * directionalCamp.length)]!;
+              fightTo = closers[Math.floor(Math.random() * closers.length)]!;
+            }
+
             if (draft.debate) {
-              draft.debate.camps = { bull, bear, neutral };
+              draft.debate.camps = { bull, bear, neutral: [...closers, ...neutral] };
               draft.debate.disagreement = disagreement;
             }
 
-            if (disagreement >= (draft.fightThreshold ?? 0.35) && bull.length > 0 && bear.length > 0) {
-              const fromAgent = bull[Math.floor(Math.random() * bull.length)]!;
-              const toAgent = bear[Math.floor(Math.random() * bear.length)]!;
+            if (disagreement >= (draft.fightThreshold ?? 0.35) && fightFrom && fightTo) {
               const punches = 1 + Math.round(disagreement * 3);
-              draft.agents[fromAgent].status = 'fighting';
-              draft.agents[toAgent].status = 'fighting';
-              hub.emit('fight', {
-                from: fromAgent,
-                to: toAgent,
+              draft.agents[fightFrom].status = 'fighting';
+              draft.agents[fightTo].status = 'fighting';
+              fightHolder.current = {
+                from: fightFrom,
+                to: fightTo,
                 intensity: Math.min(1, disagreement),
                 punches,
                 at
-              });
+              };
               draft.logs.push({
-                id: `fight-${at}-${fromAgent}`,
+                id: `fight-${at}-${fightFrom}`,
                 conversationId: 'office',
                 at,
                 kind: 'fight',
-                agent: fromAgent,
-                text: `${fromAgent.toUpperCase()} clashes with ${toAgent.toUpperCase()} over ${targetSymbol} (heat ${Math.round(disagreement * 100)}%)`
+                agent: fightFrom,
+                text: `${fightFrom.toUpperCase()} clashes with ${fightTo.toUpperCase()} over ${targetSymbol} (heat ${Math.round(disagreement * 100)}%)`
               });
             }
           });
+
+          if (fightHolder.current) {
+            hub.emit('fight', fightHolder.current);
+            lastFightAt = fightHolder.current.at;
+          }
 
           if (options.chatService) {
             void options.chatService.recordMessage({
@@ -1273,10 +1394,18 @@ export function createReplacementRuntime(
       });
 
       const currentSnap = snapshot();
-      const bull = Object.values(currentSnap.agents).filter((a) => a.stance === 'LONG').map((a) => a.id);
-      const bear = Object.values(currentSnap.agents).filter((a) => a.stance === 'SHORT').map((a) => a.id);
-      const neutral = Object.values(currentSnap.agents).filter((a) => a.stance !== 'LONG' && a.stance !== 'SHORT').map((a) => a.id);
-      const disagreement = Math.min(bull.length, bear.length) > 0 ? (Math.min(bull.length, bear.length) * 2) / 6 : 0;
+      const bull = Object.values(currentSnap.agents).filter((a) => (a.stance as string) === 'LONG').map((a) => a.id);
+      const bear = Object.values(currentSnap.agents).filter((a) => (a.stance as string) === 'SHORT').map((a) => a.id);
+      const closers = Object.values(currentSnap.agents).filter((a) => (a.stance as string) === 'CLOSE').map((a) => a.id);
+      const neutral = Object.values(currentSnap.agents).filter((a) => (a.stance as string) !== 'LONG' && (a.stance as string) !== 'SHORT' && (a.stance as string) !== 'CLOSE').map((a) => a.id);
+      const activeDirectional = bull.length + bear.length;
+      let disagreement = 0;
+      if (bull.length > 0 && bear.length > 0) {
+        disagreement = Math.min(1, (Math.min(bull.length, bear.length) * 2) / Math.max(2, activeDirectional));
+      } else if (closers.length > 0 && activeDirectional > 0) {
+        const directionalCamp = bull.length >= bear.length ? bull : bear;
+        disagreement = Math.min(1, (Math.min(closers.length, directionalCamp.length) * 2) / Math.max(2, closers.length + directionalCamp.length));
+      }
 
       let verdictRecord: Verdict;
       if (out.status === 'completed' && out.verdict) {
@@ -1291,7 +1420,7 @@ export function createReplacementRuntime(
           executed: false,
           reason: out.verdict.rejectionReason ?? (isApproved ? 'Thesis verified and approved by Risk Manager' : (action === 'CLOSE' ? 'Exit criteria met; position closed' : 'Consensus synthesis reached HOLD')),
           disagreement,
-          camps: { bull, bear, neutral },
+          camps: { bull, bear, neutral: [...closers, ...neutral] },
           example: false,
           at: Date.now()
         };
@@ -1331,8 +1460,7 @@ export function createReplacementRuntime(
             });
           }
         } else if (isApproved && out.verdict.thesis) {
-          const stopPrice = Number(out.verdict.thesis.stop);
-          const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : null;
+          const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
           const leverage = currentSnap.trading?.values.maxLeverage ?? currentSnap.paper.maxLeverage ?? 5;
           const perOrder = resolveOwnerPerOrderUsdt(currentSnap.paper);
           const thesisOrderType = out.verdict.thesis.orderType ?? 'MARKET';
@@ -1340,9 +1468,22 @@ export function createReplacementRuntime(
           const entryPrice = thesisOrderType === 'LIMIT_GTC' && thesisLimit
             ? Number(thesisLimit)
             : Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
+
+          const stopPctRoe = currentSnap.trading?.values.defaultStopPct ?? currentSnap.paper.defaultStopPct ?? 30;
+          const stopPricePct = (stopPctRoe / Math.max(1, leverage)) / 100;
+          const tpPctRoe = currentSnap.trading?.values.takeProfitPct ?? (stopPctRoe * (currentSnap.trading?.values.takeProfitR ?? 2));
+          const tpPricePct = (tpPctRoe / Math.max(1, leverage)) / 100;
+          const fallbackCalcStop = side === 'LONG'
+            ? entryPrice * (1 - stopPricePct)
+            : entryPrice * (1 + stopPricePct);
+          const fallbackCalcTp = side === 'LONG'
+            ? entryPrice * (1 + tpPricePct)
+            : entryPrice * (1 - tpPricePct);
+
+          const stopPrice = Number(out.verdict.thesis.stop) || Number(fallbackCalcStop.toFixed(4));
+          const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : Number(fallbackCalcTp.toFixed(4));
           const margin = Math.round(perOrder * 100) / 100;
           const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
-          const side = action === 'OPEN_LONG' ? 'LONG' : 'SHORT';
 
           if (perOrder <= 0) {
             verdictRecord.executed = false;
@@ -1591,6 +1732,10 @@ export function createReplacementRuntime(
 
       return lastResult ?? { ok: true, message: 'All watchlist symbols evaluated successfully.' };
     } finally {
+      if (lastFightAt && Date.now() - lastFightAt < 2500) {
+        const remainingDelay = Math.max(200, 2500 - (Date.now() - lastFightAt));
+        await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+      }
       updateState((draft) => {
         draft.debate = null;
         draft.auto.running = false;

@@ -47,7 +47,7 @@ export function mountStateRoutes(
       app: 'trading-agent-mpu-gandring',
       runtimeGeneration: 'v2',
       instanceId: options.instanceId ?? null,
-      version: state.version ?? '0.0.0.4.17',
+      version: state.version ?? '0.0.0.4.18',
       mode: state.mode,
       appMode: state.appMode,
       venue: state.venue?.name ?? state.live?.exchange ?? null,

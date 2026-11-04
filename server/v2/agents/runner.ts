@@ -168,8 +168,11 @@ function tryParseJson(raw: string): unknown {
 }
 
 export function getRoleSchemaInstruction(role: RoleId): string {
+  const toolHint = `You may optionally call tools before your final answer by returning: {"toolCalls": [{"name": "<tool_name>", "args": {...}}]}`;
   if (role === 'risk') {
-    return `Respond strictly with a valid JSON object matching this schema:
+    return `${toolHint}
+
+Respond strictly with a valid JSON object matching this schema:
 {
   "decision": "APPROVE" | "REJECT",
   "stance": "LONG" | "SHORT" | "HOLD" | "CLOSE" | "NEUTRAL",
@@ -181,7 +184,9 @@ export function getRoleSchemaInstruction(role: RoleId): string {
   }
 
   if (role === 'lead') {
-    return `Respond strictly with a valid JSON object matching this schema:
+    return `${toolHint}
+
+Respond strictly with a valid JSON object matching this schema:
 {
   "stance": "LONG" | "SHORT" | "HOLD" | "CLOSE",
   "reasoning": "Executive decision synthesis in character (max 3 sentences)",
@@ -195,7 +200,9 @@ export function getRoleSchemaInstruction(role: RoleId): string {
 }`;
   }
 
-  return `Respond strictly with a valid JSON object matching this schema:
+  return `${toolHint}
+
+Respond strictly with a valid JSON object matching this schema:
 {
   "stance": "LONG" | "SHORT" | "HOLD" | "CLOSE" | "NEUTRAL",
   "reasoning": "Analysis in character (max 3 sentences)",

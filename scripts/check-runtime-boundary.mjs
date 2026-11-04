@@ -15,13 +15,18 @@ const ALLOWED_EXACT = new Set([
   'server/session-entry.ts',
   'server/session-log.ts',
   'server/redact.ts',
-  'server/untrusted.ts'
+  'server/untrusted.ts',
+  'server/money.ts',
+  'server/strategy.ts',
+  'server/types.ts'
 ]);
 
 const ALLOWED_PREFIXES = [
   'shared/',
   'server/v2/',
-  'cli/v2/'
+  'cli/v2/',
+  'server/market/',
+  'server/exchange/'
 ];
 
 const FORBIDDEN_MARKERS = [

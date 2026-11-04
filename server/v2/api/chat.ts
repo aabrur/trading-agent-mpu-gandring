@@ -246,6 +246,11 @@ export interface LiveDeskChatContext {
     maxLeverage: number;
     defaultStopPct: number;
     takeProfitPct?: number;
+    takeProfitR?: number;
+    dailyLossLimitPct?: number;
+    maxLossPerTradePct?: number;
+    minEntryConfidencePct?: number;
+    sizingMode?: string;
     safetyNet: number;
     maxPositions: number;
     orderSizePct?: number | null;
@@ -265,7 +270,15 @@ export interface LiveDeskChatContext {
     available: number | null;
     freshness: DeskFreshness;
   };
-  positions: Array<{ symbol: string; side: string; qty: number; entry: number; stop: number; tp: number | null }>;
+  positions: Array<{
+    symbol: string;
+    side: string;
+    qty: number;
+    entry: number;
+    stop: number;
+    tp: number | null;
+    protectionStatus?: 'confirmed' | 'missing' | 'unknown';
+  }>;
   restingOrders: Array<{ symbol: string; side: string; status: string }>;
   watchlistPrices: Array<{ symbol: string; last: number | null; freshness: DeskFreshness; source: string }>;
   assignedModels: Array<{ role: string; provider: string | null; model: string | null }>;
@@ -282,6 +295,11 @@ export interface LiveDeskChatContext {
     whaleExchangeFlow?: unknown;
     liveNews?: unknown;
   }>;
+  jev?: {
+    enabled: boolean;
+    health?: string;
+    lastDecision?: unknown;
+  } | null;
   extraFeeds?: Record<string, unknown>;
 }
 
@@ -421,6 +439,11 @@ export function buildLiveDeskChatContext(
       maxLeverage: state.trading.values.maxLeverage,
       defaultStopPct: state.trading.values.defaultStopPct,
       takeProfitPct: state.trading.values.takeProfitPct,
+      takeProfitR: state.trading.values.takeProfitR,
+      dailyLossLimitPct: state.trading.values.dailyLossLimitPct,
+      maxLossPerTradePct: state.trading.values.maxLossPerTradePct,
+      minEntryConfidencePct: state.trading.values.minEntryConfidencePct,
+      sizingMode: (state.trading.values.orderSizePct ?? null) !== null ? 'FIXED_PCT_OF_MONEY_TRADE' : 'AUTO_EQUAL_SLOTS_MONEY_TRADE_DIV_N',
       safetyNet: state.trading.values.safetyNet,
       maxPositions: state.trading.values.maxPositions,
       orderSizePct: state.trading.values.orderSizePct ?? null
@@ -446,7 +469,8 @@ export function buildLiveDeskChatContext(
       qty: p.qty,
       entry: p.entry,
       stop: p.stop,
-      tp: p.tp
+      tp: p.tp,
+      protectionStatus: p.protectionStatus ?? (p.stop ? 'confirmed' : 'missing')
     })),
     restingOrders: (state.paper.positions ?? [])
       .filter((p) => Boolean(p.entryStatus) && p.entryStatus !== 'confirmed')
@@ -462,6 +486,11 @@ export function buildLiveDeskChatContext(
       prices: prices.length ? prices[0]!.freshness : 'unavailable'
     },
     marketIntelligenceBySymbol: Object.keys(marketIntelligenceBySymbol).length > 0 ? marketIntelligenceBySymbol : undefined,
+    jev: state.jev ? {
+      enabled: state.jev.enabled,
+      health: state.jev.health,
+      lastDecision: state.jev.lastDecision ?? null
+    } : null,
     extraFeeds: options.extraFeeds
   };
   const encoded = JSON.stringify(context);

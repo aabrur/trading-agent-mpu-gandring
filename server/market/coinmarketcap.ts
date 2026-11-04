@@ -132,7 +132,8 @@ export async function checkCoinMarketCapKey(
 
     if (!res.ok || (json?.status?.error_code && json.status.error_code !== 0)) {
       backoff(key, res, json?.status?.error_code);
-      const msg = json?.status?.error_message || `HTTP ${res.status}`;
+      const is429 = res.status === 429 || [1008, 1009, 1010, 1011].includes(json?.status?.error_code ?? 0);
+      const msg = is429 ? 'RATE_LIMITED_FALLBACK_TO_BROWSER' : (json?.status?.error_message || `HTTP ${res.status}`);
       return { ok: false, error: msg };
     }
 

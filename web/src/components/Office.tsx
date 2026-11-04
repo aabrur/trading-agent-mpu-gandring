@@ -59,9 +59,15 @@ function useOfficeFight(state: DeskState, fights: Fight[]) {
       document.removeEventListener('visibilitychange', update);
     };
   }, [debating]);
-  if (!debating || (!/^round \d+$/.test(state.debate?.phase ?? '') && !state.debate?.phase.startsWith("challenge") && state.debate?.phase !== "debate") || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
   const recent = fights.at(-1);
-  return recent && clock.now >= recent.at && clock.now - recent.at < 2400 ? recent : heatedDebateFight(state, clock.now) ?? undefined;
+  const hasRecentFight = Boolean(recent && clock.now >= recent.at && clock.now - recent.at < 3000);
+  const isDebatePhase = Boolean(state.debate && (
+    /^round \d+$/.test(state.debate.phase) ||
+    state.debate.phase.startsWith('challenge') ||
+    ['gathering', 'debate', 'execution review', 'risk gate', 'verdict', 'position risk review'].includes(state.debate.phase)
+  ));
+  if ((!debating && !hasRecentFight) || (!isDebatePhase && !hasRecentFight) || state.killed || state.paused || clock.reduced || clock.hidden) return undefined;
+  return hasRecentFight && recent ? recent : heatedDebateFight(state, clock.now) ?? undefined;
 }
 
 function poseFor(a: AgentView, fight: Fight | undefined, reaction: Reaction | undefined, inDebate: boolean, activeFight?: Fight): { pose: Pose; face: Face } {

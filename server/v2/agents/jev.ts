@@ -26,6 +26,7 @@ export interface JevClientOptions {
   model?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  fallbackCaller?: (prompt: string, systemPrompt?: string) => Promise<string | null>;
 }
 
 const SECRET_FIELD_RE = /(key|secret|token|password|private|authorization|seed|mnemonic|webhook)/i;
@@ -64,6 +65,7 @@ export class JevClient {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly fallbackCaller?: (prompt: string, systemPrompt?: string) => Promise<string | null>;
   private requests = 0;
   private success = 0;
   private errors = 0;
@@ -80,6 +82,7 @@ export class JevClient {
     this.model = (options.model ?? 'openai/gpt-5-mini').trim();
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fallbackCaller = options.fallbackCaller;
 
     if (this.apiKey) {
       registerSecrets([this.apiKey]);
@@ -140,6 +143,9 @@ export class JevClient {
     }
 
     if (!this.apiKey) {
+      if (this.fallbackCaller) {
+        return this.invokeFallback(input, fallbackId);
+      }
       this.lastSource = 'heuristic';
       return this.evaluateHeuristic(input, fallbackId, 'Jev API key is not configured; using local heuristic');
     }
@@ -177,6 +183,9 @@ export class JevClient {
         this.errors += 1;
         this.lastLatencyMs = Date.now() - started;
         this.lastError = `Jev HTTP ${res.status}`;
+        if (this.fallbackCaller) {
+          return this.invokeFallback(input, fallbackId);
+        }
         this.lastSource = 'heuristic';
         return this.evaluateHeuristic(input, fallbackId, `Jev HTTP ${res.status}`);
       }
@@ -226,9 +235,62 @@ export class JevClient {
       if (timedOut) this.timeouts += 1;
       else this.errors += 1;
       this.lastError = message;
+      if (this.fallbackCaller) {
+        return this.invokeFallback(input, fallbackId);
+      }
       this.lastSource = 'heuristic';
       this.lastLatencyMs = this.timeoutMs;
       return this.evaluateHeuristic(input, fallbackId, message);
+    }
+  }
+
+  private async invokeFallback(input: JevReviewInput, fallbackId: string): Promise<JevReview> {
+    if (!this.fallbackCaller) {
+      return this.evaluateHeuristic(input, fallbackId, 'No fallback caller configured');
+    }
+    const started = Date.now();
+    try {
+      this.requests += 1;
+      const systemPrompt = 'You are Jev, the trading desk objective evidence and market regime reviewer. Analyze market context and role observations. You carry ZERO execution or veto authority. Return JSON with keys: "reviewId", "market_regime" (one of TRENDING_BULL, TRENDING_BEAR, RANGING, VOLATILE, UNCERTAIN), "claimRefs" (array of strings), "contraryRefs" (array of strings), "reason" (concise string).';
+      const prompt = JSON.stringify(sanitizeJevPayload({
+        cycleId: input.cycleId,
+        symbol: input.symbol,
+        evidenceId: input.evidenceId,
+        state: input.state
+      }));
+      const raw = await this.fallbackCaller(prompt, systemPrompt);
+      if (!raw) {
+        this.errors += 1;
+        this.lastSource = 'heuristic';
+        return this.evaluateHeuristic(input, fallbackId, 'Fallback caller returned empty response');
+      }
+      let cleaned = raw.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      }
+      const parsedJson = JSON.parse(cleaned);
+      const validated = RemoteJevPayloadSchema.safeParse(parsedJson);
+      if (!validated.success) {
+        this.errors += 1;
+        this.lastSource = 'heuristic';
+        return this.evaluateHeuristic(input, fallbackId, 'Fallback caller response schema mismatch');
+      }
+      this.success += 1;
+      this.lastLatencyMs = Date.now() - started;
+      this.lastError = null;
+      this.lastSource = 'remote';
+      return {
+        status: 'completed',
+        reviewId: validated.data.reviewId ?? fallbackId,
+        claimRefs: validated.data.claimRefs,
+        contraryRefs: validated.data.contraryRefs,
+        reason: validated.data.reason ?? null,
+        ...(validated.data.market_regime ? { market_regime: validated.data.market_regime } : {})
+      };
+    } catch (err) {
+      this.errors += 1;
+      this.lastSource = 'heuristic';
+      return this.evaluateHeuristic(input, fallbackId, `Fallback caller failed: ${(err as Error).message}`);
     }
   }
 
