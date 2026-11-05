@@ -179,7 +179,7 @@ if (first === 'version' || first === '--version' || first === '-v' || first === 
 const envFile = path.join(root, '.env');
 const firstRun = !existsSync(envFile);
 if (firstRun) writeFileSync(envFile, 'APP_MODE=local\nTRADING_MODE=PAPER\nDEFAULT_PROVIDER=mock\nAUTO_TRADING=off\n', { mode: 0o600 });
-const env = { ...parse(readFileSync(envFile)), ...process.env };
+const env = { ...process.env, ...(existsSync(envFile) ? parse(readFileSync(envFile)) : {}) };
 const mode = (env.TRADING_MODE || 'PAPER').toUpperCase();
 const host = mode === 'LIVE' ? '127.0.0.1' : env.HOST || '127.0.0.1';
 const browserHost = ['0.0.0.0', '::'].includes(host) ? '127.0.0.1' : host;
@@ -250,7 +250,8 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { stopping 
 do {
   restart = false;
   const startedAt = Date.now();
-  child = spawn(process.execPath, [serverFile], { cwd: root, env: { ...process.env, NODE_ENV: 'production', MPU_MANAGED: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: true });
+  const diskEnv = existsSync(envFile) ? parse(readFileSync(envFile)) : {};
+  child = spawn(process.execPath, [serverFile], { cwd: root, env: { ...process.env, ...diskEnv, NODE_ENV: 'production', MPU_MANAGED: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: true });
   let exited = false;
   let exitCode = null, exitSignal = null, spawnError = null;
   child.on('message', (m) => { if (m?.type === 'mpu:restart') { restart = true; child.kill('SIGTERM'); } });

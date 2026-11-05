@@ -307,6 +307,8 @@ export interface ReplacementRuntimeHandle extends OfficeRuntime {
   }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
   readonly reportsService?: ReportsService;
   stop(): Promise<void>;
+  reconfigureVenueMode?(mode: TradingMode, venue?: VenueId): Promise<{ ok: boolean; error?: string }>;
+  syncVenueAccount?(): Promise<void>;
 }
 
 export interface ReplacementRuntimeOptions {
@@ -329,6 +331,10 @@ export interface ReplacementRuntimeOptions {
   accountState?: OfficeState['accountState'];
   executionGateway?: ExecutionGateway;
   venueAdapter?: VenueAdapter;
+  getVenueAdapter?: () => VenueAdapter;
+  activeAccountRef?: () => string;
+  reconfigureVenueMode?: (mode: TradingMode, venue?: VenueId) => Promise<{ ok: boolean; error?: string }>;
+  syncVenueAccount?: () => Promise<void>;
   settings?: SettingsService;
   secrets?: SecretStore;
   chatService?: ChatService;
@@ -368,6 +374,7 @@ export function verifiedVenueStop(input: {
 export function createReplacementRuntime(
   options: ReplacementRuntimeOptions = {}
 ): ReplacementRuntimeHandle {
+  let latestNewsBriefing: unknown = null;
   const hub = new OfficeEventHub();
   const env = options.env ?? process.env;
   let state = createInitialOfficeState({
@@ -544,6 +551,7 @@ export function createReplacementRuntime(
     if (savedAuto.symbols && savedAuto.symbols.length > 0) {
       state.auto.symbols = [...savedAuto.symbols];
     }
+    state.reportIntervalMin = savedAuto.reportIntervalMin ?? state.reportIntervalMin;
   }
   if (savedWatchlist && savedWatchlist.length > 0) {
     state.watchlist = [...savedWatchlist];
@@ -825,6 +833,11 @@ export function createReplacementRuntime(
     targetSymbol: string,
     reason: CycleReason = 'owner'
   ): Promise<{ ok: boolean; message: string; cycleId: string; verdict?: Verdict }> => {
+    if (snapshot().mode !== 'PAPER' && options.syncVenueAccount) {
+      try {
+        await options.syncVenueAccount();
+      } catch {}
+    }
     const snap = snapshot();
     const cycleId = `cycle-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const debateId = `debate-${Date.now()}`;
@@ -889,6 +902,21 @@ export function createReplacementRuntime(
 
         // 8 closed bars
         const closedBars = marketFrame?.closed[tf as TF]?.filter((b) => b.confirmed) ?? [];
+        const last20Bars = closedBars.slice(-20);
+        const recentHigh20 = last20Bars.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity);
+        const recentLow20 = last20Bars.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity);
+
+        const lastPivotHigh = highs[highs.length - 1]?.price != null ? Number(highs[highs.length - 1].price) : null;
+        const lastPivotLow = lows[lows.length - 1]?.price != null ? Number(lows[lows.length - 1].price) : null;
+
+        const effectiveSwingHigh = lastPivotHigh !== null && Number.isFinite(recentHigh20) && recentHigh20 > -Infinity
+          ? Math.max(lastPivotHigh, recentHigh20)
+          : (lastPivotHigh ?? (recentHigh20 > -Infinity ? recentHigh20 : null));
+
+        const effectiveSwingLow = lastPivotLow !== null && Number.isFinite(recentLow20) && recentLow20 < Infinity
+          ? Math.min(lastPivotLow, recentLow20)
+          : (lastPivotLow ?? (recentLow20 < Infinity ? recentLow20 : null));
+
         const recentCandles = closedBars.slice(-8).map((b) => ({
           t: b.startAt,
           o: b.open,
@@ -949,8 +977,8 @@ export function createReplacementRuntime(
           vwapUtc: feat.vwapUtc?.value ?? null,
           relativeVolume20: feat.relativeVolume20?.value ?? null,
           structure: {
-            swingHigh: highs[highs.length - 1]?.price ?? null,
-            swingLow: lows[lows.length - 1]?.price ?? null,
+            swingHigh: effectiveSwingHigh,
+            swingLow: effectiveSwingLow,
             priorSwingHigh: highs[highs.length - 2]?.price ?? null,
             priorSwingLow: lows[lows.length - 2]?.price ?? null,
             bos: feat.structure?.bos ?? null,
@@ -981,7 +1009,21 @@ export function createReplacementRuntime(
       tp: null,
       unrealizedPnl: 0
     } : null);
-    const currentPosCount = snap.mode === 'PAPER' ? snap.paper.positions.length : (snap.venueAccount?.positions?.length || snap.paper.positions.length);
+    const openSymbols = new Set<string>();
+    for (const p of snap.paper.positions) {
+      openSymbols.add(p.symbol.toUpperCase());
+    }
+    if (snap.venueAccount?.positions) {
+      for (const p of snap.venueAccount.positions) {
+        openSymbols.add(p.symbol.toUpperCase());
+      }
+    }
+    if (snap.venueAccount?.pendingSymbols) {
+      for (const sym of snap.venueAccount.pendingSymbols) {
+        openSymbols.add(sym.toUpperCase());
+      }
+    }
+    const currentPosCount = snap.mode === 'PAPER' ? snap.paper.positions.length : openSymbols.size;
 
     // Fetch multi-venue quotes, whale intelligence, news, and catalysts in parallel with safe error isolation
     const venueName = (snap.venue?.name as any) || 'aster';
@@ -1005,7 +1047,7 @@ export function createReplacementRuntime(
       Promise.resolve(null),
       Promise.resolve(null),
       Promise.resolve(null),
-      options.venueAdapter?.quote ? options.venueAdapter.quote(targetSymbol) : Promise.resolve(null),
+      snap.mode !== 'PAPER' && options.venueAdapter?.quote && (options.venueAdapter as any).name !== 'paper' ? options.venueAdapter.quote(targetSymbol) : Promise.resolve(null),
       Promise.resolve(null),
       Promise.resolve([]),
       Promise.resolve({ items: [] } as any),
@@ -1016,7 +1058,7 @@ export function createReplacementRuntime(
       fetchDerivatives(targetSymbol, venueName, Number(snap.tickers[targetSymbol]?.last ?? 0)),
       fetchDerivatives(targetSymbol, 'bybit', Number(snap.tickers[targetSymbol]?.last ?? 0)),
       fetchL2Orderbook(targetSymbol, 'hyperliquid', 'hyperliquid'),
-      options.venueAdapter?.quote ? options.venueAdapter.quote(targetSymbol) : Promise.resolve(null),
+      snap.mode !== 'PAPER' && options.venueAdapter?.quote && (options.venueAdapter as any).name !== 'paper' ? options.venueAdapter.quote(targetSymbol) : Promise.resolve(null),
       computeWhaleIntelligence({ symbol: targetSymbol, apiKey: whaleKey, marketHub }),
       getNewsFor(targetSymbol, {
         tradingMode: snap.mode,
@@ -1059,11 +1101,12 @@ export function createReplacementRuntime(
       normalizedItems,
       cryptopanicKey || liveAnnouncements.length > 0 || publicNews.length > 0 ? 'CONFIGURED_LIVE' : 'UNCONFIGURED'
     );
+    latestNewsBriefing = newsBriefing;
     const cmcSummary = catalystRes.status === 'fulfilled' ? catalystRes.value : null;
 
     const multiVenue = {
       preferredVenue: snap.venue?.name ?? 'bybit',
-      nativeQuote: nativeQuote ? {
+      nativeQuote: (snap.mode !== 'PAPER' && nativeQuote) ? {
         last: nativeQuote.last,
         bid: nativeQuote.bid,
         ask: nativeQuote.ask,
@@ -1190,7 +1233,6 @@ export function createReplacementRuntime(
       maxPositions: snap.paper.n,
       orderSizePct: tv?.orderSizePct ?? null,
       dailyLossLimitPct: tv?.dailyLossLimitPct,
-      maxLossPerTradePct: tv?.maxLossPerTradePct,
       safetyNet: snap.paper.safetyNet,
       sizingMode: (tv?.orderSizePct ?? null) !== null ? 'FIXED_PCT_OF_MONEY_TRADE' : 'AUTO_EQUAL_SLOTS_MONEY_TRADE_DIV_N',
       tradingProfile: snap.trading?.profile,
@@ -1202,7 +1244,7 @@ export function createReplacementRuntime(
       const out = await cycleRunner.run({
         cycleId,
         reason,
-        accountRef: 'paper:default',
+        accountRef: snap.mode === 'PAPER' ? 'paper:default' : (options.activeAccountRef?.() ?? `${snap.venue?.name ?? 'bybit'}:${snap.mode.toLowerCase()}`),
         symbol: targetSymbol,
         evidenceId: intelFrame.evidenceId,
         configVersion: options.settings?.current().activeVersion ?? 1,
@@ -1593,6 +1635,11 @@ export function createReplacementRuntime(
                 text: `${currentSnap.mode} order for ${targetSymbol} rejected by gateway: ${dispatchRes.message}`
               });
             }
+            if (options.syncVenueAccount) {
+              try {
+                await options.syncVenueAccount();
+              } catch {}
+            }
           }
         }
       } else {
@@ -1793,7 +1840,15 @@ export function createReplacementRuntime(
       const roles: RoleId[] = targetRole ? [targetRole] : [...ROLE_IDS];
       const prompt = toAll ? raw.replace(/^@all\s+/i, '') : raw;
       const conversationId = input.conversationId || 'office';
-      const deskSnapshot = buildLiveDeskChatContext(snapshot(), { marketHub });
+      if (snapshot().mode !== 'PAPER' && options.syncVenueAccount) {
+        try {
+          await options.syncVenueAccount();
+        } catch {}
+      }
+      const deskSnapshot = buildLiveDeskChatContext(snapshot(), {
+        marketHub,
+        extraFeeds: latestNewsBriefing ? { newsBriefing: latestNewsBriefing } : undefined
+      });
       const deskContext = `Live desk snapshot (informational only; not an execution command).\n${JSON.stringify(deskSnapshot, null, 2)}`;
       const outcomes = await Promise.allSettled(roles.map(async role => {
         const answer = await roleRunner.chat({
@@ -2517,6 +2572,11 @@ export function createReplacementRuntime(
     }
 
     if (cleanCmd === 'sync' || cleanCmd === 'sync balance' || cleanCmd === 'sync to book' || cleanCmd === 'refresh balance') {
+      if (snapshot().mode !== 'PAPER' && options.syncVenueAccount) {
+        try {
+          await options.syncVenueAccount();
+        } catch {}
+      }
       const snap = snapshot();
       hub.emit('state', snap);
       return { ok: true, command: 'sync', reply: `Synced book. Balance: ${snap.paper.balance} USDT, Safety net: ${snap.paper.safetyNet} USDT, Money trade: ${snap.paper.moneyTrade} USDT.` };
@@ -2735,7 +2795,9 @@ export function createReplacementRuntime(
     handleCommand,
     reportsService: options.reportsService,
     stop,
-    dispatch
+    dispatch,
+    reconfigureVenueMode: options.reconfigureVenueMode,
+    syncVenueAccount: options.syncVenueAccount
   };
 }
 
@@ -2781,6 +2843,12 @@ export async function startReplacementServer(
   const authority = new ExecutionAuthorityService(store);
   const accounts = await AccountRegistry.open(store, authority);
   const settings = await SettingsService.initialize(store, secrets);
+
+  const effectiveExchange = settings.current().effective.venue.exchange;
+  if (effectiveExchange && startup.venue && effectiveExchange !== startup.venue) {
+    secrets.writeSecrets({ EXCHANGE: startup.venue });
+    process.env.EXCHANGE = startup.venue;
+  }
 
   let venueAdapter: import('./execution/adapters/types.js').VenueAdapter;
   let accountRef: string;
@@ -2871,7 +2939,7 @@ export async function startReplacementServer(
     nativePositions = await venueAdapter.positions();
   }
 
-  const transport = createTransportFromAdapter(venueAdapter);
+  let transport = createTransportFromAdapter(venueAdapter);
   const marketHub = new BybitMarketHub({
     retainedSymbolsProvider: () => settings.current().effective.watchlist
   });
@@ -3291,6 +3359,259 @@ export async function startReplacementServer(
 
   const reportsService = new ReportsService();
 
+  let syncTimer: NodeJS.Timeout | null = null;
+  let isSyncing = false;
+
+  const syncVenueAccount = async (): Promise<void> => {
+    if (isSyncing) return;
+    const currentMode = runtimeRef ? runtimeRef.snapshot().mode : startup.tradingMode;
+    if (currentMode === 'PAPER') return;
+    if (!venueAdapter) return;
+    isSyncing = true;
+    try {
+      let recon: Awaited<ReturnType<typeof gateway.reconcile>> | null = null;
+      try {
+        recon = await gateway.reconcile(accountRef);
+      } catch {
+        recon = null;
+      }
+      const [bal, posList] = await Promise.all([
+        venueAdapter.balance(),
+        venueAdapter.positions()
+      ]);
+      const eq = bal.equity !== null ? Number(bal.equity) : null;
+      const av = bal.available !== null ? Number(bal.available) : null;
+      if (eq !== null && Number.isFinite(eq)) {
+        runtimeRef?.updateState((d) => {
+          d.financial.balance = availableFinancialField(eq);
+          d.financial.equity = availableFinancialField(eq);
+          if (av !== null && Number.isFinite(av)) {
+            d.financial.availableBalance = availableFinancialField(av);
+          }
+          const totalUnrealized = Math.round(
+            posList.reduce((sum, p) => sum + (p.unrealizedPnl ? Number(p.unrealizedPnl) : 0), 0) * 100
+          ) / 100;
+          const pendingIntents = recon?.pending ?? [];
+          d.venueAccount = {
+            equity: eq,
+            available: av ?? eq,
+            unrealized: totalUnrealized,
+            at: Date.now(),
+            status: 'confirmed',
+            positions: posList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) })),
+            pendingSymbols: pendingIntents.map((p) => p.symbol)
+          };
+          d.paper.balance = eq;
+          d.paper.unrealized = totalUnrealized;
+          d.paper.equity = eq;
+
+          const updatedPositions: Position[] = [];
+          for (let idx = 0; idx < posList.length; idx++) {
+            const nativePos = posList[idx];
+            const qty = Number(nativePos.qty);
+            const entry = Number(nativePos.entryPrice);
+            const leverage = nativePos.leverage ?? 5;
+            const margin = (qty * entry) / leverage;
+            const existing = d.paper.positions.find(
+              (p) => p.symbol.toUpperCase() === nativePos.symbol.toUpperCase() && p.side === nativePos.side
+            );
+            const upnl = nativePos.unrealizedPnl != null ? Number(nativePos.unrealizedPnl) : (existing?.unrealizedPnl ?? 0);
+            const mark = existing?.mark && Math.abs(existing.mark - entry) > 0.0001
+              ? existing.mark
+              : (entry + (nativePos.side === 'LONG' ? 1 : -1) * (qty > 0 ? upnl / qty : 0));
+
+            const shown = verifiedVenueStop({
+              protectionState: recon?.protection[nativePos.positionKey],
+              stopPrice: recon?.verifiedStops?.[nativePos.positionKey]
+            });
+            updatedPositions.push({
+              id: existing?.id ?? `pos-${nativePos.symbol}-${idx}`,
+              symbol: nativePos.symbol,
+              side: nativePos.side,
+              qty,
+              entry,
+              stop: shown.stop,
+              tp: existing?.tp ?? null,
+              mark,
+              unrealizedPnl: Math.round(upnl * 100) / 100,
+              leverage,
+              margin,
+              openedAt: existing?.openedAt ?? nativePos.observedAt ?? Date.now(),
+              protectionStatus: shown.protectionStatus,
+              entryStatus: 'confirmed'
+            });
+          }
+
+          for (const pend of pendingIntents) {
+            if (posList.some((p) => p.symbol.toUpperCase() === pend.symbol.toUpperCase())) {
+              continue;
+            }
+            updatedPositions.push({
+              id: pend.intentId || `pending-${pend.clientOrderId}`,
+              symbol: pend.symbol,
+              side: pend.side,
+              qty: Number(pend.filledQty || 0),
+              entry: 0,
+              stop: 0,
+              tp: null,
+              mark: 0,
+              unrealizedPnl: 0,
+              leverage: 5,
+              margin: 0,
+              openedAt: Date.now(),
+              protectionStatus: 'unknown',
+              entryStatus: pend.orderState === 'PARTIAL' ? 'confirmed' : 'estimated'
+            });
+          }
+
+          d.paper.positions = updatedPositions;
+          d.paper.usedMargin = updatedPositions.reduce((sum, p) => sum + p.margin, 0);
+
+          const trading = settings.current().effective.trading;
+          const slots = Math.max(1, Math.min(4, Math.floor(trading.maxPositions ?? d.paper.n ?? 1)));
+          const safety = trading.safetyNet ?? d.paper.safetyNet;
+          const mt = Math.round(Math.max(0, eq - safety) * 100) / 100;
+          d.paper.safetyNet = safety;
+          d.paper.n = slots;
+          d.paper.moneyTrade = mt;
+          const effectiveOrderSizePct = trading.orderSizePct === 1.5 ? null : (trading.orderSizePct ?? null);
+          d.paper.orderSizePct = effectiveOrderSizePct;
+          d.paper.perOrder = ownerAllocationPerOrder(mt, slots, effectiveOrderSizePct);
+          d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < slots;
+          if (d.accountState) {
+            d.accountState.hasTradableCapital = d.paper.canOpen;
+            d.accountState.canOpenNewSlot = d.paper.canOpen;
+            d.accountState.status = 'AVAILABLE';
+            d.accountState.mode = d.mode;
+            d.accountState.observedAt = Date.now();
+          }
+        });
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      isSyncing = false;
+    }
+  };
+
+  const reconfigureActiveVenueAndMode = async (
+    nextMode: TradingMode,
+    nextVenue?: VenueId
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const targetVenue = (nextVenue ?? (settings.current().effective.venue.exchange as VenueId) ?? 'bybit') as VenueId;
+    const isDexTarget = ['aster', 'dydx', 'hyperliquid', 'orderly', 'paradex'].includes(targetVenue);
+    const targetNetwork: Network | null = nextMode === 'LIVE' ? 'mainnet' : nextMode === 'TESTNET' ? 'testnet' : null;
+
+    if (nextMode === 'LIVE' || nextMode === 'TESTNET') {
+      if (!targetNetwork || !secrets.hasVenueCredentials(targetVenue, targetNetwork)) {
+        return { ok: false, error: `Missing ${targetNetwork} credentials for ${targetVenue}` };
+      }
+      const credentialRef = `${targetVenue}:${targetNetwork}`;
+      const readSecret = async () => {
+        const names = venueCredentialEnvNames(targetVenue, targetNetwork);
+        const envMap = secrets.readEnvMap();
+        const key = (envMap[names.key] ?? process.env[names.key] ?? env[names.key] ?? '').trim();
+        const secret = (envMap[names.secret] ?? process.env[names.secret] ?? env[names.secret] ?? '').trim();
+        const passphrase = names.passphrase ? (envMap[names.passphrase] ?? process.env[names.passphrase] ?? env[names.passphrase] ?? '').trim() : null;
+        const verifiedAgentAddress = (
+          envMap.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
+          process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
+          envMap.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
+          process.env.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
+          ''
+        ).trim() || null;
+        return { key, secret, passphrase, verifiedAgentAddress };
+      };
+
+      const nextAdapter = getVenueAdapter(targetVenue, {
+        network: targetNetwork,
+        credentialRef,
+        fetchImpl: fetch,
+        readSecret
+      });
+
+      const perm = await nextAdapter.permissions();
+      assertLivePermissionEvidence(perm);
+
+      const identity = await nextAdapter.accountIdentity();
+      const accountContext = await accounts.register({
+        venue: targetVenue,
+        network: targetNetwork,
+        mode: nextMode,
+        nativeIdentity: identity.publicAccountId,
+        subaccountRef: identity.subaccountRef ?? null
+      });
+      accountRef = accountContext.accountRef;
+      await authority.claim(accountRef);
+
+      venueAdapter = nextAdapter;
+      transport = createTransportFromAdapter(venueAdapter);
+
+      if (syncTimer) {
+        clearInterval(syncTimer);
+        syncTimer = null;
+      }
+      await syncVenueAccount();
+      syncTimer = setInterval(syncVenueAccount, 10_000);
+      syncTimer.unref();
+
+      runtimeRef?.updateState((draft) => {
+        draft.mode = nextMode;
+        draft.live = {
+          exchange: targetVenue,
+          network: targetNetwork,
+          experimental: targetVenue !== 'bybit'
+        };
+        draft.venue = {
+          name: targetVenue,
+          label: targetVenue.toUpperCase(),
+          kind: isDexTarget ? 'DEX' : 'CEX',
+          experimental: targetVenue !== 'bybit'
+        };
+        if (draft.trading) {
+          draft.trading.network = targetNetwork;
+        }
+      });
+      return { ok: true };
+    } else {
+      if (syncTimer) {
+        clearInterval(syncTimer);
+        syncTimer = null;
+      }
+      const paperVenue = new PaperVenue({
+        initialBalance: String(settings.current().effective.paper.balance ?? 1000)
+      });
+      venueAdapter = paperVenue;
+      const accountContext = await accounts.register({
+        accountRef: 'acct-paper-local',
+        venue: targetVenue,
+        network: 'testnet',
+        mode: 'PAPER',
+        nativeIdentity: 'paper-local',
+        subaccountRef: null
+      });
+      accountRef = accountContext.accountRef;
+      await authority.claim(accountRef);
+      transport = createTransportFromAdapter(venueAdapter);
+
+      runtimeRef?.updateState((draft) => {
+        draft.mode = 'PAPER';
+        draft.live = null;
+        draft.venue = {
+          name: targetVenue,
+          label: targetVenue.toUpperCase(),
+          kind: isDexTarget ? 'DEX' : 'CEX',
+          experimental: targetVenue !== 'bybit'
+        };
+        if (draft.trading) {
+          draft.trading.network = null;
+        }
+        draft.venueAccount = null;
+      });
+      return { ok: true };
+    }
+  };
+
   const runtime = createReplacementRuntime({
     sessionId: sessionLogger?.session.sessionId ?? null,
     initialMode: startup.tradingMode,
@@ -3304,6 +3625,10 @@ export async function startReplacementServer(
     runtimeIdentity: initialIdentity,
     executionGateway: gateway,
     venueAdapter,
+    getVenueAdapter: () => venueAdapter,
+    activeAccountRef: () => accountRef,
+    reconfigureVenueMode: (mode, venue) => reconfigureActiveVenueAndMode(mode, venue),
+    syncVenueAccount: () => syncVenueAccount(),
     env,
     settings,
     secrets,
@@ -3544,116 +3869,10 @@ export async function startReplacementServer(
     }
   }
 
-  let syncTimer: NodeJS.Timeout | null = null;
   if (startup.tradingMode !== 'PAPER') {
-    let isSyncing = false;
-    const syncVenueAccount = async () => {
-      if (isSyncing) return;
-      isSyncing = true;
-      try {
-        let recon: Awaited<ReturnType<typeof gateway.reconcile>> | null = null;
-        try {
-          recon = await gateway.reconcile(accountRef);
-        } catch {
-          recon = null;
-        }
-        const [bal, posList] = await Promise.all([
-          venueAdapter.balance(),
-          venueAdapter.positions()
-        ]);
-        const eq = bal.equity !== null ? Number(bal.equity) : null;
-        const av = bal.available !== null ? Number(bal.available) : null;
-        if (eq !== null && Number.isFinite(eq)) {
-          runtime.updateState((d) => {
-            d.financial.balance = availableFinancialField(eq);
-            d.financial.equity = availableFinancialField(eq);
-            if (av !== null && Number.isFinite(av)) {
-              d.financial.availableBalance = availableFinancialField(av);
-            }
-            const totalUnrealized = Math.round(
-              posList.reduce((sum, p) => sum + (p.unrealizedPnl ? Number(p.unrealizedPnl) : 0), 0) * 100
-            ) / 100;
-            d.venueAccount = {
-              equity: eq,
-              available: av ?? eq,
-              unrealized: totalUnrealized,
-              at: Date.now(),
-              status: 'confirmed',
-              positions: posList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) }))
-            };
-            d.paper.balance = eq;
-            d.paper.unrealized = totalUnrealized;
-            // Venue equity is authoritative and already includes unrealized PnL; avoid double counting.
-            d.paper.equity = eq;
-
-            const updatedPositions: Position[] = [];
-            for (let idx = 0; idx < posList.length; idx++) {
-              const nativePos = posList[idx];
-              const qty = Number(nativePos.qty);
-              const entry = Number(nativePos.entryPrice);
-              const leverage = nativePos.leverage ?? 5;
-              const margin = (qty * entry) / leverage;
-              const existing = d.paper.positions.find(
-                (p) => p.symbol.toUpperCase() === nativePos.symbol.toUpperCase() && p.side === nativePos.side
-              );
-              // Stop price comes only from a verified native readback. A local number is not a venue stop.
-              const upnl = nativePos.unrealizedPnl != null ? Number(nativePos.unrealizedPnl) : (existing?.unrealizedPnl ?? 0);
-              const mark = existing?.mark && Math.abs(existing.mark - entry) > 0.0001
-                ? existing.mark
-                : (entry + (nativePos.side === 'LONG' ? 1 : -1) * (qty > 0 ? upnl / qty : 0));
-
-              const shown = verifiedVenueStop({
-                protectionState: recon?.protection[nativePos.positionKey],
-                stopPrice: recon?.verifiedStops?.[nativePos.positionKey]
-              });
-              updatedPositions.push({
-                id: existing?.id ?? `pos-${nativePos.symbol}-${idx}`,
-                symbol: nativePos.symbol,
-                side: nativePos.side,
-                qty,
-                entry,
-                stop: shown.stop,
-                tp: existing?.tp ?? null,
-                mark,
-                unrealizedPnl: Math.round(upnl * 100) / 100,
-                leverage,
-                margin,
-                openedAt: existing?.openedAt ?? nativePos.observedAt ?? Date.now(),
-                protectionStatus: shown.protectionStatus,
-                entryStatus: 'confirmed'
-              });
-            }
-            d.paper.positions = updatedPositions;
-            d.paper.usedMargin = updatedPositions.reduce((sum, p) => sum + p.margin, 0);
-
-            const trading = settings.current().effective.trading;
-            const slots = Math.max(1, Math.min(4, Math.floor(trading.maxPositions ?? d.paper.n ?? 1)));
-            const safety = trading.safetyNet ?? d.paper.safetyNet;
-            const mt = Math.round(Math.max(0, eq - safety) * 100) / 100;
-            d.paper.safetyNet = safety;
-            d.paper.n = slots;
-            d.paper.moneyTrade = mt;
-            const effectiveOrderSizePct = trading.orderSizePct === 1.5 ? null : (trading.orderSizePct ?? null);
-            d.paper.orderSizePct = effectiveOrderSizePct;
-            d.paper.perOrder = ownerAllocationPerOrder(mt, slots, effectiveOrderSizePct);
-            d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < slots;
-            if (d.accountState) {
-              d.accountState.hasTradableCapital = d.paper.canOpen;
-              d.accountState.canOpenNewSlot = d.paper.canOpen;
-              d.accountState.status = 'AVAILABLE';
-              d.accountState.mode = d.mode;
-              d.accountState.observedAt = Date.now();
-            }
-          });
-        }
-      } catch {
-        // Venue polling failure is non-fatal
-      } finally {
-        isSyncing = false;
-      }
-    };
     void syncVenueAccount();
-    syncTimer = setInterval(syncVenueAccount, 15_000);
+    if (syncTimer) clearInterval(syncTimer);
+    syncTimer = setInterval(syncVenueAccount, 10_000);
     syncTimer.unref();
   }
 

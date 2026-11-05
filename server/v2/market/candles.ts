@@ -88,11 +88,12 @@ export class SymbolCandleBook {
       this.trimClosed(map);
     } else {
       // Never place unconfirmed bar in closed map.
-      if (!map.has(candle.startAt)) {
-        const prev = this.currentByTf.get(candle.tf);
-        if (!prev || candle.startAt >= prev.startAt) {
-          this.currentByTf.set(candle.tf, candle);
-        }
+      if (map.has(candle.startAt)) {
+        map.delete(candle.startAt);
+      }
+      const prev = this.currentByTf.get(candle.tf);
+      if (!prev || candle.startAt >= prev.startAt) {
+        this.currentByTf.set(candle.tf, candle);
       }
     }
   }

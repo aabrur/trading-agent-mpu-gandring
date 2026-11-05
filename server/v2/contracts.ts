@@ -246,6 +246,8 @@ export interface OfficeRuntime {
   updateAutoSettings?(patch: Record<string, unknown>): OfficeState;
   updateState?(mutator: (draft: OfficeState) => OfficeState | void): OfficeState;
   handleCommand?(input: { text: string; agent?: string; clientRequestId?: string; conversationId?: string }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
+  reconfigureVenueMode?(mode: TradingMode, venue?: VenueId): Promise<{ ok: boolean; error?: string }>;
+  syncVenueAccount?(): Promise<void>;
 }
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);

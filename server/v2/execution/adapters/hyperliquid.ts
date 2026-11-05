@@ -291,7 +291,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
           canWithdraw: null,
           verified: true,
           delegatedOnly: true,
-          detail: `Agent ${agentAddress} is not an approved API wallet of ${creds.key}`,
+          detail: `Agent ${agentAddress} is not an approved API wallet of ${creds.key}. Make sure HYPERLIQUID_API_KEY is set to your main wallet address (0x...) and HYPERLIQUID_API_SECRET is set to the private key of an API wallet authorized at https://app.hyperliquid.xyz/API`,
           observedAt
         };
       }

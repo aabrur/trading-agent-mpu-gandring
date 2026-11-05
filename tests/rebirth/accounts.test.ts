@@ -128,4 +128,39 @@ describe('T03 account lifecycle registry and execution authority', () => {
 
     await store.close();
   });
+
+  it('updates account scope when re-registering an existing explicit accountRef across venues', async () => {
+    const store = await RuntimeStore.open(createDbFile());
+    const authority = new ExecutionAuthorityService(store, 'local-runtime-1');
+    const registry = await AccountRegistry.open(store, authority);
+
+    const first = await registry.register({
+      accountRef: 'acct-paper-local',
+      venue: 'aster',
+      network: 'testnet',
+      mode: 'PAPER',
+      nativeIdentity: 'local-paper-account',
+      subaccountRef: null
+    });
+    expect(first.accountRef).toBe('acct-paper-local');
+    expect(first.venue).toBe('aster');
+
+    // Re-register the same explicit accountRef for a different venue
+    const updated = await registry.register({
+      accountRef: 'acct-paper-local',
+      venue: 'hyperliquid',
+      network: 'testnet',
+      mode: 'PAPER',
+      nativeIdentity: 'local-paper-account',
+      subaccountRef: null
+    });
+    expect(updated.accountRef).toBe('acct-paper-local');
+    expect(updated.venue).toBe('hyperliquid');
+
+    await registry.activate('acct-paper-local');
+    const ctx = registry.contexts().find((c) => c.scope.accountRef === 'acct-paper-local');
+    expect(ctx?.scope.venue).toBe('hyperliquid');
+
+    await store.close();
+  });
 });

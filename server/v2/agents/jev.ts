@@ -180,11 +180,11 @@ export class JevClient {
                 type: 'choice',
                 instructions: 'Which market regime best describes the current market condition?',
                 criteria: {
-                  TRENDING_BULL: 'Strong upward trend with higher highs and higher lows',
-                  TRENDING_BEAR: 'Strong downward trend with lower highs and lower lows',
-                  RANGING: 'Sideways or consolidating between support and resistance',
-                  VOLATILE: 'High volatility with erratic expansion wicks',
-                  UNCERTAIN: 'Conflicting or low-liquidity signals'
+                  TRENDING_BULL: 'Higher-timeframe (1h/4h/1d) structure or momentum leans bullish (including pullbacks/retests within an uptrend)',
+                  TRENDING_BEAR: 'Higher-timeframe (1h/4h/1d) structure or momentum leans bearish (including bounces/retests within a downtrend)',
+                  RANGING: 'Price consolidating or mean-reverting between intraday support and resistance with mixed timeframe momentum',
+                  VOLATILE: 'High-volatility expansion or wide liquidation wicks across timeframes',
+                  UNCERTAIN: 'Corrupted, missing, or completely uninitialized market data only (never use UNCERTAIN for normal timeframe conflicts or consolidation)'
                 }
               },
               contrary_risk: {
@@ -237,13 +237,18 @@ export class JevClient {
           };
           usage?: { cost?: number };
         }).answers;
-        const regimeChoice = answers?.market_regime?.choice || 'UNCERTAIN';
+        let regimeChoice = answers?.market_regime?.choice || 'RANGING';
+        const rawState = input.state as { marketSummary?: Record<string, unknown> } | undefined;
+        const hasMarketData = Boolean(rawState?.marketSummary && Object.keys(rawState.marketSummary).length > 0);
+        if (regimeChoice === 'UNCERTAIN' && hasMarketData) {
+          regimeChoice = 'RANGING';
+        }
         const regimeConf = typeof answers?.market_regime?.confidence === 'number' ? answers.market_regime.confidence : null;
         const contraryRisk = typeof answers?.contrary_risk?.noul === 'number' ? answers.contrary_risk.noul : 0;
         const claimRefs = contraryRisk < 0.5 ? ['Jev: Low contrary risk confirmation'] : [];
-        const contraryRefs = contraryRisk >= 0.5 ? ['Jev: Elevated contrary risk alert'] : [];
+        const contraryRefs = contraryRisk >= 0.7 ? ['Jev: Elevated contrary risk alert'] : [];
         const confStr = regimeConf !== null ? ` (confidence: ${(regimeConf * 100).toFixed(0)}%)` : '';
-        const reason = `TypeSafe Jev: ${regimeChoice}${confStr}`;
+        const reason = `TypeSafe Jev: ${regimeChoice}${confStr} (informational context only, zero veto authority)`;
         this.success += 1;
         this.lastLatencyMs = Date.now() - started;
         this.lastError = null;

@@ -303,11 +303,16 @@ export interface LiveDeskChatContext {
   extraFeeds?: Record<string, unknown>;
 }
 
-function classifyFreshness(at: number | null | undefined, now: number): DeskFreshness {
+function classifyFreshness(
+  at: number | null | undefined,
+  now: number,
+  liveMs = 15_000,
+  cachedMs = 120_000
+): DeskFreshness {
   if (at == null || at <= 0) return 'unavailable';
   const age = now - at;
-  if (age <= 15_000) return 'live';
-  if (age <= 120_000) return 'cached';
+  if (age <= liveMs) return 'live';
+  if (age <= cachedMs) return 'cached';
   return 'stale';
 }
 
@@ -323,7 +328,10 @@ export function buildLiveDeskChatContext(
 ): LiveDeskChatContext {
   const now = options.now ?? Date.now();
   const capturedAt = options.capturedAt ?? new Date(now).toISOString();
-  const posFresh = classifyFreshness(state.venueAccount?.at ?? (state.paper.positions[0]?.openedAt ?? now), now);
+  const isConfirmedVenue = state.venueAccount?.status === 'confirmed';
+  const venueLiveLimit = isConfirmedVenue ? 60_000 : 15_000;
+  const venueCachedLimit = isConfirmedVenue ? 300_000 : 120_000;
+  const posFresh = classifyFreshness(state.venueAccount?.at ?? (state.paper.positions[0]?.openedAt ?? now), now, venueLiveLimit, venueCachedLimit);
   const prices = Object.values(state.tickers ?? {}).slice(0, 12).map((ticker) => ({
     symbol: ticker.symbol,
     last: ticker.last ?? null,
@@ -351,6 +359,21 @@ export function buildLiveDeskChatContext(
           const highs = feat.structure?.pivots?.filter((p) => p.kind === 'HIGH') ?? [];
           const lows = feat.structure?.pivots?.filter((p) => p.kind === 'LOW') ?? [];
           const closed = frame.closed[tf as TF]?.filter((b) => b.confirmed) ?? [];
+          const last20 = closed.slice(-20);
+          const recentHigh20 = last20.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity);
+          const recentLow20 = last20.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity);
+
+          const lastPivotHigh = highs[highs.length - 1]?.price != null ? Number(highs[highs.length - 1].price) : null;
+          const lastPivotLow = lows[lows.length - 1]?.price != null ? Number(lows[lows.length - 1].price) : null;
+
+          const effectiveSwingHigh = lastPivotHigh !== null && Number.isFinite(recentHigh20) && recentHigh20 > -Infinity
+            ? Math.max(lastPivotHigh, recentHigh20)
+            : (lastPivotHigh ?? (recentHigh20 > -Infinity ? recentHigh20 : null));
+
+          const effectiveSwingLow = lastPivotLow !== null && Number.isFinite(recentLow20) && recentLow20 < Infinity
+            ? Math.min(lastPivotLow, recentLow20)
+            : (lastPivotLow ?? (recentLow20 < Infinity ? recentLow20 : null));
+
           const recentCandles = closed.slice(-5).map((b) => ({
             t: b.startAt,
             o: b.open,
@@ -374,8 +397,8 @@ export function buildLiveDeskChatContext(
             vwapUtc: feat.vwapUtc?.value ?? null,
             relativeVolume20: feat.relativeVolume20?.value ?? null,
             structure: {
-              swingHigh: highs[highs.length - 1]?.price ?? null,
-              swingLow: lows[lows.length - 1]?.price ?? null,
+              swingHigh: effectiveSwingHigh,
+              swingLow: effectiveSwingLow,
               bos: feat.structure?.bos ?? null,
               choch: feat.structure?.choch ?? null,
               rsiDivergence: feat.structure?.rsiDivergence ?? null
@@ -425,7 +448,9 @@ export function buildLiveDeskChatContext(
             orderbookImbalanceRatio: obImbalance,
             recentLargeTrades: exchangeTrades.slice(0, 5)
           },
-          liveNews: liveAnnouncementObservation(sym) ?? null
+          liveNews: options.extraFeeds?.newsBriefing
+            ? `${liveAnnouncementObservation(sym) ?? 'No announcements'}. Public News: ${JSON.stringify(options.extraFeeds.newsBriefing)}`
+            : (liveAnnouncementObservation(sym) ?? null)
         };
       } catch {}
     }
@@ -441,7 +466,6 @@ export function buildLiveDeskChatContext(
       takeProfitPct: state.trading.values.takeProfitPct,
       takeProfitR: state.trading.values.takeProfitR,
       dailyLossLimitPct: state.trading.values.dailyLossLimitPct,
-      maxLossPerTradePct: state.trading.values.maxLossPerTradePct,
       minEntryConfidencePct: state.trading.values.minEntryConfidencePct,
       sizingMode: (state.trading.values.orderSizePct ?? null) !== null ? 'FIXED_PCT_OF_MONEY_TRADE' : 'AUTO_EQUAL_SLOTS_MONEY_TRADE_DIV_N',
       safetyNet: state.trading.values.safetyNet,
@@ -461,7 +485,7 @@ export function buildLiveDeskChatContext(
       mode: state.mode,
       equity: state.venueAccount?.equity ?? state.paper.equity ?? null,
       available: state.venueAccount?.available ?? state.paper.moneyTrade ?? null,
-      freshness: classifyFreshness(state.venueAccount?.at, now)
+      freshness: classifyFreshness(state.venueAccount?.at, now, venueLiveLimit, venueCachedLimit)
     },
     positions: (state.paper.positions ?? []).slice(0, 8).map((p) => ({
       symbol: p.symbol,

@@ -146,6 +146,47 @@ export class AccountRegistry {
       `acct-${input.venue}-${input.network}-${identityHash.slice(0, 12)}`;
     const nowIso = new Date().toISOString();
 
+    const existingByRef = await this.store.execute(
+      `SELECT account_ref FROM accounts WHERE account_ref = ?`,
+      [accountRef]
+    );
+
+    if (existingByRef.rows.length > 0) {
+      await this.store.transaction(async (tx) => {
+        await tx.execute(
+          `UPDATE accounts SET venue = ?, network = ?, mode = ?, native_identity_hash = ?, subaccount_ref = ?, updated_at = ? WHERE account_ref = ?`,
+          [
+            input.venue,
+            input.network,
+            input.mode,
+            identityHash,
+            input.subaccountRef,
+            nowIso,
+            accountRef
+          ]
+        );
+        await tx.append({
+          eventId: `acct-updated-${accountRef}-${randomUUID()}`,
+          scope: accountRef,
+          kind: 'account.registered',
+          createdAt: nowIso,
+          correlationId: null,
+          causationId: null,
+          schemaVersion: 1,
+          payload: {
+            accountRef,
+            venue: input.venue,
+            network: input.network,
+            mode: input.mode,
+            subaccountRef: input.subaccountRef
+          }
+        });
+      });
+
+      await this.reload();
+      return this.records.get(accountRef)!.scope;
+    }
+
     await this.store.transaction(async (tx) => {
       await tx.execute(
         `INSERT INTO accounts (

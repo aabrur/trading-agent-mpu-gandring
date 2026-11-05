@@ -8,6 +8,7 @@ import {
   TRADING_MODES,
   type Network,
   type OfficeRuntime,
+  type TradingMode,
   type VenueId
 } from '../contracts.js';
 import { venueCredentialEnvNames } from '../runtime.js';
@@ -451,16 +452,19 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       };
     });
 
-    const defaultProvider = snap.effective.agents.lead.provider;
-    const defaultModel = snap.effective.agents.lead.model;
+    const leadProviderRaw = snap.effective.agents.lead.provider;
+    const defaultProvider = leadProviderRaw === 'unconfigured' || !catalog.some((c) => c.provider === leadProviderRaw) ? 'mock' : leadProviderRaw;
+    const defaultModel = snap.effective.agents.lead.model || (catalog.find((c) => c.provider === defaultProvider)?.defaultModel ?? 'mock-desk-v1');
 
     const agentRows = ROLE_IDS.map((r) => {
       const a = snap.effective.agents[r];
-      const isCustom = a.provider !== defaultProvider || a.model !== defaultModel;
+      const prov = a.provider === 'unconfigured' || !catalog.some((c) => c.provider === a.provider) ? 'mock' : a.provider;
+      const model = a.model || (catalog.find((c) => c.provider === prov)?.defaultModel ?? 'mock-desk-v1');
+      const isCustom = prov !== defaultProvider || model !== defaultModel;
       return {
         id: r,
-        provider: a.provider,
-        model: a.model,
+        provider: prov,
+        model,
         reasoning: a.reasoning ?? null,
         custom: isCustom
       };
@@ -788,8 +792,81 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       },
       expected
     );
+    if (result.applyStatus === 'applied') {
+      if (parsed.data.venue) {
+        const nextVenue = parsed.data.venue as VenueId;
+        const isDex = ['aster', 'dydx', 'hyperliquid', 'orderly', 'paradex'].includes(nextVenue);
+        const isExperimental = nextVenue !== 'bybit';
+
+        const currentSnap = deps.runtime?.snapshot?.() ?? null;
+        const currentMode = (currentSnap?.mode ?? process.env.TRADING_MODE ?? 'PAPER') as TradingMode;
+        const net: Network | null = currentMode === 'LIVE' ? 'mainnet' : currentMode === 'TESTNET' ? 'testnet' : null;
+
+        let modeWarning: string | null = null;
+        let effectiveMode = currentMode;
+
+        if (net && !deps.secrets.hasVenueCredentials(nextVenue, net)) {
+          effectiveMode = 'PAPER';
+          deps.secrets.writeSecrets({
+            EXCHANGE: nextVenue,
+            TRADING_MODE: 'PAPER'
+          });
+          process.env.EXCHANGE = nextVenue;
+          process.env.TRADING_MODE = 'PAPER';
+          modeWarning = `Venue changed to ${nextVenue}, but missing ${net} credentials in .env. Trading mode stepped down to PAPER for safety.`;
+        } else {
+          deps.secrets.writeSecrets({ EXCHANGE: nextVenue });
+          process.env.EXCHANGE = nextVenue;
+        }
+
+        if (deps.runtime?.reconfigureVenueMode) {
+          try {
+            await deps.runtime.reconfigureVenueMode(effectiveMode, nextVenue);
+          } catch (err) {
+            console.error(`[setup/venue] hot-swap failed: ${(err as Error).message}`);
+          }
+        }
+
+        deps.runtime?.updateState?.((draft) => {
+          draft.venue = {
+            name: nextVenue,
+            label: nextVenue.toUpperCase(),
+            kind: isDex ? 'DEX' : 'CEX',
+            experimental: isExperimental
+          };
+          if (effectiveMode === 'LIVE' || effectiveMode === 'TESTNET') {
+            draft.mode = effectiveMode;
+            draft.live = {
+              exchange: nextVenue,
+              network: effectiveMode === 'LIVE' ? 'mainnet' : 'testnet',
+              experimental: isExperimental
+            };
+            if (draft.trading) {
+              draft.trading.network = effectiveMode === 'LIVE' ? 'mainnet' : 'testnet';
+            }
+          } else {
+            draft.mode = 'PAPER';
+            draft.live = null;
+            if (draft.trading) {
+              draft.trading.network = null;
+            }
+          }
+        });
+
+        const detailMsg = modeWarning
+          ? modeWarning
+          : `Venue configuration updated to ${nextVenue}. Restart desk to reload full exchange adapters.`;
+        res.status(200).json({
+          ok: true,
+          detail: detailMsg,
+          ...(modeWarning ? { warning: modeWarning } : {}),
+          ...result
+        });
+        return;
+      }
+    }
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
-    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Data source configuration updated.', ...result });
+    res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Venue configuration updated.', ...result });
   });
 
   app.post('/api/setup/keys', (req, res) => {
@@ -879,13 +956,26 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       expected
     );
     if (result.applyStatus === 'applied') {
+      const activeVenue = snap.effective.venue.exchange;
       const modeUpdates: Record<string, string> = {
-        TRADING_MODE: parsed.data.mode
+        TRADING_MODE: parsed.data.mode,
+        ...(activeVenue ? { EXCHANGE: activeVenue } : {})
       };
       if (parsed.data.mode === 'LIVE' && confirmation) {
         modeUpdates.LIVE_CONFIRMED = confirmation;
       }
       deps.secrets.writeSecrets(modeUpdates);
+      process.env.TRADING_MODE = parsed.data.mode;
+      if (activeVenue) process.env.EXCHANGE = activeVenue;
+
+      if (deps.runtime?.reconfigureVenueMode) {
+        try {
+          await deps.runtime.reconfigureVenueMode(parsed.data.mode, activeVenue as VenueId);
+        } catch (err) {
+          console.error(`[setup/mode] hot-swap failed: ${(err as Error).message}`);
+        }
+      }
+
       deps.runtime?.updateState?.((draft) => {
         draft.mode = parsed.data.mode;
         if (draft.trading) {

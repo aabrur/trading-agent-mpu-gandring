@@ -119,12 +119,14 @@ export class PaperVenue implements VenueAdapter {
   }
 
   public async quote(symbol: string): Promise<VenueQuote> {
-    const lastPrice = symbol.startsWith('BTC') ? '65000.0' : '3000.0';
+    const isBtc = symbol.startsWith('BTC');
+    const isEth = symbol.startsWith('ETH');
+    const lastPrice = isBtc ? '65000.0' : isEth ? '3000.0' : '0.0';
     return {
       symbol,
       last: lastPrice,
-      bid: subDecimals(lastPrice, '0.5'),
-      ask: addDecimals(lastPrice, '0.5'),
+      bid: lastPrice !== '0.0' ? subDecimals(lastPrice, '0.5') : '0.0',
+      ask: lastPrice !== '0.0' ? addDecimals(lastPrice, '0.5') : '0.0',
       sourceAt: Date.now(),
       observedAt: Date.now(),
       ageMs: 5

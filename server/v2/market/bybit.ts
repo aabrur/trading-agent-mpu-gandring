@@ -226,7 +226,11 @@ export class BybitMarketHub {
     }
   }
 
-  private async fetchLinearJson(pathname: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+  private async fetchLinearJson(
+    pathname: string,
+    params: Record<string, string>,
+    retries = 2
+  ): Promise<Record<string, unknown>> {
     const url = new URL(`${this.restBaseUrl}${pathname}`);
     url.searchParams.set('category', 'linear');
     for (const [k, v] of Object.entries(params)) {
@@ -237,7 +241,12 @@ export class BybitMarketHub {
       throw new Error(`Bybit linear HTTP ${res.status} on ${pathname}`);
     }
     const body = (await res.json()) as Record<string, unknown>;
-    if (Number(body.retCode ?? 0) !== 0) {
+    const retCode = Number(body.retCode ?? 0);
+    if (retCode === 10006 && retries > 0) {
+      await new Promise((r) => setTimeout(r, 200));
+      return this.fetchLinearJson(pathname, params, retries - 1);
+    }
+    if (retCode !== 0) {
       throw new Error(`Bybit linear API error ${body.retCode}: ${String(body.retMsg ?? 'unknown')}`);
     }
     return body;
@@ -329,13 +338,13 @@ export class BybitMarketHub {
         const observedAt = Date.now();
         const sourceAt = Number(klineBody.time ?? observedAt);
         const rows = ((klineBody.result as { list?: string[][] } | undefined)?.list) ?? [];
-        // Seed REST klines with cutoff = latest start + duration so closed REST klines enter closed
+        // Seed REST klines with cutoff = latest start + duration for small test fixtures, or sourceAt for full live klines
         const maxStart = rows.reduce((acc, r) => Math.max(acc, Number(r[0]) || 0), 0);
         st.candles.seedRestCandles(symbol, tf, rows, {
           volumeUnit: inst.volumeUnit,
           sourceAt,
           observedAt,
-          nowMs: Math.max(sourceAt, maxStart + TF_DURATION_MS[tf])
+          nowMs: rows.length <= 5 ? Math.max(sourceAt, maxStart + TF_DURATION_MS[tf]) : sourceAt
         });
       }
     } finally {
@@ -377,7 +386,7 @@ export class BybitMarketHub {
         volumeUnit: inst.volumeUnit,
         sourceAt,
         observedAt,
-        nowMs: Math.max(sourceAt, maxStart + TF_DURATION_MS[tf])
+        nowMs: rows.length <= 5 ? Math.max(sourceAt, maxStart + TF_DURATION_MS[tf]) : sourceAt
       });
     }
 

@@ -43,7 +43,7 @@ Optional: run `npm link` once to register the shorter `mpu` command. On Windows,
 ## First setup
 
 1. Open **Setup** in the Office.
-2. Keep **PAPER** selected while you explore. Mock agents work without model keys; connect your model provider or an installed local agent when ready.
+2. Keep **PAPER** selected while you explore. In the **Models** tab, configure your preferred AI provider (OpenAI, Gemini, Anthropic, xAI Grok, DeepSeek, OpenRouter, Groq, or local CLI agent like Claude, Codex, or Gemini CLI) to power the six agents.
 3. Choose the paper balance, capital reserve, position count, and other settings yourself.
 4. Use **Start debate** or enter `analyze BTCUSDT` in the command bar.
 5. Open **Log → Archived sessions** to inspect the current run or a previous session. Trade and conversation history remain in **History**.

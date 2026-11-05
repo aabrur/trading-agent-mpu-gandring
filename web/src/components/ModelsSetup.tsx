@@ -26,8 +26,15 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   function restore(d: ModelsInfo) {
     setDefaultReasoning(d.defaultReasoning || '');
     setReasoning(Object.fromEntries(d.agents.map(a => [a.id, a.reasoning ?? null])));
-    setSelection({ provider: d.defaultProvider, model: d.defaultModel });
-    setAgents(Object.fromEntries(d.agents.map((a) => [a.id, { provider: a.provider, model: a.model }])));
+    const validProvider = (p?: string) => d.providers.some(x => x.provider === p) ? (p as string) : (d.providers.find(x => x.provider === 'mock')?.provider ?? d.providers[0]?.provider ?? 'mock');
+    const safeDefaultProvider = validProvider(d.defaultProvider);
+    const safeDefaultModel = d.providers.find(x => x.provider === safeDefaultProvider)?.defaultModel ?? d.defaultModel ?? 'mock-desk-v1';
+    setSelection({ provider: safeDefaultProvider, model: safeDefaultModel });
+    setAgents(Object.fromEntries(d.agents.map((a) => {
+      const p = validProvider(a.provider);
+      const m = d.providers.find(x => x.provider === p)?.models.some(model => model.id === a.model) ? a.model : (d.providers.find(x => x.provider === p)?.defaultModel ?? a.model);
+      return [a.id, { provider: p, model: m }];
+    })));
     setCustom(d.agents.some((a) => a.custom)); setKeys({});
   }
 
@@ -49,7 +56,7 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
 
   if (appMode === 'grokbot') return <p className="wallet-note">{t('setupModelsGrokbotNote')}</p>;
   if (!info) return <p className="wallet-note">{message || t('setupModelsLoading')}</p>;
-  const provider = (p: string) => info.providers.find((v) => v.provider === p)!;
+  const provider = (p: string) => info.providers.find((v) => v.provider === p) ?? info.providers.find((v) => v.provider === 'mock') ?? info.providers[0] ?? { provider: p, keyEnv: null, keySet: false, source: '', defaultModel: 'mock-desk-v1', models: [] };
   const used = [...new Set([selection.provider, ...(custom ? Object.values(agents).map((a) => a.provider) : [])])];
   const controls = (
     value: Selection,
@@ -61,14 +68,14 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   ) => <div className="setup-models-row">
     <label className="setup-field">
       <span className="field-label">{label} {t('setupModelsProviderLabel')}</span>
-      <select aria-label={`${label} provider`} disabled={!available || busy} value={value.provider} onChange={(e) => change({ provider: e.target.value, model: provider(e.target.value).defaultModel })}>
+      <select aria-label={`${label} provider`} disabled={!available || busy} value={value.provider} onChange={(e) => change({ provider: e.target.value, model: provider(e.target.value)?.defaultModel ?? 'mock-desk-v1' })}>
         {info.providers.map((p) => <option key={p.provider} value={p.provider}>{p.provider === 'mock' ? t('setupModelsOfflineDemo') : p.provider === 'local' ? t('setupModelsAgentOnComputer') : p.provider}</option>)}
       </select>
     </label>
     {value.provider === 'local' && <label className="setup-field">
       <span className="field-label">{label} {t('setupModelsAgentLabel')}</span>
       <select aria-label={`${label} local agent`} disabled={!available || busy} value={value.model.split(':')[0]} onChange={(e) => change({ provider: 'local', model: `${e.target.value}:default` })}>
-        {[...new Set(provider('local').models.map((m) => m.id.split(':')[0]))].map((id) => <option key={id} value={id}>{provider('local').models.find((m) => m.id.startsWith(`${id}:`))!.label.split(':')[0]}</option>)}
+        {[...new Set((provider('local')?.models ?? []).map((m) => m.id.split(':')[0]))].map((id) => <option key={id} value={id}>{(provider('local')?.models ?? []).find((m) => m.id.startsWith(`${id}:`))?.label?.split(':')[0] ?? id}</option>)}
       </select>
     </label>}
     <label className="setup-field">
@@ -78,19 +85,19 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
     <label className="setup-field">
       <span className="field-label">{label} {t('setupModelsModelLabel')}</span>
       <select aria-label={`${label} model`} disabled={!available || busy} value={value.model} onChange={(e) => change({ ...value, model: e.target.value })}>
-        {provider(value.provider).models.filter(m => m.id === value.model || !search[label] || `${m.id} ${m.label}`.toLowerCase().includes(search[label].toLowerCase())).filter((m) => value.provider !== 'local' || m.id.split(':')[0] === value.model.split(':')[0]).map((m) => <option key={m.id} value={m.id}>{m.label} · {m.tags.join(', ')}</option>)}
-        {value.provider === 'local' && !provider('local').models.some((model) => model.id === value.model) && <option value={value.model}>{value.model} · {lang === 'id' ? 'ID model manual' : 'Manual model ID'}</option>}
-        {value.provider !== 'local' && value.provider !== 'mock' && !provider(value.provider).models.some((model) => model.id === value.model) && <option value={value.model}>{value.model} · {lang === 'id' ? 'ID model kustom' : 'Custom model ID'}</option>}
-        {value.provider !== 'local' && value.provider !== 'mock' && search[label] && !provider(value.provider).models.some((model) => model.id === search[label]) && <option value={search[label]}>{search[label]} · {lang === 'id' ? 'Gunakan ID model ini' : 'Use this model ID'}</option>}
+        {(provider(value.provider)?.models ?? []).filter(m => m.id === value.model || !search[label] || `${m.id} ${m.label}`.toLowerCase().includes(search[label].toLowerCase())).filter((m) => value.provider !== 'local' || m.id.split(':')[0] === value.model.split(':')[0]).map((m) => <option key={m.id} value={m.id}>{m.label} · {m.tags.join(', ')}</option>)}
+        {value.provider === 'local' && !(provider('local')?.models ?? []).some((model) => model.id === value.model) && <option value={value.model}>{value.model} · {lang === 'id' ? 'ID model manual' : 'Manual model ID'}</option>}
+        {value.provider !== 'local' && value.provider !== 'mock' && !(provider(value.provider)?.models ?? []).some((model) => model.id === value.model) && <option value={value.model}>{value.model} · {lang === 'id' ? 'ID model kustom' : 'Custom model ID'}</option>}
+        {value.provider !== 'local' && value.provider !== 'mock' && search[label] && !(provider(value.provider)?.models ?? []).some((model) => model.id === search[label]) && <option value={search[label]}>{search[label]} · {lang === 'id' ? 'Gunakan ID model ini' : 'Use this model ID'}</option>}
       </select>
     </label>
     {onReasoningChange && <label className="setup-field">
       <span className="field-label">{label === 'Default' ? (lang === 'id' ? 'Reasoning default' : 'Default reasoning') : `${label} reasoning`}</span>
       <select aria-label={`${label} reasoning`} disabled={!available || busy} value={reasoningVal || ''} onChange={e => onReasoningChange(e.target.value)}>
         <option value="">{label === 'Default' ? (lang === 'id' ? 'Native default' : 'Native default') : (lang === 'id' ? 'Ikuti default' : 'Inherit default')}</option>
-        {(value.provider === 'local' ? [...new Set([...(provider('local').models.find(m => m.id === value.model)?.reasoningLevels || []), ...(reasoningVal ? [reasoningVal] : [])])] : ['low', 'med', 'high', 'xhigh', 'max']).map(level => <option key={level} value={level} disabled={value.provider === 'local' && !provider('local').models.find(m => m.id === value.model)?.reasoningLevels?.includes(level)}>{level === 'med' ? 'medium' : level}</option>)}
+        {(value.provider === 'local' ? [...new Set([...(provider('local')?.models?.find(m => m.id === value.model)?.reasoningLevels || []), ...(reasoningVal ? [reasoningVal] : [])])] : ['low', 'med', 'high', 'xhigh', 'max']).map(level => <option key={level} value={level} disabled={value.provider === 'local' && !provider('local')?.models?.find(m => m.id === value.model)?.reasoningLevels?.includes(level)}>{level === 'med' ? 'medium' : level}</option>)}
       </select>
-      {value.provider === 'local' && !provider('local').models.find(m => m.id === value.model)?.reasoningLevels?.length && <small className="field-help">{lang === 'id' ? 'Segarkan model di Local Agents untuk memeriksa dukungan penalaran native.' : 'Refresh models in Local Agents to verify native reasoning support.'}</small>}
+      {value.provider === 'local' && !provider('local')?.models?.find(m => m.id === value.model)?.reasoningLevels?.length && <small className="field-help">{lang === 'id' ? 'Segarkan model di Local Agents untuk memeriksa dukungan penalaran native.' : 'Refresh models in Local Agents to verify native reasoning support.'}</small>}
       {reasoningStatus && <small className="reasoning-meta" title={`requested: ${reasoningStatus.requested || 'native'} · effective: ${reasoningStatus.effective || 'native / unverified'} · supported: ${reasoningStatus.supported.join(', ') || 'native default'}`}>
         {reasoningStatus.status === 'unsupported_or_unverified' ? `Unsupported or unverified: ${reasoningStatus.requested}` : reasoningStatus.effective ? `eff: ${reasoningStatus.effective}` : 'native default'}
       </small>}
@@ -137,13 +144,13 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
     <label className="setup-check" style={{ margin: '8px 0 10px' }}><input type="checkbox" disabled={!available || busy} checked={custom} onChange={(e) => { setCustom(e.target.checked); if (e.target.checked) setAgents(Object.fromEntries(info.agents.map((a) => [a.id, { ...selection }]))); }} /> <span>{lang === 'id' ? 'Kustomisasi provider dan model untuk tiap agen' : 'Customize provider and model for each agent'}</span></label>
     {custom && <div className="setup-agents-grid">{info.agents.map((a) => <div key={a.id}>{controls(agents[a.id] || selection, (s) => setAgents((prev) => ({ ...prev, [a.id]: s })), a.id, reasoning[a.id] || '', (val) => setReasoning((old) => ({ ...old, [a.id]: val || null })), a.reasoningStatus)}</div>)}</div>}
     <div className="setup-keys">
-      {used.filter((p) => provider(p).keyEnv).map((p) => <label key={p}><span>{p} API key <code>{provider(p).keyEnv}</code> · {provider(p).keySet ? (lang === 'id' ? 'tersimpan, kosongkan bila tidak diganti' : 'set, leave blank to keep') : (lang === 'id' ? 'belum diatur, agen memakai mock' : 'not set, agents use mock until added')}</span>
+      {used.filter((p) => provider(p)?.keyEnv).map((p) => <label key={p}><span>{p} API key <code>{provider(p)?.keyEnv}</code> · {provider(p)?.keySet ? (lang === 'id' ? 'tersimpan, kosongkan bila tidak diganti' : 'set, leave blank to keep') : (lang === 'id' ? 'belum diatur, agen memakai mock' : 'not set, agents use mock until added')}</span>
         <input aria-label={`${p} API key`} type="password" disabled={!available || busy} autoComplete="off" spellCheck={false} value={keys[p] || ''} onChange={(e) => setKeys((prev) => ({ ...prev, [p]: e.target.value }))} />
       </label>)}
     </div>
     <p className="wallet-note small">{lang === 'id' ? 'Satu API key per provider dapat digunakan untuk keenam agen dengan model berbeda. Agen lokal memakai akun login bawaan mereka.' : 'One API key per provider can serve all six agents with different models. Local agents reuse their own sign-in and configured model; account limits still apply.'}</p>
     <p className="wallet-note small">{lang === 'id' ? 'Pilihan tier gratis bergantung pada kuota akun masing-masing. Model yang sama bisa dikenakan biaya jika kuota habis.' : 'Free tier choices depend on account eligibility and quota. The same model can be billed on a paid tier. Providers without confirmed free API models have no free choices listed.'}</p>
-    <p className="wallet-note small">Source: <a href={info.usageSource.url} target="_blank" rel="noreferrer">OpenRouter</a>, as of {info.usageSource.asOf} over {info.usageSource.period}. Token ranks measure OpenRouter traffic. Model and pricing sources: {used.filter((p) => p !== 'mock').map((p) => <a key={p} href={provider(p).source} target="_blank" rel="noreferrer">{p} </a>)}</p>
+    <p className="wallet-note small">Source: <a href={info.usageSource.url} target="_blank" rel="noreferrer">OpenRouter</a>, as of {info.usageSource.asOf} over {info.usageSource.period}. Token ranks measure OpenRouter traffic. Model and pricing sources: {used.filter((p) => p !== 'mock' && provider(p)?.source).map((p) => <a key={p} href={provider(p)?.source} target="_blank" rel="noreferrer">{p} </a>)}</p>
     <button type="submit" disabled={!available || busy}>{busy ? (lang === 'id' ? 'Menyimpan...' : 'Saving...') : custom ? t('setupModelsSaveBtn') : (lang === 'id' ? 'Gunakan provider dan model default untuk semua agen' : 'Use default provider and model for all agents')}</button>
     <button type="button" disabled={busy} onClick={() => { restore(info); setEditing(false); setMessage(''); }}>{t('setupDeskCancelBtn')}</button>
     </form>
