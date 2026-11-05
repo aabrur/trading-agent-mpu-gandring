@@ -249,7 +249,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
     status: VENUE_STATUS.bybit,
     capabilities: {
       exchangeStops: true,
-      restingLimitGtcEntry: false,
+      restingLimitGtcEntry: true,
       hedgeMode: true,
       financialHistory: ['fills', 'fees', 'funding']
     },
@@ -407,7 +407,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         settlementCurrency: String(item.settleCoin ?? 'USDT'),
         positionModeCapability: 'BOTH',
         exchangeStops: true,
-        restingLimitGtcEntry: false
+        restingLimitGtcEntry: true
       };
     },
 

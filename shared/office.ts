@@ -102,6 +102,7 @@ export interface ClosedTrade {
 
 export interface Verdict {
   executionStatus?: 'partial' | 'filled' | 'closed';
+  operationalStatus?: 'FILLED' | 'PARTIAL' | 'PENDING' | 'REJECTED';
   id: string;
   symbol: string;
   action: 'OPEN_LONG' | 'OPEN_SHORT' | 'CLOSE' | 'HOLD';

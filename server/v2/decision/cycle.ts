@@ -31,6 +31,8 @@ export interface CyclePolicy {
   tradingProfile?: string;
   profileBaselineStopPrice?: { long: string | null; short: string | null };
   profileBaselineTpPrice?: { long: string | null; short: string | null };
+  supportsLimitGtc?: boolean;
+  accountCapital?: Record<string, unknown>;
 }
 
 export interface RunCycleInput {
@@ -112,20 +114,59 @@ function leadChangedTicket(lead: RoleResult, ticket: CandidateOrder): boolean {
   return false;
 }
 
-function reviseTicket(lead: RoleResult, ticket: CandidateOrder): CandidateOrder {
-  const orderType = lead.proposedOrderType ?? ticket.orderType;
+function computeBaselinePricesForReference(
+  refPrice: number,
+  side: 'LONG' | 'SHORT',
+  policy: CyclePolicy
+): { stop: string; tp: string } {
+  const activeLev = policy.maxLeverage ?? 5;
+  const stopPctRoe = policy.defaultStopPct ?? 30;
+  const stopPricePct = (stopPctRoe / Math.max(1, activeLev)) / 100;
+  const tpPctRoe = policy.takeProfitPct ?? (stopPctRoe * (policy.takeProfitR ?? 2));
+  const tpPricePct = (tpPctRoe / Math.max(1, activeLev)) / 100;
+
+  const stop = side === 'LONG'
+    ? (refPrice * (1 - stopPricePct)).toFixed(4)
+    : (refPrice * (1 + stopPricePct)).toFixed(4);
+  const tp = side === 'LONG'
+    ? (refPrice * (1 + tpPricePct)).toFixed(4)
+    : (refPrice * (1 - tpPricePct)).toFixed(4);
+
+  return { stop, tp };
+}
+
+function reviseTicket(lead: RoleResult, ticket: CandidateOrder, policy?: CyclePolicy): CandidateOrder {
+  let orderType = lead.proposedOrderType ?? ticket.orderType;
+  if (orderType === 'LIMIT_GTC' && policy?.supportsLimitGtc === false) {
+    orderType = 'MARKET';
+  }
   const limitPrice = orderType === 'MARKET'
     ? null
     : lead.proposedLimitPrice === undefined
       ? ticket.limitPrice
       : lead.proposedLimitPrice;
+
+  const side = ticketSide(lead.stance) ?? ticket.side;
+  let stop = lead.proposedStop ?? ticket.stop;
+  let tp = lead.proposedTp ?? ticket.tp;
+
+  if (orderType === 'LIMIT_GTC' && limitPrice && Number(limitPrice) > 0 && side && policy) {
+    const isLimitChanged = lead.proposedLimitPrice !== undefined && lead.proposedLimitPrice !== ticket.limitPrice;
+    const isOrderTypeChangedToLimit = ticket.orderType !== 'LIMIT_GTC';
+    if (!lead.proposedStop || isLimitChanged || isOrderTypeChangedToLimit) {
+      const baselines = computeBaselinePricesForReference(Number(limitPrice), side, policy);
+      stop = lead.proposedStop ?? baselines.stop;
+      tp = lead.proposedTp ?? baselines.tp;
+    }
+  }
+
   return {
     ...ticket,
-    side: ticketSide(lead.stance) ?? ticket.side,
+    side,
     orderType,
     limitPrice,
-    stop: lead.proposedStop ?? ticket.stop,
-    tp: lead.proposedTp ?? ticket.tp
+    stop,
+    tp
   };
 }
 
@@ -282,12 +323,28 @@ export class CycleRunner {
       observeResults.find((r) => r.proposedTp)?.proposedTp ??
       baselineTp;
 
+    const initialOrderType = (executionResult.proposedOrderType === 'LIMIT_GTC' && input.policy.supportsLimitGtc === false)
+      ? 'MARKET'
+      : (executionResult.proposedOrderType ?? 'MARKET');
+    const initialLimitPrice = initialOrderType === 'MARKET' ? null : (executionResult.proposedLimitPrice ?? null);
+
+    let initialStop = executionResult.proposedStop ?? fallbackStop;
+    let initialTp = executionResult.proposedTp ?? fallbackTp;
+
+    if (initialOrderType === 'LIMIT_GTC' && initialLimitPrice && Number(initialLimitPrice) > 0 && resolvedCandidateSide) {
+      if (!executionResult.proposedStop) {
+        const baselines = computeBaselinePricesForReference(Number(initialLimitPrice), resolvedCandidateSide, input.policy);
+        initialStop = baselines.stop;
+        initialTp = executionResult.proposedTp ?? baselines.tp;
+      }
+    }
+
     const candidateOrder: CandidateOrder = {
       side: resolvedCandidateSide,
-      orderType: executionResult.proposedOrderType ?? 'MARKET',
-      limitPrice: executionResult.proposedLimitPrice ?? null,
-      stop: executionResult.proposedStop ?? fallbackStop,
-      tp: executionResult.proposedTp ?? fallbackTp,
+      orderType: initialOrderType,
+      limitPrice: initialLimitPrice,
+      stop: initialStop,
+      tp: initialTp,
       leverage: input.policy.maxLeverage ?? null,
       allocationPerOrderUsdt: input.policy.allocationPerOrderUsdt ?? null,
       availableCapitalUsdt: input.policy.availableCapitalUsdt ?? null,
@@ -462,7 +519,7 @@ export class CycleRunner {
     let ticket = candidateOrder;
     let authorizingRisk = typedRisk;
     if (leadChangedTicket(leadResult, ticket)) {
-      ticket = reviseTicket(leadResult, ticket);
+      ticket = reviseTicket(leadResult, ticket, input.policy);
       const again = await runRole({
         cycleId,
         role: 'risk',
@@ -520,10 +577,25 @@ export class CycleRunner {
     }
 
     const thesisSide = ticket.side;
-    const baselineThesisStop = resolveBaselinePrice(input.policy.profileBaselineStopPrice, thesisSide);
-    const baselineThesisTp = resolveBaselinePrice(input.policy.profileBaselineTpPrice, thesisSide);
-    const proposedStop = ticket.stop ?? baselineThesisStop;
-    const proposedTp = ticket.tp ?? baselineThesisTp;
+    let proposedStop = ticket.stop;
+    let proposedTp = ticket.tp;
+
+    if (ticket.orderType === 'LIMIT_GTC' && ticket.limitPrice && Number(ticket.limitPrice) > 0 && (thesisSide === 'LONG' || thesisSide === 'SHORT')) {
+      const baselines = computeBaselinePricesForReference(Number(ticket.limitPrice), thesisSide, input.policy);
+      const marketBaselineStop = resolveBaselinePrice(input.policy.profileBaselineStopPrice, thesisSide);
+      if (!proposedStop || proposedStop === marketBaselineStop) {
+        proposedStop = baselines.stop;
+      }
+      const marketBaselineTp = resolveBaselinePrice(input.policy.profileBaselineTpPrice, thesisSide);
+      if (!proposedTp || proposedTp === marketBaselineTp) {
+        proposedTp = baselines.tp;
+      }
+    } else {
+      const baselineThesisStop = resolveBaselinePrice(input.policy.profileBaselineStopPrice, thesisSide);
+      const baselineThesisTp = resolveBaselinePrice(input.policy.profileBaselineTpPrice, thesisSide);
+      proposedStop = proposedStop ?? baselineThesisStop;
+      proposedTp = proposedTp ?? baselineThesisTp;
+    }
     if (thesisSide !== 'LONG' && thesisSide !== 'SHORT') {
       return {
         cycleId,

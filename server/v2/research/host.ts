@@ -158,20 +158,24 @@ export interface PublicNewsItem {
   publisher: string;
   publishedAt: number | null;
   body: string;
+  targetScope?: 'SYMBOL_SPECIFIC' | 'GENERAL_MARKET';
+  matchedSymbol?: string;
 }
 
 export async function fetchPublicCryptoNews(
   symbol: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<PublicNewsItem[]> {
-  if (process.env.VITEST || process.env.NODE_ENV === 'test') {
+  if ((process.env.VITEST || process.env.NODE_ENV === 'test') && fetchImpl === fetch) {
     return [
       {
         title: `${symbol} momentum strengthens as volume expands`,
         url: 'https://cointelegraph.com/news/crypto-market-update',
         publisher: 'CoinTelegraph',
         publishedAt: Date.now() - 3600000,
-        body: 'Market participants note consistent spot delta absorption and positive structure.'
+        body: 'Market participants note consistent spot delta absorption and positive structure.',
+        targetScope: 'SYMBOL_SPECIFIC',
+        matchedSymbol: symbol.toUpperCase()
       }
     ];
   }
@@ -230,14 +234,31 @@ export async function fetchPublicCryptoNews(
     }
   }
 
-  const alias = cleanSym === 'BTC' ? 'Bitcoin' : cleanSym === 'ETH' ? 'Ethereum' : cleanSym === 'SOL' ? 'Solana' : cleanSym;
+  const alias = cleanSym === 'BTC' ? 'Bitcoin'
+    : cleanSym === 'ETH' ? 'Ethereum'
+    : cleanSym === 'SOL' ? 'Solana'
+    : cleanSym === 'DOGE' ? 'Dogecoin'
+    : cleanSym === 'XRP' ? 'Ripple'
+    : cleanSym === 'BNB' ? 'Binance'
+    : cleanSym;
   const symbolRegex = new RegExp(`\\b(${cleanSym}|${alias})\\b`, 'i');
-  const relevant = allItems.filter((item) => symbolRegex.test(item.title) || symbolRegex.test(item.body));
 
-  if (relevant.length > 0) {
-    return relevant.slice(0, 6);
+  const itemsWithScope: PublicNewsItem[] = allItems.map((item) => {
+    const isSpecific = symbolRegex.test(item.title) || symbolRegex.test(item.body);
+    return {
+      ...item,
+      targetScope: isSpecific ? ('SYMBOL_SPECIFIC' as const) : ('GENERAL_MARKET' as const),
+      matchedSymbol: isSpecific ? symbol.toUpperCase() : 'MARKET'
+    };
+  });
+
+  const specific = itemsWithScope.filter((item) => item.targetScope === 'SYMBOL_SPECIFIC');
+  const general = itemsWithScope.filter((item) => item.targetScope === 'GENERAL_MARKET');
+
+  if (specific.length > 0) {
+    return [...specific.slice(0, 6), ...general.slice(0, 3)];
   }
-  return allItems.slice(0, 4);
+  return general.slice(0, 4);
 }
 
 export class ResearchHost {

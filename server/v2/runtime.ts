@@ -371,10 +371,76 @@ export function verifiedVenueStop(input: {
   return { stop: 0, protectionStatus: 'unknown' };
 }
 
+export interface CrossMarketBreadth {
+  regime: 'SYSTEMIC_RISK_OFF' | 'SYSTEMIC_RISK_ON' | 'BALANCED_CHOP';
+  bearishCount: number;
+  bullishCount: number;
+  highRelVolCount: number;
+  summary: string;
+  details?: Record<string, { change15m?: number; relVol15m?: number; trend15m?: string }>;
+}
+
+export function computeCrossMarketBreadth(
+  tickers: Record<string, { last?: number; change15m?: number; relVol15m?: number; trend15m?: string; change24hPct?: number }>,
+  symbols: string[]
+): CrossMarketBreadth {
+  let bearishCount = 0;
+  let bullishCount = 0;
+  let highRelVolCount = 0;
+  const details: Record<string, { change15m?: number; relVol15m?: number; trend15m?: string }> = {};
+
+  const activeSymbols = symbols.filter((s) => Boolean(tickers[s]));
+  const symbolsToEvaluate = activeSymbols.length > 0 ? activeSymbols : symbols;
+  const total = symbolsToEvaluate.length;
+
+  for (const sym of symbolsToEvaluate) {
+    const t = tickers[sym];
+    if (!t) continue;
+    const change = t.change15m ?? t.change24hPct ?? 0;
+    const relVol = t.relVol15m ?? 1.0;
+    const trend = t.trend15m ?? (change < 0 ? 'DOWNTREND' : change > 0 ? 'UPTREND' : 'SIDEWAYS');
+
+    details[sym] = {
+      change15m: t.change15m,
+      relVol15m: t.relVol15m,
+      trend15m: trend
+    };
+
+    const isBearish = change < 0 || trend === 'DOWNTREND';
+    const isBullish = change > 0 || trend === 'UPTREND';
+    const isHighVol = relVol >= 2.0;
+
+    if (isBearish) bearishCount++;
+    else if (isBullish) bullishCount++;
+
+    if (isHighVol) highRelVolCount++;
+  }
+
+  let regime: 'SYSTEMIC_RISK_OFF' | 'SYSTEMIC_RISK_ON' | 'BALANCED_CHOP' = 'BALANCED_CHOP';
+  let summary = `Market regime balanced or mixed (${bullishCount} bull, ${bearishCount} bear).`;
+
+  if (total > 0 && bearishCount >= Math.ceil(total * 0.6) && highRelVolCount >= Math.floor(total * 0.4)) {
+    regime = 'SYSTEMIC_RISK_OFF';
+    summary = `Systemic risk-off detected: ${bearishCount}/${total} symbols dropping with expanding volume.`;
+  } else if (total > 0 && bullishCount >= Math.ceil(total * 0.6) && highRelVolCount >= Math.floor(total * 0.4)) {
+    regime = 'SYSTEMIC_RISK_ON';
+    summary = `Systemic risk-on detected: ${bullishCount}/${total} symbols rising with expanding volume.`;
+  }
+
+  return {
+    regime,
+    bearishCount,
+    bullishCount,
+    highRelVolCount,
+    summary,
+    details
+  };
+}
+
 export function createReplacementRuntime(
   options: ReplacementRuntimeOptions = {}
 ): ReplacementRuntimeHandle {
-  let latestNewsBriefing: unknown = null;
+  const newsBriefingsBySymbol = new Map<string, unknown>();
   const hub = new OfficeEventHub();
   const env = options.env ?? process.env;
   let state = createInitialOfficeState({
@@ -841,6 +907,7 @@ export function createReplacementRuntime(
     const snap = snapshot();
     const cycleId = `cycle-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const debateId = `debate-${Date.now()}`;
+    const spokenRolesInCurrentCycle = new Set<RoleId>();
 
     updateState((draft) => {
       draft.debate = {
@@ -855,6 +922,9 @@ export function createReplacementRuntime(
       };
       for (const role of ROLE_IDS) {
         draft.agents[role].status = 'reading';
+        draft.agents[role].stance = 'NEUTRAL';
+        draft.agents[role].confidence = null;
+        draft.agents[role].lastLine = '';
       }
     });
 
@@ -1082,26 +1152,34 @@ export function createReplacementRuntime(
     const newsItems = newsRes.status === 'fulfilled' ? (newsRes.value ?? []) : [];
     const liveAnnouncements = liveAnnounceRes.status === 'fulfilled' ? (liveAnnounceRes.value?.items ?? []) : [];
     const publicNews = publicNewsRes.status === 'fulfilled' ? publicNewsRes.value : [];
-    const publicNewsNormalized = publicNews.map((pn, i) => ({
-      id: `public-news-${Date.now()}-${i}`,
-      symbol: targetSymbol,
-      headline: pn.title,
-      body: pn.body,
-      source: pn.publisher,
-      sourceUrl: pn.url,
-      sentiment: 'neutral' as const,
-      example: false,
-      publishedAt: pn.publishedAt ?? null,
-      observedAt: Date.now()
-    }));
+    const publicNewsNormalized = publicNews.map((pn, i) => {
+      const isSpecific = pn.targetScope === 'SYMBOL_SPECIFIC' || (pn.matchedSymbol && pn.matchedSymbol === targetSymbol);
+      return {
+        id: `public-news-${Date.now()}-${i}`,
+        symbol: isSpecific ? targetSymbol : 'MARKET',
+        targetScope: isSpecific ? 'SYMBOL_SPECIFIC' : 'GENERAL_MARKET',
+        headline: pn.title,
+        body: pn.body,
+        source: pn.publisher,
+        sourceUrl: pn.url,
+        sentiment: 'neutral' as const,
+        example: false,
+        publishedAt: pn.publishedAt ?? null,
+        observedAt: Date.now()
+      };
+    });
     const combinedNews = [...liveAnnouncements, ...newsItems, ...publicNewsNormalized];
-    const normalizedItems = combinedNews.map((item) => normalizeLegacyItem(item, targetSymbol));
+    const filteredNews = combinedNews.filter((item: any) => {
+      const sym = item.symbol ? String(item.symbol).toUpperCase() : '';
+      return sym === targetSymbol || sym === 'MARKET' || item.targetScope === 'GENERAL_MARKET';
+    });
+    const normalizedItems = filteredNews.map((item) => normalizeLegacyItem(item, targetSymbol));
     const newsBriefing = buildNewsBriefing(
       targetSymbol,
       normalizedItems,
       cryptopanicKey || liveAnnouncements.length > 0 || publicNews.length > 0 ? 'CONFIGURED_LIVE' : 'UNCONFIGURED'
     );
-    latestNewsBriefing = newsBriefing;
+    newsBriefingsBySymbol.set(targetSymbol, newsBriefing);
     const cmcSummary = catalystRes.status === 'fulfilled' ? catalystRes.value : null;
 
     const multiVenue = {
@@ -1144,6 +1222,51 @@ export function createReplacementRuntime(
       (a: any) => a.symbol === targetSymbol && Date.now() - a.receivedAt < 30 * 60 * 1000
     ) ?? ((snap.tradingview as any)?.lastAlert?.symbol === targetSymbol ? (snap.tradingview as any)?.lastAlert : null);
 
+    const symbolsForBreadth = (snap.watchlist && snap.watchlist.length > 0)
+      ? snap.watchlist
+      : Object.keys(snap.tickers);
+    const crossMarketTickers: Record<string, { last?: number; change15m?: number; relVol15m?: number; trend15m?: string; change24hPct?: number }> = {};
+    for (const sym of symbolsForBreadth) {
+      const snapTicker = snap.tickers[sym];
+      let change15m: number | undefined = undefined;
+      let relVol15m: number | undefined = undefined;
+      let trend15m: string | undefined = undefined;
+
+      try {
+        const frame = marketHub.snapshot(sym);
+        const closed15m = frame?.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
+        if (closed15m.length >= 2) {
+          const lastBar = closed15m[closed15m.length - 1];
+          const prevBar = closed15m[closed15m.length - 2];
+          const lastClose = Number(lastBar.close);
+          const prevClose = Number(prevBar.close);
+          if (prevClose > 0) {
+            change15m = Math.round(((lastClose - prevClose) / prevClose) * 10000) / 100;
+          }
+          trend15m = lastClose >= Number(lastBar.open) ? 'UPTREND' : 'DOWNTREND';
+          const last20 = closed15m.slice(-20);
+          const avgVol = last20.reduce((s, b) => s + (Number(b.volume) || 0), 0) / Math.max(1, last20.length);
+          if (avgVol > 0) {
+            relVol15m = Math.round((Number(lastBar.volume) / avgVol) * 10) / 10;
+          }
+        }
+      } catch {}
+
+      crossMarketTickers[sym] = {
+        last: snapTicker?.last ? Number(snapTicker.last) : undefined,
+        change15m,
+        relVol15m,
+        trend15m,
+        change24hPct: snapTicker?.change24hPct != null ? Number(snapTicker.change24hPct) : undefined
+      };
+    }
+
+    const crossMarketBreadth = computeCrossMarketBreadth(crossMarketTickers, symbolsForBreadth);
+    const recentOwnerDiscussion = (snap.roomHistory ?? [])
+      .filter((m) => m.from === 'owner')
+      .slice(-5)
+      .map((m) => ({ text: m.text, at: m.at, to: m.to }));
+
     const marketSummary: Record<string, unknown> = {
       symbol: targetSymbol,
       venue: 'bybit',
@@ -1153,6 +1276,8 @@ export function createReplacementRuntime(
       timeframes: timeframesSummary,
       microstructure: microstructureSummary,
       multiVenue,
+      crossMarketBreadth,
+      recentOwnerDiscussion,
       tradingviewAlert: recentTvAlert ? {
         action: recentTvAlert.action,
         price: recentTvAlert.price,
@@ -1221,6 +1346,36 @@ export function createReplacementRuntime(
       };
     }
 
+    const totalEquity = snap.mode === 'PAPER'
+      ? snap.paper.equity
+      : (snap.financial.equity.value ?? snap.paper.equity);
+    const balance = snap.mode === 'PAPER'
+      ? snap.paper.balance
+      : (snap.financial.balance.value ?? snap.paper.balance);
+    const safetyNet = snap.paper.safetyNet ?? 0;
+    const moneyTradeBudget = Math.max(0, Math.round((balance - safetyNet) * 100) / 100);
+    const usedMargin = snap.mode === 'PAPER'
+      ? snap.paper.usedMargin
+      : Math.round((snap.venueAccount?.positions?.reduce((acc: number, p: any) => acc + (Number(p.margin) || 0), 0) ?? snap.paper.usedMargin ?? 0) * 100) / 100;
+    const freeAllocatableMargin = Math.max(0, Math.round((moneyTradeBudget - usedMargin) * 100) / 100);
+    const perOrderAllocation = resolveOwnerPerOrderUsdt(snap.paper);
+    const maxSlotsN = snap.paper.n || 3;
+    const freeSlots = Math.max(0, maxSlotsN - currentPosCount);
+
+    const accountCapital = {
+      totalEquity,
+      balance,
+      safetyNet,
+      moneyTradeBudget,
+      usedMargin,
+      freeAllocatableMargin,
+      perOrderAllocation,
+      maxSlotsN,
+      occupiedSlots: currentPosCount,
+      freeSlots
+    };
+    marketSummary.accountCapital = accountCapital;
+
     const policy: CyclePolicy = {
       minEntryConfidencePct: tv?.minEntryConfidencePct ?? 60,
       requireTwoOfThreeAnalysts: false,
@@ -1237,7 +1392,9 @@ export function createReplacementRuntime(
       sizingMode: (tv?.orderSizePct ?? null) !== null ? 'FIXED_PCT_OF_MONEY_TRADE' : 'AUTO_EQUAL_SLOTS_MONEY_TRADE_DIV_N',
       tradingProfile: snap.trading?.profile,
       profileBaselineStopPrice,
-      profileBaselineTpPrice
+      profileBaselineTpPrice,
+      supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false),
+      accountCapital
     };
 
     try {
@@ -1291,6 +1448,7 @@ export function createReplacementRuntime(
           hub.emit('state', snapshot());
         },
         onRoleResult: (res) => {
+          spokenRolesInCurrentCycle.add(res.role);
           const at = Date.now();
           const reasoning =
             res.reasoning ?? (res.errorReason ? `Failure: ${res.errorReason}` : `Completed with stance ${res.stance ?? 'HOLD'}`);
@@ -1355,10 +1513,11 @@ export function createReplacementRuntime(
             });
             draft.logs = draft.logs.slice(-500);
 
-            const bull = Object.values(draft.agents).filter((a) => (a.stance as string) === 'LONG').map((a) => a.id);
-            const bear = Object.values(draft.agents).filter((a) => (a.stance as string) === 'SHORT').map((a) => a.id);
-            const closers = Object.values(draft.agents).filter((a) => (a.stance as string) === 'CLOSE').map((a) => a.id);
-            const neutral = Object.values(draft.agents).filter((a) => (a.stance as string) !== 'LONG' && (a.stance as string) !== 'SHORT' && (a.stance as string) !== 'CLOSE').map((a) => a.id);
+            const spokenAgents = Object.values(draft.agents).filter((a) => spokenRolesInCurrentCycle.has(a.id as RoleId));
+            const bull = spokenAgents.filter((a) => (a.stance as string) === 'LONG').map((a) => a.id);
+            const bear = spokenAgents.filter((a) => (a.stance as string) === 'SHORT').map((a) => a.id);
+            const closers = spokenAgents.filter((a) => (a.stance as string) === 'CLOSE').map((a) => a.id);
+            const neutral = spokenAgents.filter((a) => (a.stance as string) !== 'LONG' && (a.stance as string) !== 'SHORT' && (a.stance as string) !== 'CLOSE').map((a) => a.id);
             const activeDirectional = bull.length + bear.length;
             let disagreement = 0;
             let fightFrom: RoleId | null = null;
@@ -1606,9 +1765,12 @@ export function createReplacementRuntime(
               const isPending = ['ACCEPTED', 'PENDING', 'SUBMITTED', 'NEW', 'OPEN'].includes(orderState);
               const clientOrderId = resData.clientOrderId ?? `order-${Date.now()}`;
               verdictRecord.executed = isFilled || isPartial;
-              verdictRecord.executionStatus = isFilled ? 'filled' : (isPartial ? 'partial' : undefined);
+              verdictRecord.operationalStatus = isFilled ? 'FILLED' : (isPartial ? 'PARTIAL' : (isPending ? 'PENDING' : 'REJECTED'));
+              if (isFilled || isPartial) {
+                verdictRecord.executionStatus = isFilled ? 'filled' : 'partial';
+              }
               if (isPending && !verdictRecord.executed) {
-                verdictRecord.reason = `Limit order resting (${orderState}), not filled.`;
+                verdictRecord.reason = `Limit order resting (${orderState}) at ${thesisLimit ?? entryPrice}.`;
               }
               verdictRecord.order = {
                 positionId: clientOrderId,
@@ -1628,7 +1790,8 @@ export function createReplacementRuntime(
               });
             } else {
               verdictRecord.executed = false;
-              verdictRecord.reason = `ExecutionGateway rejected order: ${dispatchRes.message}`;
+              verdictRecord.operationalStatus = 'REJECTED';
+              verdictRecord.reason = `Gateway rejected order: ${dispatchRes.message}`;
               hub.emit('log', {
                 at: Date.now(),
                 kind: 'execution',
@@ -1663,12 +1826,21 @@ export function createReplacementRuntime(
         draft.verdicts = [verdictRecord, ...draft.verdicts.slice(0, 49)];
         draft.lastVerdict = verdictRecord;
         if (!draft.logs) draft.logs = [];
+        const entryDisplay = verdictRecord.order?.entry ?? out.verdict?.thesis?.limitPrice ?? '';
+        const verdictStatusNote = verdictRecord.operationalStatus === 'FILLED' || verdictRecord.executionStatus === 'filled'
+          ? `(FILLED at ${entryDisplay})`
+          : verdictRecord.operationalStatus === 'PENDING'
+            ? `(RESTING LIMIT at ${entryDisplay})`
+            : verdictRecord.operationalStatus === 'REJECTED'
+              ? `(REJECTED: ${verdictRecord.reason})`
+              : `(${verdictRecord.reason})`;
+
         draft.logs.push({
           id: `log-${Date.now()}-verdict`,
           conversationId: 'office',
           at: Date.now(),
           kind: 'verdict',
-          text: `[VERDICT] ${verdictRecord.action} on ${targetSymbol}: ${verdictRecord.reason}`
+          text: `[VERDICT] ${verdictRecord.action} on ${targetSymbol}: ${verdictStatusNote}`
         });
         draft.logs = draft.logs.slice(-500);
         draft.lastCycle = {
@@ -1677,7 +1849,7 @@ export function createReplacementRuntime(
           stage: out.status,
           verdict: verdictRecord.action,
           noTradeReason: verdictRecord.executed ? null : verdictRecord.reason,
-          executionStatus: verdictRecord.executed ? 'filled' : null,
+          executionStatus: verdictRecord.executed ? 'filled' : (verdictRecord.executionStatus ?? null),
           reasonCode: verdictRecord.riskDecision,
           outcome: verdictRecord.action
         };
@@ -1837,15 +2009,29 @@ export function createReplacementRuntime(
     agent?: string;
     clientRequestId?: string;
     conversationId?: string;
+    symbol?: string;
   }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }> => {
-    const raw = input.text.trim();
+    let raw = input.text.trim();
     if (!raw) return { ok: false, error: 'empty command' };
-    const cmd = raw.toLowerCase();
-    const cleanCmd = cmd.replace(/^\//, '');
+    let cmd = raw.toLowerCase();
+    let cleanCmd = cmd.replace(/^\//, '');
+
+    if (/^tutup\b/i.test(cleanCmd)) {
+      cleanCmd = cleanCmd.replace(/^tutup\b/i, 'close');
+      raw = raw.replace(/^tutup\b/i, 'close');
+    } else if (/^(matikan|berhenti)\b/i.test(cleanCmd)) {
+      cleanCmd = cleanCmd.replace(/^(matikan|berhenti)\b/i, 'kill');
+      raw = raw.replace(/^(matikan|berhenti)\b/i, 'kill');
+    }
+
+    const isSlash = raw.startsWith('/');
+    const isDirectOp = /^(close|kill|unkill|open|buy|sell|analyze|debate|status|report|scan|positions|watchlist)\b/i.test(cleanCmd);
+    const isOperational = isSlash || isDirectOp;
+
     const toAll = /^@all\s+/i.test(raw);
     const targetRole = input.agent ? resolveCanonicalRole(input.agent) : null;
 
-    if (targetRole || toAll) {
+    if (!isOperational && (targetRole || toAll)) {
       const roles: RoleId[] = targetRole ? [targetRole] : [...ROLE_IDS];
       const prompt = toAll ? raw.replace(/^@all\s+/i, '') : raw;
       const conversationId = input.conversationId || 'office';
@@ -1856,7 +2042,11 @@ export function createReplacementRuntime(
       }
       const deskSnapshot = buildLiveDeskChatContext(snapshot(), {
         marketHub,
-        extraFeeds: latestNewsBriefing ? { newsBriefing: latestNewsBriefing } : undefined
+        extraFeeds: {
+          newsBriefing: (input.symbol ? newsBriefingsBySymbol.get(input.symbol.toUpperCase()) : undefined)
+            ?? Array.from(newsBriefingsBySymbol.values())[0]
+            ?? undefined
+        }
       });
       const deskContext = `Live desk snapshot (informational only; not an execution command).\n${JSON.stringify(deskSnapshot, null, 2)}`;
       const outcomes = await Promise.allSettled(roles.map(async role => {

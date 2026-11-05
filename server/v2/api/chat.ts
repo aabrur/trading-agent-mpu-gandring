@@ -238,9 +238,23 @@ const SECRET_KEY_RE = /(key|secret|token|password|private|authorization|seed|mne
 
 export type DeskFreshness = 'live' | 'cached' | 'stale' | 'unavailable';
 
+export interface AccountCapitalSummary {
+  totalEquity: number;
+  balance: number;
+  safetyNet: number;
+  moneyTradeBudget: number;
+  usedMargin: number;
+  freeAllocatableMargin: number;
+  perOrderAllocation: number;
+  maxSlotsN: number;
+  occupiedSlots: number;
+  freeSlots: number;
+}
+
 export interface LiveDeskChatContext {
   capturedAt: string;
   informationalOnly: true;
+  accountCapital?: AccountCapitalSummary;
   tradingProfile: string | null;
   tradingValues?: {
     maxLeverage: number;
@@ -479,6 +493,18 @@ export function buildLiveDeskChatContext(
       moneyTrade: state.paper.moneyTrade,
       perOrder: state.paper.perOrder,
       slotsN: state.paper.n
+    },
+    accountCapital: {
+      totalEquity: state.mode === 'PAPER' ? state.paper.equity : (state.financial.equity.value ?? state.paper.equity),
+      balance: state.mode === 'PAPER' ? state.paper.balance : (state.financial.balance.value ?? state.paper.balance),
+      safetyNet: state.paper.safetyNet ?? 0,
+      moneyTradeBudget: state.paper.moneyTrade,
+      usedMargin: state.paper.usedMargin ?? 0,
+      freeAllocatableMargin: Math.max(0, Math.round(((state.paper.moneyTrade ?? 0) - (state.paper.usedMargin ?? 0)) * 100) / 100),
+      perOrderAllocation: state.paper.perOrder ?? 0,
+      maxSlotsN: state.paper.n || 3,
+      occupiedSlots: state.paper.positions?.length ?? 0,
+      freeSlots: Math.max(0, (state.paper.n || 3) - (state.paper.positions?.length ?? 0))
     },
     venueAccount: {
       name: state.venue?.name ?? null,
