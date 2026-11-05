@@ -259,7 +259,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
       const discovery = result.discovery as LocalAgent['discovery'];
       if (!discovery || !Array.isArray(discovery.models)) throw new Error('Invalid CLI model response');
       setAgents(current => current.map(agent => agent.id === id
-        ? { ...agent, discovery, models: [...new Set([...agent.models, ...discovery.models.map(model => model.id)])] }
+        ? { ...agent, discovery, models: [...new Set([...(agent.models ?? []), ...((discovery?.models ?? []).map(model => model.id))])] }
         : agent));
       setMessage(old => ({ ...old, [id]: discovery.error || discovery.completeness }));
       window.dispatchEvent(new Event('mpu-models-updated'));
@@ -339,10 +339,10 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
             {agents.map((a) => {
               const currentSettings = editSettings[a.id] || {};
               const selectedModel = currentSettings.model && currentSettings.model !== 'default' ? currentSettings.model : a.discovery?.configuredModel;
-              const modelMetadata = a.discovery?.models.find(model => model.id === selectedModel);
+              const modelMetadata = (a.discovery?.models ?? []).find(model => model.id === selectedModel);
               const effortLevels = modelMetadata && ['cli', 'metadata'].includes(modelMetadata.source || '') ? modelMetadata.reasoningLevels : a.effortLevels;
               const isOpen = !!openDrawer[a.id];
-              const isCustomModel = currentSettings.model && currentSettings.model !== 'default' && !a.models.includes(currentSettings.model);
+              const isCustomModel = currentSettings.model && currentSettings.model !== 'default' && !(a.models ?? []).includes(currentSettings.model);
 
               return (
                 <section key={a.id} className="local-agent-row">
@@ -371,7 +371,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                       </p>
                       <label>{lang === 'id' ? 'Cari model' : 'Search models'}<input value={search[a.id] || ''} onChange={e => setSearch(old => ({...old, [a.id]: e.target.value}))} /></label>
                       <code>{a.loginCommand}</code>
-                      {a.discovery && <p className="field-help">{a.discovery.version || 'Version unknown'} · {a.discovery.models.length} models · {a.discovery.completeness} · {a.discovery.authentication}</p>}
+                      {a.discovery && <p className="field-help">{a.discovery.version || 'Version unknown'} · {(a.discovery.models ?? []).length} models · {a.discovery.completeness} · {a.discovery.authentication}</p>}
                       <button type="button" disabled={!available || !!busy || !a.installed} onClick={() => void refreshModels(a.id)}>{lang === 'id' ? 'Segarkan Model' : 'Refresh Models'}</button>
                     </div>
                     <div className="local-agent-actions">
@@ -416,7 +416,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                             }}
                           >
                             <option value="default">{lang === 'id' ? 'default (Model bawaan CLI)' : 'default (CLI default model)'}</option>
-                            {a.models.filter((m) => m !== 'default').map((m) => (
+                            {(a.models ?? []).filter((m) => m !== 'default').map((m) => (
                               <option key={m} value={m}>{m}</option>
                             ))}
                             <option value="__custom__">{lang === 'id' ? 'Model kustom...' : 'Custom model ID...'}</option>

@@ -6,6 +6,7 @@ import { safe } from '../redact.js';
 import { CHANNEL_GUIDES } from './guide.js';
 import { CHANNELS, channelConfig, type ChannelName } from './config.js';
 import { ChannelHub, whatsappSend } from './adapters.js';
+import { DIRECT_DISCORD_COMMANDS } from './discord.js';
 
 export const isChannel = (v: unknown): v is ChannelName => typeof v === 'string' && (CHANNELS as readonly string[]).includes(v);
 export interface ChannelResult { ok: boolean; detail: string; saved?: string[] }
@@ -84,12 +85,7 @@ export async function telegramChats(token: string, fetchImpl: typeof fetch = fet
 }
 
 /** The official request that registers the slash commands for your Discord app (you run it; we never see the bot token). */
-export const DISCORD_COMMANDS = [
-  { name: 'status', description: 'Desk status (read only)', type: 1 },
-  { name: 'report', description: 'Latest desk report (read only)', type: 1 },
-  { name: 'positions', description: 'Open positions and stops (read only)', type: 1 },
-  { name: 'kill', description: 'Kill switch: flatten and stop (needs confirm)', type: 1, options: [{ name: 'confirm', description: 'type confirm', type: 3, required: true }] }
-];
+export const DISCORD_COMMANDS = DIRECT_DISCORD_COMMANDS;
 export function discordRegisterCommand(appIdVar = '$DISCORD_APPLICATION_ID', tokenVar = '$DISCORD_BOT_TOKEN') {
   return `curl -X PUT "https://discord.com/api/v10/applications/${appIdVar}/commands" -H "Authorization: Bot ${tokenVar}" -H "Content-Type: application/json" -d '${JSON.stringify(DISCORD_COMMANDS)}'`;
 }

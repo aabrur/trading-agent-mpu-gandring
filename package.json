@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.22",
-  "appVersion": "0.0.0.4.22",
+  "version": "0.4.23",
+  "appVersion": "0.0.0.4.23",
   "changelog": [
+    "v0.0.0.4.23: eliminate phantom zero-size positions and false SL missing alerts in reports, guard clean setup models and local agent discovery against nullish access crashes, add expanded Discord slash commands (/balance, /mode, /health, /pause, /resume, /sync, /cycle, /unkill, /buy, /sell), fix /open option stop validation, and enable automatic Discord slash commands sync on boot.",
     "v0.0.0.4.22: live trading hot-swap across venue and network, Bybit unclosed candle relativeVolume20 fix with rate-limit backoff, multi-venue resting limit orders sync, fresh macro crypto news feed in chat, structure breakout swing high/low resolution, Jev regime calibration without veto, and absolute Owner sovereignty mandate across all agents.",
     "v0.0.0.4.21: fix setup auto-close on fresh clone, mount v2 update and trakteer adapter endpoints, resilient diagnostics logging, and accurate update modal badge.",
     "v0.0.0.4.20: full audit resolution and multi-venue optimization; unified Trading & Desk Settings UI; exact decimal allocation bars with min-lot adaptation badges; native exchange stopOrderId and tpOrderId evidence across 8 DEX/CEX venues; Decrypt RSS research feed; SQLite startup hydration for chat and activity logs; engine commands (set profile, set cycle, run cycle, set report) with Indonesian aliases; and verified 1,402 passing tests.",

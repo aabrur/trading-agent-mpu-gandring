@@ -98,7 +98,8 @@ export function createTransportFromAdapter(adapter: VenueAdapter): GatewayVenueT
         clientOrderId: r.clientOrderId,
         venueOrderId: r.venueOrderId,
         state: r.state,
-        filledQty: r.filledQty
+        filledQty: r.filledQty,
+        reason: r.reason
       };
     },
     cancelEntryOrder: async (symbol, clientOrderId) => {

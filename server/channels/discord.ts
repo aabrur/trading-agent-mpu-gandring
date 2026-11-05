@@ -37,13 +37,15 @@ export async function inspectDiscordBot(token: string, guildId?: string, fetchIm
 
 const option = (name: string, description: string, required = false, type = 3) => ({ name, description, type, required });
 export const DIRECT_DISCORD_COMMANDS = [
-  ...['status', 'report', 'positions', 'scan', 'watchlist', 'scorecard', 'lessons', 'help'].map(name => ({ name, description: `${name} from the desk`, type: 1 })),
-  { name: 'analyze', description: 'Analyze a configured symbol', type: 1, options: [option('symbol', 'Symbol', true)] },
-  { name: 'ask', description: 'Ask an agent or Desk Lead', type: 1, options: [option('text', 'Question', true), option('agent', 'lead, market, research, strategist, risk, execution', false)] },
-  { name: 'open', description: 'Existing Owner open command', type: 1, options: [option('side', 'long or short', true), option('symbol', 'Symbol', true), option('size', 'Order size percentage', false, 10), option('leverage', 'Leverage', false, 10)] },
-  { name: 'close', description: 'Existing Owner close command', type: 1, options: [option('symbol', 'Symbol or all', true)] },
-  { name: 'set', description: 'Existing Owner settings command', type: 1, options: [option('setting', 'profile, size, leverage, n, safety', true), option('value', 'Setting value', true)] },
-  { name: 'kill', description: 'Existing kill confirmation flow', type: 1, options: [option('confirm', 'Type confirm to execute', false)] }
+  ...['status', 'report', 'positions', 'balance', 'mode', 'health', 'scan', 'watchlist', 'scorecard', 'lessons', 'pause', 'resume', 'sync', 'cycle', 'unkill', 'help'].map(name => ({ name, description: `${name} command from the desk`, type: 1 })),
+  { name: 'analyze', description: 'Start an agent debate and analysis for a symbol', type: 1, options: [option('symbol', 'Symbol e.g. BTCUSDT', true)] },
+  { name: 'ask', description: 'Ask an agent or Desk Lead', type: 1, options: [option('text', 'Question or message', true), option('agent', 'lead, market, research, strategist, risk, execution', false)] },
+  { name: 'open', description: 'Open a position with required stop loss', type: 1, options: [option('side', 'long or short', true), option('symbol', 'Symbol e.g. BTCUSDT', true), option('stop', 'Required stop loss price', true, 10), option('tp', 'Optional take profit price', false, 10), option('size', 'Order size percentage of Money Trade', false, 10), option('leverage', 'Leverage integer e.g. 5, 10', false, 4)] },
+  { name: 'buy', description: 'Quick long order with required stop loss', type: 1, options: [option('symbol', 'Symbol e.g. BTCUSDT', true), option('stop', 'Required stop loss price', true, 10), option('tp', 'Optional take profit price', false, 10), option('size', 'Order size percentage', false, 10), option('leverage', 'Leverage integer', false, 4)] },
+  { name: 'sell', description: 'Quick short order with required stop loss', type: 1, options: [option('symbol', 'Symbol e.g. BTCUSDT', true), option('stop', 'Required stop loss price', true, 10), option('tp', 'Optional take profit price', false, 10), option('size', 'Order size percentage', false, 10), option('leverage', 'Leverage integer', false, 4)] },
+  { name: 'close', description: 'Close position or all positions', type: 1, options: [option('symbol', 'Symbol or all', true)] },
+  { name: 'set', description: 'Desk settings command', type: 1, options: [option('setting', 'profile, size, leverage, n, safety, cycle, report', true), option('value', 'Setting value', true)] },
+  { name: 'kill', description: 'Emergency stop: flatten all positions and halt desk', type: 1, options: [option('confirm', 'Type confirm to execute emergency stop', false)] }
 ];
 export const MPU_DISCORD_COMMAND = { name: 'mpu', description: 'Trading Agent Mpu Gandring (legacy)', type: 1, options: DIRECT_DISCORD_COMMANDS };
 export async function syncDiscordCommands(token: string, appId: string, guildId?: string, fetchImpl: typeof fetch = fetch) {
@@ -82,11 +84,45 @@ export function discordCommandText(data: DiscordInteraction['data']): string {
   const cmd = data.name.toLowerCase();
   const values = Object.fromEntries((data.options ?? []).map(o => [o.name, o.value]));
   if (cmd === 'open') {
-    return ['open', values.side, values.symbol, ...(values.size === undefined ? [] : [`${values.size}%`]), ...(values.leverage === undefined ? [] : [`${values.leverage}x`])].filter(Boolean).join(' ');
+    return [
+      'open',
+      values.side,
+      values.symbol,
+      values.stop !== undefined ? `--stop ${values.stop}` : '',
+      values.tp !== undefined ? `--tp ${values.tp}` : '',
+      values.size !== undefined ? `${values.size}%` : '',
+      values.leverage !== undefined ? `${values.leverage}x` : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (cmd === 'buy') {
+    return [
+      'buy',
+      values.symbol,
+      values.stop !== undefined ? `--stop ${values.stop}` : '',
+      values.tp !== undefined ? `--tp ${values.tp}` : '',
+      values.size !== undefined ? `${values.size}%` : '',
+      values.leverage !== undefined ? `${values.leverage}x` : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (cmd === 'sell') {
+    return [
+      'sell',
+      values.symbol,
+      values.stop !== undefined ? `--stop ${values.stop}` : '',
+      values.tp !== undefined ? `--tp ${values.tp}` : '',
+      values.size !== undefined ? `${values.size}%` : '',
+      values.leverage !== undefined ? `${values.leverage}x` : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
   }
   if (cmd === 'set') {
     let val = values.value !== undefined ? String(values.value) : '';
-    if (values.setting === 'size' && val && !val.endsWith('%')) val = `${val}%`;
+    if (values.setting === 'size' && val && !val.endsWith('%') && val !== 'auto' && val !== 'off') val = `${val}%`;
     return ['set', values.setting, val].filter(Boolean).join(' ');
   }
   if (cmd === 'ask') {
@@ -101,6 +137,9 @@ export function discordCommandText(data: DiscordInteraction['data']): string {
   }
   if (cmd === 'kill') {
     return values.confirm ? `kill ${values.confirm}` : 'kill';
+  }
+  if (cmd === 'cycle') {
+    return 'cycle now';
   }
   return [cmd, ...(data.options ?? []).flatMap(o => o.options ? [discordCommandText({ name: o.name, options: o.options })] : (o.value !== undefined ? [String(o.value)] : []))].join(' ').trim();
 }

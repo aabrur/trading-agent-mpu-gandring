@@ -25,17 +25,20 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
   const [editing, setEditing] = useState(false);
   function restore(d: ModelsInfo) {
     setDefaultReasoning(d.defaultReasoning || '');
-    setReasoning(Object.fromEntries(d.agents.map(a => [a.id, a.reasoning ?? null])));
-    const validProvider = (p?: string) => d.providers.some(x => x.provider === p) ? (p as string) : (d.providers.find(x => x.provider === 'mock')?.provider ?? d.providers[0]?.provider ?? 'mock');
+    setReasoning(Object.fromEntries((d.agents ?? []).map(a => [a.id, a.reasoning ?? null])));
+    const provs = d.providers ?? [];
+    const validProvider = (p?: string) => provs.some(x => x.provider === p) ? (p as string) : (provs.find(x => x.provider === 'mock')?.provider ?? provs[0]?.provider ?? 'mock');
     const safeDefaultProvider = validProvider(d.defaultProvider);
-    const safeDefaultModel = d.providers.find(x => x.provider === safeDefaultProvider)?.defaultModel ?? d.defaultModel ?? 'mock-desk-v1';
+    const safeDefaultModel = provs.find(x => x.provider === safeDefaultProvider)?.defaultModel ?? d.defaultModel ?? 'mock-desk-v1';
     setSelection({ provider: safeDefaultProvider, model: safeDefaultModel });
-    setAgents(Object.fromEntries(d.agents.map((a) => {
+    setAgents(Object.fromEntries((d.agents ?? []).map((a) => {
       const p = validProvider(a.provider);
-      const m = d.providers.find(x => x.provider === p)?.models.some(model => model.id === a.model) ? a.model : (d.providers.find(x => x.provider === p)?.defaultModel ?? a.model);
+      const prov = provs.find(x => x.provider === p);
+      const models = prov?.models ?? [];
+      const m = models.some(model => model.id === a.model) ? a.model : (prov?.defaultModel ?? a.model);
       return [a.id, { provider: p, model: m }];
     })));
-    setCustom(d.agents.some((a) => a.custom)); setKeys({});
+    setCustom((d.agents ?? []).some((a) => a.custom)); setKeys({});
   }
 
   const load = async () => {
@@ -56,7 +59,7 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
 
   if (appMode === 'grokbot') return <p className="wallet-note">{t('setupModelsGrokbotNote')}</p>;
   if (!info) return <p className="wallet-note">{message || t('setupModelsLoading')}</p>;
-  const provider = (p: string) => info.providers.find((v) => v.provider === p) ?? info.providers.find((v) => v.provider === 'mock') ?? info.providers[0] ?? { provider: p, keyEnv: null, keySet: false, source: '', defaultModel: 'mock-desk-v1', models: [] };
+  const provider = (p: string) => (info.providers ?? []).find((v) => v.provider === p) ?? (info.providers ?? []).find((v) => v.provider === 'mock') ?? (info.providers ?? [])[0] ?? { provider: p, keyEnv: null, keySet: false, source: '', defaultModel: 'mock-desk-v1', models: [] };
   const used = [...new Set([selection.provider, ...(custom ? Object.values(agents).map((a) => a.provider) : [])])];
   const controls = (
     value: Selection,
@@ -95,9 +98,9 @@ export function ModelsSetup({ available, appMode }: { available: boolean; appMod
       <span className="field-label">{label === 'Default' ? (lang === 'id' ? 'Reasoning default' : 'Default reasoning') : `${label} reasoning`}</span>
       <select aria-label={`${label} reasoning`} disabled={!available || busy} value={reasoningVal || ''} onChange={e => onReasoningChange(e.target.value)}>
         <option value="">{label === 'Default' ? (lang === 'id' ? 'Native default' : 'Native default') : (lang === 'id' ? 'Ikuti default' : 'Inherit default')}</option>
-        {(value.provider === 'local' ? [...new Set([...(provider('local')?.models?.find(m => m.id === value.model)?.reasoningLevels || []), ...(reasoningVal ? [reasoningVal] : [])])] : ['low', 'med', 'high', 'xhigh', 'max']).map(level => <option key={level} value={level} disabled={value.provider === 'local' && !provider('local')?.models?.find(m => m.id === value.model)?.reasoningLevels?.includes(level)}>{level === 'med' ? 'medium' : level}</option>)}
+        {(value.provider === 'local' ? [...new Set([...((provider('local')?.models ?? []).find(m => m.id === value.model)?.reasoningLevels || []), ...(reasoningVal ? [reasoningVal] : [])])] : ['low', 'med', 'high', 'xhigh', 'max']).map(level => <option key={level} value={level} disabled={value.provider === 'local' && !(provider('local')?.models ?? []).find(m => m.id === value.model)?.reasoningLevels?.includes(level)}>{level === 'med' ? 'medium' : level}</option>)}
       </select>
-      {value.provider === 'local' && !provider('local')?.models?.find(m => m.id === value.model)?.reasoningLevels?.length && <small className="field-help">{lang === 'id' ? 'Segarkan model di Local Agents untuk memeriksa dukungan penalaran native.' : 'Refresh models in Local Agents to verify native reasoning support.'}</small>}
+      {value.provider === 'local' && !(provider('local')?.models ?? []).find(m => m.id === value.model)?.reasoningLevels?.length && <small className="field-help">{lang === 'id' ? 'Segarkan model di Local Agents untuk memeriksa dukungan penalaran native.' : 'Refresh models in Local Agents to verify native reasoning support.'}</small>}
       {reasoningStatus && <small className="reasoning-meta" title={`requested: ${reasoningStatus.requested || 'native'} · effective: ${reasoningStatus.effective || 'native / unverified'} · supported: ${reasoningStatus.supported.join(', ') || 'native default'}`}>
         {reasoningStatus.status === 'unsupported_or_unverified' ? `Unsupported or unverified: ${reasoningStatus.requested}` : reasoningStatus.effective ? `eff: ${reasoningStatus.effective}` : 'native default'}
       </small>}

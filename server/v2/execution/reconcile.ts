@@ -12,6 +12,7 @@ export interface ReconcileTransportOrder {
   venueOrderId: string | null;
   state: IntentState;
   filledQty: DecimalString | null;
+  reason?: string | null;
 }
 
 export interface ReconcileVenueTransport {
@@ -142,9 +143,11 @@ export async function reconcileAccountState(params: {
       }
       try {
         const lookedUp = await transport.lookupOrder(symbol, clientOrderId);
+        const isNotFound = lookedUp.state === 'UNKNOWN' && (lookedUp.reason?.toLowerCase().includes('not found') ?? false);
+        const resolvedState = isNotFound ? 'CANCELLED' : lookedUp.state;
         resolvedIntentUpdates.push({
           intentId,
-          state: lookedUp.state,
+          state: resolvedState,
           venueOrderId: lookedUp.venueOrderId
         });
         const filled =
@@ -156,8 +159,7 @@ export async function reconcileAccountState(params: {
         }
         if (
           lookedUp.state === 'ACCEPTED' ||
-          lookedUp.state === 'PARTIAL' ||
-          lookedUp.state === 'UNKNOWN'
+          lookedUp.state === 'PARTIAL'
         ) {
           pending.push({
             intentId,
@@ -168,19 +170,11 @@ export async function reconcileAccountState(params: {
             filledQty: lookedUp.filledQty
           });
         }
-        if (lookedUp.state === 'UNKNOWN') {
+        if (lookedUp.state === 'UNKNOWN' && !isNotFound) {
           unknowns.push(`Unresolved order ${clientOrderId} on ${symbol}`);
         }
       } catch {
         unknowns.push(`Order lookup unavailable for ${clientOrderId} on ${symbol}`);
-        pending.push({
-          intentId,
-          clientOrderId,
-          symbol,
-          side,
-          orderState: 'UNKNOWN',
-          filledQty: null
-        });
       }
     }
   }

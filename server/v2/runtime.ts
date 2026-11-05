@@ -82,7 +82,7 @@ import {
 import { ResearchHost, fetchPublicCryptoNews } from './research/host.js';
 import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
-import { HELP_TEXT, DiscordGateway } from './channels.js';
+import { HELP_TEXT, DiscordGateway, syncDiscordCommandsV2 } from './channels.js';
 import { formatDeskReportText, ReportsService } from './reports.js';
 import {
   deskOpenPnl,
@@ -2034,7 +2034,7 @@ export function createReplacementRuntime(
 
     if (cleanCmd === 'scan') {
       const snap = snapshot();
-      const ps = snap.paper.positions ?? [];
+      const ps = (snap.paper.positions ?? []).filter((p) => Number(p.qty) > 0);
       const unprot = ps.filter(p => !p.stop || p.stop <= 0);
       const findings: string[] = [];
       if (unprot.length > 0) {
@@ -2085,6 +2085,73 @@ export function createReplacementRuntime(
         ok: res.ok,
         command: 'kill',
         reply: safe(`KILL SWITCH ON. ${res.message}. Release only on the desk computer: the local Office OFF button or npm run unkill -- --yes.`)
+      };
+    }
+
+    if (cleanCmd === 'unkill' || cleanCmd === 'release') {
+      const res = await dispatch({ kind: 'unkill', actor: 'local_owner' });
+      return {
+        ok: res.ok,
+        command: 'unkill',
+        reply: res.ok
+          ? 'Local halt latch released; Auto remains OFF. Send /resume or check Office to resume trading.'
+          : res.message
+      };
+    }
+
+    if (cleanCmd === 'balance' || cleanCmd === 'saldo') {
+      const snap = snapshot();
+      const eq = snap.financial.equity.value ?? snap.paper.equity;
+      const bal = snap.financial.balance.value ?? snap.paper.balance;
+      const unrl = snap.paper.unrealized ?? 0;
+      return {
+        ok: true,
+        command: 'balance',
+        reply: [
+          '💰 CAPITAL SUMMARY',
+          '────────',
+          `Equity: ${eq.toFixed(2)} USDT`,
+          `Balance: ${bal.toFixed(2)} USDT`,
+          `Safety Net: ${snap.paper.safetyNet.toFixed(2)} USDT`,
+          `Money Trade: ${snap.paper.moneyTrade.toFixed(2)} USDT`,
+          `Per Order: ${snap.paper.perOrder.toFixed(2)} USDT`,
+          `Unrealized PnL: ${(unrl >= 0 ? '+' : '') + unrl.toFixed(2)} USDT`,
+          `Slots: ${snap.paper.positions.length}/${snap.paper.n} occupied`
+        ].join('\n')
+      };
+    }
+
+    if (cleanCmd === 'mode') {
+      const snap = snapshot();
+      return {
+        ok: true,
+        command: 'mode',
+        reply: [
+          '🧭 DESK MODE & VENUE',
+          '────────',
+          `Mode: ${snap.mode}`,
+          `Venue: ${snap.venue?.label ?? snap.venue?.name ?? 'bybit'}`,
+          `Trading: ${snap.killed ? 'STOPPED (kill switch)' : snap.paused ? 'PAUSED' : 'ACTIVE'}`,
+          `Auto: ${snap.auto.on ? `ON (every ${snap.auto.intervalMin}m)` : 'OFF'}`
+        ].join('\n')
+      };
+    }
+
+    if (cleanCmd === 'health') {
+      const snap = snapshot();
+      const venueStatus = snap.mode === 'PAPER' ? 'confirmed' : (snap.venueAccount?.status ?? 'pending');
+      return {
+        ok: true,
+        command: 'health',
+        reply: [
+          '🩺 DESK HEALTH',
+          '────────',
+          `Backend: OK (mode ${snap.mode})`,
+          `Venue Connection: ${venueStatus}`,
+          `Auto Loop: ${snap.auto.running ? 'Running debate' : snap.auto.on ? 'Idle (scheduled)' : 'OFF'}`,
+          `Kill Switch: ${snap.killed ? 'ENGAGED' : 'CLEAR'}`,
+          `Daily Loss Stop: ${snap.dailyLoss?.hit ? 'HIT' : 'CLEAR'}`
+        ].join('\n')
       };
     }
 
@@ -3392,13 +3459,14 @@ export async function startReplacementServer(
             posList.reduce((sum, p) => sum + (p.unrealizedPnl ? Number(p.unrealizedPnl) : 0), 0) * 100
           ) / 100;
           const pendingIntents = recon?.pending ?? [];
+          const activePosList = posList.filter((p) => Number(p.qty) > 0);
           d.venueAccount = {
             equity: eq,
             available: av ?? eq,
             unrealized: totalUnrealized,
             at: Date.now(),
             status: 'confirmed',
-            positions: posList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) })),
+            positions: activePosList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) })),
             pendingSymbols: pendingIntents.map((p) => p.symbol)
           };
           d.paper.balance = eq;
@@ -3406,8 +3474,8 @@ export async function startReplacementServer(
           d.paper.equity = eq;
 
           const updatedPositions: Position[] = [];
-          for (let idx = 0; idx < posList.length; idx++) {
-            const nativePos = posList[idx];
+          for (let idx = 0; idx < activePosList.length; idx++) {
+            const nativePos = activePosList[idx];
             const qty = Number(nativePos.qty);
             const entry = Number(nativePos.entryPrice);
             const leverage = nativePos.leverage ?? 5;
@@ -3446,11 +3514,15 @@ export async function startReplacementServer(
             if (posList.some((p) => p.symbol.toUpperCase() === pend.symbol.toUpperCase())) {
               continue;
             }
+            const filled = Number(pend.filledQty || 0);
+            if (filled <= 0) {
+              continue;
+            }
             updatedPositions.push({
               id: pend.intentId || `pending-${pend.clientOrderId}`,
               symbol: pend.symbol,
               side: pend.side,
-              qty: Number(pend.filledQty || 0),
+              qty: filled,
               entry: 0,
               stop: 0,
               tp: null,
@@ -3477,8 +3549,16 @@ export async function startReplacementServer(
           const effectiveOrderSizePct = trading.orderSizePct === 1.5 ? null : (trading.orderSizePct ?? null);
           d.paper.orderSizePct = effectiveOrderSizePct;
           d.paper.perOrder = ownerAllocationPerOrder(mt, slots, effectiveOrderSizePct);
-          d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < slots;
+
+          const openSymbols = new Set([
+            ...updatedPositions.map((p) => p.symbol.toUpperCase()),
+            ...pendingIntents
+              .filter((p) => p.orderState === 'ACCEPTED' || p.orderState === 'PARTIAL')
+              .map((p) => p.symbol.toUpperCase())
+          ]);
+          d.paper.canOpen = d.paper.perOrder > 0 && openSymbols.size < slots;
           if (d.accountState) {
+            d.accountState.freeSlots = Math.max(0, slots - openSymbols.size);
             d.accountState.hasTradableCapital = d.paper.canOpen;
             d.accountState.canOpenNewSlot = d.paper.canOpen;
             d.accountState.status = 'AVAILABLE';
@@ -3864,6 +3944,18 @@ export async function startReplacementServer(
       );
       discordGateway.start();
       log(`[channels:discord] Gateway client started (commands: ${commandsEnabled ? 'on' : 'off'})`);
+      if (dcBot && (env.DISCORD_APPLICATION_ID ?? '').trim()) {
+        syncDiscordCommandsV2(
+          dcBot,
+          (env.DISCORD_APPLICATION_ID ?? '').trim(),
+          (env.DISCORD_GUILD_ID ?? '').trim() || undefined,
+          fetch
+        ).then((cmds) => {
+          log(`[channels:discord] Slash commands synced (${cmds.length} commands)`);
+        }).catch((err) => {
+          log(`[channels:discord] Slash commands sync deferred: ${(err as Error).message}`);
+        });
+      }
     } catch (err) {
       console.error(`[channels:discord] Failed to start Gateway: ${(err as Error).message}`);
     }

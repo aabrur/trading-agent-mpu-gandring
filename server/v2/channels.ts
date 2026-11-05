@@ -287,57 +287,83 @@ const discordOption = (name: string, description: string, required = false, type
 });
 
 export const DISCORD_COMMANDS = [
-  ...['status', 'report', 'positions', 'scan', 'watchlist', 'scorecard', 'lessons', 'help'].map((name) => ({
+  ...['status', 'report', 'positions', 'balance', 'mode', 'health', 'scan', 'watchlist', 'scorecard', 'lessons', 'pause', 'resume', 'sync', 'cycle', 'unkill', 'help'].map((name) => ({
     name,
-    description: `${name} from the desk`,
+    description: `${name} command from the desk`,
     type: 1
   })),
   {
     name: 'analyze',
-    description: 'Analyze a configured symbol',
+    description: 'Start an agent debate and analysis for a symbol',
     type: 1,
-    options: [discordOption('symbol', 'Symbol', true)]
+    options: [discordOption('symbol', 'Symbol e.g. BTCUSDT', true)]
   },
   {
     name: 'ask',
     description: 'Ask an agent or Desk Lead',
     type: 1,
     options: [
-      discordOption('text', 'Question', true),
+      discordOption('text', 'Question or message', true),
       discordOption('agent', 'lead, market, research, strategist, risk, execution', false)
     ]
   },
   {
     name: 'open',
-    description: 'Existing Owner open command',
+    description: 'Open a position with required stop loss',
     type: 1,
     options: [
       discordOption('side', 'long or short', true),
-      discordOption('symbol', 'Symbol', true),
+      discordOption('symbol', 'Symbol e.g. BTCUSDT', true),
+      discordOption('stop', 'Required stop loss price', true, 10),
+      discordOption('tp', 'Optional take profit price', false, 10),
+      discordOption('size', 'Order size percentage of Money Trade', false, 10),
+      discordOption('leverage', 'Leverage integer e.g. 5, 10', false, 4)
+    ]
+  },
+  {
+    name: 'buy',
+    description: 'Quick long order with required stop loss',
+    type: 1,
+    options: [
+      discordOption('symbol', 'Symbol e.g. BTCUSDT', true),
+      discordOption('stop', 'Required stop loss price', true, 10),
+      discordOption('tp', 'Optional take profit price', false, 10),
       discordOption('size', 'Order size percentage', false, 10),
-      discordOption('leverage', 'Leverage', false, 10)
+      discordOption('leverage', 'Leverage integer', false, 4)
+    ]
+  },
+  {
+    name: 'sell',
+    description: 'Quick short order with required stop loss',
+    type: 1,
+    options: [
+      discordOption('symbol', 'Symbol e.g. BTCUSDT', true),
+      discordOption('stop', 'Required stop loss price', true, 10),
+      discordOption('tp', 'Optional take profit price', false, 10),
+      discordOption('size', 'Order size percentage', false, 10),
+      discordOption('leverage', 'Leverage integer', false, 4)
     ]
   },
   {
     name: 'close',
-    description: 'Existing Owner close command',
+    description: 'Close position or all positions',
     type: 1,
     options: [discordOption('symbol', 'Symbol or all', true)]
   },
   {
     name: 'set',
-    description: 'Existing Owner settings command',
+    description: 'Desk settings command',
     type: 1,
     options: [
-      discordOption('setting', 'profile, size, leverage, n, safety', true),
+      discordOption('setting', 'profile, size, leverage, n, safety, cycle, report', true),
       discordOption('value', 'Setting value', true)
     ]
   },
   {
     name: 'kill',
-    description: 'Existing kill confirmation flow',
+    description: 'Emergency stop: flatten all positions and halt desk',
     type: 1,
-    options: [discordOption('confirm', 'Type confirm to execute', false)]
+    options: [discordOption('confirm', 'Type confirm to execute emergency stop', false)]
   }
 ];
 
@@ -785,18 +811,28 @@ export const HELP_TEXT = [
   '⚡ MPU GANDRING',
   '────────',
   '📊 /status  desk, capital, Open PnL',
+  '💰 /balance  balance, safety net, Money Trade',
+  '🧭 /mode  current trading mode & venue',
+  '🩺 /health  desk & venue connection status',
   '📌 /positions  stops and position PnL',
   '📋 /report  same Open PnL as the office',
-  '🔎 /scan  alerts',
-  '👀 /watchlist  auto symbols',
-  '📊 /scorecard  calls',
-  '📘 /lessons  recent notes',
+  '🔎 /scan  alerts & protection checks',
+  '👀 /watchlist  auto symbols & cycle',
+  '📊 /scorecard  employee calls & win rate',
+  '📘 /lessons  recent notes & learnings',
   '💬 /analyze <symbol>  start a debate',
-  '💬 /ask <question>  Desk Lead',
-  '⚙️ /set profile|size|leverage',
-  '📈 /open long|short <symbol>',
-  '📉 /close <symbol> or /close all',
-  '🛑 /kill  emergency stop, then /kill confirm'
+  '💬 /ask <question>  Desk Lead or role chat',
+  '📈 /open <side> <symbol> <stop>  open with stop',
+  '🛒 /buy <symbol> <stop>  quick long with stop',
+  '🏷️ /sell <symbol> <stop>  quick short with stop',
+  '📉 /close <symbol|all>  close position(s)',
+  '⚙️ /set profile|size|leverage|n|safety',
+  '⏸️ /pause  pause auto-trading',
+  '▶️ /resume  resume auto-trading',
+  '🔄 /sync  sync book from venue',
+  '⚡ /cycle  trigger debate cycle now',
+  '🛑 /kill  emergency stop (then /kill confirm)',
+  '🔓 /unkill  release emergency kill switch'
 ].join('\n');
 
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -861,15 +897,41 @@ export function discordCommandText(data: DiscordInteraction['data']): string {
       'open',
       values.side,
       values.symbol,
-      ...(values.size === undefined ? [] : [`${values.size}%`]),
-      ...(values.leverage === undefined ? [] : [`${values.leverage}x`])
+      values.stop !== undefined ? `--stop ${values.stop}` : '',
+      values.tp !== undefined ? `--tp ${values.tp}` : '',
+      values.size !== undefined ? `${values.size}%` : '',
+      values.leverage !== undefined ? `${values.leverage}x` : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (cmd === 'buy') {
+    return [
+      'buy',
+      values.symbol,
+      values.stop !== undefined ? `--stop ${values.stop}` : '',
+      values.tp !== undefined ? `--tp ${values.tp}` : '',
+      values.size !== undefined ? `${values.size}%` : '',
+      values.leverage !== undefined ? `${values.leverage}x` : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (cmd === 'sell') {
+    return [
+      'sell',
+      values.symbol,
+      values.stop !== undefined ? `--stop ${values.stop}` : '',
+      values.tp !== undefined ? `--tp ${values.tp}` : '',
+      values.size !== undefined ? `${values.size}%` : '',
+      values.leverage !== undefined ? `${values.leverage}x` : ''
     ]
       .filter(Boolean)
       .join(' ');
   }
   if (cmd === 'set') {
     let val = values.value !== undefined ? String(values.value) : '';
-    if (values.setting === 'size' && val && !val.endsWith('%')) val = `${val}%`;
+    if (values.setting === 'size' && val && !val.endsWith('%') && val !== 'auto' && val !== 'off') val = `${val}%`;
     return ['set', values.setting, val].filter(Boolean).join(' ');
   }
   if (cmd === 'ask') {
@@ -884,6 +946,9 @@ export function discordCommandText(data: DiscordInteraction['data']): string {
   }
   if (cmd === 'kill') {
     return values.confirm ? `kill ${values.confirm}` : 'kill';
+  }
+  if (cmd === 'cycle') {
+    return 'cycle now';
   }
   return [
     cmd,

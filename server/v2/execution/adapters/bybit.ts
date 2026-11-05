@@ -530,13 +530,34 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         orderLinkId: intent.clientOrderId
       });
 
+      let venueOrderId = typeof created.orderId === 'string' && created.orderId ? created.orderId : null;
+      let state: IntentState = 'ACCEPTED';
+      let filledQty: DecimalString | null = null;
+      let avgFillPrice: DecimalString | null = null;
+
+      if (intent.orderType === 'MARKET') {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise((r) => setTimeout(r, 100));
+          try {
+            const looked = await adapter.lookupOrder(intent.symbol, intent.clientOrderId);
+            if (looked.state === 'FILLED' || looked.state === 'PARTIAL') {
+              state = looked.state;
+              filledQty = looked.filledQty;
+              avgFillPrice = looked.avgFillPrice;
+              venueOrderId = looked.venueOrderId ?? venueOrderId;
+              break;
+            }
+          } catch {}
+        }
+      }
+
       return {
         clientOrderId: intent.clientOrderId,
-        venueOrderId: typeof created.orderId === 'string' && created.orderId ? created.orderId : null,
+        venueOrderId,
         symbol: intent.symbol,
-        state: 'ACCEPTED',
-        filledQty: null,
-        avgFillPrice: null,
+        state,
+        filledQty,
+        avgFillPrice,
         observedAt: Date.now(),
         reason: null
       };

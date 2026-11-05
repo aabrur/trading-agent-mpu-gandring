@@ -135,7 +135,7 @@ export class ReportsService {
     const n = state.paper.n;
     const perOrder = moneyTrade !== null && n > 0 ? Math.floor((moneyTrade / n) * 100) / 100 : null;
 
-    const positions = state.paper.positions ?? [];
+    const positions = (state.paper.positions ?? []).filter((p) => Number(p.qty) > 0);
     const open = deskOpenPnl({
       mode: state.mode,
       paperUnrealized: state.paper.unrealized,
@@ -188,7 +188,7 @@ export class ReportsService {
         cycles: state.auto?.cycles ?? 0,
         intervalMin: state.auto?.intervalMin ?? 15
       },
-      positions: (state.paper.positions ?? []).map((p) => ({
+      positions: (state.paper.positions ?? []).filter((p) => Number(p.qty) > 0).map((p) => ({
         symbol: p.symbol,
         side: p.side,
         qty: Number(p.qty) || 0,
