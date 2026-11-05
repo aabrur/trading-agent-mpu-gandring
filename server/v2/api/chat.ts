@@ -496,9 +496,16 @@ export function buildLiveDeskChatContext(
       tp: p.tp,
       protectionStatus: p.protectionStatus ?? (p.stop ? 'confirmed' : 'missing')
     })),
-    restingOrders: (state.paper.positions ?? [])
-      .filter((p) => Boolean(p.entryStatus) && p.entryStatus !== 'confirmed')
-      .map((p) => ({ symbol: p.symbol, side: p.side, status: String(p.entryStatus) })),
+    restingOrders: [
+      ...(state.paper.positions ?? [])
+        .filter((p) => Boolean(p.entryStatus) && p.entryStatus !== 'confirmed')
+        .map((p) => ({ symbol: p.symbol, side: p.side, status: String(p.entryStatus) })),
+      ...(state.venueAccount?.pendingSymbols ?? []).map((sym) => ({
+        symbol: sym,
+        side: 'PENDING',
+        status: 'pending_fill'
+      }))
+    ],
     watchlistPrices: prices,
     assignedModels: Object.values(state.agents).map((agent) => ({
       role: agent.id,

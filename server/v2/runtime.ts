@@ -1739,13 +1739,17 @@ export function createReplacementRuntime(
       }
 
       // Multi-symbol automated evaluation:
-      // 1. Inspect existing open positions first (for potential revalidation/close).
+      // 1. Inspect existing open positions and resting pending orders first.
       const currentPos = snap.mode === 'PAPER'
         ? snap.paper.positions
         : (snap.venueAccount?.positions?.length ? snap.venueAccount.positions : snap.paper.positions);
-      const openSymbols = [...new Set(currentPos.map((p) => p.symbol.toUpperCase()))];
+      const pendingSymbols = snap.mode === 'PAPER' ? [] : (snap.venueAccount?.pendingSymbols ?? []);
+      const openSymbols = [...new Set([
+        ...currentPos.map((p) => p.symbol.toUpperCase()),
+        ...pendingSymbols.map((s) => s.toUpperCase())
+      ])];
       const maxN = snap.paper.n || 3;
-      const freeSlots = Math.max(0, maxN - currentPos.length);
+      const freeSlots = Math.max(0, maxN - openSymbols.length);
 
       // 2. Select candidates from active watchlist that do not already have open positions.
       const watchlistCandidates = snap.auto.symbols
@@ -1769,8 +1773,13 @@ export function createReplacementRuntime(
         const activePos = curSnap.mode === 'PAPER'
           ? curSnap.paper.positions
           : (curSnap.venueAccount?.positions ?? curSnap.paper.positions);
-        const hasPosition = activePos.some((p) => p.symbol.toUpperCase() === targetSym);
-        if (!hasPosition && activePos.length >= (curSnap.paper.n || 3)) {
+        const curPending = curSnap.mode === 'PAPER' ? [] : (curSnap.venueAccount?.pendingSymbols ?? []);
+        const allOccupied = new Set([
+          ...activePos.map((p) => p.symbol.toUpperCase()),
+          ...curPending.map((s) => s.toUpperCase())
+        ]);
+        const hasPosition = allOccupied.has(targetSym);
+        if (!hasPosition && allOccupied.size >= (curSnap.paper.n || 3)) {
           // All slots occupied; skip further entry scanning
           continue;
         }
