@@ -373,9 +373,12 @@ export function verifiedVenueStop(input: {
 
 export interface CrossMarketBreadth {
   regime: 'SYSTEMIC_RISK_OFF' | 'SYSTEMIC_RISK_ON' | 'BALANCED_CHOP';
+  marketCondition?: 'BROAD_SELLOFF' | 'BROAD_RALLY' | 'MIXED';
   bearishCount: number;
   bullishCount: number;
   highRelVolCount: number;
+  avgChange15m?: number;
+  avgChange24h?: number;
   summary: string;
   details?: Record<string, { change15m?: number; relVol15m?: number; trend15m?: string }>;
 }
@@ -387,6 +390,10 @@ export function computeCrossMarketBreadth(
   let bearishCount = 0;
   let bullishCount = 0;
   let highRelVolCount = 0;
+  let sumChange15m = 0;
+  let countChange15m = 0;
+  let sumChange24h = 0;
+  let countChange24h = 0;
   const details: Record<string, { change15m?: number; relVol15m?: number; trend15m?: string }> = {};
 
   const activeSymbols = symbols.filter((s) => Boolean(tickers[s]));
@@ -397,6 +404,14 @@ export function computeCrossMarketBreadth(
     const t = tickers[sym];
     if (!t) continue;
     const change = t.change15m ?? t.change24hPct ?? 0;
+    if (t.change15m !== undefined && Number.isFinite(t.change15m)) {
+      sumChange15m += t.change15m;
+      countChange15m++;
+    }
+    if (t.change24hPct !== undefined && Number.isFinite(t.change24hPct)) {
+      sumChange24h += t.change24hPct;
+      countChange24h++;
+    }
     const relVol = t.relVol15m ?? 1.0;
     const trend = t.trend15m ?? (change < 0 ? 'DOWNTREND' : change > 0 ? 'UPTREND' : 'SIDEWAYS');
 
@@ -416,22 +431,42 @@ export function computeCrossMarketBreadth(
     if (isHighVol) highRelVolCount++;
   }
 
+  const avgChange15m = countChange15m > 0 ? Math.round((sumChange15m / countChange15m) * 100) / 100 : 0;
+  const avgChange24h = countChange24h > 0 ? Math.round((sumChange24h / countChange24h) * 100) / 100 : 0;
+
   let regime: 'SYSTEMIC_RISK_OFF' | 'SYSTEMIC_RISK_ON' | 'BALANCED_CHOP' = 'BALANCED_CHOP';
+  let marketCondition: 'BROAD_SELLOFF' | 'BROAD_RALLY' | 'MIXED' = 'MIXED';
   let summary = `Market regime balanced or mixed (${bullishCount} bull, ${bearishCount} bear).`;
 
-  if (total > 0 && bearishCount >= Math.ceil(total * 0.6) && highRelVolCount >= Math.floor(total * 0.4)) {
-    regime = 'SYSTEMIC_RISK_OFF';
-    summary = `Systemic risk-off detected: ${bearishCount}/${total} symbols dropping with expanding volume.`;
-  } else if (total > 0 && bullishCount >= Math.ceil(total * 0.6) && highRelVolCount >= Math.floor(total * 0.4)) {
-    regime = 'SYSTEMIC_RISK_ON';
-    summary = `Systemic risk-on detected: ${bullishCount}/${total} symbols rising with expanding volume.`;
+  const isBroadSelloff = total > 0 && (bearishCount >= Math.ceil(total * 0.6) || avgChange15m <= -1.5);
+  const isBroadRally = total > 0 && (bullishCount >= Math.ceil(total * 0.6) || avgChange15m >= 1.5);
+
+  if (isBroadSelloff) {
+    marketCondition = 'BROAD_SELLOFF';
+    if (highRelVolCount >= Math.floor(total * 0.4)) {
+      regime = 'SYSTEMIC_RISK_OFF';
+      summary = `Systemic risk-off detected: ${bearishCount}/${total} symbols dropping with expanding volume.`;
+    } else {
+      summary = `Broad sell-off detected: ${bearishCount}/${total} symbols dropping (avg 15m: ${avgChange15m}%).`;
+    }
+  } else if (isBroadRally) {
+    marketCondition = 'BROAD_RALLY';
+    if (highRelVolCount >= Math.floor(total * 0.4)) {
+      regime = 'SYSTEMIC_RISK_ON';
+      summary = `Systemic risk-on detected: ${bullishCount}/${total} symbols rising with expanding volume.`;
+    } else {
+      summary = `Broad rally detected: ${bullishCount}/${total} symbols rising (avg 15m: ${avgChange15m}%).`;
+    }
   }
 
   return {
     regime,
+    marketCondition,
     bearishCount,
     bullishCount,
     highRelVolCount,
+    avgChange15m,
+    avgChange24h,
     summary,
     details
   };
@@ -1227,10 +1262,10 @@ export function createReplacementRuntime(
       : Object.keys(snap.tickers);
     const crossMarketTickers: Record<string, { last?: number; change15m?: number; relVol15m?: number; trend15m?: string; change24hPct?: number }> = {};
     for (const sym of symbolsForBreadth) {
-      const snapTicker = snap.tickers[sym];
-      let change15m: number | undefined = undefined;
-      let relVol15m: number | undefined = undefined;
-      let trend15m: string | undefined = undefined;
+      const snapTicker = snap.tickers[sym] as any;
+      let change15m: number | undefined = snapTicker?.change15m !== undefined ? Number(snapTicker.change15m) : undefined;
+      let relVol15m: number | undefined = snapTicker?.relVol15m !== undefined ? Number(snapTicker.relVol15m) : undefined;
+      let trend15m: string | undefined = snapTicker?.trend15m ?? undefined;
 
       try {
         const frame = marketHub.snapshot(sym);
@@ -1267,6 +1302,47 @@ export function createReplacementRuntime(
       .slice(-5)
       .map((m) => ({ text: m.text, at: m.at, to: m.to }));
 
+    const currentPriceNum = Number(snap.tickers[targetSymbol]?.last ?? (existingPos ? existingPos.entry : 0));
+    let roePct = 0;
+    let slDistancePct: number | null = null;
+    let tpDistancePct: number | null = null;
+    let priorEntryThesis: Record<string, unknown> | null = null;
+
+    if (existingPos) {
+      const entryNum = Number(existingPos.entry) || currentPriceNum;
+      const lev = (existingPos as any).leverage || snap.trading?.values.maxLeverage || snap.paper.maxLeverage || 5;
+      if (entryNum > 0 && currentPriceNum > 0) {
+        if (existingPos.side === 'LONG') {
+          roePct = ((currentPriceNum - entryNum) / entryNum) * lev * 100;
+        } else {
+          roePct = ((entryNum - currentPriceNum) / entryNum) * lev * 100;
+        }
+      }
+      if (existingPos.stop && Number(existingPos.stop) > 0 && currentPriceNum > 0) {
+        slDistancePct = Math.abs((currentPriceNum - Number(existingPos.stop)) / currentPriceNum) * 100;
+      }
+      if (existingPos.tp && Number(existingPos.tp) > 0 && currentPriceNum > 0) {
+        tpDistancePct = Math.abs((Number(existingPos.tp) - currentPriceNum) / currentPriceNum) * 100;
+      }
+
+      const priorVerdict = [...(snap.verdicts ?? [])]
+        .reverse()
+        .find((v) => v.symbol.toUpperCase() === targetSymbol.toUpperCase() && (v.action === 'OPEN_LONG' || v.action === 'OPEN_SHORT'));
+      if (priorVerdict) {
+        priorEntryThesis = {
+          action: priorVerdict.action,
+          reason: priorVerdict.reason,
+          at: priorVerdict.at,
+          order: priorVerdict.order ? {
+            entry: priorVerdict.order.entry,
+            stop: priorVerdict.order.stop,
+            tp: priorVerdict.order.tp,
+            leverage: priorVerdict.order.leverage
+          } : null
+        };
+      }
+    }
+
     const marketSummary: Record<string, unknown> = {
       symbol: targetSymbol,
       venue: 'bybit',
@@ -1278,6 +1354,13 @@ export function createReplacementRuntime(
       multiVenue,
       crossMarketBreadth,
       recentOwnerDiscussion,
+      ownerDirectives: {
+        recentMessages: recentOwnerDiscussion,
+        instruction: 'Owner Sovereignty: The user/owner is the ultimate decision maker. Adhere strictly to any risk, position, or market directives given in recent owner messages.'
+      },
+      venueCapabilities: {
+        supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false)
+      },
       tradingviewAlert: recentTvAlert ? {
         action: recentTvAlert.action,
         price: recentTvAlert.price,
@@ -1289,11 +1372,18 @@ export function createReplacementRuntime(
       existingPosition: existingPos ? {
         side: existingPos.side,
         entryPrice: existingPos.entry,
+        openedAt: (existingPos as any).openedAt ?? null,
         qty: existingPos.qty,
-        stop: existingPos.stop,
-        tp: existingPos.tp,
-        unrealizedPnl: existingPos.unrealizedPnl
+        markPrice: currentPriceNum,
+        unrealizedPnl: existingPos.unrealizedPnl ?? 0,
+        roePct: Math.round(roePct * 100) / 100,
+        stopPrice: existingPos.stop ?? 0,
+        slDistancePct: slDistancePct !== null ? Math.round(slDistancePct * 100) / 100 : null,
+        takeProfitPrice: existingPos.tp ?? null,
+        tpDistancePct: tpDistancePct !== null ? Math.round(tpDistancePct * 100) / 100 : null,
+        priorEntryThesis
       } : null,
+      evaluationMode: existingPos ? 'POSITION_MANAGEMENT' : 'CANDIDATE_DISCOVERY',
       deskSlots: {
         maxPositions: snap.paper.n || 3,
         occupiedPositions: currentPosCount,
@@ -1730,6 +1820,9 @@ export function createReplacementRuntime(
                 draft.paper.canOpen = draft.paper.positions.length < draft.paper.n;
               });
 
+              verdictRecord.executed = true;
+              verdictRecord.operationalStatus = 'FILLED';
+
               hub.emit('log', {
                 at: Date.now(),
                 kind: 'execution',
@@ -1910,53 +2003,101 @@ export function createReplacementRuntime(
         return res;
       }
 
-      // Multi-symbol automated evaluation:
-      // 1. Inspect existing open positions and resting pending orders first.
-      const currentPos = snap.mode === 'PAPER'
-        ? snap.paper.positions
-        : (snap.venueAccount?.positions?.length ? snap.venueAccount.positions : snap.paper.positions);
-      const pendingSymbols = snap.mode === 'PAPER' ? [] : (snap.venueAccount?.pendingSymbols ?? []);
-      const openSymbols = [...new Set([
+      // =========================================================================
+      // FASE 1: POSITION MANAGEMENT (Prioritas Utama)
+      // =========================================================================
+      if (snapshot().mode !== 'PAPER' && options.syncVenueAccount) {
+        try { await options.syncVenueAccount(); } catch {}
+      }
+      const prePhase1Snap = snapshot();
+      const currentPos = prePhase1Snap.mode === 'PAPER'
+        ? prePhase1Snap.paper.positions
+        : (prePhase1Snap.venueAccount?.positions?.length ? prePhase1Snap.venueAccount.positions : prePhase1Snap.paper.positions);
+      const pendingSymbols = prePhase1Snap.mode === 'PAPER' ? [] : (prePhase1Snap.venueAccount?.pendingSymbols ?? []);
+      const openPositionSymbols = [...new Set([
         ...currentPos.map((p) => p.symbol.toUpperCase()),
         ...pendingSymbols.map((s) => s.toUpperCase())
       ])];
-      const maxN = snap.paper.n || 3;
-      const freeSlots = Math.max(0, maxN - openSymbols.length);
 
-      // 2. Select candidates from active watchlist that do not already have open positions.
-      const watchlistCandidates = snap.auto.symbols
-        .map((s) => s.toUpperCase())
-        .filter((s) => !openSymbols.includes(s));
+      let lastResult: { ok: boolean; message: string; cycleId: string; verdict?: Verdict } | null = null;
 
-      const symbolsToEvaluate: string[] = [];
-      // Re-evaluate open positions first
-      symbolsToEvaluate.push(...openSymbols);
-      // If slots are available, evaluate candidate symbols
-      if (freeSlots > 0 && watchlistCandidates.length > 0) {
-        symbolsToEvaluate.push(...watchlistCandidates.slice(0, Math.max(freeSlots, snap.auto.symbols.length)));
-      } else if (symbolsToEvaluate.length === 0) {
-        symbolsToEvaluate.push((snap.auto.symbols[0] ?? 'BTCUSDT').toUpperCase());
+      // Jalankan siklus evaluasi meja agen HANYA untuk simbol yang memiliki posisi terbuka
+      for (const posSym of openPositionSymbols) {
+        if (snapshot().killed) break;
+        lastResult = await executeSingleSymbolCycle(posSym, reason);
+        if (snapshot().mode !== 'PAPER' && options.syncVenueAccount) {
+          try { await options.syncVenueAccount(); } catch {}
+        }
       }
 
-      let lastResult: { ok: boolean; message: string; cycleId: string } | null = null;
-      for (const targetSym of symbolsToEvaluate) {
-        if (snapshot().killed) break;
-        const curSnap = snapshot();
-        const activePos = curSnap.mode === 'PAPER'
-          ? curSnap.paper.positions
-          : (curSnap.venueAccount?.positions ?? curSnap.paper.positions);
-        const curPending = curSnap.mode === 'PAPER' ? [] : (curSnap.venueAccount?.pendingSymbols ?? []);
-        const allOccupied = new Set([
-          ...activePos.map((p) => p.symbol.toUpperCase()),
-          ...curPending.map((s) => s.toUpperCase())
-        ]);
-        const hasPosition = allOccupied.has(targetSym);
-        if (!hasPosition && allOccupied.size >= (curSnap.paper.n || 3)) {
-          // All slots occupied; skip further entry scanning
-          continue;
-        }
+      // =========================================================================
+      // CEK KAPASITAS SLOT (Slot Gate)
+      // =========================================================================
+      const postPhase1Snap = snapshot();
+      const activePos = postPhase1Snap.mode === 'PAPER'
+        ? postPhase1Snap.paper.positions
+        : (postPhase1Snap.venueAccount?.positions?.length ? postPhase1Snap.venueAccount.positions : postPhase1Snap.paper.positions);
+      const activePending = postPhase1Snap.mode === 'PAPER' ? [] : (postPhase1Snap.venueAccount?.pendingSymbols ?? []);
+      const activeSymbols = [...new Set([
+        ...activePos.map((p) => p.symbol.toUpperCase()),
+        ...activePending.map((s) => s.toUpperCase())
+      ])];
 
-        lastResult = await executeSingleSymbolCycle(targetSym, reason);
+      const maxN = postPhase1Snap.paper.n || 3;
+      const occupiedSlots = activeSymbols.length;
+      let freeSlots = Math.max(0, maxN - occupiedSlots);
+
+      if (freeSlots === 0) {
+        const skipMsg = `[CYCLE] All ${maxN} slots occupied (${activeSymbols.join(', ')}). Skipping watchlist discovery to conserve API tokens.`;
+        hub.emit('log', {
+          at: Date.now(),
+          kind: 'system',
+          text: skipMsg
+        });
+        return lastResult ?? {
+          ok: true,
+          message: skipMsg
+        };
+      }
+
+      // =========================================================================
+      // FASE 2: CANDIDATE DISCOVERY (Kondisional: Hanya Jika freeSlots > 0)
+      // =========================================================================
+      const watchlistCandidates = (postPhase1Snap.watchlist?.length ? postPhase1Snap.watchlist : postPhase1Snap.auto.symbols)
+        .map((s) => s.toUpperCase())
+        .filter((s) => !activeSymbols.includes(s));
+
+      if (watchlistCandidates.length === 0 && openPositionSymbols.length === 0) {
+        const fallbackSym = (postPhase1Snap.auto.symbols[0] ?? 'BTCUSDT').toUpperCase();
+        lastResult = await executeSingleSymbolCycle(fallbackSym, reason);
+        return lastResult;
+      }
+
+      for (const candidateSym of watchlistCandidates) {
+        if (snapshot().killed) break;
+        if (freeSlots <= 0) break;
+
+        lastResult = await executeSingleSymbolCycle(candidateSym, reason);
+
+        const verdict = lastResult?.verdict;
+        if (verdict && (verdict.action === 'OPEN_LONG' || verdict.action === 'OPEN_SHORT')) {
+          if (
+            verdict.operationalStatus === 'FILLED' ||
+            verdict.operationalStatus === 'PENDING' ||
+            verdict.operationalStatus === 'PARTIAL' ||
+            verdict.executed
+          ) {
+            freeSlots -= 1;
+            if (freeSlots <= 0) {
+              hub.emit('log', {
+                at: Date.now(),
+                kind: 'debate',
+                text: `[CYCLE] Slots reached maximum capacity (${maxN}/${maxN}). Stopping watchlist discovery.`
+              });
+              break;
+            }
+          }
+        }
       }
 
       return lastResult ?? { ok: true, message: 'All watchlist symbols evaluated successfully.' };

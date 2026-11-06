@@ -258,6 +258,7 @@ export interface Verdict {
   exitCause?: ExitCause;
   executionOutcome?: string;
   finalOperationalStatus?: string;
+  operationalStatus?: 'FILLED' | 'PARTIAL' | 'PENDING' | 'REJECTED';
   ownerMinConfidencePct?: number;
   riskAssessment?: { decision: string; reason: string; fallback: boolean };
   nativeQuote?: Record<string, unknown>;

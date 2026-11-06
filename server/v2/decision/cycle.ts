@@ -153,10 +153,16 @@ function reviseTicket(lead: RoleResult, ticket: CandidateOrder, policy?: CyclePo
   if (orderType === 'LIMIT_GTC' && limitPrice && Number(limitPrice) > 0 && side && policy) {
     const isLimitChanged = lead.proposedLimitPrice !== undefined && lead.proposedLimitPrice !== ticket.limitPrice;
     const isOrderTypeChangedToLimit = ticket.orderType !== 'LIMIT_GTC';
-    if (!lead.proposedStop || isLimitChanged || isOrderTypeChangedToLimit) {
-      const baselines = computeBaselinePricesForReference(Number(limitPrice), side, policy);
-      stop = lead.proposedStop ?? baselines.stop;
-      tp = lead.proposedTp ?? baselines.tp;
+    const numLimit = Number(limitPrice);
+    const numStop = Number(stop);
+    const isStopGeometryInvalid = !stop || isNaN(numStop) || (side === 'LONG' ? numStop >= numLimit : numStop <= numLimit);
+    const numTp = Number(tp);
+    const isTpGeometryInvalid = tp ? (isNaN(numTp) || (side === 'LONG' ? numTp <= numLimit : numTp >= numLimit)) : false;
+
+    if (!lead.proposedStop || isLimitChanged || isOrderTypeChangedToLimit || isStopGeometryInvalid) {
+      const baselines = computeBaselinePricesForReference(numLimit, side, policy);
+      stop = (!isStopGeometryInvalid && lead.proposedStop) ? lead.proposedStop : baselines.stop;
+      tp = (!isTpGeometryInvalid && lead.proposedTp) ? lead.proposedTp : baselines.tp;
     }
   }
 
@@ -332,10 +338,16 @@ export class CycleRunner {
     let initialTp = executionResult.proposedTp ?? fallbackTp;
 
     if (initialOrderType === 'LIMIT_GTC' && initialLimitPrice && Number(initialLimitPrice) > 0 && resolvedCandidateSide) {
-      if (!executionResult.proposedStop) {
-        const baselines = computeBaselinePricesForReference(Number(initialLimitPrice), resolvedCandidateSide, input.policy);
-        initialStop = baselines.stop;
-        initialTp = executionResult.proposedTp ?? baselines.tp;
+      const numLimit = Number(initialLimitPrice);
+      const numStop = Number(initialStop);
+      const isStopGeometryInvalid = !initialStop || isNaN(numStop) || (resolvedCandidateSide === 'LONG' ? numStop >= numLimit : numStop <= numLimit);
+      const numTp = Number(initialTp);
+      const isTpGeometryInvalid = initialTp ? (isNaN(numTp) || (resolvedCandidateSide === 'LONG' ? numTp <= numLimit : numTp >= numLimit)) : false;
+
+      if (!executionResult.proposedStop || initialStop === baselineStop || isStopGeometryInvalid) {
+        const baselines = computeBaselinePricesForReference(numLimit, resolvedCandidateSide, input.policy);
+        initialStop = (!isStopGeometryInvalid && executionResult.proposedStop) ? executionResult.proposedStop : baselines.stop;
+        initialTp = (!isTpGeometryInvalid && executionResult.proposedTp) ? executionResult.proposedTp : baselines.tp;
       }
     }
 
@@ -581,13 +593,21 @@ export class CycleRunner {
     let proposedTp = ticket.tp;
 
     if (ticket.orderType === 'LIMIT_GTC' && ticket.limitPrice && Number(ticket.limitPrice) > 0 && (thesisSide === 'LONG' || thesisSide === 'SHORT')) {
-      const baselines = computeBaselinePricesForReference(Number(ticket.limitPrice), thesisSide, input.policy);
+      const numLimit = Number(ticket.limitPrice);
+      const baselines = computeBaselinePricesForReference(numLimit, thesisSide, input.policy);
       const marketBaselineStop = resolveBaselinePrice(input.policy.profileBaselineStopPrice, thesisSide);
-      if (!proposedStop || proposedStop === marketBaselineStop) {
+      const numProposedStop = Number(proposedStop);
+      const isStopGeometryInvalid = !proposedStop || isNaN(numProposedStop) || (thesisSide === 'LONG' ? numProposedStop >= numLimit : numProposedStop <= numLimit);
+
+      if (!proposedStop || proposedStop === marketBaselineStop || isStopGeometryInvalid) {
         proposedStop = baselines.stop;
       }
+
       const marketBaselineTp = resolveBaselinePrice(input.policy.profileBaselineTpPrice, thesisSide);
-      if (!proposedTp || proposedTp === marketBaselineTp) {
+      const numProposedTp = Number(proposedTp);
+      const isTpGeometryInvalid = proposedTp ? (isNaN(numProposedTp) || (thesisSide === 'LONG' ? numProposedTp <= numLimit : numProposedTp >= numLimit)) : false;
+
+      if (!proposedTp || proposedTp === marketBaselineTp || isTpGeometryInvalid) {
         proposedTp = baselines.tp;
       }
     } else {
