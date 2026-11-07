@@ -3843,11 +3843,12 @@ export async function startReplacementServer(
       const orderType = (p.orderType as 'MARKET' | 'LIMIT_GTC') ?? 'MARKET';
       const limitPrice = p.limitPrice != null ? String(p.limitPrice) : (p.entry != null ? String(p.entry) : null);
 
+      const auth = await authority.claim(accountRef);
       const receipt = await gateway.submit({
         intentId: `intent-${Date.now()}`,
         accountRef,
         configVersion: settings.current().activeVersion,
-        authorityEpoch: (await authority.current(accountRef))?.writerEpoch ?? 1,
+        authorityEpoch: auth.writerEpoch,
         action: 'OPEN',
         symbol,
         side,
@@ -3969,13 +3970,14 @@ export async function startReplacementServer(
         };
       }
 
+      const auth = await authority.claim(accountRef);
       const receipts = [];
       for (const pos of targetPos) {
         const r = await gateway.close({
           intentId: `close-${Date.now()}-${pos.symbol}`,
           accountRef,
           configVersion: settings.current().activeVersion,
-          authorityEpoch: (await authority.current(accountRef))?.writerEpoch ?? 1,
+          authorityEpoch: auth.writerEpoch,
           symbol: pos.symbol,
           side: pos.side,
           quantity: pos.qty,
