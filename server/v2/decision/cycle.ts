@@ -373,25 +373,34 @@ export class CycleRunner {
       observeResults.find((r) => r.proposedTp)?.proposedTp ??
       baselineTp;
 
+    const fallbackOrderType =
+      challengeResults.find((r) => r.proposedOrderType)?.proposedOrderType ??
+      observeResults.find((r) => r.proposedOrderType)?.proposedOrderType;
+    const fallbackLimitPrice =
+      challengeResults.find((r) => r.proposedLimitPrice)?.proposedLimitPrice ??
+      observeResults.find((r) => r.proposedLimitPrice)?.proposedLimitPrice;
+
     const initialOrderType = (executionResult.proposedOrderType === 'LIMIT_GTC' && input.policy.supportsLimitGtc === false)
       ? 'MARKET'
-      : (executionResult.proposedOrderType ?? 'MARKET');
-    const initialLimitPrice = initialOrderType === 'MARKET' ? null : (executionResult.proposedLimitPrice ?? null);
+      : (executionResult.proposedOrderType ?? fallbackOrderType ?? 'MARKET');
+    const initialLimitPrice = initialOrderType === 'MARKET' ? null : (executionResult.proposedLimitPrice ?? fallbackLimitPrice ?? null);
 
     let initialStop = executionResult.proposedStop ?? fallbackStop;
     let initialTp = executionResult.proposedTp ?? fallbackTp;
 
     if (initialOrderType === 'LIMIT_GTC' && initialLimitPrice && Number(initialLimitPrice) > 0 && resolvedCandidateSide) {
       const numLimit = Number(initialLimitPrice);
+      const baselines = computeBaselinePricesForReference(numLimit, resolvedCandidateSide, input.policy);
       const numStop = Number(initialStop);
       const isStopGeometryInvalid = !initialStop || isNaN(numStop) || (resolvedCandidateSide === 'LONG' ? numStop >= numLimit : numStop <= numLimit);
       const numTp = Number(initialTp);
       const isTpGeometryInvalid = initialTp ? (isNaN(numTp) || (resolvedCandidateSide === 'LONG' ? numTp <= numLimit : numTp >= numLimit)) : false;
 
-      if (!executionResult.proposedStop || initialStop === baselineStop || isStopGeometryInvalid) {
-        const baselines = computeBaselinePricesForReference(numLimit, resolvedCandidateSide, input.policy);
-        initialStop = (!isStopGeometryInvalid && executionResult.proposedStop) ? executionResult.proposedStop : baselines.stop;
-        initialTp = (!isTpGeometryInvalid && executionResult.proposedTp) ? executionResult.proposedTp : baselines.tp;
+      if (!initialStop || initialStop === baselineStop || isStopGeometryInvalid) {
+        initialStop = baselines.stop;
+      }
+      if (!initialTp || initialTp === baselineTp || isTpGeometryInvalid) {
+        initialTp = baselines.tp;
       }
     }
 

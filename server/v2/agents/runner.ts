@@ -109,11 +109,13 @@ const ModelConfidenceSchema = z
 const PredicateSchema = z
   .object({
     kind: z.enum(['PRICE_BELOW', 'PRICE_ABOVE', 'STRUCTURE_BREAK']),
-    level: z.string().optional(),
+    level: z.union([z.string(), z.number()]).transform((v) => String(v)).optional(),
     timeframe: z.string().optional(),
     description: z.string().min(1)
   })
   .strict();
+
+const OptionalPriceString = z.union([z.string(), z.number()]).transform((v) => String(v)).nullable().optional();
 
 const BaseReplySchema = z.object({
   stance: z.enum(['LONG', 'SHORT', 'HOLD', 'CLOSE', 'NEUTRAL']),
@@ -123,10 +125,10 @@ const BaseReplySchema = z.object({
   reasoning: z.string().min(1),
   confidence: ModelConfidenceSchema.optional(),
   invalidationPredicate: PredicateSchema.nullable().optional(),
-  proposedStop: z.string().nullable().optional(),
-  proposedTp: z.string().nullable().optional(),
+  proposedStop: OptionalPriceString,
+  proposedTp: OptionalPriceString,
   proposedOrderType: z.enum(['MARKET', 'LIMIT_GTC']).nullable().optional(),
-  proposedLimitPrice: z.string().nullable().optional()
+  proposedLimitPrice: OptionalPriceString
 });
 
 function validateScaleBounds(scale: ConfidenceScale | null, value: number | null): boolean {
@@ -619,6 +621,15 @@ export class RoleRunner {
             obj.decision = 'APPROVE';
           } else {
             obj.decision = 'REJECT';
+          }
+        }
+
+        if (typeof obj.proposedStop === 'number') obj.proposedStop = String(obj.proposedStop);
+        if (typeof obj.proposedTp === 'number') obj.proposedTp = String(obj.proposedTp);
+        if (typeof obj.proposedLimitPrice === 'number') obj.proposedLimitPrice = String(obj.proposedLimitPrice);
+        if (obj.invalidationPredicate && typeof obj.invalidationPredicate === 'object') {
+          if (typeof (obj.invalidationPredicate as Record<string, unknown>).level === 'number') {
+            (obj.invalidationPredicate as Record<string, unknown>).level = String((obj.invalidationPredicate as Record<string, unknown>).level);
           }
         }
       }

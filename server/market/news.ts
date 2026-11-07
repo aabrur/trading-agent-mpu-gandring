@@ -25,6 +25,7 @@ export interface NormalizedNewsEvent {
   metricProvenance?: MetricProvenance;
   id: string;
   title: string;
+  summary?: string;
   source: string;
   sourceUrl: string | null;
   publishedAt: number | null;
@@ -233,6 +234,7 @@ export function normalizeLegacyItem(item: NewsItem, symbol: string, now: number 
     metricProvenance: metricProvenance(item, item.observedAt ?? now),
     id: item.id,
     title: item.headline,
+    summary: item.body?.trim() ? item.body.trim() : (item.headline?.trim() || undefined),
     source: item.source,
     sourceUrl: item.sourceUrl ?? null,
     publishedAt,

@@ -1543,10 +1543,10 @@ export function createReplacementRuntime(
         instruction: 'NO_VETO: If no high-impact breaking news exists, do NOT penalize confidence.',
         items: newsBriefing.events.slice(0, 5).map((item: any) => ({
           id: item.id,
-          symbol: item.symbol,
-          targetScope: item.targetScope,
-          headline: item.headline,
-          summary: (item.summary ?? item.body ?? '').slice(0, 280),
+          symbol: item.symbol ?? (item.affectedAssets?.[0] ?? targetSymbol),
+          targetScope: item.targetScope ?? 'BROAD_CRYPTO',
+          headline: item.title ?? item.headline ?? '',
+          summary: (item.summary ?? item.body ?? item.impactAssessment ?? '').slice(0, 280),
           source: item.source,
           sentiment: item.sentiment,
           publishedAt: item.publishedAt ?? null
@@ -3707,9 +3707,9 @@ export async function startReplacementServer(
   const initialFinancial = {
     balance: equityNum !== null ? availableFinancialField(equityNum) : unavailableFinancialField(),
     equity: equityNum !== null ? availableFinancialField(equityNum) : unavailableFinancialField(),
-    availableBalance: availNum !== null ? availableFinancialField(availNum) : unavailableFinancialField(),
+    availableBalance: availNum !== null ? availableFinancialField(availNum) : (equityNum !== null ? availableFinancialField(equityNum) : unavailableFinancialField()),
     realizedPnl: realizedNum !== null ? availableFinancialField(realizedNum) : unavailableFinancialField(),
-    unrealizedPnl: unavailableFinancialField()
+    unrealizedPnl: availableFinancialField(0)
   };
 
   const initialPositions: Position[] = nativePositions.map((p, idx) => {
@@ -4165,17 +4165,17 @@ export async function startReplacementServer(
         runtimeRef?.updateState((d) => {
           d.financial.balance = availableFinancialField(eq);
           d.financial.equity = availableFinancialField(eq);
-          if (av !== null && Number.isFinite(av)) {
-            d.financial.availableBalance = availableFinancialField(av);
-          }
+          const effectiveAv = (av !== null && Number.isFinite(av)) ? av : eq;
+          d.financial.availableBalance = availableFinancialField(effectiveAv);
           const totalUnrealized = Math.round(
             posList.reduce((sum, p) => sum + (p.unrealizedPnl ? Number(p.unrealizedPnl) : 0), 0) * 100
           ) / 100;
+          d.financial.unrealizedPnl = availableFinancialField(totalUnrealized);
           const pendingIntents = recon?.pending ?? [];
           const activePosList = posList.filter((p) => Number(p.qty) > 0);
           d.venueAccount = {
             equity: eq,
-            available: av ?? eq,
+            available: effectiveAv,
             unrealized: totalUnrealized,
             at: Date.now(),
             status: 'confirmed',
