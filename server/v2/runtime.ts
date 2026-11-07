@@ -1168,7 +1168,7 @@ export function createReplacementRuntime(
         let smcData: any = null;
         if (['5m', '15m', '1h', '4h'].includes(tf) && normalizedCandles.length > 0) {
           try {
-            const smcRes = analyzeSMC(normalizedCandles);
+            const smcRes = analyzeSMC(normalizedCandles, { symbol: targetSymbol, tf });
             if (smcRes) {
               smcData = {
                 marketTrend: smcRes.marketTrend,
@@ -2444,7 +2444,7 @@ export function createReplacementRuntime(
     }
 
     const isSlash = raw.startsWith('/');
-    const isDirectOp = /^(close|kill|unkill|open|buy|sell|analyze|debate|status|report|scan|positions|watchlist)\b/i.test(cleanCmd);
+    const isDirectOp = /^(close|kill|unkill|open|buy|sell|cancel|protect|analyze|debate|status|report|scan|positions|watchlist)\b/i.test(cleanCmd);
     const isOperational = isSlash || isDirectOp;
 
     const toAll = /^@all\s+/i.test(raw);
@@ -2849,6 +2849,68 @@ export function createReplacementRuntime(
       });
       hub.emit('state', snapshot());
       return { ok: true, command: 'close', reply: `Closed ${closedCount} position(s).` };
+    }
+
+    if (cleanCmd.startsWith('cancel')) {
+      const parts = raw.split(/\s+/);
+      const target = (parts[1] ?? '').toUpperCase();
+      if (!target) {
+        return { ok: false, command: 'cancel', error: 'Usage: cancel <symbol|orderId>' };
+      }
+      const snap = snapshot();
+      const pendingList = snap.venueAccount?.pendingOrders ?? [];
+      const match = pendingList.find(
+        (p) => p.symbol.toUpperCase() === target || p.clientOrderId === target
+      );
+      if (!match) {
+        return { ok: false, command: 'cancel', error: `No active resting order found for ${target}` };
+      }
+      const dispatchRes = await dispatch({
+        kind: 'cancel_entry',
+        actor: 'local_owner',
+        symbol: match.symbol,
+        payload: {
+          symbol: match.symbol,
+          clientOrderId: match.clientOrderId
+        }
+      });
+      if (options.syncVenueAccount) {
+        try { await options.syncVenueAccount(); } catch {}
+      }
+      return {
+        ok: dispatchRes.ok,
+        command: 'cancel',
+        reply: `Cancelled resting order for ${match.symbol} (${match.clientOrderId}): ${dispatchRes.message}`,
+        error: dispatchRes.ok ? undefined : dispatchRes.message
+      };
+    }
+
+    if (cleanCmd.startsWith('protect')) {
+      const stopMatch = raw.match(/--stop(?:=|\s+)(\d+(?:\.\d+)?)/i);
+      const tpMatch = raw.match(/--tp(?:=|\s+)(\d+(?:\.\d+)?)/i);
+      const parts = raw.replace(/--(?:stop|tp)(?:=|\s+)\S+/gi, '').trim().split(/\s+/);
+      const target = (parts[1] ?? '').toUpperCase();
+      if (!target || !stopMatch) {
+        return { ok: false, command: 'protect', error: 'Usage: protect <symbol> --stop <price> [--tp <price>]' };
+      }
+      const stop = stopMatch[1];
+      const tp = tpMatch ? tpMatch[1] : null;
+      const dispatchRes = await dispatch({
+        kind: 'protect',
+        actor: 'local_owner',
+        symbol: target,
+        payload: {
+          symbol: target,
+          stop,
+          tp
+        }
+      });
+      return {
+        ok: dispatchRes.ok,
+        command: 'protect',
+        reply: dispatchRes.message,
+        error: dispatchRes.ok ? undefined : dispatchRes.message
+      };
     }
 
     if (/^(?:open|buy|sell)\b/i.test(cleanCmd) && !/^open\s+orders?\b/i.test(cleanCmd)) {
@@ -3511,6 +3573,28 @@ export function createReplacementRuntime(
       };
     }
 
+    if (input.kind === 'protect') {
+      const sym = String(input.symbol ?? input.payload?.symbol ?? '').toUpperCase();
+      const stop = input.payload?.stop ? Number(input.payload.stop) : null;
+      const tp = input.payload?.tp ? Number(input.payload.tp) : null;
+      let updated = false;
+      updateState((d) => {
+        for (const p of d.paper.positions) {
+          if (p.symbol.toUpperCase() === sym) {
+            if (stop) p.stop = stop;
+            if (tp !== null) p.tp = tp;
+            p.protectionStatus = 'confirmed';
+            updated = true;
+          }
+        }
+      });
+      return {
+        ok: updated,
+        code: updated ? 'OK' : 'INVALID_INPUT',
+        message: updated ? `Updated paper protection for ${sym}: SL ${stop}, TP ${tp ?? 'none'}` : `No open position for ${sym}`
+      };
+    }
+
     if (input.kind === 'cancel_entry') {
       return {
         ok: true,
@@ -4081,6 +4165,28 @@ export async function startReplacementServer(
           orderState: overallState,
           receipts
         }
+      };
+    }
+
+    if (input.kind === 'protect') {
+      const symbol = String(input.symbol ?? input.payload?.symbol ?? '').toUpperCase();
+      const positions = await transport.positions();
+      const targetPos = positions.find((p) => p.symbol.toUpperCase() === symbol);
+      if (!targetPos) {
+        return { ok: false, code: 'INVALID_INPUT', message: `No active position found on venue for ${symbol}` };
+      }
+      const stop = input.payload?.stop ? String(input.payload.stop) : null;
+      const tp = input.payload?.tp ? String(input.payload.tp) : null;
+      if (!stop) {
+        return { ok: false, code: 'INVALID_INPUT', message: 'Stop price is required to protect position' };
+      }
+      const prot = await transport.placeProtection(targetPos, stop, tp);
+      try { await syncVenueAccount(); } catch {}
+      return {
+        ok: prot.state === 'VERIFIED',
+        code: prot.state === 'VERIFIED' ? 'OK' : 'REJECTED',
+        message: `Protection updated on venue for ${symbol}: SL ${stop}, TP ${tp ?? 'none'} (${prot.state})`,
+        data: prot as unknown as Record<string, unknown>
       };
     }
 

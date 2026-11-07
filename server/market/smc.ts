@@ -130,7 +130,7 @@ export function findSwingPoints(bars: InternalBar[], window: number = 2): SMCSwi
 /**
  * Detects 3-bar Fair Value Gaps (FVG) and evaluates whether they have been mitigated by later bars.
  */
-export function detectFairValueGaps(bars: InternalBar[]): SMCFairValueGap[] {
+export function detectFairValueGaps(bars: InternalBar[], prefix: string = ''): SMCFairValueGap[] {
   const fvgs: SMCFairValueGap[] = [];
 
   for (let i = 2; i < bars.length; i++) {
@@ -154,7 +154,7 @@ export function detectFairValueGaps(bars: InternalBar[]): SMCFairValueGap[] {
       }
 
       fvgs.push({
-        id: `fvg-bull-${first.timestamp}`,
+        id: `fvg-${prefix}bull-${first.timestamp}`,
         type: 'BULLISH',
         topPrice,
         bottomPrice,
@@ -181,7 +181,7 @@ export function detectFairValueGaps(bars: InternalBar[]): SMCFairValueGap[] {
       }
 
       fvgs.push({
-        id: `fvg-bear-${first.timestamp}`,
+        id: `fvg-${prefix}bear-${first.timestamp}`,
         type: 'BEARISH',
         topPrice,
         bottomPrice,
@@ -198,12 +198,18 @@ export function detectFairValueGaps(bars: InternalBar[]): SMCFairValueGap[] {
 /**
  * Executes full Smart Money Concepts (SMC) structure analysis on candles.
  */
-export function analyzeSMC(candles: any[]): SMCAnalysis | null {
+export function analyzeSMC(candles: any[], options?: { symbol?: string; tf?: string }): SMCAnalysis | null {
   const bars = normalizeBars(candles);
   if (bars.length < 10) return null;
 
+  const prefix = options?.symbol && options?.tf
+    ? `${options.symbol.toUpperCase()}-${options.tf}-`
+    : options?.tf
+    ? `${options.tf}-`
+    : '';
+
   const swingPoints = findSwingPoints(bars, 2);
-  const fvgs = detectFairValueGaps(bars);
+  const fvgs = detectFairValueGaps(bars, prefix);
   const activeFVGs = fvgs.filter(f => !f.mitigated);
 
   const swingHighs = swingPoints.filter(p => p.type === 'HIGH');
@@ -239,7 +245,7 @@ export function analyzeSMC(candles: any[]): SMCAnalysis | null {
       for (let k = bar.index - 1; k >= Math.max(0, bar.index - 6); k--) {
         if (bars[k].close < bars[k].open) {
           orderBlocks.push({
-            id: `ob-bull-${bars[k].timestamp}`,
+            id: `ob-${prefix}bull-${bars[k].timestamp}`,
             type: 'BULLISH',
             topPrice: bars[k].high,
             bottomPrice: bars[k].low,
@@ -268,7 +274,7 @@ export function analyzeSMC(candles: any[]): SMCAnalysis | null {
       for (let k = bar.index - 1; k >= Math.max(0, bar.index - 6); k--) {
         if (bars[k].close > bars[k].open) {
           orderBlocks.push({
-            id: `ob-bear-${bars[k].timestamp}`,
+            id: `ob-${prefix}bear-${bars[k].timestamp}`,
             type: 'BEARISH',
             topPrice: bars[k].high,
             bottomPrice: bars[k].low,

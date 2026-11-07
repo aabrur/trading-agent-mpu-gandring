@@ -483,7 +483,7 @@ export function buildLiveDeskChatContext(
           let smcData: any = null;
           if (['5m', '15m', '1h', '4h'].includes(tf) && normalizedCandles.length > 0) {
             try {
-              const smcRes = analyzeSMC(normalizedCandles);
+              const smcRes = analyzeSMC(normalizedCandles, { symbol: sym, tf });
               if (smcRes) {
                 smcData = {
                   marketTrend: smcRes.marketTrend,

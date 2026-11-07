@@ -568,6 +568,7 @@ export interface OfficeCommand {
     | 'unkill'
     | 'open'
     | 'close'
+    | 'protect'
     | 'cancel_entry'
     | 'scan'
     | 'report_now'

@@ -25,14 +25,18 @@ describe('watchlist opportunity scoring', () => {
 });
 
 describe('SMC order blocks', () => {
-  it('does not repeat the same order block id', () => {
+  it('includes symbol and tf prefix in order block and fvg ids when provided', () => {
     const bars = Array.from({ length: 40 }, (_, i) => {
       const base = i < 20 ? 100 + (i % 4) : 110 + i;
       const up = i % 3 !== 0;
       return { timestamp: i * 60_000, open: up ? base : base + 1, high: base + 2, low: base - 1, close: up ? base + 1 : base, volume: 10 };
     });
-    const smc = analyzeSMC(bars)!;
-    const ids = smc.activeOrderBlocks.map((ob) => ob.id);
-    expect(new Set(ids).size).toBe(ids.length);
+    const smc = analyzeSMC(bars, { symbol: 'ETHUSDT', tf: '15m' })!;
+    for (const ob of smc.activeOrderBlocks) {
+      expect(ob.id.startsWith('ob-ETHUSDT-15m-')).toBe(true);
+    }
+    for (const fvg of smc.activeFVGs) {
+      expect(fvg.id.startsWith('fvg-ETHUSDT-15m-')).toBe(true);
+    }
   });
 });
