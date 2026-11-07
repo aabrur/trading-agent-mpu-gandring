@@ -961,12 +961,15 @@ export function createReplacementRuntime(
 
     const paperPos = snap.paper.positions.find((p) => p.symbol.toUpperCase() === targetSymbol);
     const venuePos = snap.venueAccount?.positions?.find((p) => p.symbol.toUpperCase() === targetSymbol);
+    const matchingVerdict = [...(snap.verdicts ?? [])]
+      .reverse()
+      .find((v) => v.symbol.toUpperCase() === targetSymbol && v.order);
     const existingPos = paperPos ?? (venuePos ? {
       side: venuePos.side,
       entry: Number(snap.tickers[targetSymbol]?.last ?? 0),
       qty: venuePos.qty,
-      stop: 0,
-      tp: null,
+      stop: matchingVerdict?.order?.stop ? Number(matchingVerdict.order.stop) : 0,
+      tp: matchingVerdict?.order?.tp ? Number(matchingVerdict.order.tp) : null,
       unrealizedPnl: 0
     } : null);
 
@@ -999,7 +1002,11 @@ export function createReplacementRuntime(
       .reverse()
       .find((v) => v.symbol.toUpperCase() === targetSymbol && (v as any).operationalStatus === 'PENDING');
 
-    const existingPendingOrder = (venuePending || hasPendingSymbol || pendingVerdict) ? {
+    const hasLivePending = snap.mode !== 'PAPER'
+      ? Boolean(venuePending || hasPendingSymbol)
+      : Boolean(pendingVerdict);
+
+    const existingPendingOrder = (!existingPos && hasLivePending) ? {
       clientOrderId: venuePending?.clientOrderId ?? (pendingVerdict as any)?.positionId ?? (pendingVerdict as any)?.order?.clientOrderId ?? `pending-${targetSymbol}`,
       side: (venuePending?.side ?? (pendingVerdict?.action === 'OPEN_SHORT' ? 'SHORT' : 'LONG')) as 'LONG' | 'SHORT',
       limitPrice: (pendingVerdict as any)?.order?.entry ?? null,
@@ -2235,9 +2242,11 @@ export function createReplacementRuntime(
       const pendingSymbols = prePhase1Snap.mode === 'PAPER' ? [] : (prePhase1Snap.venueAccount?.pendingSymbols ?? []);
       const pendingOrders = (prePhase1Snap.venueAccount as any)?.pendingOrders ?? [];
       const pendingOrderSymbols = pendingOrders.map((p: any) => p.symbol.toUpperCase());
-      const pendingVerdictSymbols = (prePhase1Snap.verdicts ?? [])
-        .filter((v: any) => v.operationalStatus === 'PENDING')
-        .map((v) => v.symbol.toUpperCase());
+      const pendingVerdictSymbols = prePhase1Snap.mode === 'PAPER'
+        ? (prePhase1Snap.verdicts ?? [])
+            .filter((v: any) => v.operationalStatus === 'PENDING')
+            .map((v) => v.symbol.toUpperCase())
+        : [];
       const openPositionSymbols = [...new Set([
         ...currentPos.map((p) => p.symbol.toUpperCase()),
         ...pendingSymbols.map((s) => s.toUpperCase()),
@@ -2266,9 +2275,11 @@ export function createReplacementRuntime(
       const activePending = postPhase1Snap.mode === 'PAPER' ? [] : (postPhase1Snap.venueAccount?.pendingSymbols ?? []);
       const activePendingOrders = (postPhase1Snap.venueAccount as any)?.pendingOrders ?? [];
       const activePendingOrderSymbols = activePendingOrders.map((p: any) => p.symbol.toUpperCase());
-      const activePendingVerdictSymbols = (postPhase1Snap.verdicts ?? [])
-        .filter((v: any) => v.operationalStatus === 'PENDING')
-        .map((v) => v.symbol.toUpperCase());
+      const activePendingVerdictSymbols = postPhase1Snap.mode === 'PAPER'
+        ? (postPhase1Snap.verdicts ?? [])
+            .filter((v: any) => v.operationalStatus === 'PENDING')
+            .map((v) => v.symbol.toUpperCase())
+        : [];
       const activeSymbols = [...new Set([
         ...activePos.map((p) => p.symbol.toUpperCase()),
         ...activePending.map((s) => s.toUpperCase()),
@@ -3892,13 +3903,14 @@ export async function startReplacementServer(
         const snap = runtimeRef?.snapshot() ?? state;
         const pendingOrder = (snap.venueAccount as any)?.pendingOrders?.find((p: any) => p.symbol.toUpperCase() === symbol);
         const isPendingSymbol = snap.venueAccount?.pendingSymbols?.some((s) => s.toUpperCase() === symbol);
+        const hasPendingVerdict = (snap.verdicts ?? []).some((v: any) => v.symbol.toUpperCase() === symbol && v.operationalStatus === 'PENDING');
 
         const activeIntent = (await store.execute(
           `SELECT intent_id, client_order_id, symbol, side, order_state FROM execution_intents WHERE UPPER(symbol) = ? AND order_state IN ('ACCEPTED', 'PARTIAL', 'SUBMITTING') ORDER BY created_at DESC LIMIT 1`,
           [symbol]
         ))?.rows?.[0];
 
-        if (pendingOrder || isPendingSymbol || activeIntent) {
+        if (pendingOrder || isPendingSymbol || activeIntent || hasPendingVerdict) {
           const clientOrderId = pendingOrder?.clientOrderId ?? (activeIntent?.client_order_id as string | undefined);
           if (clientOrderId && transport.cancelEntryOrder) {
             try {
@@ -4173,6 +4185,22 @@ export async function startReplacementServer(
           d.financial.unrealizedPnl = availableFinancialField(totalUnrealized);
           const pendingIntents = recon?.pending ?? [];
           const activePosList = posList.filter((p) => Number(p.qty) > 0);
+          if (d.verdicts) {
+            for (const v of d.verdicts) {
+              if ((v as any).operationalStatus === 'PENDING') {
+                const sym = v.symbol.toUpperCase();
+                const isPos = activePosList.some((p) => p.symbol.toUpperCase() === sym);
+                const isPend = pendingIntents.some((p) => p.symbol.toUpperCase() === sym);
+                if (isPos) {
+                  (v as any).operationalStatus = 'FILLED';
+                  v.executed = true;
+                } else if (!isPend) {
+                  (v as any).operationalStatus = 'CANCELLED';
+                  v.executed = false;
+                }
+              }
+            }
+          }
           d.venueAccount = {
             equity: eq,
             available: effectiveAv,
@@ -4213,6 +4241,9 @@ export async function startReplacementServer(
               protectionState: recon?.protection[nativePos.positionKey],
               stopPrice: recon?.verifiedStops?.[nativePos.positionKey]
             });
+            const priorVerdictTp = (d.verdicts ?? []).find(
+              (v: any) => v.symbol.toUpperCase() === nativePos.symbol.toUpperCase() && v.order?.tp
+            )?.order?.tp;
             updatedPositions.push({
               id: existing?.id ?? `pos-${nativePos.symbol}-${idx}`,
               symbol: nativePos.symbol,
@@ -4220,7 +4251,7 @@ export async function startReplacementServer(
               qty,
               entry,
               stop: shown.stop,
-              tp: existing?.tp ?? null,
+              tp: existing?.tp ?? (priorVerdictTp ? Number(priorVerdictTp) : null),
               mark,
               unrealizedPnl: Math.round(upnl * 100) / 100,
               leverage,

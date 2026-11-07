@@ -467,23 +467,41 @@ export class RoleRunner {
           return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Task cancelled or superseded');
         }
 
-        rawText = await this.providerCaller({
-          cycleId: task.cycleId,
-          role: task.role,
-          phase: task.phase,
-          taskAttempt: task.taskAttempt,
-          turn,
-          provider,
-          model,
-          apiKey: assignment.apiKey ?? '',
-          baseUrl: assignment.baseUrl,
-          system,
-          user: userPrompt,
-          signal: combinedSignal,
-          timeoutMs: remainingBudgetMs,
-          reasoningEffort: assignment.reasoningEffort,
-          provenOsSandbox: assignment.provenOsSandbox
-        });
+        let callError: unknown = null;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            rawText = await this.providerCaller({
+              cycleId: task.cycleId,
+              role: task.role,
+              phase: task.phase,
+              taskAttempt: task.taskAttempt,
+              turn,
+              provider,
+              model,
+              apiKey: assignment.apiKey ?? '',
+              baseUrl: assignment.baseUrl,
+              system,
+              user: userPrompt,
+              retryReason: attempt > 1 ? 'output_limit' : undefined,
+              signal: combinedSignal,
+              timeoutMs: remainingBudgetMs,
+              reasoningEffort: assignment.reasoningEffort,
+              provenOsSandbox: assignment.provenOsSandbox
+            });
+            callError = null;
+            break;
+          } catch (e) {
+            callError = e;
+            const msg = e instanceof Error ? e.message : String(e);
+            const isTransient = /empty output|token limit|timeout|fetch failed|rate limit|econnreset|503|502|429/i.test(msg);
+            if (attempt === 1 && isTransient && !combinedSignal.aborted) {
+              await new Promise((r) => setTimeout(r, 1000));
+              continue;
+            }
+            throw e;
+          }
+        }
+        if (callError) throw callError;
 
         if (combinedSignal.aborted || this.activeAttempts.get(key)?.attempt !== task.taskAttempt) {
           return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Late result discarded after cancellation');
