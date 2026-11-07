@@ -563,4 +563,114 @@ describe('Two-Phase Cycle (Slot-Aware Efficiency) & Agent Memory Context', () =>
       await runtime.stop();
     }
   });
+
+  it('pre-screens and prioritizes candidates by quantitative opportunity ranking in Phase 2', async () => {
+    const evaluatedSymbols: string[] = [];
+    const emittedLogs: string[] = [];
+
+    const roleRunner = new RoleRunner({
+      providerCaller: async () =>
+        JSON.stringify({
+          stance: 'HOLD',
+          decision: 'APPROVE',
+          claimRefs: ['ev-test-1'],
+          contraryRefs: [],
+          reasoning: 'Evaluated candidate',
+          confidence: { value: 0.8, scale: 'probability_0_1' }
+        }),
+      resolveAssignment: () => ({
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        apiKey: 'test-key'
+      })
+    });
+
+    const cycleRunner = new CycleRunner({ roleRunner });
+    const originalRun = cycleRunner.run.bind(cycleRunner);
+    cycleRunner.run = async (input) => {
+      evaluatedSymbols.push(input.symbol);
+      return originalRun(input);
+    };
+
+    const mockMarketHub = {
+      snapshot: (sym: string) => {
+        if (sym === 'ZECUSDT') {
+          return {
+            symbol: 'ZECUSDT',
+            venue: 'bybit',
+            category: 'linear',
+            asOf: Date.now(),
+            last: { value: '1290.0', availability: 'AVAILABLE' },
+            closed: {
+              '15m': Array.from({ length: 25 }, (_, i) => ({
+                startAt: Date.now() - (25 - i) * 900000,
+                open: 1200 + i,
+                high: 1210 + i,
+                low: 1195 + i,
+                close: 1205 + i,
+                volume: i === 24 ? 10000 : 1000,
+                confirmed: true
+              }))
+            },
+            price24hPcnt: '0.08'
+          };
+        }
+        return {
+          symbol: sym,
+          venue: 'bybit',
+          category: 'linear',
+          asOf: Date.now(),
+          last: { value: '100.0', availability: 'AVAILABLE' },
+          closed: {
+            '15m': Array.from({ length: 25 }, (_, i) => ({
+              startAt: Date.now() - (25 - i) * 900000,
+              open: 100,
+              high: 101,
+              low: 99,
+              close: 100,
+              volume: 100,
+              confirmed: true
+            }))
+          },
+          price24hPcnt: '0.001'
+        };
+      },
+      stop: async () => {}
+    } as any;
+
+    const runtime = createReplacementRuntime({
+      roleRunner,
+      cycleRunner,
+      marketHub: mockMarketHub
+    });
+
+    runtime.hub.subscribe((event: any) => {
+      if (event.type === 'log') {
+        const payload = event.payload ?? event.data;
+        if (payload?.text) emittedLogs.push(payload.text);
+      }
+    });
+
+    try {
+      runtime.updateState((draft: any) => {
+        draft.paper.n = 2;
+        draft.watchlist = ['ETHUSDT', 'SOLUSDT', 'ZECUSDT'];
+        draft.auto.symbols = ['ETHUSDT', 'SOLUSDT', 'ZECUSDT'];
+        draft.paper.positions = [];
+      });
+
+      const res = await runtime.triggerCycle(undefined, 'schedule');
+      expect(res.ok).toBe(true);
+
+      // ZECUSDT must be evaluated FIRST because its opportunity score is highest!
+      expect(evaluatedSymbols[0]).toBe('ZECUSDT');
+
+      // Check that WATCHLIST SCREEN log was emitted
+      const screenLog = emittedLogs.find((l) => l.includes('[WATCHLIST SCREEN]'));
+      expect(screenLog).toBeDefined();
+      expect(screenLog).toContain('ZECUSDT');
+    } finally {
+      await runtime.stop();
+    }
+  });
 });

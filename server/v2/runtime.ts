@@ -488,6 +488,135 @@ export function computeCrossMarketBreadth(
   };
 }
 
+export interface CandidateOpportunity {
+  symbol: string;
+  score: number;
+  reasons: string[];
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+}
+
+export function evaluateWatchlistOpportunity(
+  symbol: string,
+  hub?: BybitMarketHub | null
+): CandidateOpportunity {
+  const cleanSym = symbol.trim().toUpperCase();
+  const reasons: string[] = [];
+  let score = 50;
+  let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+
+  if (!hub) {
+    return { symbol: cleanSym, score, reasons: ['Standard queue order'], bias };
+  }
+
+  try {
+    const frame = hub.snapshot(cleanSym);
+    if (!frame || frame.last?.availability !== 'AVAILABLE') {
+      return { symbol: cleanSym, score: 30, reasons: ['Market feed pending'], bias };
+    }
+
+    const currentPrice = Number(frame.last.value);
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      return { symbol: cleanSym, score: 30, reasons: ['Price feed unavailable'], bias };
+    }
+
+    const closed15m = frame.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
+    const closed1h = frame.closed?.['1h']?.filter((b) => b.confirmed) ?? [];
+    const closed5m = frame.closed?.['5m']?.filter((b) => b.confirmed) ?? [];
+
+    const primaryClosed = closed15m.length >= 20 ? closed15m : (closed5m.length >= 20 ? closed5m : closed1h);
+
+    if (primaryClosed.length >= 20) {
+      const lastBar = primaryClosed.at(-1)!;
+      const priorBars = primaryClosed.slice(-21, -1);
+      const priorHigh20 = priorBars.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity);
+      const priorLow20 = priorBars.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity);
+
+      const barHigh = Number(lastBar.high);
+      const barLow = Number(lastBar.low);
+      const barClose = Number(lastBar.close);
+
+      // 1. Deteksi Liquidity Sweep (Fakeout Rejection)
+      if (barHigh > priorHigh20 && barClose < priorHigh20) {
+        score += 25;
+        bias = 'BEARISH';
+        reasons.push('BEARISH_SWEEP_REJECT (+25)');
+      } else if (barLow < priorLow20 && barClose > priorLow20) {
+        score += 25;
+        bias = 'BULLISH';
+        reasons.push('BULLISH_SWEEP_RECLAIM (+25)');
+      }
+
+      // 2. Deteksi Volume Spike & Climax
+      const volumes = priorBars.map((b) => Number(b.volume) || 0);
+      const avgVol = volumes.reduce((sum, v) => sum + v, 0) / (volumes.length || 1);
+      const lastVol = Number(lastBar.volume) || 0;
+      const relVol = avgVol > 0 ? lastVol / avgVol : 1;
+
+      if (relVol >= 2.5) {
+        score += 20;
+        reasons.push(`VOLUME_CLIMAX (${relVol.toFixed(1)}x) (+20)`);
+      } else if (relVol >= 1.8) {
+        score += 15;
+        reasons.push(`HIGH_REL_VOL (${relVol.toFixed(1)}x) (+15)`);
+      }
+
+      // Normalisasi candle untuk Alpha & Harmonics
+      const normalizedCandles = primaryClosed.map((b) => ({
+        timestamp: b.startAt,
+        open: Number(b.open),
+        high: Number(b.high),
+        low: Number(b.low),
+        close: Number(b.close),
+        volume: Number(b.volume)
+      }));
+
+      // 3. Alpha Factors (Composite Score & Regime)
+      try {
+        const alpha = calculateAlphaFactors(normalizedCandles);
+        if (alpha) {
+          const absComp = Math.abs(alpha.compositeScore || 0);
+          if (absComp >= 0.35) {
+            score += 15;
+            if (alpha.compositeScore > 0) bias = 'BULLISH';
+            else if (alpha.compositeScore < 0) bias = 'BEARISH';
+            reasons.push(`ALPHA_STRONG (${alpha.regime}, score: ${alpha.compositeScore.toFixed(2)}) (+15)`);
+          } else if (absComp >= 0.2) {
+            score += 10;
+            reasons.push(`ALPHA_MOMENTUM (+10)`);
+          }
+        }
+      } catch {}
+
+      // 4. Harmonic Patterns
+      try {
+        const harmonics = detectHarmonicPatterns(normalizedCandles);
+        if (harmonics && harmonics.length > 0) {
+          const best = harmonics[0];
+          score += 20;
+          if (best.orientation === 'BULLISH') bias = 'BULLISH';
+          else if (best.orientation === 'BEARISH') bias = 'BEARISH';
+          reasons.push(`HARMONIC_${best.name.toUpperCase()} (Q:${best.qualityScore}) (+20)`);
+        }
+      } catch {}
+    }
+
+    // 5. 24h Momentum Trend
+    const p24 = frame.price24hPcnt != null ? Number(frame.price24hPcnt) : null;
+    if (p24 !== null && Math.abs(p24) >= 0.03) {
+      score += 10;
+      reasons.push(`HIGH_24H_MOMENTUM (${(p24 * 100).toFixed(1)}%) (+10)`);
+    }
+
+    if (reasons.length === 0) {
+      reasons.push('CONSOLIDATION');
+    }
+
+    return { symbol: cleanSym, score, reasons, bias };
+  } catch (err) {
+    return { symbol: cleanSym, score: 35, reasons: [`Evaluation error: ${(err as Error).message}`], bias: 'NEUTRAL' };
+  }
+}
+
 export function createReplacementRuntime(
   options: ReplacementRuntimeOptions = {}
 ): ReplacementRuntimeHandle {
@@ -1373,8 +1502,8 @@ export function createReplacementRuntime(
       venues: {
         bybit: {
           last: snap.tickers[targetSymbol]?.last ?? null,
-          bid: intelFrame.microstructure?.spreadBps ? marketFrame?.bid.value : null,
-          ask: intelFrame.microstructure?.spreadBps ? marketFrame?.ask.value : null,
+          bid: marketFrame?.bid?.value ?? null,
+          ask: marketFrame?.ask?.value ?? null,
           spreadBps: intelFrame.microstructure?.spreadBps?.value ?? null,
           fundingRate: intelFrame.microstructure?.funding?.value ?? bybitDerivs?.fundingRate ?? null,
           openInterest: intelFrame.microstructure?.openInterest?.value ?? bybitDerivs?.openInterest ?? null
@@ -2307,20 +2436,35 @@ export function createReplacementRuntime(
       // =========================================================================
       // FASE 2: CANDIDATE DISCOVERY (Kondisional: Hanya Jika freeSlots > 0)
       // =========================================================================
-      const watchlistCandidates = (postPhase1Snap.watchlist?.length ? postPhase1Snap.watchlist : postPhase1Snap.auto.symbols)
+      const rawCandidates = (postPhase1Snap.watchlist?.length ? postPhase1Snap.watchlist : postPhase1Snap.auto.symbols)
         .map((s) => s.toUpperCase())
         .filter((s) => !activeSymbols.includes(s));
 
-      if (watchlistCandidates.length === 0 && openPositionSymbols.length === 0) {
+      if (rawCandidates.length === 0 && openPositionSymbols.length === 0) {
         const fallbackSym = (postPhase1Snap.auto.symbols[0] ?? 'BTCUSDT').toUpperCase();
         lastResult = await executeSingleSymbolCycle(fallbackSym, reason);
         return lastResult;
       }
 
-      for (const candidateSym of watchlistCandidates) {
+      // Pre-screening & Opportunity Ranking seluruh kandidat di watchlist
+      const rankedCandidates = rawCandidates.map((sym) => evaluateWatchlistOpportunity(sym, marketHub));
+      rankedCandidates.sort((a, b) => b.score - a.score);
+
+      const rankingSummary = rankedCandidates
+        .map((c, i) => `#${i + 1} ${c.symbol} (${c.score} pts: ${c.reasons.slice(0, 2).join(', ')})`)
+        .join(' | ');
+
+      hub.emit('log', {
+        at: Date.now(),
+        kind: 'system',
+        text: `[WATCHLIST SCREEN] Evaluated ${rankedCandidates.length} candidate(s): ${rankingSummary}. Prioritizing top opportunities.`
+      });
+
+      for (const candidate of rankedCandidates) {
         if (snapshot().killed) break;
         if (freeSlots <= 0) break;
 
+        const candidateSym = candidate.symbol;
         lastResult = await executeSingleSymbolCycle(candidateSym, reason);
 
         const verdict = lastResult?.verdict;
@@ -3243,7 +3387,9 @@ export function createReplacementRuntime(
       clearTimeout(autoTimer);
       autoTimer = null;
     }
-    await marketHub.stop();
+    if (typeof (marketHub as any)?.stop === 'function') {
+      await marketHub.stop();
+    }
   };
 
   const dispatch = async (input: OfficeCommand): Promise<OfficeReply> => {
