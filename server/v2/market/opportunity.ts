@@ -9,6 +9,14 @@ export interface CandidateOpportunity {
   bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 }
 
+export interface WatchlistFunnelOptions {
+  allocatedMarginUsdt?: number;
+  leverage?: number;
+  minNotionalUsdt?: number;
+  systemicRiskOff?: boolean;
+  rejectedRecently?: boolean;
+}
+
 type OpportunityHub = Pick<BybitMarketHub, 'snapshot'>;
 
 /**
@@ -19,7 +27,8 @@ type OpportunityHub = Pick<BybitMarketHub, 'snapshot'>;
  */
 export function evaluateWatchlistOpportunity(
   symbol: string,
-  hub?: OpportunityHub | null
+  hub?: OpportunityHub | null,
+  opts?: WatchlistFunnelOptions
 ): CandidateOpportunity {
   const cleanSym = symbol.trim().toUpperCase();
   const reasons: string[] = [];
@@ -40,12 +49,29 @@ export function evaluateWatchlistOpportunity(
   try {
     const frame = hub.snapshot(cleanSym);
     if (!frame || frame.last?.availability !== 'AVAILABLE') {
-      return { symbol: cleanSym, score: 30, reasons: ['Market feed pending'], bias: 'NEUTRAL' };
+      return { symbol: cleanSym, score: base, reasons: ['Market feed pending'], bias: 'NEUTRAL' };
     }
 
     const currentPrice = Number(frame.last.value);
     if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-      return { symbol: cleanSym, score: 30, reasons: ['Price feed unavailable'], bias: 'NEUTRAL' };
+      return { symbol: cleanSym, score: base, reasons: ['Price feed unavailable'], bias: 'NEUTRAL' };
+    }
+
+    if (opts?.allocatedMarginUsdt && opts?.leverage && opts?.minNotionalUsdt) {
+      const effectiveNotional = opts.allocatedMarginUsdt * opts.leverage;
+      if (effectiveNotional < opts.minNotionalUsdt) {
+        return {
+          symbol: cleanSym,
+          score: 15,
+          reasons: [`INSUFFICIENT_NOTIONAL (${effectiveNotional.toFixed(1)} < min ${opts.minNotionalUsdt})`],
+          bias: 'NEUTRAL'
+        };
+      }
+    }
+
+    if (opts?.rejectedRecently) {
+      base = Math.max(20, base - 20);
+      reasons.push('REJECT_COOLDOWN (-20)');
     }
 
     const closed15m = frame.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
@@ -126,8 +152,17 @@ export function evaluateWatchlistOpportunity(
     if (opposing > 0) reasons.push(`CONFLICT (-${opposing})`);
     if (reasons.length === 0) reasons.push('CONSOLIDATION');
 
-    const bias = bull > bear ? 'BULLISH' : bear > bull ? 'BEARISH' : 'NEUTRAL';
-    return { symbol: cleanSym, score: base + dominant - opposing, reasons, bias };
+    let effectiveDominant = dominant;
+    let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = bull > bear ? 'BULLISH' : bear > bull ? 'BEARISH' : 'NEUTRAL';
+
+    if (opts?.systemicRiskOff && bias === 'BULLISH') {
+      reasons.push('SYSTEMIC_RISK_OFF (bullish long blocked -30)');
+      bias = 'NEUTRAL';
+      effectiveDominant = 0;
+      base = Math.max(20, base - 30);
+    }
+
+    return { symbol: cleanSym, score: Math.max(0, base + effectiveDominant - opposing), reasons, bias };
   } catch (err) {
     return { symbol: cleanSym, score: 35, reasons: [`Evaluation error: ${(err as Error).message}`], bias: 'NEUTRAL' };
   }

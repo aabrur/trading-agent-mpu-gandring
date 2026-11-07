@@ -2,6 +2,16 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.26] - 2026-11-08
+
+### Added & Improved
+- Implemented Fast Reflex Loop (< 1s, in-memory) operating on WebSocket tickers, enforcing Breakeven Plus ratchet (+1R -> Entry + 0.15% fee/funding cover) and monotonic ATR Ratchet Trailing (+1.5R) without LLM latency or exchange REST rate limits.
+- Implemented 4-Stage Watchlist Funnel in candidate discovery: Stage 1 Feasibility (`AllocatedMargin * Leverage >= MinNotional`) and reject cache cooldown penalty; Stage 2 Systemic Risk-Off cross-market breadth filter blocking altcoin longs; Stage 3 quantitative pre-scoring (0-100 pts) combining Alpha158 composite, Harmonic PRZ, and relative volume; Stage 4 Top-K Promotion sending only top 1-2 candidates to 6-agent deliberation.
+- Implemented Pending Limit Order Lifecycle guards: 45-minute TTL auto-cancellation and runaway TP1 touch cancellation.
+- Implemented Clean Sweep of orphan pending orders upon exchange position closure.
+- Restored pending order pricing visibility (`limitPrice`, `stopPrice`, `tpPrice`) in state reconciliation, eliminating the deliberation blind spot.
+- Added comprehensive unit and integration test suite `tests/rebirth/fast-reflex-lifecycle.test.ts`.
+
 ## [v0.0.0.4.25] - 2026-11-07
 
 ### Added & Improved

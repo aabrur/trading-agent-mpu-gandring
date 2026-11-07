@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.25",
-  "appVersion": "0.0.0.4.25",
+  "version": "0.4.26",
+  "appVersion": "0.0.0.4.26",
   "changelog": [
+    "v0.0.0.4.26: fast reflex loop (<1s in-memory) for breakeven plus (+1R -> entry + 0.15%) and monotonic ATR ratchet trailing (+1.5R), 4-stage watchlist funnel (feasibility & minNotional, reject cache cooldown, systemic risk-off breadth filter, quantitative pre-scoring 0-100, and top-k promotion), pending limit order TTL (45m) and runaway TP1 auto-cancel, clean sweep orphan order cancellation, and restored pending order pricing visibility in agent deliberation.",
     "v0.0.0.4.25: unified clean agent context eliminating 7 data duplication points across 6 AI agents and Jev, pending limit order management (PENDING_ORDER_MANAGEMENT) with automatic resting order cancellation on reversal, airtight slot gate protection, enriched chart reading with liquidity sweeps, anomaly volume climax, Alpha158 factors, and harmonic patterns, plus long-term memory lessons injection and organic lesson logging.",
     "v0.0.0.4.24: implement two-phase slot-aware cycle scheduling, working memory position and breadth context injection, sovereign owner directives memory, and native LIMIT_GTC geometry recalculation.",
     "v0.0.0.4.23: eliminate phantom zero-size positions and false SL missing alerts in reports, guard clean setup models and local agent discovery against nullish access crashes, add expanded Discord slash commands (/balance, /mode, /health, /pause, /resume, /sync, /cycle, /unkill, /buy, /sell), fix /open option stop validation, and enable automatic Discord slash commands sync on boot.",

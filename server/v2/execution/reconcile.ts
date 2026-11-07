@@ -44,6 +44,9 @@ export interface ReconciledPendingIntent {
   side: 'LONG' | 'SHORT';
   orderState: IntentState;
   filledQty: DecimalString | null;
+  limitPrice?: DecimalString | null;
+  stopPrice?: DecimalString | null;
+  tpPrice?: DecimalString | null;
 }
 
 export interface Reconciliation {
@@ -131,14 +134,22 @@ export async function reconcileAccountState(params: {
     ) {
       let stop: string | null = null;
       let tp: string | null = null;
+      let limitPrice: string | null = null;
       if (side === 'LONG' || side === 'SHORT') {
         try {
-          const parsed = JSON.parse(String(row.payload_json)) as { stop?: string | null; tp?: string | null };
+          const parsed = JSON.parse(String(row.payload_json)) as {
+            stop?: string | null;
+            tp?: string | null;
+            entry?: string | null;
+            limitPrice?: string | null;
+          };
           stop = parsed.stop ? String(parsed.stop) : null;
           tp = parsed.tp ? String(parsed.tp) : null;
+          limitPrice = parsed.entry ? String(parsed.entry) : (parsed.limitPrice ? String(parsed.limitPrice) : null);
         } catch {
           stop = null;
           tp = null;
+          limitPrice = null;
         }
       }
       try {
@@ -167,7 +178,10 @@ export async function reconcileAccountState(params: {
             symbol,
             side,
             orderState: lookedUp.state,
-            filledQty: lookedUp.filledQty
+            filledQty: lookedUp.filledQty,
+            limitPrice,
+            stopPrice: stop,
+            tpPrice: tp
           });
         }
         if (lookedUp.state === 'UNKNOWN' && !isNotFound) {

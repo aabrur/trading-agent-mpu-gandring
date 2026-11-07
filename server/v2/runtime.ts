@@ -324,6 +324,7 @@ export interface ReplacementRuntimeHandle extends OfficeRuntime {
   }): Promise<{ ok: boolean; command?: string; reply?: string; error?: string }>;
   readonly reportsService?: ReportsService;
   stop(): Promise<void>;
+  runFastReflex?(): Promise<void>;
   reconfigureVenueMode?(mode: TradingMode, venue?: VenueId): Promise<{ ok: boolean; error?: string }>;
   syncVenueAccount?(): Promise<void>;
 }
@@ -816,6 +817,8 @@ export function createReplacementRuntime(
 
   let lastFightAt = 0;
   let autoTimer: NodeJS.Timeout | null = null;
+  let fastReflexTimer: NodeJS.Timeout | null = null;
+  const rejectCache = new Map<string, { at: number; price: number }>();
 
   const scheduleNextAutoCycle = () => {
     if (autoTimer) {
@@ -1012,9 +1015,9 @@ export function createReplacementRuntime(
     const existingPendingOrder = (!existingPos && hasLivePending) ? {
       clientOrderId: venuePending?.clientOrderId ?? (pendingVerdict as any)?.positionId ?? (pendingVerdict as any)?.order?.clientOrderId ?? `pending-${targetSymbol}`,
       side: (venuePending?.side ?? (pendingVerdict?.action === 'OPEN_SHORT' ? 'SHORT' : 'LONG')) as 'LONG' | 'SHORT',
-      limitPrice: (pendingVerdict as any)?.order?.entry ?? null,
-      stopPrice: (pendingVerdict as any)?.order?.stop ?? null,
-      tpPrice: (pendingVerdict as any)?.order?.tp ?? null,
+      limitPrice: venuePending?.limitPrice ?? (pendingVerdict as any)?.order?.entry ?? null,
+      stopPrice: venuePending?.stopPrice ?? (pendingVerdict as any)?.order?.stop ?? null,
+      tpPrice: venuePending?.tpPrice ?? (pendingVerdict as any)?.order?.tp ?? null,
       orderState: venuePending?.orderState ?? 'ACCEPTED'
     } : null;
     const currentPriceNum = Number(snap.tickers[targetSymbol]?.last ?? (existingPos ? existingPos.entry : 0));
@@ -2326,6 +2329,17 @@ export function createReplacementRuntime(
       // =========================================================================
       // FASE 2: CANDIDATE DISCOVERY (Kondisional: Hanya Jika freeSlots > 0)
       // =========================================================================
+      // 1. Guard pemakaian batas rugi harian: jika >= 80% cap terpakai, skip candidate discovery
+      const startEquity = postPhase1Snap.dailyLoss?.startEquity || (postPhase1Snap.paper?.balance ?? 100);
+      const limitPct = postPhase1Snap.trading?.values?.dailyLossLimitPct ?? postPhase1Snap.dailyLoss?.limitPct ?? 10;
+      const dailyCapUsdt = (startEquity * limitPct) / 100;
+      const currentRealizedPnl = Number(postPhase1Snap.financial?.realizedPnl?.value ?? 0);
+      if (dailyCapUsdt > 0 && currentRealizedPnl < 0 && Math.abs(currentRealizedPnl) >= dailyCapUsdt * 0.8) {
+        const skipLossMsg = `[CYCLE] Daily loss usage (${Math.abs(currentRealizedPnl).toFixed(2)}/${dailyCapUsdt.toFixed(2)} USDT) reached >= 80% of limit. Skipping candidate discovery to preserve remaining capital.`;
+        hub.emit('log', { at: Date.now(), kind: 'system', text: skipLossMsg });
+        return lastResult ?? { ok: true, message: skipLossMsg };
+      }
+
       const rawCandidates = (postPhase1Snap.watchlist?.length ? postPhase1Snap.watchlist : postPhase1Snap.auto.symbols)
         .map((s) => s.toUpperCase())
         .filter((s) => !activeSymbols.includes(s));
@@ -2336,8 +2350,76 @@ export function createReplacementRuntime(
         return lastResult;
       }
 
-      // Pre-screening & Opportunity Ranking seluruh kandidat di watchlist
-      const rankedCandidates = rawCandidates.map((sym) => evaluateWatchlistOpportunity(sym, marketHub));
+      if (rawCandidates.length === 0) {
+        return lastResult ?? { ok: true, message: 'No eligible candidate symbols remaining in watchlist.' };
+      }
+
+      // 2. Cross-Market Breadth Filter
+      const breadthSymbols = postPhase1Snap.auto.symbols;
+      const crossMarketTickers: Record<string, any> = {};
+      for (const s of breadthSymbols) {
+        const snap = marketHub?.snapshot(s);
+        let change15m: number | undefined;
+        let relVol15m: number | undefined;
+        let trend15m: string | undefined;
+        try {
+          const closed15m = snap?.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
+          if (closed15m.length >= 2) {
+            const lastBar = closed15m[closed15m.length - 1];
+            const prevBar = closed15m[closed15m.length - 2];
+            const lastClose = Number(lastBar.close);
+            const prevClose = Number(prevBar.close);
+            if (prevClose > 0) {
+              change15m = Math.round(((lastClose - prevClose) / prevClose) * 10000) / 100;
+            }
+            trend15m = lastClose >= Number(lastBar.open) ? 'UPTREND' : 'DOWNTREND';
+            const last20 = closed15m.slice(-20);
+            const avgVol = last20.reduce((sum, b) => sum + (Number(b.volume) || 0), 0) / Math.max(1, last20.length);
+            if (avgVol > 0) {
+              relVol15m = Math.round((Number(lastBar.volume) / avgVol) * 10) / 10;
+            }
+          }
+        } catch {}
+        if (snap?.last?.value) {
+          crossMarketTickers[s] = {
+            last: Number(snap.last.value),
+            change15m,
+            relVol15m,
+            trend15m,
+            change24hPct: snap.price24hPcnt ? Number(snap.price24hPcnt) * 100 : undefined
+          };
+        }
+      }
+      const crossBreadth = computeCrossMarketBreadth(crossMarketTickers, breadthSymbols);
+      const isSystemicRiskOff = crossBreadth.regime === 'SYSTEMIC_RISK_OFF';
+
+      // 3. Pre-screening & Opportunity Ranking seluruh kandidat di watchlist (Funnel Stages 1-3)
+      const currentBalance = postPhase1Snap.paper.balance ?? 100;
+      const allocatedMargin = maxN > 0 ? currentBalance / maxN : 5;
+      const effectiveLeverage = postPhase1Snap.trading?.values?.maxLeverage ?? 5;
+      const minNotionalUsdt = 5.0;
+
+      const rankedCandidates = rawCandidates.map((sym) => {
+        let rejectedRecently = false;
+        if (rejectCache.has(sym)) {
+          const cached = rejectCache.get(sym)!;
+          const ageMs = Date.now() - cached.at;
+          const currPrice = Number(marketHub?.snapshot(sym)?.last?.value ?? 0);
+          const priceDiffPcnt = cached.price > 0 && currPrice > 0 ? Math.abs(currPrice - cached.price) / cached.price : 0;
+          if (ageMs < 15 * 60 * 1000 && priceDiffPcnt < 0.02) {
+            rejectedRecently = true;
+          } else if (ageMs >= 15 * 60 * 1000 || priceDiffPcnt >= 0.02) {
+            rejectCache.delete(sym);
+          }
+        }
+        return evaluateWatchlistOpportunity(sym, marketHub, {
+          allocatedMarginUsdt: allocatedMargin,
+          leverage: effectiveLeverage,
+          minNotionalUsdt,
+          systemicRiskOff: isSystemicRiskOff,
+          rejectedRecently
+        });
+      });
       rankedCandidates.sort((a, b) => b.score - a.score);
 
       const rankingSummary = rankedCandidates
@@ -2350,7 +2432,25 @@ export function createReplacementRuntime(
         text: `[WATCHLIST SCREEN] Evaluated ${rankedCandidates.length} candidate(s): ${rankingSummary}. Prioritizing top opportunities.`
       });
 
-      for (const candidate of rankedCandidates) {
+      // 4. Stage 4: Top-K Promotion (Score >= 60 high conviction, capped at min(freeSlots, 2))
+      let promotedCandidates = rankedCandidates.filter((c) => c.score >= 60).slice(0, Math.min(freeSlots, 2));
+      if (promotedCandidates.length === 0 && rankedCandidates.length > 0) {
+        const viable = rankedCandidates.filter((c) => c.score >= 50);
+        if (viable.length > 0) {
+          promotedCandidates = viable.slice(0, Math.min(freeSlots, 2));
+        } else if (reason === 'owner') {
+          // Explicit owner command: do not drop candidates on score
+          promotedCandidates = rankedCandidates.slice(0, 1);
+        }
+      }
+
+      if (promotedCandidates.length === 0) {
+        const noPromoMsg = `[WATCHLIST SCREEN] No candidates reached promotion threshold. Discovery completed.`;
+        hub.emit('log', { at: Date.now(), kind: 'system', text: noPromoMsg });
+        return lastResult ?? { ok: true, message: noPromoMsg };
+      }
+
+      for (const candidate of promotedCandidates) {
         if (snapshot().killed) break;
         if (freeSlots <= 0) break;
 
@@ -2375,6 +2475,9 @@ export function createReplacementRuntime(
               break;
             }
           }
+        } else {
+          const currPx = Number(marketHub?.snapshot(candidateSym)?.last?.value ?? 0);
+          rejectCache.set(candidateSym, { at: Date.now(), price: currPx });
         }
       }
 
@@ -3340,6 +3443,10 @@ export function createReplacementRuntime(
       clearTimeout(autoTimer);
       autoTimer = null;
     }
+    if (fastReflexTimer) {
+      clearInterval(fastReflexTimer);
+      fastReflexTimer = null;
+    }
     if (typeof (marketHub as any)?.stop === 'function') {
       await marketHub.stop();
     }
@@ -3633,6 +3740,151 @@ export function createReplacementRuntime(
     };
   };
 
+  const runFastReflexLoop = async (): Promise<void> => {
+    const snap = snapshot();
+    if (snap.killed || snap.paused) return;
+
+    // 1. Position Trailing & Breakeven Defense
+    const activePositions = snap.mode === 'PAPER'
+      ? snap.paper.positions
+      : (snap.venueAccount?.positions?.length ? snap.paper.positions : []);
+
+    for (const pos of activePositions) {
+      const sym = pos.symbol.toUpperCase();
+      const frame = marketHub?.snapshot(sym);
+      const currPrice = frame?.last?.value ? Number(frame.last.value) : (pos.mark || pos.entry);
+      if (!currPrice || currPrice <= 0 || !pos.entry || pos.entry <= 0) continue;
+
+      const isLong = pos.side === 'LONG';
+      const initialRisk = pos.stop > 0 ? Math.abs(pos.entry - pos.stop) : (pos.entry * 0.04);
+      if (initialRisk <= 0) continue;
+
+      const unrealizedPnlDist = isLong ? (currPrice - pos.entry) : (pos.entry - currPrice);
+      const rMultiple = unrealizedPnlDist / initialRisk;
+
+      // 1a. Breakeven Plus (+1R threshold)
+      if (rMultiple >= 1.0) {
+        const beStop = isLong
+          ? Math.round(pos.entry * 1.0015 * 10000) / 10000
+          : Math.round(pos.entry * 0.9985 * 10000) / 10000;
+        const needsBeAdjustment = isLong
+          ? (pos.stop < beStop)
+          : (pos.stop > beStop || pos.stop <= 0);
+
+        if (needsBeAdjustment) {
+          hub.emit('log', {
+            at: Date.now(),
+            kind: 'system',
+            text: `[FAST REFLEX] ${sym} reached +${rMultiple.toFixed(2)}R. Ratcheting stop to Breakeven+ (${beStop}).`
+          });
+          void dispatch({
+            kind: 'protect',
+            actor: 'system',
+            symbol: sym,
+            payload: { symbol: sym, stop: beStop, tp: pos.tp }
+          }).catch(() => {});
+        }
+      }
+
+      // 1b. ATR Ratchet Trailing (+1.5R)
+      if (rMultiple >= 1.5) {
+        const closed15m = frame?.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
+        const closed5m = frame?.closed?.['5m']?.filter((b) => b.confirmed) ?? [];
+        const primaryBars = closed15m.length >= 14 ? closed15m : closed5m;
+        let atr = initialRisk;
+        if (primaryBars.length >= 14) {
+          const recent = primaryBars.slice(-14);
+          const trs = recent.map((b) => Math.max(
+            Number(b.high) - Number(b.low),
+            Math.abs(Number(b.high) - Number(b.close)),
+            Math.abs(Number(b.low) - Number(b.close))
+          ));
+          atr = trs.reduce((a, b) => a + b, 0) / trs.length;
+        }
+
+        const trailStop = isLong
+          ? Math.round((currPrice - (1.5 * atr)) * 10000) / 10000
+          : Math.round((currPrice + (1.5 * atr)) * 10000) / 10000;
+
+        const needsTrailingAdjustment = isLong
+          ? (trailStop > pos.stop && trailStop > pos.entry * 1.0015)
+          : ((pos.stop <= 0 || trailStop < pos.stop) && trailStop < pos.entry * 0.9985);
+
+        if (needsTrailingAdjustment) {
+          hub.emit('log', {
+            at: Date.now(),
+            kind: 'system',
+            text: `[FAST REFLEX] ${sym} profit +${rMultiple.toFixed(2)}R. Trailing stop ratchet to ${trailStop}.`
+          });
+          void dispatch({
+            kind: 'protect',
+            actor: 'system',
+            symbol: sym,
+            payload: { symbol: sym, stop: trailStop, tp: pos.tp }
+          }).catch(() => {});
+        }
+      }
+    }
+
+    // 2. Pending Limit Order TTL & Runaway TP1 Checks
+    const pendingOrders = (snap.venueAccount as any)?.pendingOrders ?? [];
+    const pendingVerdicts = (snap.verdicts ?? []).filter((v: any) => v.operationalStatus === 'PENDING');
+
+    const now = Date.now();
+    for (const po of pendingOrders) {
+      const sym = po.symbol.toUpperCase();
+      const clientOrderId = po.clientOrderId;
+      const matchingVerdict = pendingVerdicts.find((v) => v.symbol.toUpperCase() === sym);
+      const createdAt = matchingVerdict?.at ?? (po as any).createdAt ?? now;
+      const ageMs = now - createdAt;
+
+      // 2a. TTL Expired (45 minutes)
+      if (ageMs > 45 * 60 * 1000) {
+        hub.emit('log', {
+          at: now,
+          kind: 'system',
+          text: `[FAST REFLEX] Pending limit order for ${sym} expired TTL (${Math.round(ageMs / 60000)}m > 45m). Auto-cancelling.`
+        });
+        void dispatch({
+          kind: 'cancel_entry',
+          actor: 'system',
+          symbol: sym,
+          payload: { symbol: sym, clientOrderId }
+        }).catch(() => {});
+        continue;
+      }
+
+      // 2b. Runaway TP1 Touch
+      const tpPrice = po.tpPrice ? Number(po.tpPrice) : (matchingVerdict?.order?.tp ? Number(matchingVerdict.order.tp) : null);
+      if (tpPrice && tpPrice > 0) {
+        const frame = marketHub?.snapshot(sym);
+        const currPrice = frame?.last?.value ? Number(frame.last.value) : 0;
+        if (currPrice > 0) {
+          const isShort = po.side === 'SHORT' || matchingVerdict?.action === 'OPEN_SHORT';
+          const tpReached = isShort ? (currPrice <= tpPrice) : (currPrice >= tpPrice);
+          if (tpReached) {
+            hub.emit('log', {
+              at: now,
+              kind: 'system',
+              text: `[FAST REFLEX] Price for ${sym} touched TP1 (${tpPrice}) without filling pending limit. Cancelling runaway entry.`
+            });
+            void dispatch({
+              kind: 'cancel_entry',
+              actor: 'system',
+              symbol: sym,
+              payload: { symbol: sym, clientOrderId }
+            }).catch(() => {});
+          }
+        }
+      }
+    }
+  };
+
+  fastReflexTimer = setInterval(() => {
+    void runFastReflexLoop().catch(() => {});
+  }, 1000);
+  fastReflexTimer.unref();
+
   return {
     hub,
     marketHub,
@@ -3646,6 +3898,7 @@ export function createReplacementRuntime(
     reportsService: options.reportsService,
     stop,
     dispatch,
+    runFastReflex: runFastReflexLoop,
     reconfigureVenueMode: options.reconfigureVenueMode,
     syncVenueAccount: options.syncVenueAccount
   };
@@ -4365,7 +4618,10 @@ export async function startReplacementServer(
               symbol: p.symbol,
               side: p.side,
               orderState: p.orderState,
-              filledQty: p.filledQty
+              filledQty: p.filledQty,
+              limitPrice: p.limitPrice ?? null,
+              stopPrice: p.stopPrice ?? null,
+              tpPrice: p.tpPrice ?? null
             }))
           };
           d.paper.balance = eq;
@@ -4481,6 +4737,24 @@ export async function startReplacementServer(
 
         if (slotFreedByClose && runtimeRef) {
           const s = runtimeRef.snapshot();
+          for (const closedSym of closedSymbolsList) {
+            const pendingToClean = (s.venueAccount as any)?.pendingOrders?.filter(
+              (p: any) => p.symbol.toUpperCase() === closedSym.toUpperCase()
+            ) ?? [];
+            for (const po of pendingToClean) {
+              runtimeRef.hub.emit('log', {
+                at: Date.now(),
+                kind: 'system',
+                text: `[CLEAN SWEEP] Cancelling orphan pending order ${po.clientOrderId} on closed symbol ${closedSym}.`
+              });
+              void runtimeRef.dispatch({
+                actor: 'system',
+                kind: 'cancel_entry',
+                symbol: closedSym,
+                payload: { symbol: closedSym, clientOrderId: po.clientOrderId }
+              }).catch(() => {});
+            }
+          }
           if (s.auto.on && !s.killed && !s.paused && !s.auto.running) {
             runtimeRef.hub.emit('log', {
               at: Date.now(),
