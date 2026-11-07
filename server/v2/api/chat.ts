@@ -10,6 +10,7 @@ import { liveAnnouncementObservation } from '../../market/live-news.js';
 import { analyzeSMC } from '../../market/smc.js';
 import { calculateAlphaFactors } from '../../market/alpha-factors.js';
 import { detectHarmonicPatterns } from '../../market/harmonics.js';
+import { evaluateWatchlistOpportunity } from '../market/opportunity.js';
 
 function roundPriceMetric(val: number | string | null | undefined, refPrice = 1): number | null {
   if (val === null || val === undefined) return null;
@@ -385,6 +386,7 @@ export function buildLiveDeskChatContext(
     secrets?: Record<string, unknown>;
     marketHub?: BybitMarketHub;
     extraFeeds?: Record<string, unknown>;
+    newsBySymbol?: Record<string, unknown>;
   } = {}
 ): LiveDeskChatContext {
   const now = options.now ?? Date.now();
@@ -417,10 +419,6 @@ export function buildLiveDeskChatContext(
         const intel = computeIntelligence(frame, { orderbook: book, trades });
         const currentPriceNum = Number(frame.last?.value ?? state.tickers?.[sym]?.last ?? 1) || 1;
 
-        let oppScore = 50;
-        let oppBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-        const oppReasons: string[] = [];
-
         const tfSummary: Record<string, any> = {};
         for (const [tf, feat] of Object.entries(intel.byTimeframe ?? {})) {
           if (!feat) continue;
@@ -450,10 +448,8 @@ export function buildLiveDeskChatContext(
             const barClose = Number(lastBar.close);
             if (barHigh > effectiveSwingHigh && barClose < effectiveSwingHigh) {
               liquiditySweep = 'BEARISH_SWEEP_REJECT';
-              if (tf === '15m') { oppScore += 25; oppBias = 'BEARISH'; oppReasons.push('BEARISH_SWEEP_REJECT (+25)'); }
             } else if (barLow < effectiveSwingLow && barClose > effectiveSwingLow) {
               liquiditySweep = 'BULLISH_SWEEP_RECLAIM';
-              if (tf === '15m') { oppScore += 25; oppBias = 'BULLISH'; oppReasons.push('BULLISH_SWEEP_RECLAIM (+25)'); }
             }
           }
 
@@ -468,16 +464,10 @@ export function buildLiveDeskChatContext(
           if (lastBar && barClose !== null) {
             if ((isCompressing || relVol >= 1.8) && barClose > bbUpper && relVol >= 1.8) {
               anomalySignal = 'SQUEEZE_BREAKOUT_UP';
-              if (tf === '15m') { oppScore += 20; oppReasons.push(`SQUEEZE_BREAKOUT_UP (+20)`); }
             } else if (relVol >= 1.8 && barClose < bbLower) {
               anomalySignal = 'SQUEEZE_BREAKDOWN_DOWN';
-              if (tf === '15m') { oppScore += 20; oppReasons.push(`SQUEEZE_BREAKDOWN_DOWN (+20)`); }
             } else if (relVol >= 2.5) {
               anomalySignal = 'VOLUME_CLIMAX_SPIKE';
-              if (tf === '15m') { oppScore += 20; oppReasons.push(`VOLUME_CLIMAX (${relVol.toFixed(1)}x) (+20)`); }
-            } else if (tf === '15m' && relVol >= 1.8) {
-              oppScore += 15;
-              oppReasons.push(`HIGH_REL_VOL (${relVol.toFixed(1)}x) (+15)`);
             }
           }
 
@@ -520,18 +510,6 @@ export function buildLiveDeskChatContext(
                   vwap20Ratio: roundRatioMetric(alpha.vwap20Ratio, 2),
                   rsv14: roundRatioMetric(alpha.rsv14, 1)
                 };
-                if (tf === '15m') {
-                  const absComp = Math.abs(alpha.compositeScore || 0);
-                  if (absComp >= 0.35) {
-                    oppScore += 15;
-                    if (alpha.compositeScore > 0) oppBias = 'BULLISH';
-                    else if (alpha.compositeScore < 0) oppBias = 'BEARISH';
-                    oppReasons.push(`ALPHA_STRONG (${alpha.regime}, ${alpha.compositeScore.toFixed(2)}) (+15)`);
-                  } else if (absComp >= 0.2) {
-                    oppScore += 10;
-                    oppReasons.push('ALPHA_MOMENTUM (+10)');
-                  }
-                }
               }
             } catch {}
             try {
@@ -549,13 +527,6 @@ export function buildLiveDeskChatContext(
                     target2: roundPriceMetric(h.prz.target2, currentPriceNum)
                   }
                 }));
-                if (tf === '15m') {
-                  const best = harmonics[0]!;
-                  oppScore += 20;
-                  if (best.orientation === 'BULLISH') oppBias = 'BULLISH';
-                  else if (best.orientation === 'BEARISH') oppBias = 'BEARISH';
-                  oppReasons.push(`HARMONIC_${best.name.toUpperCase()} (Q:${best.qualityScore}) (+20)`);
-                }
               }
             } catch {}
           }
@@ -602,13 +573,8 @@ export function buildLiveDeskChatContext(
           };
         }
 
-        const p24 = frame.price24hPcnt != null ? Number(frame.price24hPcnt) : null;
-        if (p24 !== null && Math.abs(p24) >= 0.03) {
-          oppScore += 10;
-          oppReasons.push(`HIGH_24H_MOMENTUM (${(p24 * 100).toFixed(1)}%) (+10)`);
-        }
-        if (oppReasons.length === 0) oppReasons.push('CONSOLIDATION');
-        rawRanking.push({ symbol: sym, score: oppScore, bias: oppBias, reasons: oppReasons });
+        // Same scorer the auto cycle uses, so chat ranking and cycle ranking never disagree.
+        rawRanking.push(evaluateWatchlistOpportunity(sym, options.marketHub));
 
         const tradesList = options.marketHub.recentTrades(sym) ?? [];
         let largeBuyVol = 0;
@@ -651,9 +617,11 @@ export function buildLiveDeskChatContext(
             orderbookImbalanceRatio: obImbalance,
             recentLargeTrades: exchangeTrades.slice(0, 5)
           },
-          liveNews: options.extraFeeds?.newsBriefing
-            ? `${liveAnnouncementObservation(sym) ?? 'No announcements'}. Public News: ${JSON.stringify(options.extraFeeds.newsBriefing)}`
-            : (liveAnnouncementObservation(sym) ?? null)
+          liveNews: {
+            announcements: liveAnnouncementObservation(sym) ?? null,
+            // Only attach a public news briefing that was actually gathered for this symbol.
+            publicNews: options.newsBySymbol?.[sym] ?? null
+          }
         };
       } catch {}
     }

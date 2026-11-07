@@ -62,6 +62,7 @@ import { PaperVenue } from './sandbox/paper.js';
 import { analyzeSMC } from '../market/smc.js';
 import { calculateAlphaFactors } from '../market/alpha-factors.js';
 import { detectHarmonicPatterns } from '../market/harmonics.js';
+import { evaluateWatchlistOpportunity } from './market/opportunity.js';
 import {
   fetchL2Orderbook,
   fetchDerivatives,
@@ -488,134 +489,7 @@ export function computeCrossMarketBreadth(
   };
 }
 
-export interface CandidateOpportunity {
-  symbol: string;
-  score: number;
-  reasons: string[];
-  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-}
-
-export function evaluateWatchlistOpportunity(
-  symbol: string,
-  hub?: BybitMarketHub | null
-): CandidateOpportunity {
-  const cleanSym = symbol.trim().toUpperCase();
-  const reasons: string[] = [];
-  let score = 50;
-  let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-
-  if (!hub) {
-    return { symbol: cleanSym, score, reasons: ['Standard queue order'], bias };
-  }
-
-  try {
-    const frame = hub.snapshot(cleanSym);
-    if (!frame || frame.last?.availability !== 'AVAILABLE') {
-      return { symbol: cleanSym, score: 30, reasons: ['Market feed pending'], bias };
-    }
-
-    const currentPrice = Number(frame.last.value);
-    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-      return { symbol: cleanSym, score: 30, reasons: ['Price feed unavailable'], bias };
-    }
-
-    const closed15m = frame.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
-    const closed1h = frame.closed?.['1h']?.filter((b) => b.confirmed) ?? [];
-    const closed5m = frame.closed?.['5m']?.filter((b) => b.confirmed) ?? [];
-
-    const primaryClosed = closed15m.length >= 20 ? closed15m : (closed5m.length >= 20 ? closed5m : closed1h);
-
-    if (primaryClosed.length >= 20) {
-      const lastBar = primaryClosed.at(-1)!;
-      const priorBars = primaryClosed.slice(-21, -1);
-      const priorHigh20 = priorBars.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity);
-      const priorLow20 = priorBars.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity);
-
-      const barHigh = Number(lastBar.high);
-      const barLow = Number(lastBar.low);
-      const barClose = Number(lastBar.close);
-
-      // 1. Deteksi Liquidity Sweep (Fakeout Rejection)
-      if (barHigh > priorHigh20 && barClose < priorHigh20) {
-        score += 25;
-        bias = 'BEARISH';
-        reasons.push('BEARISH_SWEEP_REJECT (+25)');
-      } else if (barLow < priorLow20 && barClose > priorLow20) {
-        score += 25;
-        bias = 'BULLISH';
-        reasons.push('BULLISH_SWEEP_RECLAIM (+25)');
-      }
-
-      // 2. Deteksi Volume Spike & Climax
-      const volumes = priorBars.map((b) => Number(b.volume) || 0);
-      const avgVol = volumes.reduce((sum, v) => sum + v, 0) / (volumes.length || 1);
-      const lastVol = Number(lastBar.volume) || 0;
-      const relVol = avgVol > 0 ? lastVol / avgVol : 1;
-
-      if (relVol >= 2.5) {
-        score += 20;
-        reasons.push(`VOLUME_CLIMAX (${relVol.toFixed(1)}x) (+20)`);
-      } else if (relVol >= 1.8) {
-        score += 15;
-        reasons.push(`HIGH_REL_VOL (${relVol.toFixed(1)}x) (+15)`);
-      }
-
-      // Normalisasi candle untuk Alpha & Harmonics
-      const normalizedCandles = primaryClosed.map((b) => ({
-        timestamp: b.startAt,
-        open: Number(b.open),
-        high: Number(b.high),
-        low: Number(b.low),
-        close: Number(b.close),
-        volume: Number(b.volume)
-      }));
-
-      // 3. Alpha Factors (Composite Score & Regime)
-      try {
-        const alpha = calculateAlphaFactors(normalizedCandles);
-        if (alpha) {
-          const absComp = Math.abs(alpha.compositeScore || 0);
-          if (absComp >= 0.35) {
-            score += 15;
-            if (alpha.compositeScore > 0) bias = 'BULLISH';
-            else if (alpha.compositeScore < 0) bias = 'BEARISH';
-            reasons.push(`ALPHA_STRONG (${alpha.regime}, score: ${alpha.compositeScore.toFixed(2)}) (+15)`);
-          } else if (absComp >= 0.2) {
-            score += 10;
-            reasons.push(`ALPHA_MOMENTUM (+10)`);
-          }
-        }
-      } catch {}
-
-      // 4. Harmonic Patterns
-      try {
-        const harmonics = detectHarmonicPatterns(normalizedCandles);
-        if (harmonics && harmonics.length > 0) {
-          const best = harmonics[0];
-          score += 20;
-          if (best.orientation === 'BULLISH') bias = 'BULLISH';
-          else if (best.orientation === 'BEARISH') bias = 'BEARISH';
-          reasons.push(`HARMONIC_${best.name.toUpperCase()} (Q:${best.qualityScore}) (+20)`);
-        }
-      } catch {}
-    }
-
-    // 5. 24h Momentum Trend
-    const p24 = frame.price24hPcnt != null ? Number(frame.price24hPcnt) : null;
-    if (p24 !== null && Math.abs(p24) >= 0.03) {
-      score += 10;
-      reasons.push(`HIGH_24H_MOMENTUM (${(p24 * 100).toFixed(1)}%) (+10)`);
-    }
-
-    if (reasons.length === 0) {
-      reasons.push('CONSOLIDATION');
-    }
-
-    return { symbol: cleanSym, score, reasons, bias };
-  } catch (err) {
-    return { symbol: cleanSym, score: 35, reasons: [`Evaluation error: ${(err as Error).message}`], bias: 'NEUTRAL' };
-  }
-}
+export { evaluateWatchlistOpportunity, type CandidateOpportunity } from './market/opportunity.js';
 
 export function createReplacementRuntime(
   options: ReplacementRuntimeOptions = {}
@@ -2127,8 +2001,21 @@ export function createReplacementRuntime(
             ? entryPrice * (1 + tpPricePct)
             : entryPrice * (1 - tpPricePct);
 
-          const stopPrice = Number(out.verdict.thesis.stop) || Number(fallbackCalcStop.toFixed(4));
-          const tpPrice = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : Number(fallbackCalcTp.toFixed(4));
+          // Owner profile SL/TP (ROE %) bind every position. Agents choose symbol, direction and entry;
+          // their structural stop/target is advisory and only used when no profile is configured.
+          const profileAnchored = Boolean(currentSnap.trading?.values);
+          const priceDp = entryPrice >= 100 ? 2 : entryPrice >= 1 ? 4 : 8;
+          const profileStop = Number(fallbackCalcStop.toFixed(priceDp));
+          const profileTp = Number(fallbackCalcTp.toFixed(priceDp));
+          const stopPrice = profileAnchored ? profileStop : (Number(out.verdict.thesis.stop) || profileStop);
+          const tpPrice = profileAnchored ? profileTp : (out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : profileTp);
+          if (profileAnchored && (Number(out.verdict.thesis.stop) !== stopPrice || Number(out.verdict.thesis.tp) !== tpPrice)) {
+            hub.emit('log', {
+              at: Date.now(),
+              kind: 'execution',
+              text: `${targetSymbol}: profile ${currentSnap.trading?.profile ?? 'custom'} anchors SL ${stopPrice} (${stopPctRoe}% ROE) / TP ${tpPrice} (${tpPctRoe}% ROE); desk proposal was SL ${out.verdict.thesis.stop ?? 'none'} / TP ${out.verdict.thesis.tp ?? 'none'}.`
+            });
+          }
           const margin = Math.round(perOrder * 100) / 100;
           const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
 
@@ -2219,6 +2106,9 @@ export function createReplacementRuntime(
               }
               if (isPending && !verdictRecord.executed) {
                 verdictRecord.reason = `Limit order resting (${orderState}) at ${thesisLimit ?? entryPrice}.`;
+              }
+              if (!isFilled && !isPartial && !isPending) {
+                verdictRecord.reason = `Venue did not accept order (state ${orderState}): ${dispatchRes.message}`;
               }
               verdictRecord.order = {
                 positionId: clientOrderId,
@@ -2571,6 +2461,7 @@ export function createReplacementRuntime(
       }
       const deskSnapshot = buildLiveDeskChatContext(snapshot(), {
         marketHub,
+        newsBySymbol: Object.fromEntries(newsBriefingsBySymbol),
         extraFeeds: {
           newsBriefing: (input.symbol ? newsBriefingsBySymbol.get(input.symbol.toUpperCase()) : undefined)
             ?? Array.from(newsBriefingsBySymbol.values())[0]

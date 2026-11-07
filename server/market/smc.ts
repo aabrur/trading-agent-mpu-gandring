@@ -284,8 +284,12 @@ export function analyzeSMC(candles: any[]): SMCAnalysis | null {
   // Evaluate Order Block mitigation by current price
   const latestPrice = bars[bars.length - 1].close;
   const activeOrderBlocks: SMCOrderBlock[] = [];
+  const seenOrderBlocks = new Set<string>();
 
   for (const ob of orderBlocks) {
+    // Every bar that closes beyond the same swing re-detects the same origin candle; keep one.
+    if (seenOrderBlocks.has(ob.id)) continue;
+    seenOrderBlocks.add(ob.id);
     if (ob.type === 'BULLISH' && latestPrice < ob.bottomPrice) {
       ob.mitigated = true;
     } else if (ob.type === 'BEARISH' && latestPrice > ob.topPrice) {
