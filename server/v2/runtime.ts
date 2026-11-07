@@ -4322,7 +4322,10 @@ export async function startReplacementServer(
       const eq = bal.equity !== null ? Number(bal.equity) : null;
       const av = bal.available !== null ? Number(bal.available) : null;
       if (eq !== null && Number.isFinite(eq)) {
+        let slotFreedByClose = false;
+        let closedSymbolsList: string[] = [];
         runtimeRef?.updateState((d) => {
+          const prevPosSymbols = (d.venueAccount?.positions ?? d.paper.positions ?? []).map((p) => p.symbol.toUpperCase());
           d.financial.balance = availableFinancialField(eq);
           d.financial.equity = availableFinancialField(eq);
           const effectiveAv = (av !== null && Number.isFinite(av)) ? av : eq;
@@ -4333,6 +4336,8 @@ export async function startReplacementServer(
           d.financial.unrealizedPnl = availableFinancialField(totalUnrealized);
           const pendingIntents = recon?.pending ?? [];
           const activePosList = posList.filter((p) => Number(p.qty) > 0);
+          const currentPosSymbols = new Set(activePosList.map((p) => p.symbol.toUpperCase()));
+          closedSymbolsList = prevPosSymbols.filter((s) => !currentPosSymbols.has(s));
           if (d.verdicts) {
             for (const v of d.verdicts) {
               if ((v as any).operationalStatus === 'PENDING') {
@@ -4456,9 +4461,19 @@ export async function startReplacementServer(
               .filter((p) => p.orderState === 'ACCEPTED' || p.orderState === 'PARTIAL')
               .map((p) => p.symbol.toUpperCase())
           ]);
+          const nextFreeSlots = Math.max(0, slots - openSymbols.size);
+          if (closedSymbolsList.length > 0 && nextFreeSlots > 0) {
+            slotFreedByClose = true;
+          }
           d.paper.canOpen = d.paper.perOrder > 0 && openSymbols.size < slots;
           if (d.accountState) {
-            d.accountState.freeSlots = Math.max(0, slots - openSymbols.size);
+            d.accountState.openPositionsCount = updatedPositions.length;
+            d.accountState.occupiedSlots = openSymbols.size;
+            d.accountState.pendingOpenCount = pendingIntents.filter(
+              (p) => p.orderState === 'ACCEPTED' || p.orderState === 'PARTIAL'
+            ).length;
+            d.accountState.maxPositions = slots;
+            d.accountState.freeSlots = nextFreeSlots;
             d.accountState.hasTradableCapital = d.paper.canOpen;
             d.accountState.canOpenNewSlot = d.paper.canOpen;
             d.accountState.status = 'AVAILABLE';
@@ -4466,6 +4481,18 @@ export async function startReplacementServer(
             d.accountState.observedAt = Date.now();
           }
         });
+
+        if (slotFreedByClose && runtimeRef) {
+          const s = runtimeRef.snapshot();
+          if (s.auto.on && !s.killed && !s.paused && !s.auto.running) {
+            runtimeRef.hub.emit('log', {
+              at: Date.now(),
+              kind: 'system',
+              text: `[VENUE SYNC] Position(s) closed on exchange (${closedSymbolsList.join(', ')}). Slot freed (${s.accountState?.freeSlots ?? 1}/${s.paper.n}). Triggering immediate watchlist opportunity scan.`
+            });
+            void runtimeRef.triggerCycle(undefined, 'schedule').catch(() => {});
+          }
+        }
       }
     } catch {
       // non-fatal

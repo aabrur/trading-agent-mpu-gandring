@@ -7,6 +7,27 @@ import type { RuntimeStore } from '../store/database.js';
 import type { BybitMarketHub } from '../market/bybit.js';
 import { computeIntelligence } from '../market/intelligence.js';
 import { liveAnnouncementObservation } from '../../market/live-news.js';
+import { analyzeSMC } from '../../market/smc.js';
+import { calculateAlphaFactors } from '../../market/alpha-factors.js';
+import { detectHarmonicPatterns } from '../../market/harmonics.js';
+
+function roundPriceMetric(val: number | string | null | undefined, refPrice = 1): number | null {
+  if (val === null || val === undefined) return null;
+  const num = typeof val === 'number' ? val : Number(val);
+  if (!Number.isFinite(num)) return null;
+  const absRef = Math.abs(refPrice || num);
+  const decimals = absRef >= 100 ? 2 : absRef >= 1 ? 4 : absRef >= 0.01 ? 6 : 8;
+  const factor = 10 ** decimals;
+  return Math.round(num * factor) / factor;
+}
+
+function roundRatioMetric(val: number | string | null | undefined, decimals = 2): number | null {
+  if (val === null || val === undefined) return null;
+  const num = typeof val === 'number' ? val : Number(val);
+  if (!Number.isFinite(num)) return null;
+  const factor = 10 ** decimals;
+  return Math.round(num * factor) / factor;
+}
 
 export interface StudioConversation {
   id: string;
@@ -309,6 +330,32 @@ export interface LiveDeskChatContext {
     whaleExchangeFlow?: unknown;
     liveNews?: unknown;
   }>;
+  watchlistOpportunityRanking?: Array<{
+    rank: number;
+    symbol: string;
+    score: number;
+    bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    reasons: string[];
+  }>;
+  recentVerdicts?: Array<{
+    id: string;
+    symbol: string;
+    action: string;
+    operationalStatus?: string;
+    executed: boolean;
+    reason: string;
+    order?: unknown;
+    at: number;
+  }>;
+  recentLessons?: Array<{
+    role: string;
+    kind: string;
+    symbol?: string;
+    happened: string;
+    rootCause: string;
+    lesson: string;
+    status?: string;
+  }>;
   jev?: {
     enabled: boolean;
     health?: string;
@@ -354,6 +401,8 @@ export function buildLiveDeskChatContext(
   }));
 
   const marketIntelligenceBySymbol: Record<string, any> = {};
+  const rawRanking: Array<{ symbol: string; score: number; bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'; reasons: string[] }> = [];
+
   if (options.marketHub) {
     const rawSymbols = (state.watchlist && state.watchlist.length > 0)
       ? state.watchlist
@@ -366,6 +415,11 @@ export function buildLiveDeskChatContext(
         const book = options.marketHub.orderbook(sym);
         const trades = options.marketHub.recentTrades(sym);
         const intel = computeIntelligence(frame, { orderbook: book, trades });
+        const currentPriceNum = Number(frame.last?.value ?? state.tickers?.[sym]?.last ?? 1) || 1;
+
+        let oppScore = 50;
+        let oppBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+        const oppReasons: string[] = [];
 
         const tfSummary: Record<string, any> = {};
         for (const [tf, feat] of Object.entries(intel.byTimeframe ?? {})) {
@@ -373,20 +427,138 @@ export function buildLiveDeskChatContext(
           const highs = feat.structure?.pivots?.filter((p) => p.kind === 'HIGH') ?? [];
           const lows = feat.structure?.pivots?.filter((p) => p.kind === 'LOW') ?? [];
           const closed = frame.closed[tf as TF]?.filter((b) => b.confirmed) ?? [];
-          const last20 = closed.slice(-20);
-          const recentHigh20 = last20.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity);
-          const recentLow20 = last20.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity);
+          const lastBar = closed.at(-1);
+          const priorBars = closed.slice(-21, -1);
+          const priorHigh20 = priorBars.length > 0 ? priorBars.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity) : -Infinity;
+          const priorLow20 = priorBars.length > 0 ? priorBars.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity) : Infinity;
 
           const lastPivotHigh = highs[highs.length - 1]?.price != null ? Number(highs[highs.length - 1].price) : null;
           const lastPivotLow = lows[lows.length - 1]?.price != null ? Number(lows[lows.length - 1].price) : null;
 
-          const effectiveSwingHigh = lastPivotHigh !== null && Number.isFinite(recentHigh20) && recentHigh20 > -Infinity
-            ? Math.max(lastPivotHigh, recentHigh20)
-            : (lastPivotHigh ?? (recentHigh20 > -Infinity ? recentHigh20 : null));
+          const effectiveSwingHigh = lastPivotHigh !== null && Number.isFinite(priorHigh20) && priorHigh20 > -Infinity
+            ? Math.max(lastPivotHigh, priorHigh20)
+            : (lastPivotHigh ?? (priorHigh20 > -Infinity ? priorHigh20 : null));
 
-          const effectiveSwingLow = lastPivotLow !== null && Number.isFinite(recentLow20) && recentLow20 < Infinity
-            ? Math.min(lastPivotLow, recentLow20)
-            : (lastPivotLow ?? (recentLow20 < Infinity ? recentLow20 : null));
+          const effectiveSwingLow = lastPivotLow !== null && Number.isFinite(priorLow20) && priorLow20 < Infinity
+            ? Math.min(lastPivotLow, priorLow20)
+            : (lastPivotLow ?? (priorLow20 < Infinity ? priorLow20 : null));
+
+          let liquiditySweep: 'BEARISH_SWEEP_REJECT' | 'BULLISH_SWEEP_RECLAIM' | null = null;
+          if (lastBar && effectiveSwingHigh !== null && effectiveSwingLow !== null) {
+            const barHigh = Number(lastBar.high);
+            const barLow = Number(lastBar.low);
+            const barClose = Number(lastBar.close);
+            if (barHigh > effectiveSwingHigh && barClose < effectiveSwingHigh) {
+              liquiditySweep = 'BEARISH_SWEEP_REJECT';
+              if (tf === '15m') { oppScore += 25; oppBias = 'BEARISH'; oppReasons.push('BEARISH_SWEEP_REJECT (+25)'); }
+            } else if (barLow < effectiveSwingLow && barClose > effectiveSwingLow) {
+              liquiditySweep = 'BULLISH_SWEEP_RECLAIM';
+              if (tf === '15m') { oppScore += 25; oppBias = 'BULLISH'; oppReasons.push('BULLISH_SWEEP_RECLAIM (+25)'); }
+            }
+          }
+
+          let anomalySignal: 'SQUEEZE_BREAKOUT_UP' | 'SQUEEZE_BREAKDOWN_DOWN' | 'VOLUME_CLIMAX_SPIKE' | null = null;
+          const relVol = Number(feat.relativeVolume20?.value ?? 0);
+          const bbUpper = feat.bollinger20?.value?.upper != null ? Number(feat.bollinger20.value.upper) : Infinity;
+          const bbLower = feat.bollinger20?.value?.lower != null ? Number(feat.bollinger20.value.lower) : -Infinity;
+          const bbBandwidth = feat.bollinger20?.value?.bandwidth != null ? Number(feat.bollinger20.value.bandwidth) : null;
+          const isCompressing = feat.volatilityRegime === 'COMPRESSING' || (bbBandwidth !== null && bbBandwidth < 0.04);
+          const barClose = lastBar ? Number(lastBar.close) : null;
+
+          if (lastBar && barClose !== null) {
+            if ((isCompressing || relVol >= 1.8) && barClose > bbUpper && relVol >= 1.8) {
+              anomalySignal = 'SQUEEZE_BREAKOUT_UP';
+              if (tf === '15m') { oppScore += 20; oppReasons.push(`SQUEEZE_BREAKOUT_UP (+20)`); }
+            } else if (relVol >= 1.8 && barClose < bbLower) {
+              anomalySignal = 'SQUEEZE_BREAKDOWN_DOWN';
+              if (tf === '15m') { oppScore += 20; oppReasons.push(`SQUEEZE_BREAKDOWN_DOWN (+20)`); }
+            } else if (relVol >= 2.5) {
+              anomalySignal = 'VOLUME_CLIMAX_SPIKE';
+              if (tf === '15m') { oppScore += 20; oppReasons.push(`VOLUME_CLIMAX (${relVol.toFixed(1)}x) (+20)`); }
+            } else if (tf === '15m' && relVol >= 1.8) {
+              oppScore += 15;
+              oppReasons.push(`HIGH_REL_VOL (${relVol.toFixed(1)}x) (+15)`);
+            }
+          }
+
+          const normalizedCandles = closed.map((b) => ({
+            timestamp: b.startAt,
+            open: Number(b.open),
+            high: Number(b.high),
+            low: Number(b.low),
+            close: Number(b.close),
+            volume: Number(b.volume)
+          }));
+
+          let smcData: any = null;
+          if (['5m', '15m', '1h', '4h'].includes(tf) && normalizedCandles.length > 0) {
+            try {
+              const smcRes = analyzeSMC(normalizedCandles);
+              if (smcRes) {
+                smcData = {
+                  marketTrend: smcRes.marketTrend,
+                  lastBreak: smcRes.lastBreak,
+                  activeFVGs: smcRes.activeFVGs,
+                  activeOrderBlocks: smcRes.activeOrderBlocks,
+                  premiumDiscountZone: smcRes.premiumDiscountZone
+                };
+              }
+            } catch {}
+          }
+
+          let quantFactors: unknown = null;
+          let harmonicPatterns: unknown[] = [];
+          if (['15m', '1h', '4h'].includes(tf) && normalizedCandles.length > 0) {
+            try {
+              const alpha = calculateAlphaFactors(normalizedCandles);
+              if (alpha) {
+                quantFactors = {
+                  compositeScore: roundRatioMetric(alpha.compositeScore, 3),
+                  regime: alpha.regime,
+                  roc5: roundRatioMetric(alpha.roc5, 2),
+                  roc20: roundRatioMetric(alpha.roc20, 2),
+                  vwap20Ratio: roundRatioMetric(alpha.vwap20Ratio, 2),
+                  rsv14: roundRatioMetric(alpha.rsv14, 1)
+                };
+                if (tf === '15m') {
+                  const absComp = Math.abs(alpha.compositeScore || 0);
+                  if (absComp >= 0.35) {
+                    oppScore += 15;
+                    if (alpha.compositeScore > 0) oppBias = 'BULLISH';
+                    else if (alpha.compositeScore < 0) oppBias = 'BEARISH';
+                    oppReasons.push(`ALPHA_STRONG (${alpha.regime}, ${alpha.compositeScore.toFixed(2)}) (+15)`);
+                  } else if (absComp >= 0.2) {
+                    oppScore += 10;
+                    oppReasons.push('ALPHA_MOMENTUM (+10)');
+                  }
+                }
+              }
+            } catch {}
+            try {
+              const harmonics = detectHarmonicPatterns(normalizedCandles);
+              if (harmonics && harmonics.length > 0) {
+                harmonicPatterns = harmonics.slice(0, 2).map((h) => ({
+                  name: h.name,
+                  orientation: h.orientation,
+                  qualityScore: h.qualityScore,
+                  prz: {
+                    entryMin: roundPriceMetric(h.prz.entryMin, currentPriceNum),
+                    entryMax: roundPriceMetric(h.prz.entryMax, currentPriceNum),
+                    stopLoss: roundPriceMetric(h.prz.stopLoss, currentPriceNum),
+                    target1: roundPriceMetric(h.prz.target1, currentPriceNum),
+                    target2: roundPriceMetric(h.prz.target2, currentPriceNum)
+                  }
+                }));
+                if (tf === '15m') {
+                  const best = harmonics[0]!;
+                  oppScore += 20;
+                  if (best.orientation === 'BULLISH') oppBias = 'BULLISH';
+                  else if (best.orientation === 'BEARISH') oppBias = 'BEARISH';
+                  oppReasons.push(`HARMONIC_${best.name.toUpperCase()} (Q:${best.qualityScore}) (+20)`);
+                }
+              }
+            } catch {}
+          }
 
           const recentCandles = closed.slice(-5).map((b) => ({
             t: b.startAt,
@@ -401,25 +573,42 @@ export function buildLiveDeskChatContext(
           tfSummary[tf] = {
             momentum: feat.momentumRegime,
             volatility: feat.volatilityRegime,
-            ema9: feat.ema9?.value ?? null,
-            ema21: feat.ema21?.value ?? null,
-            ema50: feat.ema50?.value ?? null,
-            ema200: feat.ema200?.value ?? null,
-            rsi14: feat.rsi14?.value ?? null,
-            atr14: feat.atr14?.value ?? null,
-            macd: feat.macd?.value ? { line: feat.macd.value.macd, signal: feat.macd.value.signal, histogram: feat.macd.value.histogram } : null,
-            vwapUtc: feat.vwapUtc?.value ?? null,
-            relativeVolume20: feat.relativeVolume20?.value ?? null,
+            liquiditySweep,
+            anomalySignal,
+            ema9: roundPriceMetric(feat.ema9?.value, currentPriceNum),
+            ema21: roundPriceMetric(feat.ema21?.value, currentPriceNum),
+            ema50: roundPriceMetric(feat.ema50?.value, currentPriceNum),
+            ema200: roundPriceMetric(feat.ema200?.value, currentPriceNum),
+            rsi14: roundRatioMetric(feat.rsi14?.value, 2),
+            atr14: roundPriceMetric(feat.atr14?.value, currentPriceNum),
+            macd: feat.macd?.value ? {
+              line: roundPriceMetric(feat.macd.value.macd, currentPriceNum),
+              signal: roundPriceMetric(feat.macd.value.signal, currentPriceNum),
+              histogram: roundPriceMetric(feat.macd.value.histogram, currentPriceNum)
+            } : null,
+            vwapUtc: roundPriceMetric(feat.vwapUtc?.value, currentPriceNum),
+            relativeVolume20: roundRatioMetric(feat.relativeVolume20?.value, 2),
             structure: {
-              swingHigh: effectiveSwingHigh,
-              swingLow: effectiveSwingLow,
+              swingHigh: roundPriceMetric(effectiveSwingHigh, currentPriceNum),
+              swingLow: roundPriceMetric(effectiveSwingLow, currentPriceNum),
               bos: feat.structure?.bos ?? null,
               choch: feat.structure?.choch ?? null,
-              rsiDivergence: feat.structure?.rsiDivergence ?? null
+              rsiDivergence: feat.structure?.rsiDivergence ?? null,
+              ...(smcData ?? {})
             },
+            ...(quantFactors ? { quantFactors } : {}),
+            ...(harmonicPatterns.length > 0 ? { harmonicPatterns } : {}),
             recentCandles
           };
         }
+
+        const p24 = frame.price24hPcnt != null ? Number(frame.price24hPcnt) : null;
+        if (p24 !== null && Math.abs(p24) >= 0.03) {
+          oppScore += 10;
+          oppReasons.push(`HIGH_24H_MOMENTUM (${(p24 * 100).toFixed(1)}%) (+10)`);
+        }
+        if (oppReasons.length === 0) oppReasons.push('CONSOLIDATION');
+        rawRanking.push({ symbol: sym, score: oppScore, bias: oppBias, reasons: oppReasons });
 
         const tradesList = options.marketHub.recentTrades(sym) ?? [];
         let largeBuyVol = 0;
@@ -543,6 +732,39 @@ export function buildLiveDeskChatContext(
       prices: prices.length ? prices[0]!.freshness : 'unavailable'
     },
     marketIntelligenceBySymbol: Object.keys(marketIntelligenceBySymbol).length > 0 ? marketIntelligenceBySymbol : undefined,
+    watchlistOpportunityRanking: rawRanking.length > 0
+      ? [...rawRanking]
+          .sort((a, b) => b.score - a.score)
+          .map((item, idx) => ({
+            rank: idx + 1,
+            symbol: item.symbol,
+            score: item.score,
+            bias: item.bias,
+            reasons: item.reasons
+          }))
+      : undefined,
+    recentVerdicts: (state.verdicts ?? []).slice(0, 5).map((v) => ({
+      id: v.id,
+      symbol: v.symbol,
+      action: v.action,
+      operationalStatus: (v as any).operationalStatus,
+      executed: v.executed,
+      reason: v.reason,
+      order: v.order,
+      at: v.at
+    })),
+    recentLessons: (state.lessons ?? [])
+      .filter((l: any) => !l.archived)
+      .slice(-5)
+      .map((l: any) => ({
+        role: l.role,
+        kind: l.kind,
+        symbol: l.symbol,
+        happened: l.happened,
+        rootCause: l.rootCause,
+        lesson: l.lesson,
+        status: l.status
+      })),
     jev: state.jev ? {
       enabled: state.jev.enabled,
       health: state.jev.health,
