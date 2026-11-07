@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.24",
-  "appVersion": "0.0.0.4.24",
+  "version": "0.4.25",
+  "appVersion": "0.0.0.4.25",
   "changelog": [
+    "v0.0.0.4.25: unified clean agent context eliminating 7 data duplication points across 6 AI agents and Jev, pending limit order management (PENDING_ORDER_MANAGEMENT) with automatic resting order cancellation on reversal, airtight slot gate protection, enriched chart reading with liquidity sweeps, anomaly volume climax, Alpha158 factors, and harmonic patterns, plus long-term memory lessons injection and organic lesson logging.",
     "v0.0.0.4.24: implement two-phase slot-aware cycle scheduling, working memory position and breadth context injection, sovereign owner directives memory, and native LIMIT_GTC geometry recalculation.",
     "v0.0.0.4.23: eliminate phantom zero-size positions and false SL missing alerts in reports, guard clean setup models and local agent discovery against nullish access crashes, add expanded Discord slash commands (/balance, /mode, /health, /pause, /resume, /sync, /cycle, /unkill, /buy, /sell), fix /open option stop validation, and enable automatic Discord slash commands sync on boot.",
     "v0.0.0.4.22: live trading hot-swap across venue and network, Bybit unclosed candle relativeVolume20 fix with rate-limit backoff, multi-venue resting limit orders sync, fresh macro crypto news feed in chat, structure breakout swing high/low resolution, Jev regime calibration without veto, and absolute Owner sovereignty mandate across all agents.",

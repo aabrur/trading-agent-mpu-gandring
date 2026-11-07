@@ -2,6 +2,20 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.25] - 2026-11-07
+
+### Added & Improved
+- Cleaned and eliminated all 7 data duplication points across all 6 AI agents (market, research, strategist, execution, risk, lead) and Jev to establish a Single Source of Truth without losing market intelligence.
+- Implemented `PENDING_ORDER_MANAGEMENT` mode evaluating resting unfilled LIMIT_GTC orders in Phase 1 with automated exchange cancellation and lesson logging on CLOSE invalidation verdicts.
+- Sealed Slot Gate across manual cycle execution, auto cycle dispatch, and background triggers when max slots N are occupied.
+- Sharpened candlestick chart reading with Liquidity Sweep (Fakeout Wick Trap) detection, Squeeze Breakout / Volume Climax Anomaly signals, and integrated Alpha158 quant factors alongside Harmonic Fibonacci PRZ pattern recognition.
+- Injected unarchived recent lessons into deliberation prompt context and automated organic lesson logging on order cancellations and stop loss executions.
+
+## [v0.0.0.4.24] - 2026-11-06
+
+### Added & Improved
+- Implemented two-phase slot-aware cycle scheduling, working memory position and breadth context injection, sovereign owner directives memory, and native LIMIT_GTC geometry recalculation.
+
 ## [v0.0.0.4.21] - 2026-11-05
 
 ### Added & Fixed

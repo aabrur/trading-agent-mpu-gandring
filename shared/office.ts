@@ -395,6 +395,14 @@ export interface DeskState {
     status: 'confirmed' | 'stale';
     positions?: { symbol: string; side: string; qty: number }[];
     pendingSymbols?: string[];
+    pendingOrders?: {
+      intentId: string;
+      clientOrderId: string;
+      symbol: string;
+      side: 'LONG' | 'SHORT';
+      orderState: string;
+      filledQty: string | null;
+    }[];
   } | null;
   opportunities?: Record<string, { score: number; reasons: string[]; at: number; source: string }>;
   auto: {

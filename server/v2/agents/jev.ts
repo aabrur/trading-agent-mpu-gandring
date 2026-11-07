@@ -156,12 +156,23 @@ export class JevClient {
       return this.evaluateHeuristic(input, fallbackId, 'Jev API key is not configured; using local heuristic');
     }
 
-    const sanitizedState = sanitizeJevPayload({
-      cycleId: input.cycleId,
-      symbol: input.symbol,
-      evidenceId: input.evidenceId,
-      state: input.state
-    });
+    const rawInputState = input.state as Record<string, unknown> | null | undefined;
+    const isStructuredState = rawInputState && typeof rawInputState === 'object' && ('timeframes' in rawInputState || 'marketSummary' in rawInputState || 'observations' in rawInputState);
+    const sanitizedState = sanitizeJevPayload(
+      isStructuredState
+        ? {
+            cycleId: input.cycleId,
+            symbol: input.symbol,
+            evidenceId: input.evidenceId,
+            ...rawInputState
+          }
+        : {
+            cycleId: input.cycleId,
+            symbol: input.symbol,
+            evidenceId: input.evidenceId,
+            state: input.state
+          }
+    );
 
     try {
       this.requests += 1;
@@ -238,8 +249,12 @@ export class JevClient {
           usage?: { cost?: number };
         }).answers;
         let regimeChoice = answers?.market_regime?.choice || 'RANGING';
-        const rawState = input.state as { marketSummary?: Record<string, unknown> } | undefined;
-        const hasMarketData = Boolean(rawState?.marketSummary && Object.keys(rawState.marketSummary).length > 0);
+        const rawState = input.state as any;
+        const hasMarketData = Boolean(
+          (rawState?.marketSummary && Object.keys(rawState.marketSummary).length > 0) ||
+          (rawState?.timeframes && Object.keys(rawState.timeframes).length > 0) ||
+          rawState?.lastPrice
+        );
         if (regimeChoice === 'UNCERTAIN' && hasMarketData) {
           regimeChoice = 'RANGING';
         }

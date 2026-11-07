@@ -60,6 +60,8 @@ import { getVenueAdapter, createTransportFromAdapter } from './execution/adapter
 import { ChatService, buildLiveDeskChatContext } from './api/chat.js';
 import { PaperVenue } from './sandbox/paper.js';
 import { analyzeSMC } from '../market/smc.js';
+import { calculateAlphaFactors } from '../market/alpha-factors.js';
+import { detectHarmonicPatterns } from '../market/harmonics.js';
 import {
   fetchL2Orderbook,
   fetchDerivatives,
@@ -98,6 +100,20 @@ function normSymbol(s: string): string {
   const up = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!up) return '';
   return /USDT$|USDC$|USD$/.test(up) ? up : `${up}USDT`;
+}
+
+function roundPriceMetric(val: number | null | undefined, refPrice = 1): number | null {
+  if (val === null || val === undefined || !Number.isFinite(val)) return null;
+  const absRef = Math.abs(refPrice || val);
+  const decimals = absRef >= 100 ? 2 : absRef >= 1 ? 4 : absRef >= 0.01 ? 6 : 8;
+  const factor = 10 ** decimals;
+  return Math.round(val * factor) / factor;
+}
+
+function roundRatioMetric(val: number | null | undefined, decimals = 2): number | null {
+  if (val === null || val === undefined || !Number.isFinite(val)) return null;
+  const factor = 10 ** decimals;
+  return Math.round(val * factor) / factor;
 }
 
 export class StartupValidationError extends Error {
@@ -942,6 +958,71 @@ export function createReplacementRuntime(
     const snap = snapshot();
     const cycleId = `cycle-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const debateId = `debate-${Date.now()}`;
+
+    const paperPos = snap.paper.positions.find((p) => p.symbol.toUpperCase() === targetSymbol);
+    const venuePos = snap.venueAccount?.positions?.find((p) => p.symbol.toUpperCase() === targetSymbol);
+    const existingPos = paperPos ?? (venuePos ? {
+      side: venuePos.side,
+      entry: Number(snap.tickers[targetSymbol]?.last ?? 0),
+      qty: venuePos.qty,
+      stop: 0,
+      tp: null,
+      unrealizedPnl: 0
+    } : null);
+
+    const openSymbols = new Set<string>();
+    for (const p of snap.paper.positions) {
+      openSymbols.add(p.symbol.toUpperCase());
+    }
+    if (snap.venueAccount?.positions) {
+      for (const p of snap.venueAccount.positions) {
+        openSymbols.add(p.symbol.toUpperCase());
+      }
+    }
+    if (snap.venueAccount?.pendingSymbols) {
+      for (const sym of snap.venueAccount.pendingSymbols) {
+        openSymbols.add(sym.toUpperCase());
+      }
+    }
+    if ((snap.venueAccount as any)?.pendingOrders) {
+      for (const po of (snap.venueAccount as any).pendingOrders) {
+        openSymbols.add(po.symbol.toUpperCase());
+      }
+    }
+    const currentPosCount = snap.mode === 'PAPER' ? snap.paper.positions.length : openSymbols.size;
+    const maxSlotsN = snap.paper.n || 3;
+    const freeSlots = Math.max(0, maxSlotsN - currentPosCount);
+
+    const venuePending = (snap.venueAccount as any)?.pendingOrders?.find((p: any) => p.symbol.toUpperCase() === targetSymbol);
+    const hasPendingSymbol = snap.venueAccount?.pendingSymbols?.some((s) => s.toUpperCase() === targetSymbol);
+    const pendingVerdict = [...(snap.verdicts ?? [])]
+      .reverse()
+      .find((v) => v.symbol.toUpperCase() === targetSymbol && (v as any).operationalStatus === 'PENDING');
+
+    const existingPendingOrder = (venuePending || hasPendingSymbol || pendingVerdict) ? {
+      clientOrderId: venuePending?.clientOrderId ?? (pendingVerdict as any)?.positionId ?? (pendingVerdict as any)?.order?.clientOrderId ?? `pending-${targetSymbol}`,
+      side: (venuePending?.side ?? (pendingVerdict?.action === 'OPEN_SHORT' ? 'SHORT' : 'LONG')) as 'LONG' | 'SHORT',
+      limitPrice: (pendingVerdict as any)?.order?.entry ?? null,
+      stopPrice: (pendingVerdict as any)?.order?.stop ?? null,
+      tpPrice: (pendingVerdict as any)?.order?.tp ?? null,
+      orderState: venuePending?.orderState ?? 'ACCEPTED'
+    } : null;
+    const currentPriceNum = Number(snap.tickers[targetSymbol]?.last ?? (existingPos ? existingPos.entry : 0));
+
+    if (!existingPos && !existingPendingOrder && freeSlots <= 0 && reason !== 'owner') {
+      const skipMsg = `All ${maxSlotsN} position slots occupied. Deliberation skipped by Slot Gate.`;
+      hub.emit('log', {
+        at: Date.now(),
+        kind: 'gate',
+        text: `Slot Gate: ${skipMsg} (${targetSymbol}, reason: ${reason})`
+      });
+      return {
+        ok: false,
+        message: skipMsg,
+        cycleId
+      };
+    }
+
     const spokenRolesInCurrentCycle = new Set<RoleId>();
 
     updateState((draft) => {
@@ -1005,22 +1086,55 @@ export function createReplacementRuntime(
         const highs = feat.structure?.pivots?.filter((p) => p.kind === 'HIGH') ?? [];
         const lows = feat.structure?.pivots?.filter((p) => p.kind === 'LOW') ?? [];
 
-        // 8 closed bars
         const closedBars = marketFrame?.closed[tf as TF]?.filter((b) => b.confirmed) ?? [];
-        const last20Bars = closedBars.slice(-20);
-        const recentHigh20 = last20Bars.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity);
-        const recentLow20 = last20Bars.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity);
+        const lastBar = closedBars.at(-1);
+        const priorBars = closedBars.slice(-21, -1);
+        const priorHigh20 = priorBars.length > 0 ? priorBars.reduce((max, b) => Math.max(max, Number(b.high) || 0), -Infinity) : -Infinity;
+        const priorLow20 = priorBars.length > 0 ? priorBars.reduce((min, b) => Math.min(min, Number(b.low) || Infinity), Infinity) : Infinity;
 
         const lastPivotHigh = highs[highs.length - 1]?.price != null ? Number(highs[highs.length - 1].price) : null;
         const lastPivotLow = lows[lows.length - 1]?.price != null ? Number(lows[lows.length - 1].price) : null;
 
-        const effectiveSwingHigh = lastPivotHigh !== null && Number.isFinite(recentHigh20) && recentHigh20 > -Infinity
-          ? Math.max(lastPivotHigh, recentHigh20)
-          : (lastPivotHigh ?? (recentHigh20 > -Infinity ? recentHigh20 : null));
+        const effectiveSwingHigh = lastPivotHigh !== null && Number.isFinite(priorHigh20) && priorHigh20 > -Infinity
+          ? Math.max(lastPivotHigh, priorHigh20)
+          : (lastPivotHigh ?? (priorHigh20 > -Infinity ? priorHigh20 : null));
 
-        const effectiveSwingLow = lastPivotLow !== null && Number.isFinite(recentLow20) && recentLow20 < Infinity
-          ? Math.min(lastPivotLow, recentLow20)
-          : (lastPivotLow ?? (recentLow20 < Infinity ? recentLow20 : null));
+        const effectiveSwingLow = lastPivotLow !== null && Number.isFinite(priorLow20) && priorLow20 < Infinity
+          ? Math.min(lastPivotLow, priorLow20)
+          : (lastPivotLow ?? (priorLow20 < Infinity ? priorLow20 : null));
+
+        const priorHighRef = effectiveSwingHigh;
+        const priorLowRef = effectiveSwingLow;
+
+        let liquiditySweep: 'BEARISH_SWEEP_REJECT' | 'BULLISH_SWEEP_RECLAIM' | null = null;
+        if (lastBar && priorHighRef !== null && priorLowRef !== null) {
+          const barHigh = Number(lastBar.high);
+          const barLow = Number(lastBar.low);
+          const barClose = Number(lastBar.close);
+          if (barHigh > priorHighRef && barClose < priorHighRef) {
+            liquiditySweep = 'BEARISH_SWEEP_REJECT';
+          } else if (barLow < priorLowRef && barClose > priorLowRef) {
+            liquiditySweep = 'BULLISH_SWEEP_RECLAIM';
+          }
+        }
+
+        let anomalySignal: 'SQUEEZE_BREAKOUT_UP' | 'SQUEEZE_BREAKDOWN_DOWN' | 'VOLUME_CLIMAX_SPIKE' | null = null;
+        const relVol = Number(feat.relativeVolume20?.value ?? 0);
+        const bbUpper = feat.bollinger20?.value?.upper != null ? Number(feat.bollinger20.value.upper) : Infinity;
+        const bbLower = feat.bollinger20?.value?.lower != null ? Number(feat.bollinger20.value.lower) : -Infinity;
+        const bbBandwidth = feat.bollinger20?.value?.bandwidth != null ? Number(feat.bollinger20.value.bandwidth) : null;
+        const isCompressing = feat.volatilityRegime === 'COMPRESSING' || (bbBandwidth !== null && bbBandwidth < 0.04);
+        const barClose = lastBar ? Number(lastBar.close) : null;
+
+        if (lastBar && barClose !== null) {
+          if ((isCompressing || relVol >= 1.8) && barClose > bbUpper && relVol >= 1.8) {
+            anomalySignal = 'SQUEEZE_BREAKOUT_UP';
+          } else if (relVol >= 1.8 && barClose < bbLower) {
+            anomalySignal = 'SQUEEZE_BREAKDOWN_DOWN';
+          } else if (relVol >= 2.5) {
+            anomalySignal = 'VOLUME_CLIMAX_SPIKE';
+          }
+        }
 
         const recentCandles = closedBars.slice(-8).map((b) => ({
           t: b.startAt,
@@ -1032,18 +1146,19 @@ export function createReplacementRuntime(
           dir: Number(b.close) >= Number(b.open) ? 'BULL' : 'BEAR'
         }));
 
-        // SMC analysis for 5m, 15m, 1h, 4h
-        let smcData: unknown = null;
-        if (['5m', '15m', '1h', '4h'].includes(tf) && closedBars.length > 0) {
+        const normalizedCandles = closedBars.map((b) => ({
+          timestamp: b.startAt,
+          open: Number(b.open),
+          high: Number(b.high),
+          low: Number(b.low),
+          close: Number(b.close),
+          volume: Number(b.volume)
+        }));
+
+        let smcData: any = null;
+        if (['5m', '15m', '1h', '4h'].includes(tf) && normalizedCandles.length > 0) {
           try {
-            const smcRes = analyzeSMC(closedBars.map((b) => ({
-              timestamp: b.startAt,
-              open: Number(b.open),
-              high: Number(b.high),
-              low: Number(b.low),
-              close: Number(b.close),
-              volume: Number(b.volume)
-            })));
+            const smcRes = analyzeSMC(normalizedCandles);
             if (smcRes) {
               smcData = {
                 marketTrend: smcRes.marketTrend,
@@ -1058,40 +1173,89 @@ export function createReplacementRuntime(
           }
         }
 
+        let quantFactors: unknown = null;
+        let harmonicPatterns: unknown[] = [];
+        if (['15m', '1h', '4h'].includes(tf) && normalizedCandles.length > 0) {
+          try {
+            const alpha = calculateAlphaFactors(normalizedCandles);
+            if (alpha) {
+              quantFactors = {
+                compositeScore: roundRatioMetric(alpha.compositeScore, 3),
+                regime: alpha.regime,
+                roc5: roundRatioMetric(alpha.roc5, 2),
+                roc20: roundRatioMetric(alpha.roc20, 2),
+                vwap20Ratio: roundRatioMetric(alpha.vwap20Ratio, 2),
+                rsv14: roundRatioMetric(alpha.rsv14, 1)
+              };
+            }
+          } catch {
+            quantFactors = null;
+          }
+          try {
+            const harmonics = detectHarmonicPatterns(normalizedCandles);
+            if (harmonics && harmonics.length > 0) {
+              harmonicPatterns = harmonics.slice(0, 2).map((h) => ({
+                name: h.name,
+                orientation: h.orientation,
+                qualityScore: h.qualityScore,
+                prz: {
+                  entryMin: roundPriceMetric(h.prz.entryMin, currentPriceNum),
+                  entryMax: roundPriceMetric(h.prz.entryMax, currentPriceNum),
+                  stopLoss: roundPriceMetric(h.prz.stopLoss, currentPriceNum),
+                  target1: roundPriceMetric(h.prz.target1, currentPriceNum),
+                  target2: roundPriceMetric(h.prz.target2, currentPriceNum)
+                }
+              }));
+            }
+          } catch {
+            harmonicPatterns = [];
+          }
+        }
+
         timeframesSummary[tf] = {
           momentum: feat.momentumRegime,
           volatility: feat.volatilityRegime,
-          ema9: feat.ema9?.value ?? null,
-          ema21: feat.ema21?.value ?? null,
-          ema50: feat.ema50?.value ?? null,
-          ema200: feat.ema200?.value ?? null,
-          sma20: feat.sma20?.value ?? null,
-          rsi14: feat.rsi14?.value ?? null,
-          atr14: feat.atr14?.value ?? null,
+          liquiditySweep,
+          anomalySignal,
+          ema9: roundPriceMetric(feat.ema9?.value, currentPriceNum),
+          ema21: roundPriceMetric(feat.ema21?.value, currentPriceNum),
+          ema50: roundPriceMetric(feat.ema50?.value, currentPriceNum),
+          ema200: roundPriceMetric(feat.ema200?.value, currentPriceNum),
+          sma20: roundPriceMetric(feat.sma20?.value, currentPriceNum),
+          rsi14: roundRatioMetric(feat.rsi14?.value, 2),
+          atr14: roundPriceMetric(feat.atr14?.value, currentPriceNum),
           macd: feat.macd?.value ? {
-            line: feat.macd.value.macd,
-            signal: feat.macd.value.signal,
-            histogram: feat.macd.value.histogram
+            line: roundPriceMetric(feat.macd.value.macd, currentPriceNum),
+            signal: roundPriceMetric(feat.macd.value.signal, currentPriceNum),
+            histogram: roundPriceMetric(feat.macd.value.histogram, currentPriceNum)
           } : null,
           bollinger: feat.bollinger20?.value ? {
-            upper: feat.bollinger20.value.upper,
-            middle: feat.bollinger20.value.middle,
-            lower: feat.bollinger20.value.lower,
-            bandwidth: feat.bollinger20.value.bandwidth
+            upper: roundPriceMetric(feat.bollinger20.value.upper, currentPriceNum),
+            middle: roundPriceMetric(feat.bollinger20.value.middle, currentPriceNum),
+            lower: roundPriceMetric(feat.bollinger20.value.lower, currentPriceNum),
+            bandwidth: roundRatioMetric(feat.bollinger20.value.bandwidth, 4)
           } : null,
-          vwapUtc: feat.vwapUtc?.value ?? null,
-          relativeVolume20: feat.relativeVolume20?.value ?? null,
+          vwapUtc: roundPriceMetric(feat.vwapUtc?.value, currentPriceNum),
+          relativeVolume20: roundRatioMetric(feat.relativeVolume20?.value, 2),
           structure: {
-            swingHigh: effectiveSwingHigh,
-            swingLow: effectiveSwingLow,
-            priorSwingHigh: highs[highs.length - 2]?.price ?? null,
-            priorSwingLow: lows[lows.length - 2]?.price ?? null,
+            swingHigh: roundPriceMetric(effectiveSwingHigh, currentPriceNum),
+            swingLow: roundPriceMetric(effectiveSwingLow, currentPriceNum),
+            priorSwingHigh: roundPriceMetric(highs[highs.length - 2]?.price ?? null, currentPriceNum),
+            priorSwingLow: roundPriceMetric(lows[lows.length - 2]?.price ?? null, currentPriceNum),
             bos: feat.structure?.bos ?? null,
             choch: feat.structure?.choch ?? null,
-            rsiDivergence: feat.structure?.rsiDivergence ?? null
+            rsiDivergence: feat.structure?.rsiDivergence ?? null,
+            ...(smcData ? {
+              marketTrend: smcData.marketTrend,
+              lastBreak: smcData.lastBreak,
+              activeFVGs: smcData.activeFVGs,
+              activeOrderBlocks: smcData.activeOrderBlocks,
+              premiumDiscountZone: smcData.premiumDiscountZone
+            } : {})
           },
-          recentCandles,
-          ...(smcData ? { smc: smcData } : {})
+          ...(quantFactors ? { quantFactors } : {}),
+          ...(harmonicPatterns.length > 0 ? { harmonicPatterns } : {}),
+          recentCandles
         };
       }
     }
@@ -1103,32 +1267,6 @@ export function createReplacementRuntime(
       fundingRate: intelFrame.microstructure?.funding?.value ?? null,
       openInterest: intelFrame.microstructure?.openInterest?.value ?? null
     };
-
-    const paperPos = snap.paper.positions.find((p) => p.symbol.toUpperCase() === targetSymbol);
-    const venuePos = snap.venueAccount?.positions?.find((p) => p.symbol.toUpperCase() === targetSymbol);
-    const existingPos = paperPos ?? (venuePos ? {
-      side: venuePos.side,
-      entry: Number(snap.tickers[targetSymbol]?.last ?? 0),
-      qty: venuePos.qty,
-      stop: 0,
-      tp: null,
-      unrealizedPnl: 0
-    } : null);
-    const openSymbols = new Set<string>();
-    for (const p of snap.paper.positions) {
-      openSymbols.add(p.symbol.toUpperCase());
-    }
-    if (snap.venueAccount?.positions) {
-      for (const p of snap.venueAccount.positions) {
-        openSymbols.add(p.symbol.toUpperCase());
-      }
-    }
-    if (snap.venueAccount?.pendingSymbols) {
-      for (const sym of snap.venueAccount.pendingSymbols) {
-        openSymbols.add(sym.toUpperCase());
-      }
-    }
-    const currentPosCount = snap.mode === 'PAPER' ? snap.paper.positions.length : openSymbols.size;
 
     // Fetch multi-venue quotes, whale intelligence, news, and catalysts in parallel with safe error isolation
     const venueName = (snap.venue?.name as any) || 'aster';
@@ -1302,7 +1440,33 @@ export function createReplacementRuntime(
       .slice(-5)
       .map((m) => ({ text: m.text, at: m.at, to: m.to }));
 
-    const currentPriceNum = Number(snap.tickers[targetSymbol]?.last ?? (existingPos ? existingPos.entry : 0));
+    const totalEquity = snap.mode === 'PAPER'
+      ? snap.paper.equity
+      : (snap.financial.equity.value ?? snap.paper.equity);
+    const balance = snap.mode === 'PAPER'
+      ? snap.paper.balance
+      : (snap.financial.balance.value ?? snap.paper.balance);
+    const safetyNet = snap.paper.safetyNet ?? 0;
+    const moneyTradeBudget = Math.max(0, Math.round((balance - safetyNet) * 100) / 100);
+    const usedMargin = snap.mode === 'PAPER'
+      ? snap.paper.usedMargin
+      : Math.round((snap.venueAccount?.positions?.reduce((acc: number, p: any) => acc + (Number(p.margin) || 0), 0) ?? snap.paper.usedMargin ?? 0) * 100) / 100;
+    const freeAllocatableMargin = Math.max(0, Math.round((moneyTradeBudget - usedMargin) * 100) / 100);
+    const perOrderAllocation = resolveOwnerPerOrderUsdt(snap.paper);
+
+    const accountCapital = {
+      totalEquity,
+      balance,
+      safetyNet,
+      moneyTradeBudget,
+      usedMargin,
+      freeAllocatableMargin,
+      perOrderAllocation,
+      maxSlotsN,
+      occupiedSlots: currentPosCount,
+      freeSlots
+    };
+
     let roePct = 0;
     let slDistancePct: number | null = null;
     let tpDistancePct: number | null = null;
@@ -1341,7 +1505,64 @@ export function createReplacementRuntime(
           } : null
         };
       }
+    } else if (pendingVerdict) {
+      priorEntryThesis = {
+        action: pendingVerdict.action,
+        reason: pendingVerdict.reason,
+        at: pendingVerdict.at,
+        order: pendingVerdict.order ? {
+          entry: pendingVerdict.order.entry,
+          stop: pendingVerdict.order.stop,
+          tp: pendingVerdict.order.tp,
+          leverage: pendingVerdict.order.leverage
+        } : null
+      };
     }
+
+    const evaluationMode = existingPos
+      ? 'POSITION_MANAGEMENT'
+      : (existingPendingOrder ? 'PENDING_ORDER_MANAGEMENT' : 'CANDIDATE_DISCOVERY');
+
+    const recentLessons = (snap.lessons ?? [])
+      .filter((l: any) => !l.archived && (!l.symbol || String(l.symbol).toUpperCase() === targetSymbol))
+      .slice(-5)
+      .map((l: any) => ({
+        role: l.role,
+        kind: l.kind,
+        symbol: l.symbol ?? targetSymbol,
+        happened: l.happened,
+        rootCause: l.rootCause,
+        lesson: l.lesson,
+        status: l.status
+      }));
+
+    const optionalResearch = {
+      news: {
+        status: newsBriefing.events.length > 0 ? 'available' : 'no_events',
+        providerStatus: newsBriefing.providerStatus,
+        instruction: 'NO_VETO: If no high-impact breaking news exists, do NOT penalize confidence.',
+        items: newsBriefing.events.slice(0, 5).map((item: any) => ({
+          id: item.id,
+          symbol: item.symbol,
+          targetScope: item.targetScope,
+          headline: item.headline,
+          summary: (item.summary ?? item.body ?? '').slice(0, 280),
+          source: item.source,
+          sentiment: item.sentiment,
+          publishedAt: item.publishedAt ?? null
+        }))
+      },
+      whale: {
+        status: whaleReport && (whaleReport.exchange.largeTrades.length > 0 || whaleReport.onchain.events.length > 0) ? 'available' : 'no_events',
+        instruction: 'NO_VETO: If no massive whale transaction detected, do NOT penalize confidence.',
+        report: whaleReport
+      },
+      catalyst: {
+        status: cmcSummary?.momentum?.sourceStatus === 'live' ? 'available' : (cmcSummary ? 'cached' : 'no_events'),
+        instruction: 'NO_VETO: If external catalyst feed has no update, do NOT penalize confidence.',
+        momentum: cmcSummary?.momentum ?? null
+      }
+    };
 
     const marketSummary: Record<string, unknown> = {
       symbol: targetSymbol,
@@ -1353,7 +1574,6 @@ export function createReplacementRuntime(
       microstructure: microstructureSummary,
       multiVenue,
       crossMarketBreadth,
-      recentOwnerDiscussion,
       ownerDirectives: {
         recentMessages: recentOwnerDiscussion,
         instruction: 'Owner Sovereignty: The user/owner is the ultimate decision maker. Adhere strictly to any risk, position, or market directives given in recent owner messages.'
@@ -1368,7 +1588,6 @@ export function createReplacementRuntime(
         receivedAt: recentTvAlert.receivedAt
       } : null,
       opposingFacts: intelFrame.opposingFacts,
-      jevReview: snap.jev?.lastDecision ?? null,
       existingPosition: existingPos ? {
         side: existingPos.side,
         entryPrice: existingPos.entry,
@@ -1383,35 +1602,20 @@ export function createReplacementRuntime(
         tpDistancePct: tpDistancePct !== null ? Math.round(tpDistancePct * 100) / 100 : null,
         priorEntryThesis
       } : null,
-      evaluationMode: existingPos ? 'POSITION_MANAGEMENT' : 'CANDIDATE_DISCOVERY',
-      deskSlots: {
-        maxPositions: snap.paper.n || 3,
-        occupiedPositions: currentPosCount,
-        freeSlots: Math.max(0, (snap.paper.n || 3) - currentPosCount)
-      },
-      intelligenceFeeds: {
-        whale: whaleReport,
-        news: newsBriefing,
-        catalyst: cmcSummary?.momentum ?? null
-      },
-      optionalResearch: {
-        news: {
-          status: newsBriefing.events.length > 0 ? 'available' : 'no_events',
-          providerStatus: newsBriefing.providerStatus,
-          instruction: 'NO_VETO: If no high-impact breaking news exists, do NOT penalize confidence.',
-          items: newsBriefing.events.slice(0, 5)
-        },
-        whale: {
-          status: whaleReport && (whaleReport.exchange.largeTrades.length > 0 || whaleReport.onchain.events.length > 0) ? 'available' : 'no_events',
-          instruction: 'NO_VETO: If no massive whale transaction detected, do NOT penalize confidence.',
-          report: whaleReport
-        },
-        catalyst: {
-          status: cmcSummary?.momentum?.sourceStatus === 'live' ? 'available' : (cmcSummary ? 'cached' : 'no_events'),
-          instruction: 'NO_VETO: If external catalyst feed has no update, do NOT penalize confidence.',
-          momentum: cmcSummary?.momentum ?? null
-        }
-      }
+      pendingOrder: existingPendingOrder ? {
+        clientOrderId: existingPendingOrder.clientOrderId,
+        side: existingPendingOrder.side,
+        limitPrice: existingPendingOrder.limitPrice,
+        stopPrice: existingPendingOrder.stopPrice,
+        takeProfitPrice: existingPendingOrder.tpPrice,
+        orderState: existingPendingOrder.orderState,
+        priorEntryThesis,
+        instruction: 'PENDING_ORDER_MANAGEMENT: A resting LIMIT_GTC order is waiting on the exchange. Review current market structure: output HOLD to keep the limit order resting, or output CLOSE to cancel the unfilled limit order immediately if price structure has reversed or invalidated the entry setup.'
+      } : null,
+      evaluationMode,
+      optionalResearch,
+      recentLessons,
+      accountCapital
     };
 
     const tv = snap.trading?.values;
@@ -1436,36 +1640,6 @@ export function createReplacementRuntime(
       };
     }
 
-    const totalEquity = snap.mode === 'PAPER'
-      ? snap.paper.equity
-      : (snap.financial.equity.value ?? snap.paper.equity);
-    const balance = snap.mode === 'PAPER'
-      ? snap.paper.balance
-      : (snap.financial.balance.value ?? snap.paper.balance);
-    const safetyNet = snap.paper.safetyNet ?? 0;
-    const moneyTradeBudget = Math.max(0, Math.round((balance - safetyNet) * 100) / 100);
-    const usedMargin = snap.mode === 'PAPER'
-      ? snap.paper.usedMargin
-      : Math.round((snap.venueAccount?.positions?.reduce((acc: number, p: any) => acc + (Number(p.margin) || 0), 0) ?? snap.paper.usedMargin ?? 0) * 100) / 100;
-    const freeAllocatableMargin = Math.max(0, Math.round((moneyTradeBudget - usedMargin) * 100) / 100);
-    const perOrderAllocation = resolveOwnerPerOrderUsdt(snap.paper);
-    const maxSlotsN = snap.paper.n || 3;
-    const freeSlots = Math.max(0, maxSlotsN - currentPosCount);
-
-    const accountCapital = {
-      totalEquity,
-      balance,
-      safetyNet,
-      moneyTradeBudget,
-      usedMargin,
-      freeAllocatableMargin,
-      perOrderAllocation,
-      maxSlotsN,
-      occupiedSlots: currentPosCount,
-      freeSlots
-    };
-    marketSummary.accountCapital = accountCapital;
-
     const policy: CyclePolicy = {
       minEntryConfidencePct: tv?.minEntryConfidencePct ?? 60,
       requireTwoOfThreeAnalysts: false,
@@ -1483,8 +1657,7 @@ export function createReplacementRuntime(
       tradingProfile: snap.trading?.profile,
       profileBaselineStopPrice,
       profileBaselineTpPrice,
-      supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false),
-      accountCapital
+      supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false)
     };
 
     try {
@@ -1736,6 +1909,52 @@ export function createReplacementRuntime(
                 kind: 'execution',
                 text: `Closed PAPER position for ${targetSymbol} upon CLOSE verdict`
               });
+            } else {
+              let cancelledPending = false;
+              updateState((draft) => {
+                for (const v of draft.verdicts ?? []) {
+                  if (v.symbol.toUpperCase() === targetSymbol && (v as any).operationalStatus === 'PENDING') {
+                    (v as any).operationalStatus = 'CANCELLED';
+                    v.executed = false;
+                    cancelledPending = true;
+                  }
+                }
+                if (draft.venueAccount?.pendingOrders) {
+                  const beforeLen = draft.venueAccount.pendingOrders.length;
+                  draft.venueAccount.pendingOrders = draft.venueAccount.pendingOrders.filter((p) => p.symbol.toUpperCase() !== targetSymbol);
+                  if (draft.venueAccount.pendingOrders.length < beforeLen) cancelledPending = true;
+                }
+                if (draft.venueAccount?.pendingSymbols) {
+                  const beforeLen = draft.venueAccount.pendingSymbols.length;
+                  draft.venueAccount.pendingSymbols = draft.venueAccount.pendingSymbols.filter((s) => s.toUpperCase() !== targetSymbol);
+                  if (draft.venueAccount.pendingSymbols.length < beforeLen) cancelledPending = true;
+                }
+                if (cancelledPending) {
+                  draft.lessons = draft.lessons ?? [];
+                  draft.lessons.push({
+                    id: `lesson-${Date.now()}-${randomUUID().slice(0, 6)}`,
+                    role: 'execution',
+                    kind: 'pending_order_cancelled',
+                    symbol: targetSymbol,
+                    happened: `Resting limit entry order cancelled for ${targetSymbol} due to CLOSE verdict`,
+                    rootCause: 'Resting limit entry order cancelled due to structural reversal or regime invalidation on CLOSE evaluation',
+                    lesson: 'Cancelled resting order when market reversed before entry fill to prevent adverse execution',
+                    count: 1,
+                    firstAt: Date.now(),
+                    lastAt: Date.now(),
+                    source: 'runtime',
+                    status: 'new'
+                  });
+                }
+              });
+              verdictRecord.executed = cancelledPending;
+              if (cancelledPending) {
+                hub.emit('log', {
+                  at: Date.now(),
+                  kind: 'execution',
+                  text: `Cancelled resting PAPER limit order for ${targetSymbol} upon CLOSE verdict`
+                });
+              }
             }
           } else {
             const dispatchRes = await dispatch({
@@ -2014,9 +2233,16 @@ export function createReplacementRuntime(
         ? prePhase1Snap.paper.positions
         : (prePhase1Snap.venueAccount?.positions?.length ? prePhase1Snap.venueAccount.positions : prePhase1Snap.paper.positions);
       const pendingSymbols = prePhase1Snap.mode === 'PAPER' ? [] : (prePhase1Snap.venueAccount?.pendingSymbols ?? []);
+      const pendingOrders = (prePhase1Snap.venueAccount as any)?.pendingOrders ?? [];
+      const pendingOrderSymbols = pendingOrders.map((p: any) => p.symbol.toUpperCase());
+      const pendingVerdictSymbols = (prePhase1Snap.verdicts ?? [])
+        .filter((v: any) => v.operationalStatus === 'PENDING')
+        .map((v) => v.symbol.toUpperCase());
       const openPositionSymbols = [...new Set([
         ...currentPos.map((p) => p.symbol.toUpperCase()),
-        ...pendingSymbols.map((s) => s.toUpperCase())
+        ...pendingSymbols.map((s) => s.toUpperCase()),
+        ...pendingOrderSymbols,
+        ...pendingVerdictSymbols
       ])];
 
       let lastResult: { ok: boolean; message: string; cycleId: string; verdict?: Verdict } | null = null;
@@ -2038,9 +2264,16 @@ export function createReplacementRuntime(
         ? postPhase1Snap.paper.positions
         : (postPhase1Snap.venueAccount?.positions?.length ? postPhase1Snap.venueAccount.positions : postPhase1Snap.paper.positions);
       const activePending = postPhase1Snap.mode === 'PAPER' ? [] : (postPhase1Snap.venueAccount?.pendingSymbols ?? []);
+      const activePendingOrders = (postPhase1Snap.venueAccount as any)?.pendingOrders ?? [];
+      const activePendingOrderSymbols = activePendingOrders.map((p: any) => p.symbol.toUpperCase());
+      const activePendingVerdictSymbols = (postPhase1Snap.verdicts ?? [])
+        .filter((v: any) => v.operationalStatus === 'PENDING')
+        .map((v) => v.symbol.toUpperCase());
       const activeSymbols = [...new Set([
         ...activePos.map((p) => p.symbol.toUpperCase()),
-        ...activePending.map((s) => s.toUpperCase())
+        ...activePending.map((s) => s.toUpperCase()),
+        ...activePendingOrderSymbols,
+        ...activePendingVerdictSymbols
       ])];
 
       const maxN = postPhase1Snap.paper.n || 3;
@@ -2943,10 +3176,8 @@ export function createReplacementRuntime(
       if (snap.auto.running) {
         return { ok: false, error: `A cycle is already running for ${snap.debate?.symbol ?? 'symbol'}` };
       }
-      const symbols = snap.watchlist?.length ? snap.watchlist : snap.auto.symbols;
-      const targetSym = symbols[0] ?? 'BTCUSDT';
-      void triggerCycle(targetSym, 'owner').catch(console.error);
-      return { ok: true, command: 'run_cycle', reply: `Triggered auto cycle immediately on ${targetSym} (watchlist: ${symbols.join(', ')})...` };
+      void triggerCycle(undefined, 'owner').catch(console.error);
+      return { ok: true, command: 'run_cycle', reply: 'Triggered two-phase deliberation cycle immediately across active positions and candidates...' };
     }
 
     const reportIntervalMatch = raw.replace(/^\//, '').match(/^(?:(?:set\s+)?report(?:\s+interval)?|(?:atur|ubah)\s+report(?:\s+interval)?)\s*(?:=|to|:)?\s*(\d+)\b/i);
@@ -3100,6 +3331,7 @@ export function createReplacementRuntime(
     if (input.kind === 'close') {
       const sym = String(input.symbol ?? input.payload?.symbol ?? '').toUpperCase();
       let closedCount = 0;
+      let cancelledPending = false;
       updateState((draft) => {
         if (sym === 'ALL') {
           for (const pos of draft.paper?.positions ?? []) {
@@ -3114,6 +3346,23 @@ export function createReplacementRuntime(
               reason: (input.payload?.cause as string) ?? 'Manual Close All',
               closedAt: Date.now()
             });
+            if (pos.unrealizedPnl < 0) {
+              draft.lessons = draft.lessons ?? [];
+              draft.lessons.push({
+                id: `lesson-${Date.now()}-${randomUUID().slice(0, 6)}`,
+                role: 'risk',
+                kind: 'stop_loss_hit',
+                symbol: pos.symbol,
+                happened: `Position closed with realized loss of ${pos.unrealizedPnl}`,
+                rootCause: 'Adverse market movement triggered position closure',
+                lesson: 'Enforce strict stop loss and exit discipline when thesis is invalidated',
+                count: 1,
+                firstAt: Date.now(),
+                lastAt: Date.now(),
+                source: 'runtime',
+                status: 'new'
+              });
+            }
             closedCount += 1;
           }
           draft.paper.positions = [];
@@ -3134,6 +3383,23 @@ export function createReplacementRuntime(
                 reason: (input.payload?.cause as string) ?? `Manual Close ${sym}`,
                 closedAt: Date.now()
               });
+              if (pos.unrealizedPnl < 0) {
+                draft.lessons = draft.lessons ?? [];
+                draft.lessons.push({
+                  id: `lesson-${Date.now()}-${randomUUID().slice(0, 6)}`,
+                  role: 'risk',
+                  kind: 'stop_loss_hit',
+                  symbol: pos.symbol,
+                  happened: `Position closed with realized loss of ${pos.unrealizedPnl}`,
+                  rootCause: 'Adverse market movement triggered position closure',
+                  lesson: 'Enforce strict stop loss and exit discipline when thesis is invalidated',
+                  count: 1,
+                  firstAt: Date.now(),
+                  lastAt: Date.now(),
+                  source: 'runtime',
+                  status: 'new'
+                });
+              }
               draft.paper.usedMargin = Math.max(0, (draft.paper.usedMargin ?? 0) - pos.margin);
               closedCount += 1;
             } else {
@@ -3142,8 +3408,53 @@ export function createReplacementRuntime(
           }
           draft.paper.positions = remaining;
           draft.paper.canOpen = remaining.length < draft.paper.n;
+
+          if (closedCount === 0) {
+            if (draft.venueAccount?.pendingOrders) {
+              const beforeLen = draft.venueAccount.pendingOrders.length;
+              draft.venueAccount.pendingOrders = draft.venueAccount.pendingOrders.filter((p) => p.symbol.toUpperCase() !== sym);
+              if (draft.venueAccount.pendingOrders.length < beforeLen) cancelledPending = true;
+            }
+            if (draft.venueAccount?.pendingSymbols) {
+              const beforeLen = draft.venueAccount.pendingSymbols.length;
+              draft.venueAccount.pendingSymbols = draft.venueAccount.pendingSymbols.filter((s) => s.toUpperCase() !== sym);
+              if (draft.venueAccount.pendingSymbols.length < beforeLen) cancelledPending = true;
+            }
+            for (const v of draft.verdicts ?? []) {
+              if (v.symbol.toUpperCase() === sym && (v as any).operationalStatus === 'PENDING') {
+                (v as any).operationalStatus = 'CANCELLED';
+                v.executed = false;
+                cancelledPending = true;
+              }
+            }
+            if (cancelledPending) {
+              draft.lessons = draft.lessons ?? [];
+              draft.lessons.push({
+                id: `lesson-${Date.now()}-${randomUUID().slice(0, 6)}`,
+                role: 'execution',
+                kind: 'pending_order_cancelled',
+                symbol: sym,
+                happened: `Resting limit entry order cancelled for ${sym} due to close/invalidation verdict`,
+                rootCause: 'Resting limit entry order cancelled due to structural reversal or regime invalidation on CLOSE evaluation',
+                lesson: 'Cancelled resting order when market reversed before entry fill to prevent adverse execution',
+                count: 1,
+                firstAt: Date.now(),
+                lastAt: Date.now(),
+                source: 'runtime',
+                status: 'new'
+              });
+            }
+          }
         }
       });
+      if (closedCount === 0 && cancelledPending) {
+        return {
+          ok: true,
+          code: 'OK',
+          message: `Cancelled pending limit entry order for ${sym} due to close/invalidation verdict`,
+          data: { orderState: 'CANCELLED' }
+        };
+      }
       return {
         ok: true,
         code: 'OK',
@@ -3577,6 +3888,68 @@ export async function startReplacementServer(
             data: { orderState: 'CLOSED' }
           };
         }
+
+        const snap = runtimeRef?.snapshot() ?? state;
+        const pendingOrder = (snap.venueAccount as any)?.pendingOrders?.find((p: any) => p.symbol.toUpperCase() === symbol);
+        const isPendingSymbol = snap.venueAccount?.pendingSymbols?.some((s) => s.toUpperCase() === symbol);
+
+        const activeIntent = (await store.execute(
+          `SELECT intent_id, client_order_id, symbol, side, order_state FROM execution_intents WHERE UPPER(symbol) = ? AND order_state IN ('ACCEPTED', 'PARTIAL', 'SUBMITTING') ORDER BY created_at DESC LIMIT 1`,
+          [symbol]
+        ))?.rows?.[0];
+
+        if (pendingOrder || isPendingSymbol || activeIntent) {
+          const clientOrderId = pendingOrder?.clientOrderId ?? (activeIntent?.client_order_id as string | undefined);
+          if (clientOrderId && transport.cancelEntryOrder) {
+            try {
+              await transport.cancelEntryOrder(symbol, String(clientOrderId));
+            } catch (err) {
+              console.warn(`[cancelEntryOrder] Failed on transport: ${(err as Error).message}`);
+            }
+          }
+          if (activeIntent) {
+            await store.execute(
+              `UPDATE execution_intents SET order_state = 'CANCELLED', updated_at = ? WHERE intent_id = ?`,
+              [Date.now(), activeIntent.intent_id]
+            );
+          }
+          runtimeRef?.updateState((draft) => {
+            if (draft.venueAccount?.pendingOrders) {
+              draft.venueAccount.pendingOrders = draft.venueAccount.pendingOrders.filter((p) => p.symbol.toUpperCase() !== symbol);
+            }
+            if (draft.venueAccount?.pendingSymbols) {
+              draft.venueAccount.pendingSymbols = draft.venueAccount.pendingSymbols.filter((s) => s.toUpperCase() !== symbol);
+            }
+            for (const v of draft.verdicts ?? []) {
+              if (v.symbol.toUpperCase() === symbol && (v as any).operationalStatus === 'PENDING') {
+                (v as any).operationalStatus = 'CANCELLED';
+                v.executed = false;
+              }
+            }
+            draft.lessons = draft.lessons ?? [];
+            draft.lessons.push({
+              id: `lesson-${Date.now()}-${randomUUID().slice(0, 6)}`,
+              role: 'execution',
+              kind: 'pending_order_cancelled',
+              symbol,
+              happened: `Resting limit entry order cancelled for ${symbol} due to close/invalidation verdict`,
+              rootCause: 'Resting limit entry order cancelled due to structural reversal or regime invalidation on CLOSE evaluation',
+              lesson: 'Cancelled resting order when market reversed before entry fill to prevent adverse execution',
+              count: 1,
+              firstAt: Date.now(),
+              lastAt: Date.now(),
+              source: 'runtime',
+              status: 'new'
+            });
+          });
+          return {
+            ok: true,
+            code: 'OK',
+            message: `Cancelled pending limit entry order for ${symbol} due to close/invalidation verdict`,
+            data: { orderState: 'CANCELLED' }
+          };
+        }
+
         return {
           ok: false,
           code: 'INVALID_INPUT',
@@ -3689,7 +4062,7 @@ export async function startReplacementServer(
     }
 
     if (input.kind === 'debate' || input.kind === 'auto_cycle') {
-      const sym = input.symbol ?? 'BTCUSDT';
+      const sym = input.symbol ?? (input.kind === 'auto_cycle' ? undefined : 'BTCUSDT');
       const res = await (runtimeRef?.triggerCycle(sym, input.actor === 'system' ? 'schedule' : 'owner') ?? Promise.resolve({ ok: false, message: 'Runtime unavailable' }));
       return {
         ok: res.ok,
@@ -3807,7 +4180,15 @@ export async function startReplacementServer(
             at: Date.now(),
             status: 'confirmed',
             positions: activePosList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) })),
-            pendingSymbols: pendingIntents.map((p) => p.symbol)
+            pendingSymbols: pendingIntents.map((p) => p.symbol),
+            pendingOrders: pendingIntents.map((p) => ({
+              intentId: p.intentId,
+              clientOrderId: p.clientOrderId,
+              symbol: p.symbol,
+              side: p.side,
+              orderState: p.orderState,
+              filledQty: p.filledQty
+            }))
           };
           d.paper.balance = eq;
           d.paper.unrealized = totalUnrealized;

@@ -11,7 +11,7 @@ import {
 import type { VerifiedExit } from './exits.js';
 import type { TradeThesis } from './revalidate.js';
 
-export type CycleReason = 'owner' | 'schedule' | 'market-event' | 'position-event';
+export type CycleReason = 'owner' | 'schedule' | 'market-event' | 'position-event' | 'timer' | 'signal';
 
 export interface CyclePolicy {
   minEntryConfidencePct: number;
@@ -82,11 +82,64 @@ interface CandidateOrder {
   stop: string | null;
   tp: string | null;
   leverage: number | null;
-  allocationPerOrderUsdt: number | null;
-  availableCapitalUsdt: number | null;
-  orderSizePct: number | null;
-  maxPositions: number | null;
-  dailyLossLimitPct: number | null;
+}
+
+export function toPeerDigest(r: RoleResult): Record<string, unknown> {
+  const digest: Record<string, unknown> = {
+    role: r.role,
+    phase: r.phase,
+    status: r.status,
+    stance: r.stance,
+    ...(r.role === 'risk' && 'decision' in r ? { decision: (r as RiskRoleResult).decision } : {}),
+    confidence: r.confidence ? { value: r.confidence.value, scale: r.confidence.scale } : null,
+    reasoning: r.reasoning,
+    claimRefs: r.claimRefs ?? [],
+    contraryRefs: r.contraryRefs ?? []
+  };
+  if (r.proposedOrderType) digest.proposedOrderType = r.proposedOrderType;
+  if (r.proposedLimitPrice !== undefined && r.proposedLimitPrice !== null) digest.proposedLimitPrice = r.proposedLimitPrice;
+  if (r.proposedStop) digest.proposedStop = r.proposedStop;
+  if (r.proposedTp != null) digest.proposedTp = r.proposedTp;
+  return digest;
+}
+
+export function buildCleanJevState(
+  marketSummary: Record<string, unknown>,
+  observeResults: RoleResult[]
+): Record<string, unknown> {
+  const cleanTimeframes: Record<string, unknown> = {};
+  const rawTimeframes = (marketSummary.timeframes as Record<string, any>) ?? {};
+  for (const [tf, data] of Object.entries(rawTimeframes)) {
+    if (!data) continue;
+    const { recentCandles, ...rest } = data;
+    cleanTimeframes[tf] = {
+      ...rest,
+      recentCandles: Array.isArray(recentCandles) ? recentCandles.slice(-3) : []
+    };
+  }
+
+  return {
+    symbol: marketSummary.symbol,
+    lastPrice: marketSummary.lastPrice,
+    evaluationMode: marketSummary.evaluationMode,
+    existingPosition: marketSummary.existingPosition ?? null,
+    pendingOrder: marketSummary.pendingOrder ?? null,
+    timeframes: cleanTimeframes,
+    microstructure: marketSummary.microstructure ?? null,
+    crossMarketBreadth: marketSummary.crossMarketBreadth ?? null,
+    opposingFacts: marketSummary.opposingFacts ?? [],
+    optionalResearch: marketSummary.optionalResearch ?? null,
+    observations: observeResults.map(toPeerDigest)
+  };
+}
+
+function samePrice(a: string | number | null | undefined, b: string | number | null | undefined): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  const numA = Number(a);
+  const numB = Number(b);
+  if (!Number.isFinite(numA) || !Number.isFinite(numB)) return String(a) === String(b);
+  return Math.abs(numA - numB) <= 1e-8;
 }
 
 function resolveBaselinePrice(
@@ -108,9 +161,9 @@ function leadChangedTicket(lead: RoleResult, ticket: CandidateOrder): boolean {
   const side = ticketSide(lead.stance);
   if (side && side !== ticket.side) return true;
   if (lead.proposedOrderType && lead.proposedOrderType !== ticket.orderType) return true;
-  if (lead.proposedLimitPrice !== undefined && lead.proposedLimitPrice !== ticket.limitPrice) return true;
-  if (lead.proposedStop && lead.proposedStop !== ticket.stop) return true;
-  if (lead.proposedTp != null && lead.proposedTp !== ticket.tp) return true;
+  if (lead.proposedLimitPrice !== undefined && !samePrice(lead.proposedLimitPrice, ticket.limitPrice)) return true;
+  if (lead.proposedStop && !samePrice(lead.proposedStop, ticket.stop)) return true;
+  if (lead.proposedTp != null && !samePrice(lead.proposedTp, ticket.tp)) return true;
   return false;
 }
 
@@ -151,7 +204,7 @@ function reviseTicket(lead: RoleResult, ticket: CandidateOrder, policy?: CyclePo
   let tp = lead.proposedTp ?? ticket.tp;
 
   if (orderType === 'LIMIT_GTC' && limitPrice && Number(limitPrice) > 0 && side && policy) {
-    const isLimitChanged = lead.proposedLimitPrice !== undefined && lead.proposedLimitPrice !== ticket.limitPrice;
+    const isLimitChanged = lead.proposedLimitPrice !== undefined && !samePrice(lead.proposedLimitPrice, ticket.limitPrice);
     const isOrderTypeChangedToLimit = ticket.orderType !== 'LIMIT_GTC';
     const numLimit = Number(limitPrice);
     const numStop = Number(stop);
@@ -247,16 +300,7 @@ export class CycleRunner {
         cycleId,
         symbol: input.symbol,
         evidenceId: input.evidenceId,
-        state: {
-          marketSummary: input.marketSummary,
-          observations: observeResults.map((r) => ({
-            role: r.role,
-            status: r.status,
-            stance: r.stance,
-            claimRefs: r.claimRefs,
-            contraryRefs: r.contraryRefs
-          }))
-        }
+        state: buildCleanJevState(input.marketSummary, observeResults)
       });
     }
     const jevReviewId = jevReview?.status === 'completed' ? jevReview.reviewId : null;
@@ -277,7 +321,7 @@ export class CycleRunner {
           symbol: input.symbol,
           promptContext: {
             marketSummary: input.marketSummary,
-            peerObservations: observeResults,
+            peerObservations: observeResults.map(toPeerDigest),
             jevReview
           }
         })
@@ -299,8 +343,8 @@ export class CycleRunner {
       symbol: input.symbol,
       promptContext: {
         marketSummary: input.marketSummary,
-        observations: observeResults,
-        challenges: challengeResults,
+        observations: observeResults.map(toPeerDigest),
+        challenges: challengeResults.map(toPeerDigest),
         jevReview,
         policy: input.policy
       }
@@ -357,12 +401,7 @@ export class CycleRunner {
       limitPrice: initialLimitPrice,
       stop: initialStop,
       tp: initialTp,
-      leverage: input.policy.maxLeverage ?? null,
-      allocationPerOrderUsdt: input.policy.allocationPerOrderUsdt ?? null,
-      availableCapitalUsdt: input.policy.availableCapitalUsdt ?? null,
-      orderSizePct: input.policy.orderSizePct ?? null,
-      maxPositions: input.policy.maxPositions ?? null,
-      dailyLossLimitPct: input.policy.dailyLossLimitPct ?? null
+      leverage: input.policy.maxLeverage ?? null
     };
     const riskResult = await runRole({
       cycleId,
@@ -377,8 +416,8 @@ export class CycleRunner {
       symbol: input.symbol,
       promptContext: {
         marketSummary: input.marketSummary,
-        observations: observeResults,
-        challenges: challengeResults,
+        observations: observeResults.map(toPeerDigest),
+        challenges: challengeResults.map(toPeerDigest),
         jevReview,
         policy: input.policy,
         candidateOrder
@@ -400,10 +439,10 @@ export class CycleRunner {
       symbol: input.symbol,
       promptContext: {
         marketSummary: input.marketSummary,
-        observations: observeResults,
-        challenges: challengeResults,
-        riskResult,
-        executionResult,
+        observations: observeResults.map(toPeerDigest),
+        challenges: challengeResults.map(toPeerDigest),
+        riskResult: toPeerDigest(riskResult),
+        executionResult: toPeerDigest(executionResult),
         jevReview,
         policy: input.policy,
         candidateOrder
@@ -545,8 +584,8 @@ export class CycleRunner {
         symbol: input.symbol,
         promptContext: {
           marketSummary: input.marketSummary,
-          observations: observeResults,
-          challenges: challengeResults,
+          observations: observeResults.map(toPeerDigest),
+          challenges: challengeResults.map(toPeerDigest),
           jevReview,
           policy: input.policy,
           candidateOrder: ticket
