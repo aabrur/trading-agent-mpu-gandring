@@ -819,6 +819,7 @@ export function createReplacementRuntime(
   let autoTimer: NodeJS.Timeout | null = null;
   let fastReflexTimer: NodeJS.Timeout | null = null;
   const rejectCache = new Map<string, { at: number; price: number }>();
+  const nonWhitelistedSymbols = new Set<string>();
 
   const scheduleNextAutoCycle = () => {
     if (autoTimer) {
@@ -998,7 +999,9 @@ export function createReplacementRuntime(
         openSymbols.add(po.symbol.toUpperCase());
       }
     }
-    const currentPosCount = snap.mode === 'PAPER' ? snap.paper.positions.length : openSymbols.size;
+    const currentPosCount = snap.mode === 'PAPER'
+      ? Math.max(snap.paper.positions.length, openSymbols.size)
+      : (snap.accountState?.occupiedSlots ?? openSymbols.size);
     const maxSlotsN = snap.paper.n || 3;
     const freeSlots = Math.max(0, maxSlotsN - currentPosCount);
 
@@ -1461,11 +1464,16 @@ export function createReplacementRuntime(
       : (snap.financial.balance.value ?? snap.paper.balance);
     const safetyNet = snap.paper.safetyNet ?? 0;
     const moneyTradeBudget = Math.max(0, Math.round((balance - safetyNet) * 100) / 100);
-    const usedMargin = snap.mode === 'PAPER'
-      ? snap.paper.usedMargin
-      : Math.round((snap.venueAccount?.positions?.reduce((acc: number, p: any) => acc + (Number(p.margin) || 0), 0) ?? snap.paper.usedMargin ?? 0) * 100) / 100;
+    const usedMargin = Math.round(((snap.paper.usedMargin ?? 0) > 0 ? snap.paper.usedMargin : (snap.venueAccount?.positions?.reduce((acc: number, p: any) => acc + (Number(p.margin) || 0), 0) ?? 0)) * 100) / 100;
     const freeAllocatableMargin = Math.max(0, Math.round((moneyTradeBudget - usedMargin) * 100) / 100);
     const perOrderAllocation = resolveOwnerPerOrderUsdt(snap.paper);
+
+    const pendingOrdersList = (snap.venueAccount as any)?.pendingOrders ?? [];
+    const occupiedByPositions = (snap.paper.positions ?? []).map((p) => p.symbol);
+    const occupiedByPendingOrders = pendingOrdersList.map((p: any) => p.symbol);
+    const occupiedBySymbols = Array.from(new Set([...occupiedByPositions, ...occupiedByPendingOrders]));
+    const totalOccupiedSlots = snap.accountState?.occupiedSlots ?? occupiedBySymbols.length;
+    const freeSlotsAfterOccupied = Math.max(0, maxSlotsN - totalOccupiedSlots);
 
     const accountCapital = {
       totalEquity,
@@ -1476,8 +1484,12 @@ export function createReplacementRuntime(
       freeAllocatableMargin,
       perOrderAllocation,
       maxSlotsN,
-      occupiedSlots: currentPosCount,
-      freeSlots
+      occupiedSlots: totalOccupiedSlots,
+      freeSlots: freeSlotsAfterOccupied,
+      occupiedByPositions,
+      occupiedByPendingOrders,
+      occupiedBySymbols,
+      slotLedgerNote: `${occupiedByPositions.length} active positions, ${occupiedByPendingOrders.length} pending orders (${totalOccupiedSlots}/${maxSlotsN} slots occupied)`
     };
 
     let roePct = 0;
@@ -2112,6 +2124,9 @@ export function createReplacementRuntime(
               }
               if (!isFilled && !isPartial && !isPending) {
                 verdictRecord.reason = `Venue did not accept order (state ${orderState}): ${dispatchRes.message}`;
+                if (/10029|not whitelisted/i.test(dispatchRes.message ?? '')) {
+                  nonWhitelistedSymbols.add(targetSymbol);
+                }
               }
               verdictRecord.order = {
                 positionId: clientOrderId,
@@ -2133,11 +2148,101 @@ export function createReplacementRuntime(
               verdictRecord.executed = false;
               verdictRecord.operationalStatus = 'REJECTED';
               verdictRecord.reason = `Gateway rejected order: ${dispatchRes.message}`;
+              if (/10029|not whitelisted/i.test(dispatchRes.message ?? '')) {
+                nonWhitelistedSymbols.add(targetSymbol);
+              }
               hub.emit('log', {
                 at: Date.now(),
                 kind: 'execution',
                 text: `${currentSnap.mode} order for ${targetSymbol} rejected by gateway: ${dispatchRes.message}`
               });
+            }
+            if (options.syncVenueAccount) {
+              try {
+                await options.syncVenueAccount();
+              } catch {}
+            }
+          }
+        } else if (action === 'HOLD' && existingPos) {
+          const proposedStopNum = out.verdict.thesis?.stop ? Number(out.verdict.thesis.stop) : null;
+          const proposedTpNum = out.verdict.thesis?.tp ? Number(out.verdict.thesis.tp) : null;
+          const currentStopNum = existingPos.stop ? Number(existingPos.stop) : null;
+          const currentTpNum = existingPos.tp ? Number(existingPos.tp) : null;
+          const frameLast = Number(marketHub?.snapshot(targetSymbol)?.last?.value);
+          const currPrice = (frameLast > 0 ? frameLast : 0) || (Number(currentSnap.tickers[targetSymbol]?.last) || 0) || ((existingPos as any)?.mark ? Number((existingPos as any).mark) : 0) || currentPriceNum;
+
+          let shouldUpdateStop = false;
+          let nextStop = currentStopNum;
+          if (proposedStopNum != null && Number.isFinite(proposedStopNum) && proposedStopNum > 0 && currPrice > 0) {
+            if (existingPos.side === 'LONG') {
+              if ((currentStopNum == null || proposedStopNum > currentStopNum) && proposedStopNum < currPrice) {
+                shouldUpdateStop = true;
+                nextStop = proposedStopNum;
+              }
+            } else if (existingPos.side === 'SHORT') {
+              if ((currentStopNum == null || (currentStopNum > 0 && proposedStopNum < currentStopNum)) && proposedStopNum > currPrice) {
+                shouldUpdateStop = true;
+                nextStop = proposedStopNum;
+              }
+            }
+          }
+
+          let shouldUpdateTp = false;
+          let nextTp = currentTpNum;
+          if (proposedTpNum != null && Number.isFinite(proposedTpNum) && proposedTpNum > 0 && currPrice > 0) {
+            if (existingPos.side === 'LONG' && proposedTpNum > currPrice) {
+              if (currentTpNum == null || proposedTpNum !== currentTpNum) {
+                shouldUpdateTp = true;
+                nextTp = proposedTpNum;
+              }
+            } else if (existingPos.side === 'SHORT' && proposedTpNum < currPrice) {
+              if (currentTpNum == null || proposedTpNum !== currentTpNum) {
+                shouldUpdateTp = true;
+                nextTp = proposedTpNum;
+              }
+            }
+          }
+
+          if (shouldUpdateStop || shouldUpdateTp) {
+            if (currentSnap.mode === 'PAPER') {
+              updateState((draft) => {
+                const p = draft.paper.positions.find((pos) => pos.symbol.toUpperCase() === targetSymbol);
+                if (p) {
+                  if (nextStop != null) p.stop = nextStop;
+                  if (nextTp != null) p.tp = nextTp;
+                }
+              });
+              verdictRecord.executed = true;
+              hub.emit('log', {
+                at: Date.now(),
+                kind: 'execution',
+                text: `[EXECUTION] Tightened PAPER protection on HOLD verdict for ${targetSymbol}: SL ${nextStop ?? 'unchanged'}, TP ${nextTp ?? 'none'}`
+              });
+            } else {
+              try {
+                const protectRes = await dispatch({
+                  kind: 'protect',
+                  actor: 'system',
+                  symbol: targetSymbol,
+                  payload: {
+                    symbol: targetSymbol,
+                    stop: nextStop != null ? String(nextStop) : undefined,
+                    tp: nextTp != null ? String(nextTp) : null
+                  }
+                });
+                verdictRecord.executed = protectRes.ok;
+                hub.emit('log', {
+                  at: Date.now(),
+                  kind: 'execution',
+                  text: `[EXECUTION] Tightened protection on HOLD verdict for ${targetSymbol}: SL ${nextStop ?? 'unchanged'}, TP ${nextTp ?? 'none'} (${protectRes.message})`
+                });
+              } catch (err: any) {
+                hub.emit('log', {
+                  at: Date.now(),
+                  kind: 'execution',
+                  text: `[EXECUTION] Failed to tighten protection on HOLD verdict for ${targetSymbol}: ${err?.message ?? String(err)}`
+                });
+              }
             }
             if (options.syncVenueAccount) {
               try {
@@ -2417,7 +2522,8 @@ export function createReplacementRuntime(
           leverage: effectiveLeverage,
           minNotionalUsdt,
           systemicRiskOff: isSystemicRiskOff,
-          rejectedRecently
+          rejectedRecently,
+          nonWhitelistedSymbols
         });
       });
       rankedCandidates.sort((a, b) => b.score - a.score);
@@ -3761,15 +3867,23 @@ export function createReplacementRuntime(
 
       const unrealizedPnlDist = isLong ? (currPrice - pos.entry) : (pos.entry - currPrice);
       const rMultiple = unrealizedPnlDist / initialRisk;
+      const leverage = (pos as any).leverage || snap.trading?.values?.maxLeverage || snap.paper?.maxLeverage || 10;
+      const priceMovePct = (unrealizedPnlDist / pos.entry) * 100;
+      const roePct = priceMovePct * leverage;
 
-      // 1a. Breakeven Plus (+1R threshold)
-      if (rMultiple >= 1.0) {
+      // 1a. Breakeven Plus (+1.0R threshold OR >= +8.0% ROE)
+      if (rMultiple >= 1.0 || roePct >= 8.0) {
         const beStop = isLong
           ? Math.round(pos.entry * 1.0015 * 10000) / 10000
           : Math.round(pos.entry * 0.9985 * 10000) / 10000;
-        const needsBeAdjustment = isLong
+
+        const hasSafeBuffer = isLong
+          ? (currPrice >= beStop * 1.0005)
+          : (currPrice <= beStop * 0.9995);
+
+        const needsBeAdjustment = hasSafeBuffer && (isLong
           ? (pos.stop < beStop)
-          : (pos.stop > beStop || pos.stop <= 0);
+          : (pos.stop > beStop || pos.stop <= 0));
 
         if (needsBeAdjustment) {
           hub.emit('log', {
@@ -3786,8 +3900,8 @@ export function createReplacementRuntime(
         }
       }
 
-      // 1b. ATR Ratchet Trailing (+1.5R)
-      if (rMultiple >= 1.5) {
+      // 1b. ATR Ratchet Trailing (+1.5R threshold OR >= +12.0% ROE)
+      if (rMultiple >= 1.5 || roePct >= 12.0) {
         const closed15m = frame?.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
         const closed5m = frame?.closed?.['5m']?.filter((b) => b.confirmed) ?? [];
         const primaryBars = closed15m.length >= 14 ? closed15m : closed5m;
@@ -3807,8 +3921,8 @@ export function createReplacementRuntime(
           : Math.round((currPrice + (1.5 * atr)) * 10000) / 10000;
 
         const needsTrailingAdjustment = isLong
-          ? (trailStop > pos.stop && trailStop > pos.entry * 1.0015)
-          : ((pos.stop <= 0 || trailStop < pos.stop) && trailStop < pos.entry * 0.9985);
+          ? (trailStop > pos.stop && trailStop > pos.entry * 1.0015 && trailStop < currPrice)
+          : ((pos.stop <= 0 || trailStop < pos.stop) && trailStop < pos.entry * 0.9985 && trailStop > currPrice);
 
         if (needsTrailingAdjustment) {
           hub.emit('log', {
@@ -3835,11 +3949,12 @@ export function createReplacementRuntime(
       const sym = po.symbol.toUpperCase();
       const clientOrderId = po.clientOrderId;
       const matchingVerdict = pendingVerdicts.find((v) => v.symbol.toUpperCase() === sym);
-      const createdAt = matchingVerdict?.at ?? (po as any).createdAt ?? now;
-      const ageMs = now - createdAt;
+      const rawCreatedAt = (po as any).createdAt ?? matchingVerdict?.at ?? null;
+      const createdAt = typeof rawCreatedAt === 'number' && rawCreatedAt > 0 ? rawCreatedAt : null;
+      const ageMs = createdAt ? (now - createdAt) : 0;
 
       // 2a. TTL Expired (45 minutes)
-      if (ageMs > 45 * 60 * 1000) {
+      if (createdAt && ageMs > 45 * 60 * 1000) {
         hub.emit('log', {
           at: now,
           kind: 'system',
@@ -3851,6 +3966,20 @@ export function createReplacementRuntime(
           symbol: sym,
           payload: { symbol: sym, clientOrderId }
         }).catch(() => {});
+        updateState((draft) => {
+          if (draft.venueAccount?.pendingOrders) {
+            draft.venueAccount.pendingOrders = draft.venueAccount.pendingOrders.filter((p) => p.symbol.toUpperCase() !== sym);
+          }
+          if (draft.venueAccount?.pendingSymbols) {
+            draft.venueAccount.pendingSymbols = draft.venueAccount.pendingSymbols.filter((s) => s.toUpperCase() !== sym);
+          }
+          for (const v of draft.verdicts ?? []) {
+            if (v.symbol.toUpperCase() === sym && (v as any).operationalStatus === 'PENDING') {
+              (v as any).operationalStatus = 'CANCELLED';
+              v.executed = false;
+            }
+          }
+        });
         continue;
       }
 
@@ -4612,17 +4741,21 @@ export async function startReplacementServer(
             status: 'confirmed',
             positions: activePosList.map((p) => ({ symbol: p.symbol, side: p.side, qty: Number(p.qty) })),
             pendingSymbols: pendingIntents.map((p) => p.symbol),
-            pendingOrders: pendingIntents.map((p) => ({
-              intentId: p.intentId,
-              clientOrderId: p.clientOrderId,
-              symbol: p.symbol,
-              side: p.side,
-              orderState: p.orderState,
-              filledQty: p.filledQty,
-              limitPrice: p.limitPrice ?? null,
-              stopPrice: p.stopPrice ?? null,
-              tpPrice: p.tpPrice ?? null
-            }))
+            pendingOrders: pendingIntents.map((p) => {
+              const matchingVerdict = (d.verdicts ?? []).find((v: any) => v.symbol.toUpperCase() === p.symbol.toUpperCase());
+              return {
+                intentId: p.intentId,
+                clientOrderId: p.clientOrderId,
+                symbol: p.symbol,
+                side: p.side,
+                orderState: p.orderState,
+                filledQty: p.filledQty,
+                limitPrice: p.limitPrice ?? null,
+                stopPrice: p.stopPrice ?? null,
+                tpPrice: p.tpPrice ?? null,
+                createdAt: p.createdAt ?? matchingVerdict?.at ?? null
+              };
+            })
           };
           d.paper.balance = eq;
           d.paper.unrealized = totalUnrealized;
@@ -4650,6 +4783,8 @@ export async function startReplacementServer(
             const priorVerdictTp = (d.verdicts ?? []).find(
               (v: any) => v.symbol.toUpperCase() === nativePos.symbol.toUpperCase() && v.order?.tp
             )?.order?.tp;
+            const verifiedTp = recon?.verifiedTps?.[nativePos.positionKey] ? Number(recon.verifiedTps[nativePos.positionKey]) : null;
+            const resolvedTp = verifiedTp ?? (existing?.tp ?? (priorVerdictTp ? Number(priorVerdictTp) : null));
             updatedPositions.push({
               id: existing?.id ?? `pos-${nativePos.symbol}-${idx}`,
               symbol: nativePos.symbol,
@@ -4657,7 +4792,7 @@ export async function startReplacementServer(
               qty,
               entry,
               stop: shown.stop,
-              tp: existing?.tp ?? (priorVerdictTp ? Number(priorVerdictTp) : null),
+              tp: resolvedTp,
               mark,
               unrealizedPnl: Math.round(upnl * 100) / 100,
               leverage,

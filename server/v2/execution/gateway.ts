@@ -581,13 +581,19 @@ export class ExecutionGateway {
         });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : 'Exchange submission failed';
+        const isDeterministicReject =
+          /10029|10001|110007|110004|110043|10004/i.test(errMsg) ||
+          /not whitelisted|insufficient|invalid|minimum|qty/i.test(errMsg);
+        const finalState: IntentState = isDeterministicReject ? 'REJECTED' : 'UNKNOWN';
+        const finalProtection: ProtectionState = isDeterministicReject ? 'NOT_APPLICABLE' : 'PENDING';
+
         await this.store
           .transaction(async (tx) => {
             await tx.execute(
               `UPDATE execution_intents
-               SET order_state = 'UNKNOWN', updated_at = ?
+               SET order_state = ?, protection_state = ?, updated_at = ?
                WHERE account_ref = ? AND intent_id = ?`,
-              [new Date().toISOString(), intent.accountRef, intent.intentId]
+              [finalState, finalProtection, new Date().toISOString(), intent.accountRef, intent.intentId]
             );
           })
           .catch(() => {});
@@ -595,9 +601,9 @@ export class ExecutionGateway {
         return {
           intentId: intent.intentId,
           clientOrderId,
-          orderState: 'UNKNOWN',
+          orderState: finalState,
           filledQty: null,
-          protectionState: 'PENDING',
+          protectionState: finalProtection,
           certainty: null,
           reason: errMsg
         };

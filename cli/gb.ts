@@ -165,13 +165,71 @@ export async function gb(argv: string[], deps: Deps = {}): Promise<GbResult> {
     }
     case 'account': {
       const st = await state();
-      const d = { mode: st.mode, appMode: st.appMode, exchange: st.live?.exchange ?? null, balance: st.paper.balance, equity: st.paper.equity, safetyNet: st.paper.safetyNet, n: st.paper.n, moneyTrade: st.paper.moneyTrade, perOrder: st.paper.perOrder, orderSizePct: st.paper.orderSizePct, open: st.paper.positions.length, dailyLoss: st.dailyLoss, killed: st.killed, paused: st.paused, auto: { on: st.auto?.on, intervalMin: st.auto?.intervalMin } };
-      return ok(d, `${d.mode}${d.exchange ? ` on ${d.exchange}` : ''}: balance ${d.balance}, equity ${d.equity}, safety net ${d.safetyNet}, ${d.open}/${d.n} open, daily stop ${d.dailyLoss.limitPct}%${d.dailyLoss.hit ? ' HIT' : ''}${d.killed ? ', KILLED' : ''}`);
+      const pendingOrders = (st.venueAccount?.pendingOrders ?? []) as Array<Record<string, unknown>>;
+      const pendingSymbols = pendingOrders.map((p) => String(p.symbol).toUpperCase());
+      const occupiedSlots = Number(st.accountState?.occupiedSlots ?? (st.paper.positions.length + pendingOrders.length));
+      const d = {
+        mode: st.mode,
+        appMode: st.appMode,
+        exchange: st.live?.exchange ?? null,
+        balance: st.paper.balance,
+        equity: st.paper.equity,
+        safetyNet: st.paper.safetyNet,
+        n: st.paper.n,
+        moneyTrade: st.paper.moneyTrade,
+        perOrder: st.paper.perOrder,
+        orderSizePct: st.paper.orderSizePct,
+        open: st.paper.positions.length,
+        pendingCount: pendingOrders.length,
+        pendingSymbols,
+        occupiedSlots,
+        dailyLoss: st.dailyLoss,
+        killed: st.killed,
+        paused: st.paused,
+        auto: { on: st.auto?.on, intervalMin: st.auto?.intervalMin }
+      };
+      return ok(
+        d,
+        `${d.mode}${d.exchange ? ` on ${d.exchange}` : ''}: balance ${d.balance}, equity ${d.equity}, safety net ${d.safetyNet}, ${d.open} filled, ${d.pendingCount} pending (${d.occupiedSlots}/${d.n} slots occupied), daily stop ${d.dailyLoss?.limitPct ?? 3}%${d.dailyLoss?.hit ? ' HIT' : ''}${d.killed ? ', KILLED' : ''}`
+      );
     }
     case 'positions': {
       const st = await state();
-      const d = st.paper.positions.map((p: Record<string, unknown>) => ({ symbol: p.symbol, side: p.side, qty: p.qty, entry: p.entry, stop: p.stop, tp: p.tp, mark: p.mark, pnl: p.unrealizedPnl, margin: p.margin, leverage: p.leverage, openedAt: p.openedAt, protectionStatus: p.protectionStatus ?? 'unknown' }));
-      return ok(d, d.length ? d.map((p: Record<string, unknown>) => `${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} PnL ${p.pnl} protection ${p.protectionStatus}`).join('\n') : 'no open positions');
+      const d = st.paper.positions.map((p: Record<string, unknown>) => ({
+        symbol: p.symbol,
+        side: p.side,
+        qty: p.qty,
+        entry: p.entry,
+        stop: p.stop,
+        tp: p.tp,
+        mark: p.mark,
+        pnl: p.unrealizedPnl,
+        margin: p.margin,
+        leverage: p.leverage,
+        openedAt: p.openedAt,
+        protectionStatus: p.protectionStatus ?? 'unknown'
+      }));
+      const pendingOrders = ((st.venueAccount?.pendingOrders ?? []) as Array<Record<string, unknown>>).map((p) => ({
+        symbol: p.symbol,
+        side: p.side,
+        limitPrice: p.limitPrice,
+        stopPrice: p.stopPrice,
+        tpPrice: p.tpPrice,
+        orderState: p.orderState,
+        clientOrderId: p.clientOrderId
+      }));
+      Object.defineProperty(d, 'pendingOrders', { value: pendingOrders, enumerable: false, writable: true, configurable: true });
+
+      const lines: string[] = [];
+      if (d.length) {
+        lines.push(...d.map((p: Record<string, unknown>) => `${p.side} ${p.qty} ${p.symbol} entry ${p.entry} SL ${p.stop}${p.tp ? ` TP ${p.tp}` : ''} PnL ${p.pnl} protection ${p.protectionStatus}`));
+      }
+      if (pendingOrders.length) {
+        lines.push(...pendingOrders.map((p) => `PENDING LIMIT ${p.side} ${p.symbol} @ ${p.limitPrice ?? 'limit'} (SL: ${p.stopPrice ?? 'n/a'}, TP: ${p.tpPrice ?? 'n/a'}) [${p.orderState}] id=${p.clientOrderId}`));
+      }
+
+      const text = lines.length ? lines.join('\n') : 'no open positions';
+      return ok(d, text);
     }
     case 'split': {
       let balance = num(flags.balance), safetyNet = num(flags.safety), n = num(flags.n), orderSizePct = cfg.risk.orderSizePct;

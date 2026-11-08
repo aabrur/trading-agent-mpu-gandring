@@ -99,29 +99,64 @@ const ToolCallEnvelopeSchema = z
   })
   .passthrough();
 
-const ModelConfidenceSchema = z
-  .object({
-    value: z.number().nullable(),
-    scale: z.enum(['probability_0_1', 'ordinal_1_5', 'score_0_100']).nullable()
-  })
-  .strict();
+const ModelConfidenceSchema = z.preprocess((val) => {
+  if (typeof val === 'number') {
+    const num = val <= 1 ? val : val / 100;
+    return { value: num, scale: 'probability_0_1' };
+  }
+  if (typeof val === 'string') {
+    const parsed = Number(val);
+    if (Number.isFinite(parsed)) {
+      const num = parsed <= 1 ? parsed : parsed / 100;
+      return { value: num, scale: 'probability_0_1' };
+    }
+  }
+  if (val && typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    const rawVal = obj.value;
+    const numVal = typeof rawVal === 'string' ? Number(rawVal) : (typeof rawVal === 'number' ? rawVal : null);
+    return {
+      ...obj,
+      value: Number.isFinite(numVal) ? numVal : null,
+      scale: typeof obj.scale === 'string' ? obj.scale : 'probability_0_1'
+    };
+  }
+  return val;
+}, z.object({
+  value: z.number().nullable(),
+  scale: z.enum(['probability_0_1', 'ordinal_1_5', 'score_0_100']).nullable()
+}));
 
-const PredicateSchema = z
-  .object({
-    kind: z.enum(['PRICE_BELOW', 'PRICE_ABOVE', 'STRUCTURE_BREAK']),
-    level: z.union([z.string(), z.number()]).transform((v) => String(v)).optional(),
-    timeframe: z.string().optional(),
-    description: z.string().min(1)
-  })
-  .strict();
+const PredicateSchema = z.object({
+  kind: z.enum(['PRICE_BELOW', 'PRICE_ABOVE', 'STRUCTURE_BREAK']),
+  level: z.union([z.string(), z.number()]).transform((v) => String(v)).optional(),
+  timeframe: z.string().optional(),
+  description: z.string().min(1)
+});
+
+const PreprocessedStance = z.preprocess((val) => {
+  if (typeof val === 'string') {
+    const upper = val.trim().toUpperCase();
+    if (upper === 'BULLISH' || upper === 'BUY') return 'LONG';
+    if (upper === 'BEARISH' || upper === 'SELL') return 'SHORT';
+    if (upper === 'WAIT' || upper === 'FLAT' || upper === 'NONE') return 'HOLD';
+    return upper;
+  }
+  return val;
+}, z.enum(['LONG', 'SHORT', 'HOLD', 'CLOSE', 'NEUTRAL']));
+
+const LooseStringArray = z.preprocess(
+  (v) => (Array.isArray(v) ? v.map(String) : []),
+  z.array(z.string())
+).default([]);
 
 const OptionalPriceString = z.union([z.string(), z.number()]).transform((v) => String(v)).nullable().optional();
 
 const BaseReplySchema = z.object({
-  stance: z.enum(['LONG', 'SHORT', 'HOLD', 'CLOSE', 'NEUTRAL']),
+  stance: PreprocessedStance,
   decision: z.enum(['APPROVE', 'REJECT']).optional(),
-  claimRefs: z.array(z.string()).default([]),
-  contraryRefs: z.array(z.string()).default([]),
+  claimRefs: LooseStringArray,
+  contraryRefs: LooseStringArray,
   reasoning: z.string().min(1),
   confidence: ModelConfidenceSchema.optional(),
   invalidationPredicate: PredicateSchema.nullable().optional(),
@@ -607,22 +642,32 @@ export class RoleRunner {
           obj.stance = 'HOLD';
         }
 
-        if (!obj.reasoning && typeof obj.argument === 'string') {
+        if (!obj.reasoning && typeof obj.rationale === 'string') {
+          obj.reasoning = obj.rationale;
+        } else if (!obj.reasoning && typeof obj.analysis === 'string') {
+          obj.reasoning = obj.analysis;
+        } else if (!obj.reasoning && typeof obj.argument === 'string') {
           obj.reasoning = obj.argument;
         } else if (!obj.reasoning && typeof obj.summary === 'string') {
           obj.reasoning = obj.summary;
         } else if (!obj.reasoning && typeof obj.text === 'string') {
           obj.reasoning = obj.text;
+        } else if (!obj.reasoning) {
+          obj.reasoning = 'Deliberation completed.';
         }
 
-        if (typeof obj.confidence === 'number') {
-          const num = obj.confidence;
-          if (num >= 0 && num <= 1) {
-            obj.confidence = { value: num, scale: 'probability_0_1' };
-          } else if (num > 1 && num <= 100) {
-            obj.confidence = { value: num, scale: 'score_0_100' };
-          } else {
-            obj.confidence = { value: null, scale: null };
+        if (typeof obj.confidence === 'number' || typeof obj.confidence === 'string') {
+          const num = typeof obj.confidence === 'number' ? obj.confidence : Number(obj.confidence);
+          if (Number.isFinite(num)) {
+            if (num >= 0 && num <= 1) {
+              obj.confidence = { value: num, scale: 'probability_0_1' };
+            } else if (num > 1 && num <= 5) {
+              obj.confidence = { value: num, scale: 'ordinal_1_5' };
+            } else if (num > 5 && num <= 100) {
+              obj.confidence = { value: num, scale: 'score_0_100' };
+            } else {
+              obj.confidence = { value: null, scale: null };
+            }
           }
         }
 
@@ -640,6 +685,20 @@ export class RoleRunner {
           } else {
             obj.decision = 'REJECT';
           }
+        }
+
+        if (obj.thesis && typeof obj.thesis === 'object') {
+          const t = obj.thesis as Record<string, unknown>;
+          if (t.stop != null && !obj.proposedStop) obj.proposedStop = String(t.stop);
+          if (t.tp != null && !obj.proposedTp) obj.proposedTp = String(t.tp);
+          if (t.limitPrice != null && !obj.proposedLimitPrice) obj.proposedLimitPrice = String(t.limitPrice);
+          if (t.orderType != null && !obj.proposedOrderType) obj.proposedOrderType = t.orderType;
+        }
+        if (typeof obj.stop === 'number' || typeof obj.stop === 'string') {
+          if (!obj.proposedStop) obj.proposedStop = String(obj.stop);
+        }
+        if (typeof obj.tp === 'number' || typeof obj.tp === 'string') {
+          if (!obj.proposedTp) obj.proposedTp = String(obj.tp);
         }
 
         if (typeof obj.proposedStop === 'number') obj.proposedStop = String(obj.proposedStop);

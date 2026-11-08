@@ -47,6 +47,7 @@ export interface ReconciledPendingIntent {
   limitPrice?: DecimalString | null;
   stopPrice?: DecimalString | null;
   tpPrice?: DecimalString | null;
+  createdAt?: number | null;
 }
 
 export interface Reconciliation {
@@ -61,6 +62,7 @@ export interface Reconciliation {
     availability: Availability;
   };
   verifiedStops: Record<string, DecimalString | null>;
+  verifiedTps?: Record<string, DecimalString | null>;
   unknowns: string[];
   externalCredentialConflict: boolean;
 }
@@ -78,7 +80,7 @@ export async function reconcileAccountState(params: {
 
   // 1. Read local unresolved intents and known managed symbols in short queries.
   const intentRows = await store.execute(
-    `SELECT intent_id, client_order_id, symbol, side, intent_kind, order_state, payload_json
+    `SELECT intent_id, client_order_id, symbol, side, intent_kind, order_state, payload_json, created_at
      FROM execution_intents
      WHERE account_ref = ?`,
     [accountRef]
@@ -135,6 +137,12 @@ export async function reconcileAccountState(params: {
       let stop: string | null = null;
       let tp: string | null = null;
       let limitPrice: string | null = null;
+      const rawCreated = (row as any).created_at;
+      const parsedCreated = typeof rawCreated === 'number'
+        ? rawCreated
+        : (typeof rawCreated === 'string' && /^\d+$/.test(rawCreated) ? Number(rawCreated) : Date.parse(String(rawCreated ?? '')));
+      const createdAt = Number.isFinite(parsedCreated) && parsedCreated > 0 ? parsedCreated : null;
+
       if (side === 'LONG' || side === 'SHORT') {
         try {
           const parsed = JSON.parse(String(row.payload_json)) as {
@@ -181,7 +189,8 @@ export async function reconcileAccountState(params: {
             filledQty: lookedUp.filledQty,
             limitPrice,
             stopPrice: stop,
-            tpPrice: tp
+            tpPrice: tp,
+            createdAt
           });
         }
         if (lookedUp.state === 'UNKNOWN' && !isNotFound) {
@@ -202,6 +211,7 @@ export async function reconcileAccountState(params: {
   let externalCredentialConflict = false;
   const protection: Record<string, ProtectionState> = {};
   const verifiedStops: Record<string, DecimalString | null> = {};
+  const verifiedTps: Record<string, DecimalString | null> = {};
   const ownedKeys = new Set<string>();
 
   const claim = (pos: NativeExposurePosition): { owned: boolean; stop: string | null; tp: string | null } => {
@@ -236,10 +246,12 @@ export async function reconcileAccountState(params: {
         protection[pos.positionKey] = 'UNVERIFIED';
         verifiedStops[pos.positionKey] = null;
       }
+      verifiedTps[pos.positionKey] = null;
       continue;
     }
 
     ownedKeys.add(pos.positionKey);
+    verifiedTps[pos.positionKey] = relation.tp ?? null;
     let observedStop: string | null = null;
     const readProtection = async (position: NativeExposurePosition) => {
       const snap = await transport.readProtection(position);
@@ -353,6 +365,7 @@ export async function reconcileAccountState(params: {
       availability: hasFinancial ? 'AVAILABLE' : 'UNAVAILABLE'
     },
     verifiedStops,
+    verifiedTps,
     unknowns,
     externalCredentialConflict
   };

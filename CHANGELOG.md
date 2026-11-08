@@ -2,6 +2,18 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.27] - 2026-11-08
+
+### Added & Improved
+- Fixed 45-minute TTL on live resting limit orders by selecting `created_at` in `reconcileAccountState` SQL query and persisting order timestamp into `pendingOrders` and `execution_intents`.
+- Fixed queue-blindness in CLI `gb account` and `gb positions`, explicitly tracking resting limit orders (`pendingCount`, `occupiedSlots`, `pendingSymbols`) and rendering `PENDING LIMIT` order lines.
+- Calibrated Fast Reflex Loop thresholds for intraday responsiveness: activates Breakeven Plus (+0.15% from entry) at +1.0R or >= +8.0% ROE with a safe mark price buffer (>= 0.05%), and monotonic ATR Ratchet Trailing at +1.5R or >= +12.0% ROE.
+- Preserved and restored `tpPrice` via `verifiedTps` across position reconciliation, preventing takeProfitPrice from resetting to null after limit orders fill.
+- Enabled monotonic SL and TP dynamic protection updates on HOLD verdicts for existing positions, dispatching exchange protection directly.
+- Implemented deterministic exchange error mapping for Bybit 10029 (symbol not whitelisted) in `ExecutionGateway`, mapping to `REJECTED` (not `UNKNOWN`) to prevent permanent slot locks, and blocking rejected symbols at Stage 1 of the Watchlist Funnel.
+- Restored `accountCapital` margin and slot accounting transparency: accurate `usedMargin` from `paper.usedMargin`, and explicit `occupiedByPositions`, `occupiedByPendingOrders`, and `occupiedBySymbols` lists.
+- Hardened agent output schema parsing tolerance: accepts bare numbers and strings for confidence, maps stance aliases (`BULLISH` -> `LONG`, `BEARISH` -> `SHORT`, `WAIT` -> `HOLD`), handles null `claimRefs`, and strips strict object validation.
+
 ## [v0.0.0.4.26] - 2026-11-08
 
 ### Added & Improved

@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.26",
-  "appVersion": "0.0.0.4.26",
+  "version": "0.4.27",
+  "appVersion": "0.0.0.4.27",
   "changelog": [
+    "v0.0.0.4.27: live operational hardening (45m TTL resting limit fix with created_at persistence, queue-aware CLI gb reporting pending orders and occupied slots, fast reflex intraday ROE calibration for +8% BE+ and +12% ATR ratchet, tpPrice retention after limit fill, dynamic protection tightening on HOLD verdicts, deterministic exchange error handling for Bybit 10029, accountCapital slot transparency, and tolerant agent schema validation).",
     "v0.0.0.4.26: fast reflex loop (<1s in-memory) for breakeven plus (+1R -> entry + 0.15%) and monotonic ATR ratchet trailing (+1.5R), 4-stage watchlist funnel (feasibility & minNotional, reject cache cooldown, systemic risk-off breadth filter, quantitative pre-scoring 0-100, and top-k promotion), pending limit order TTL (45m) and runaway TP1 auto-cancel, clean sweep orphan order cancellation, and restored pending order pricing visibility in agent deliberation.",
     "v0.0.0.4.25: unified clean agent context eliminating 7 data duplication points across 6 AI agents and Jev, pending limit order management (PENDING_ORDER_MANAGEMENT) with automatic resting order cancellation on reversal, airtight slot gate protection, enriched chart reading with liquidity sweeps, anomaly volume climax, Alpha158 factors, and harmonic patterns, plus long-term memory lessons injection and organic lesson logging.",
     "v0.0.0.4.24: implement two-phase slot-aware cycle scheduling, working memory position and breadth context injection, sovereign owner directives memory, and native LIMIT_GTC geometry recalculation.",

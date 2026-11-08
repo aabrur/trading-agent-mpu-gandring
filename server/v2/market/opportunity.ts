@@ -15,6 +15,7 @@ export interface WatchlistFunnelOptions {
   minNotionalUsdt?: number;
   systemicRiskOff?: boolean;
   rejectedRecently?: boolean;
+  nonWhitelistedSymbols?: Set<string>;
 }
 
 type OpportunityHub = Pick<BybitMarketHub, 'snapshot'>;
@@ -35,6 +36,10 @@ export function evaluateWatchlistOpportunity(
   let base = 50;
   let bull = 0;
   let bear = 0;
+
+  if (opts?.nonWhitelistedSymbols?.has(cleanSym)) {
+    return { symbol: cleanSym, score: 0, reasons: ['SYMBOL_NOT_WHITELISTED_10029'], bias: 'NEUTRAL' };
+  }
 
   if (!hub) {
     return { symbol: cleanSym, score: base, reasons: ['Standard queue order'], bias: 'NEUTRAL' };

@@ -508,6 +508,24 @@ export class CycleRunner {
     const desiredStance = leadResult.stance;
 
     if (desiredStance !== 'LONG' && desiredStance !== 'SHORT') {
+      const holdThesis: TradeThesis | null = (desiredStance === 'HOLD' && (leadResult.proposedStop || leadResult.proposedTp))
+        ? {
+            id: `thesis-${randomUUID()}`,
+            cycleId,
+            accountRef: input.accountRef,
+            symbol: input.symbol,
+            side: 'LONG',
+            evidenceId: input.evidenceId,
+            configVersion: input.configVersion,
+            claims: leadResult.claimRefs ?? [],
+            invalidation: [],
+            stop: leadResult.proposedStop ?? '',
+            tp: leadResult.proposedTp ?? '',
+            orderType: leadResult.proposedOrderType ?? 'MARKET',
+            limitPrice: leadResult.proposedLimitPrice ?? null
+          }
+        : null;
+
       return {
         cycleId,
         reason: input.reason,
@@ -515,7 +533,7 @@ export class CycleRunner {
         verdict: {
           action: desiredStance === 'CLOSE' ? 'CLOSE' : 'HOLD',
           symbol: input.symbol,
-          thesis: null,
+          thesis: holdThesis,
           exit: null,
           rejectionReason: null
         },
