@@ -36,7 +36,7 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(sp.data).toMatchObject({ moneyTrade: 800, perOrder: 200 });
     const sz = await run('size', 'ETHUSDT', 'SHORT', '3100', '3140');
     expect(sz.ok).toBe(true);
-    expect((sz.data as { stop: number }).stop).toBeCloseTo(3100 * (1 + 20 / 300), 1);
+    expect((sz.data as { stop: number }).stop).toBeCloseTo(3100 * (1 + 20 / 100), 1);
   });
   it('event lines show in the office as Grok Bot agents speaking', async () => {
     const r = await run('event', 'market', 'ETH tape is heavy, sellers in control.', '--stance', 'SHORT', '--confidence', '0.7');
@@ -55,7 +55,7 @@ describe('npm run gb (keyless agent CLI, fake exchange)', () => {
     expect(adapter.placed).toHaveLength(1);
     expect(adapter.placed[0].leverage).toBeLessThanOrEqual(3);
     // The profile supplies protection, regardless of legacy agent stop input.
-    expect(adapter.placed[0].stop).toBeCloseTo((await adapter.ticker('ETHUSDT')) * (1 + 20 / 300), 0);
+    expect(adapter.placed[0].stop).toBeCloseTo((await adapter.ticker('ETHUSDT')) * (1 + 20 / 100), 0);
     expect(adapter.placed[0].stop).not.toBe(stop);
     const pos = await run('positions');
     expect((pos.data as unknown[]).length).toBe(1);

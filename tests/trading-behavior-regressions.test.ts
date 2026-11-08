@@ -22,16 +22,16 @@ describe('Owner profile margin protection', () => {
       expect(plan.ok).toBe(true);
       if (!plan.ok) continue;
       expect(plan.margin).toBe(200);
-      expect(Math.abs(100 - plan.stop) * plan.qty).toBeCloseTo(200 * values.defaultStopPct / 100, 6);
-      expect(Math.abs(plan.tp! - 100) * plan.qty).toBeCloseTo(200 * values.takeProfitPct! / 100, 2);
+      expect(Math.abs(100 - plan.stop)).toBeCloseTo(100 * values.defaultStopPct / 100, 6);
+      expect(Math.abs(plan.tp! - 100)).toBeCloseTo(100 * values.takeProfitPct! / 100, 2);
       expect(plan.notes).not.toEqual(expect.arrayContaining([expect.stringMatching(/size cut|loss cap|floor/i)]));
     }
   });
 
-  it('accepts a 0.05% price stop below the removed 1.2% floor', () => {
+  it('accepts a 1% price stop below the removed 1.2% floor', () => {
     const plan = planOrder({ balance: 1000, safetyNet: 200, n: 4, openPositions: 0, usedMargin: 0, price: 100, side: 'LONG', sizeFactor: 1, leverage: 20, stopPct: 1, takeProfitPct: 60, minStopPct: 1.2, minOrderUsdt: 5 });
     expect(plan.ok).toBe(true);
-    if (plan.ok) expect(plan.stop).toBeCloseTo(99.95);
+    if (plan.ok) expect(plan.stop).toBeCloseTo(99.0);
   });
 
   it('uses the active profile in preview and execution despite stale agent stop, TP and size choices', async () => {
@@ -67,7 +67,7 @@ describe('Owner profile margin protection', () => {
       expect(verdict.executed).toBe(true);
       expect(caller.mock.calls.some(([request]) => request.task === 'risk')).toBe(false);
       const payload = caller.mock.calls.find(([request]) => request.task === 'lead')![0].user;
-      expect(payload).toContain('order margin before fees');
+      expect(payload).toContain('open position price');
       for (const legacyField of ['maxLossPerTradePct', 'minStopPct', 'takeProfitR', '"cautious"']) expect(payload).not.toContain(legacyField);
       expect(verdict.order?.leverage).toBe(5);
       expect(verdict.order?.margin).toBeGreaterThan(249);

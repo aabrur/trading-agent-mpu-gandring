@@ -64,8 +64,8 @@ describe('active configuration ticket preview', () => {
     const cfg = loadConfig({ TRADING_MODE: 'PAPER', MARKET_SOURCE: 'sample', DEFAULT_STOP_PCT: '2', TAKE_PROFIT_PCT: '6', TAKE_PROFIT_R: '999' });
     const before = structuredClone(cfg.risk);
     const book = { balance: 1000, equity: 1000, safetyNet: 200, n: 4, open: 0, used: 0, mode: 'PAPER' };
-    expect(previewTicket(cfg, book, { symbol: 'BTCUSDT', side: 'LONG', entry: 100 }, null).data).toMatchObject({ stop: 99.6, tp: 101.2 });
-    expect(previewTicket(cfg, book, { symbol: 'BTCUSDT', side: 'SHORT', entry: 100 }, null).data).toMatchObject({ stop: 100.4, tp: 98.8 });
+    expect(previewTicket(cfg, book, { symbol: 'BTCUSDT', side: 'LONG', entry: 100 }, null).data).toMatchObject({ stop: 98, tp: 106 });
+    expect(previewTicket(cfg, book, { symbol: 'BTCUSDT', side: 'SHORT', entry: 100 }, null).data).toMatchObject({ stop: 102, tp: 94 });
     expect(cfg.risk).toEqual(before);
   });
 });

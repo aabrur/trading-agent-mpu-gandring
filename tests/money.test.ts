@@ -48,7 +48,7 @@ describe('order planning', () => {
     expect(p.ok).toBe(true);
     if (p.ok) {
       expect(p.margin).toBe(800);
-      expect(p.stop).toBe(99.5); // 1.5% of margin at 3x = 0.5% of price.
+      expect(p.stop).toBe(98.5); // 1.5% directly from entry price.
       expect(p.lossAtStop).toBeGreaterThan(10);
     }
   });

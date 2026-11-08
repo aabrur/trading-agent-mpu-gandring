@@ -211,10 +211,10 @@ export function planOrder(p: PlanInput): Plan {
   const fee = Math.max(p.takerFee ?? 0, rules.takerFee ?? 0);
   if (![step, minQty].every((v) => Number.isFinite(v) && v > 0) || !Number.isFinite(minNotional) || minNotional < 0 || !Number.isFinite(fee) || fee < 0) return { ok: false, reason: 'Invalid exchange quantity, minimum or fee rule.', split };
 
-  // App entry paths derive protection from profile margin percentages. Explicit prices support low-level previews.
+  // App entry paths derive protection from profile percentages based directly on entry price. Explicit prices support low-level previews.
   let rawStop: number;
   if (p.stop != null) rawStop = p.stop;
-  else if (p.stopPct != null && p.stopPct > 0) rawStop = p.side === 'LONG' ? p.price * (1 - p.stopPct / (100 * p.leverage)) : p.price * (1 + p.stopPct / (100 * p.leverage));
+  else if (p.stopPct != null && p.stopPct > 0) rawStop = p.side === 'LONG' ? p.price * (1 - p.stopPct / 100) : p.price * (1 + p.stopPct / 100);
   else return { ok: false, reason: 'No stop loss. Every order needs one.', split };
   if (!(rawStop > 0)) return { ok: false, reason: 'No stop loss. Every order needs one.', split };
   if (p.side === 'LONG' ? rawStop >= p.price : rawStop <= p.price) return { ok: false, reason: `Stop ${rawStop} is on the wrong side of the entry ${p.price} for a ${p.side}.`, split };
@@ -260,7 +260,7 @@ export function planOrder(p: PlanInput): Plan {
   const r = p.takeProfitR != null && p.takeProfitR > 0
     ? p.takeProfitR
     : (p.takeProfitPct != null && stopPct > 0 ? p.takeProfitPct / stopPct : 2);
-  const targetDistance = p.takeProfitPct != null ? p.price * p.takeProfitPct / (100 * p.leverage) : dist * r;
+  const targetDistance = p.takeProfitPct != null ? p.price * p.takeProfitPct / 100 : dist * r;
   const rawTp = p.side === 'LONG' ? p.price + targetDistance : p.price - targetDistance;
   const tp = targetDistance > 0 && rawTp > 0 ? tickToward(rawTp, rules.tickSize, p.side === 'LONG' ? 'SHORT' : 'LONG') : null;
   return {

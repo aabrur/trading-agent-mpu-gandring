@@ -86,7 +86,7 @@ describe('Desk binding debate contract with a mocked exchange', () => {
     const verdict = await desk.runDebate('BTCUSDT');
     expect(verdict).toMatchObject({ action: 'OPEN_LONG', riskDecision: 'APPROVE', executed: true });
     expect(adapter.placed).toHaveLength(1);
-    expect(adapter.placed[0]).toMatchObject({ side: 'LONG', leverage: 4, qty: 7.407, stop: 104.8, tp: 114.4 });
+    expect(adapter.placed[0]).toMatchObject({ side: 'LONG', leverage: 4, qty: 7.407, stop: 95.1, tp: 133.9 });
     expect(desk.book.positions[0]).toMatchObject({ entryScenarioId: scenario.id, entryZone: scenario.entryZone, invalidationLevel: 100 });
     expect(desk.book.positions[0].stop).not.toBe(scenario.invalidationLevel);
     expect(desk.book.positions[0].margin).toBeLessThanOrEqual(200);

@@ -99,7 +99,7 @@ describe('network trading settings', () => {
     const d = new Desk(cfg, makeCaller(cfg), { reportsDir: null });
     await d.applyTradingSettings('testnet', 'manual', { ...DEFAULT_TRADING_SETTINGS, takeProfitPct: 60, maxLossPerTradePct: 0.2, maxLeverage: 2, safetyNet: 100, maxPositions: 2, takeProfitR: 3 });
     const result = previewTicket(cfg, { balance: d.book.balance, equity: d.book.balance + d.book.unrealized, safetyNet: d.book.safetyNet, n: d.book.n, open: 0, used: 0, mode: 'TESTNET' }, { symbol: 'ETHUSDT', side: 'LONG', entry: 3000, stop: 2970, leverage: 8 }, { qtyStep: 0.001, minQty: 0.001, tickSize: 0.01, minNotional: 5 });
-    expect(result.ok).toBe(true); expect(result.data).toMatchObject({ leverage: 2, stop: 2700, tp: 3900, stopMarginPct: 20, takeProfitMarginPct: 60, split: { moneyTrade: 900, perOrder: 450 } });
+    expect(result.ok).toBe(true); expect(result.data).toMatchObject({ leverage: 2, stop: 2400, tp: 4800, stopMarginPct: 20, takeProfitMarginPct: 60, split: { moneyTrade: 900, perOrder: 450 } });
     expect(Number(result.data?.riskAtStop)).toBeGreaterThan(89);
     expect(result.data).not.toHaveProperty('maxLoss');
   });

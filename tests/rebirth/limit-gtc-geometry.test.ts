@@ -28,8 +28,8 @@ describe('Task 2: SL/TP Geometry Recalculation for LIMIT_GTC', () => {
             reasoning: 'Market breakdown',
             proposedOrderType: 'MARKET',
             proposedLimitPrice: null,
-            proposedStop: '1.3035',
-            proposedTp: '1.2396',
+            proposedStop: '1.7891',
+            proposedTp: '0.5112',
             claims: [],
             claimRefs: []
           };
@@ -114,8 +114,8 @@ describe('Task 2: SL/TP Geometry Recalculation for LIMIT_GTC', () => {
         takeProfitPct: 60,
         takeProfitR: 1.5,
         supportsLimitGtc: true,
-        profileBaselineStopPrice: { long: '1.2523', short: '1.3035' },
-        profileBaselineTpPrice: { long: '1.3162', short: '1.2396' }
+        profileBaselineStopPrice: { long: '0.7667', short: '1.7891' },
+        profileBaselineTpPrice: { long: '2.0446', short: '0.5112' }
       }
     });
 
@@ -123,8 +123,8 @@ describe('Task 2: SL/TP Geometry Recalculation for LIMIT_GTC', () => {
     expect(res.verdict.action).toBe('OPEN_SHORT');
     expect(res.verdict.thesis?.orderType).toBe('LIMIT_GTC');
     expect(res.verdict.thesis?.limitPrice).toBe('1.2900');
-    // Geometry must be anchored to 1.2900: SL 1.3158, TP 1.2513
-    expect(Number(res.verdict.thesis?.stop)).toBeCloseTo(1.3158, 3);
-    expect(Number(res.verdict.thesis?.tp)).toBeCloseTo(1.2513, 3);
+    // Geometry must be anchored to 1.2900: SL 1.8060, TP 0.5160
+    expect(Number(res.verdict.thesis?.stop)).toBeCloseTo(1.8060, 3);
+    expect(Number(res.verdict.thesis?.tp)).toBeCloseTo(0.5160, 3);
   });
 });

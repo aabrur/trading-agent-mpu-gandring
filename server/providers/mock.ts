@@ -132,8 +132,8 @@ function chat(c: Ctx) {
   const riskAtStop = pos.reduce((s, p) => s + Math.abs(p.entry - p.stop) * p.qty, 0);
   const asks = (...w: string[]) => w.some((x) => msg.includes(x));
   if (agent === 'risk') {
-    if (asks('stop', 'lose', 'loss', 'rugi')) return { reply: pos.length ? `At the current stop prices, the estimated loss is ${r2(riskAtStop)} USDT plus fees. New orders use SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% of committed margin, before fees and venue rounding.` : `No open positions. New orders use the Owner profile: SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% of committed margin before fees and venue rounding.` };
-    return { reply: `The Owner profile sets SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% of order margin and leverage up to ${c.maxLeverage}x. I report those settings without adding size reductions or stop-distance rules.` };
+    if (asks('stop', 'lose', 'loss', 'rugi')) return { reply: pos.length ? `At the current stop prices, the estimated loss is ${r2(riskAtStop)} USDT plus fees. New orders use SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% from entry price, before fees and venue rounding.` : `No open positions. New orders use the Owner profile: SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% from entry price before fees and venue rounding.` };
+    return { reply: `The Owner profile sets SL ${c.stopMarginPct}% / TP ${c.takeProfitMarginPct}% from entry price and leverage up to ${c.maxLeverage}x. I report those settings without adding size reductions or stop-distance rules.` };
   }
   if (agent === 'lead') return { reply: asks('learn', 'journal', 'report', 'pelajaran') ? `I keep the journal too. Every closed trade gets a grade and one lesson, and the periodic report is mine. Positions: ${posTxt}.` : asks('why', 'kenapa') ? `I only sign what survives the argument and the risk gate. HOLD is a perfectly good answer.` : `Give me a symbol and I will call the table. Positions: ${posTxt}.` };
   if (agent === 'market') return { reply: `I read public prices and closed candles, nothing else. Ask me after a debate and I will tell you what the tape said.` };

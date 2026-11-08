@@ -172,11 +172,10 @@ function computeBaselinePricesForReference(
   side: 'LONG' | 'SHORT',
   policy: CyclePolicy
 ): { stop: string; tp: string } {
-  const activeLev = policy.maxLeverage ?? 5;
-  const stopPctRoe = policy.defaultStopPct ?? 30;
-  const stopPricePct = (stopPctRoe / Math.max(1, activeLev)) / 100;
-  const tpPctRoe = policy.takeProfitPct ?? (stopPctRoe * (policy.takeProfitR ?? 2));
-  const tpPricePct = (tpPctRoe / Math.max(1, activeLev)) / 100;
+  const stopPct = policy.defaultStopPct ?? 30;
+  const stopPricePct = stopPct / 100;
+  const tpPct = policy.takeProfitPct ?? (stopPct * (policy.takeProfitR ?? 2));
+  const tpPricePct = tpPct / 100;
 
   const stop = side === 'LONG'
     ? (refPrice * (1 - stopPricePct)).toFixed(4)

@@ -1646,10 +1646,10 @@ export function createReplacementRuntime(
     const tv = snap.trading?.values;
     const currentPrice = Number(snap.tickers[targetSymbol]?.last ?? 0);
     const activeLev = tv?.maxLeverage ?? snap.paper.maxLeverage ?? 1;
-    const stopPctRoe = tv?.defaultStopPct ?? snap.paper.defaultStopPct ?? 30;
-    const stopPricePct = (stopPctRoe / Math.max(1, activeLev)) / 100;
-    const tpPctRoe = tv?.takeProfitPct ?? (stopPctRoe * (tv?.takeProfitR ?? 2));
-    const tpPricePct = (tpPctRoe / Math.max(1, activeLev)) / 100;
+    const stopPct = tv?.defaultStopPct ?? snap.paper.defaultStopPct ?? 30;
+    const stopPricePct = stopPct / 100;
+    const tpPct = tv?.takeProfitPct ?? (stopPct * (tv?.takeProfitR ?? 2));
+    const tpPricePct = tpPct / 100;
 
     let profileBaselineStopPrice: { long: string | null; short: string | null } | undefined = undefined;
     let profileBaselineTpPrice: { long: string | null; short: string | null } | undefined = undefined;
@@ -1669,8 +1669,8 @@ export function createReplacementRuntime(
       minEntryConfidencePct: tv?.minEntryConfidencePct ?? 60,
       requireTwoOfThreeAnalysts: false,
       maxLeverage: activeLev,
-      defaultStopPct: stopPctRoe,
-      takeProfitPct: tpPctRoe,
+      defaultStopPct: stopPct,
+      takeProfitPct: tpPct,
       takeProfitR: tv?.takeProfitR ?? 2,
       availableCapitalUsdt: snap.paper.moneyTrade,
       allocationPerOrderUsdt: resolveOwnerPerOrderUsdt(snap.paper),
@@ -2005,10 +2005,10 @@ export function createReplacementRuntime(
             ? Number(thesisLimit)
             : Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
 
-          const stopPctRoe = currentSnap.trading?.values.defaultStopPct ?? currentSnap.paper.defaultStopPct ?? 30;
-          const stopPricePct = (stopPctRoe / Math.max(1, leverage)) / 100;
-          const tpPctRoe = currentSnap.trading?.values.takeProfitPct ?? (stopPctRoe * (currentSnap.trading?.values.takeProfitR ?? 2));
-          const tpPricePct = (tpPctRoe / Math.max(1, leverage)) / 100;
+          const stopPct = currentSnap.trading?.values.defaultStopPct ?? currentSnap.paper.defaultStopPct ?? 30;
+          const stopPricePct = stopPct / 100;
+          const tpPct = currentSnap.trading?.values.takeProfitPct ?? (stopPct * (currentSnap.trading?.values.takeProfitR ?? 2));
+          const tpPricePct = tpPct / 100;
           const fallbackCalcStop = side === 'LONG'
             ? entryPrice * (1 - stopPricePct)
             : entryPrice * (1 + stopPricePct);
@@ -2016,7 +2016,7 @@ export function createReplacementRuntime(
             ? entryPrice * (1 + tpPricePct)
             : entryPrice * (1 - tpPricePct);
 
-          // Owner profile SL/TP (ROE %) bind every position. Agents choose symbol, direction and entry;
+          // Owner profile SL/TP bind every position. Agents choose symbol, direction and entry;
           // their structural stop/target is advisory and only used when no profile is configured.
           const profileAnchored = Boolean(currentSnap.trading?.values);
           const priceDp = entryPrice >= 100 ? 2 : entryPrice >= 1 ? 4 : 8;
@@ -2028,7 +2028,7 @@ export function createReplacementRuntime(
             hub.emit('log', {
               at: Date.now(),
               kind: 'execution',
-              text: `${targetSymbol}: profile ${currentSnap.trading?.profile ?? 'custom'} anchors SL ${stopPrice} (${stopPctRoe}% ROE) / TP ${tpPrice} (${tpPctRoe}% ROE); desk proposal was SL ${out.verdict.thesis.stop ?? 'none'} / TP ${out.verdict.thesis.tp ?? 'none'}.`
+              text: `${targetSymbol}: profile ${currentSnap.trading?.profile ?? 'custom'} anchors SL ${stopPrice} (${stopPct}%) / TP ${tpPrice} (${tpPct}%); desk proposal was SL ${out.verdict.thesis.stop ?? 'none'} / TP ${out.verdict.thesis.tp ?? 'none'}.`
             });
           }
           const margin = Math.round(perOrder * 100) / 100;

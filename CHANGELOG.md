@@ -2,6 +2,15 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.28] - 2026-11-08
+
+### Added & Improved
+- Sovereign Stop Loss and Take Profit percentage calculation: completely eliminated artificial leverage division from SL and TP calculation across `server/money.ts`, `server/v2/decision/cycle.ts`, `server/v2/runtime.ts`, `server/sizing.ts`, and `server/desk.ts`.
+- Enforced direct entry price percentage basis: Stop Loss and Take Profit percentages are calculated directly from open position entry price (`Entry * (1 - StopPct / 100)` for LONG, `Entry * (1 + StopPct / 100)` for SHORT).
+- Updated Risk agent system prompt instructions and desk context to align with direct open position price percentage basis without dividing by leverage.
+- Aligned UI input labels and help texts in `web/src/i18n.tsx` and `web/src/components/TradingSetup.tsx` in both English and Indonesian.
+- Updated all unit and integration test fixtures to validate the direct price percentage contract.
+
 ## [v0.0.0.4.27] - 2026-11-08
 
 ### Added & Improved

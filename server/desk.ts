@@ -1375,9 +1375,9 @@ export class Desk extends EventEmitter {
       };
       this.setStatus('lead', 'thinking'); this.changed();
       const ld = await timer.measure('deskLead', () => this.run('lead', 'lead', {
-        extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use committed order margin before fees. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
-        instruction: `Decide the ${symbol} debate from roleAnalysis and structured DebateEvidence. Entry zones are recommendations, not binding price constraints. Use OPEN for an immediate executable entry or explicitly HOLD to wait for a pullback. Preserve valid structural invalidation. Group structure, tape, verified catalyst and JEV independently; UNKNOWN optional data is neither support nor veto. Weigh opposing dimensions with Risk; they are evidence, not independent system vetoes. Disagreement alone never vetoes. CLOSE needs any one supplied verified closeTrigger; name it explicitly. You may identify EARLY_TAKE_PROFIT via exitSignal only from the supplied exhaustion/target evidenceRefs and known net profit. Holding duration is never an exit reason. Preserve all Owner sizing, leverage, N and margin SL/TP.`,
-        data: { ...positionContext, marketEvidence, symbol, roleAnalysis, debateEvidence, entryScenario: selectedScenario, closeTriggers, exitEvidenceRefs: exitRefs, netUnrealizedPnl, tradingSettings: { ...entrySettings, percentageBasis: 'order margin before fees' }, openPosition: pos, freeSlots: slots.freeSlots, journal, strategyInvalidated },
+        extraSystem: 'Order sizing and SL/TP come directly from the Owner profile. Percentages use open position price (entry price) without dividing by leverage. Do not add a stop-distance floor, equity loss cap per trade, mood penalty, or discretionary size reduction.',
+        instruction: `Decide the ${symbol} debate from roleAnalysis and structured DebateEvidence. Entry zones are recommendations, not binding price constraints. Use OPEN for an immediate executable entry or explicitly HOLD to wait for a pullback. Preserve valid structural invalidation. Group structure, tape, verified catalyst and JEV independently; UNKNOWN optional data is neither support nor veto. Weigh opposing dimensions with Risk; they are evidence, not independent system vetoes. Disagreement alone never vetoes. CLOSE needs any one supplied verified closeTrigger; name it explicitly. You may identify EARLY_TAKE_PROFIT via exitSignal only from the supplied exhaustion/target evidenceRefs and known net profit. Holding duration is never an exit reason. Preserve all Owner sizing, leverage, N and profile SL/TP.`,
+        data: { ...positionContext, marketEvidence, symbol, roleAnalysis, debateEvidence, entryScenario: selectedScenario, closeTriggers, exitEvidenceRefs: exitRefs, netUnrealizedPnl, tradingSettings: { ...entrySettings, percentageBasis: 'open position price' }, openPosition: pos, freeSlots: slots.freeSlots, journal, strategyInvalidated },
         context: { ...positionContext, weighted, disagreement, researchVote, hasPosition: !!pos, positionSide: pos?.side, unrealizedPnl: pos?.unrealizedPnl ?? 0, slotsFree: slots.canOpenNew, debateEvidence, entryScenario: selectedScenario, closeTriggers, liveFeed: !snap.example, strategyInvalidated }
       }));
       let action: Action = ld.data.action;
@@ -2416,7 +2416,7 @@ export class Desk extends EventEmitter {
         case 'invalid': ok = false; reply = cmd.reason; break;
         case 'set_profile': {
           const values = await this.applyOwnerSettings((base) => resolveTradingPreset(cmd.profile, base), cmd.profile);
-          reply = `Profile ${cmd.profile} active: SL ${values.defaultStopPct}% / TP ${values.takeProfitPct}% of margin, confidence ${values.minEntryConfidencePct}%, daily loss ${values.dailyLossLimitPct}%, leverage ${values.maxLeverage}x.`;
+          reply = `Profile ${cmd.profile} active: SL ${values.defaultStopPct}% / TP ${values.takeProfitPct}% of entry price, confidence ${values.minEntryConfidencePct}%, daily loss ${values.dailyLossLimitPct}%, leverage ${values.maxLeverage}x.`;
           break;
         }
         case 'set_size':
