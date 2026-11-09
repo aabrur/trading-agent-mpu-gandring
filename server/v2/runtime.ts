@@ -3534,7 +3534,7 @@ export function createReplacementRuntime(
       return { ok: false, error: 'Cycle interval must be an integer between 1 and 1440 minutes.' };
     }
 
-    if (/^(?:run\s+cycle|cycle\s+now|start\s+cycle|jalankan\s+cycle|mulai\s+cycle)$/i.test(cleanCmd)) {
+    if (/^(?:(?:run\s+)?cycle(?:\s+now)?|start\s+cycle|jalankan\s+cycle|mulai\s+cycle)$/i.test(cleanCmd)) {
       const snap = snapshot();
       if (snap.killed) {
         return { ok: false, error: 'Kill switch is ON. Release it first.' };

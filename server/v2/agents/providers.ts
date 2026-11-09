@@ -1,6 +1,7 @@
 import { registerSecrets, safe } from '../../redact.js';
 import type { RoleId } from '../contracts.js';
 import { runLocalCliInference, type LocalCliInferenceOptions, type LocalCliInferenceResult } from './local.js';
+import { generateMockAgentReply } from './mock.js';
 
 export type RolePhase = 'observe' | 'challenge' | 'final';
 
@@ -94,13 +95,7 @@ export function createOfficialProviderCaller(
   return async (req: ProviderCallRequest): Promise<string> => {
     const provider = req.provider.trim().toLowerCase();
     if (provider === 'mock') {
-      return JSON.stringify({
-        role: req.role,
-        reply: `[${req.role} Demo]: Offline demo reply. Operating in demo mode without live API key.`,
-        stance: 'HOLD',
-        confidence: 0.5,
-        reasoning: 'Offline demo response. Real provider or local CLI can be configured in Setup.'
-      });
+      return generateMockAgentReply(req);
     }
 
     if (req.apiKey) {

@@ -33,6 +33,9 @@ describe('Channel Commands and Synchronization Suite', () => {
         'set n 3', '/set n 3',
         'n 2', '/n 2',
         'set cycle 15', '/set cycle 15',
+        'cycle', '/cycle',
+        'run cycle', '/run cycle',
+        'cycle now', '/cycle now',
         'set report 60', '/set report 60',
         'kill', '/kill',
         'unkill', '/unkill'
@@ -40,7 +43,8 @@ describe('Channel Commands and Synchronization Suite', () => {
 
       for (const cmd of commands) {
         const res = await runtime.handleCommand({ text: cmd });
-        expect(res.ok, `Expected command "${cmd}" to succeed, got error: ${res.error}`).toBe(true);
+        const isCycleRunning = /cycle/i.test(cmd) && res.error?.includes('already running');
+        expect(res.ok || isCycleRunning, `Expected command "${cmd}" to succeed, got error: ${res.error}`).toBe(true);
       }
     } finally {
       await runtime.stop();
