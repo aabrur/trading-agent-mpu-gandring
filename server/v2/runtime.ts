@@ -1640,7 +1640,9 @@ export function createReplacementRuntime(
       evaluationMode,
       optionalResearch,
       recentLessons,
-      accountCapital
+      accountCapital,
+      hasPosition: Boolean(existingPos),
+      positionSide: existingPos?.side === 'SHORT' ? 'SHORT' : existingPos?.side ? 'LONG' : undefined
     };
 
     const tv = snap.trading?.values;
@@ -1682,7 +1684,9 @@ export function createReplacementRuntime(
       tradingProfile: snap.trading?.profile,
       profileBaselineStopPrice,
       profileBaselineTpPrice,
-      supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false)
+      supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false),
+      hasPosition: Boolean(existingPos),
+      positionSide: existingPos?.side === 'SHORT' ? 'SHORT' : existingPos?.side ? 'LONG' : undefined
     };
 
     try {
@@ -2038,7 +2042,11 @@ export function createReplacementRuntime(
             verdictRecord.executed = false;
             verdictRecord.reason = 'Owner-derived per-order size is 0; refusing to substitute a fallback size.';
           } else if (currentSnap.mode === 'PAPER') {
-            if (currentSnap.paper.positions.length < currentSnap.paper.n) {
+            const alreadyOpen = currentSnap.paper.positions.some((p) => p.symbol.toUpperCase() === targetSymbol);
+            if (alreadyOpen) {
+              verdictRecord.executed = false;
+              verdictRecord.reason = `Position for ${targetSymbol} already open. Keeping active position without duplicate entry.`;
+            } else if (currentSnap.paper.positions.length < currentSnap.paper.n) {
               const positionId = `pos-${Date.now()}-${targetSymbol}`;
 
               verdictRecord.executed = true;
@@ -2090,72 +2098,79 @@ export function createReplacementRuntime(
               verdictRecord.reason = `Risk gate held: Max open positions (${currentSnap.paper.n}) reached.`;
             }
           } else {
-            const dispatchRes = await dispatch({
-              kind: 'open',
-              actor: 'system',
-              symbol: targetSymbol,
-              payload: {
+            const venueOpen = (currentSnap.venueAccount?.positions ?? []).some((p: any) => p.symbol.toUpperCase() === targetSymbol);
+            const venuePending = (currentSnap.venueAccount?.pendingOrders ?? []).some((o: any) => o.symbol.toUpperCase() === targetSymbol);
+            if (venueOpen || venuePending) {
+              verdictRecord.executed = false;
+              verdictRecord.reason = `Venue position or pending order for ${targetSymbol} already active. Refusing duplicate order submission.`;
+            } else {
+              const dispatchRes = await dispatch({
+                kind: 'open',
+                actor: 'system',
                 symbol: targetSymbol,
-                side,
-                qty: String(qty),
-                stop: String(stopPrice),
-                tp: tpPrice ? String(tpPrice) : null,
-                leverage,
-                orderType: thesisOrderType,
-                limitPrice: thesisLimit,
-                entry: thesisLimit
-              }
-            });
+                payload: {
+                  symbol: targetSymbol,
+                  side,
+                  qty: String(qty),
+                  stop: String(stopPrice),
+                  tp: tpPrice ? String(tpPrice) : null,
+                  leverage,
+                  orderType: thesisOrderType,
+                  limitPrice: thesisLimit,
+                  entry: thesisLimit
+                }
+              });
 
-            if (dispatchRes.ok) {
-              const resData = (dispatchRes.data as any) ?? {};
-              const orderState: string = resData.orderState ?? 'UNKNOWN';
-              const isFilled = orderState === 'FILLED';
-              const isPartial = orderState === 'PARTIAL';
-              const isPending = ['ACCEPTED', 'PENDING', 'SUBMITTED', 'NEW', 'OPEN'].includes(orderState);
-              const clientOrderId = resData.clientOrderId ?? `order-${Date.now()}`;
-              verdictRecord.executed = isFilled || isPartial;
-              verdictRecord.operationalStatus = isFilled ? 'FILLED' : (isPartial ? 'PARTIAL' : (isPending ? 'PENDING' : 'REJECTED'));
-              if (isFilled || isPartial) {
-                verdictRecord.executionStatus = isFilled ? 'filled' : 'partial';
-              }
-              if (isPending && !verdictRecord.executed) {
-                verdictRecord.reason = `Limit order resting (${orderState}) at ${thesisLimit ?? entryPrice}.`;
-              }
-              if (!isFilled && !isPartial && !isPending) {
-                verdictRecord.reason = `Venue did not accept order (state ${orderState}): ${dispatchRes.message}`;
+              if (dispatchRes.ok) {
+                const resData = (dispatchRes.data as any) ?? {};
+                const orderState: string = resData.orderState ?? 'UNKNOWN';
+                const isFilled = orderState === 'FILLED';
+                const isPartial = orderState === 'PARTIAL';
+                const isPending = ['ACCEPTED', 'PENDING', 'SUBMITTED', 'NEW', 'OPEN'].includes(orderState);
+                const clientOrderId = resData.clientOrderId ?? `order-${Date.now()}`;
+                verdictRecord.executed = isFilled || isPartial;
+                verdictRecord.operationalStatus = isFilled ? 'FILLED' : (isPartial ? 'PARTIAL' : (isPending ? 'PENDING' : 'REJECTED'));
+                if (isFilled || isPartial) {
+                  verdictRecord.executionStatus = isFilled ? 'filled' : 'partial';
+                }
+                if (isPending && !verdictRecord.executed) {
+                  verdictRecord.reason = `Limit order resting (${orderState}) at ${thesisLimit ?? entryPrice}.`;
+                }
+                if (!isFilled && !isPartial && !isPending) {
+                  verdictRecord.reason = `Venue did not accept order (state ${orderState}): ${dispatchRes.message}`;
+                  if (/10029|not whitelisted/i.test(dispatchRes.message ?? '')) {
+                    nonWhitelistedSymbols.add(targetSymbol);
+                  }
+                }
+                verdictRecord.order = {
+                  positionId: clientOrderId,
+                  status: isFilled ? 'filled' : (isPartial ? 'partial' : undefined),
+                  side,
+                  qty: resData.filledQty ? Number(resData.filledQty) : qty,
+                  entry: entryPrice,
+                  stop: stopPrice,
+                  tp: tpPrice,
+                  margin,
+                  leverage
+                };
+                hub.emit('log', {
+                  at: Date.now(),
+                  kind: 'execution',
+                  text: `Submitted ${currentSnap.mode} ${side} ${qty} ${targetSymbol} (SL: ${stopPrice}, TP: ${tpPrice ?? 'none'}) via ExecutionGateway: [${orderState}] ${dispatchRes.message}`
+                });
+              } else {
+                verdictRecord.executed = false;
+                verdictRecord.operationalStatus = 'REJECTED';
+                verdictRecord.reason = `Gateway rejected order: ${dispatchRes.message}`;
                 if (/10029|not whitelisted/i.test(dispatchRes.message ?? '')) {
                   nonWhitelistedSymbols.add(targetSymbol);
                 }
+                hub.emit('log', {
+                  at: Date.now(),
+                  kind: 'execution',
+                  text: `${currentSnap.mode} order for ${targetSymbol} rejected by gateway: ${dispatchRes.message}`
+                });
               }
-              verdictRecord.order = {
-                positionId: clientOrderId,
-                status: isFilled ? 'filled' : (isPartial ? 'partial' : undefined),
-                side,
-                qty: resData.filledQty ? Number(resData.filledQty) : qty,
-                entry: entryPrice,
-                stop: stopPrice,
-                tp: tpPrice,
-                margin,
-                leverage
-              };
-              hub.emit('log', {
-                at: Date.now(),
-                kind: 'execution',
-                text: `Submitted ${currentSnap.mode} ${side} ${qty} ${targetSymbol} (SL: ${stopPrice}, TP: ${tpPrice ?? 'none'}) via ExecutionGateway: [${orderState}] ${dispatchRes.message}`
-              });
-            } else {
-              verdictRecord.executed = false;
-              verdictRecord.operationalStatus = 'REJECTED';
-              verdictRecord.reason = `Gateway rejected order: ${dispatchRes.message}`;
-              if (/10029|not whitelisted/i.test(dispatchRes.message ?? '')) {
-                nonWhitelistedSymbols.add(targetSymbol);
-              }
-              hub.emit('log', {
-                at: Date.now(),
-                kind: 'execution',
-                text: `${currentSnap.mode} order for ${targetSymbol} rejected by gateway: ${dispatchRes.message}`
-              });
             }
             if (options.syncVenueAccount) {
               try {
@@ -2538,16 +2553,31 @@ export function createReplacementRuntime(
         text: `[WATCHLIST SCREEN] Evaluated ${rankedCandidates.length} candidate(s): ${rankingSummary}. Prioritizing top opportunities.`
       });
 
-      // 4. Stage 4: Top-K Promotion (Score >= 60 high conviction, capped at min(freeSlots, 2))
-      let promotedCandidates = rankedCandidates.filter((c) => c.score >= 60).slice(0, Math.min(freeSlots, 2));
+      // 4. Stage 4: Top-K Promotion (Score >= 60 high conviction, utilizing up to freeSlots)
+      let promotedCandidates = rankedCandidates.filter((c) => c.score >= 60).slice(0, freeSlots);
       if (promotedCandidates.length === 0 && rankedCandidates.length > 0) {
         const viable = rankedCandidates.filter((c) => c.score >= 50);
         if (viable.length > 0) {
-          promotedCandidates = viable.slice(0, Math.min(freeSlots, 2));
+          promotedCandidates = viable.slice(0, freeSlots);
         } else if (reason === 'owner') {
           // Explicit owner command: do not drop candidates on score
-          promotedCandidates = rankedCandidates.slice(0, 1);
+          promotedCandidates = rankedCandidates.slice(0, Math.min(freeSlots, 1));
         }
+      }
+
+      if (promotedCandidates.length > 0) {
+        updateState((draft) => {
+          if (!draft.roomHistory) draft.roomHistory = [];
+          draft.roomHistory.push({
+            id: randomUUID(),
+            conversationId: 'office',
+            at: Date.now(),
+            from: 'market',
+            to: 'all',
+            text: `Radar Watchlist: Mengevaluasi ${rankedCandidates.length} aset pantauan. Mempromosikan ${promotedCandidates.length} kandidat prioritas (${promotedCandidates.map((c) => c.symbol).join(', ')}) ke meja diskusi.`
+          });
+          draft.roomHistory = draft.roomHistory.slice(-100);
+        });
       }
 
       if (promotedCandidates.length === 0) {
@@ -4882,7 +4912,7 @@ export async function startReplacementServer(
           d.paper.usedMargin = updatedPositions.reduce((sum, p) => sum + p.margin, 0);
 
           const trading = settings.current().effective.trading;
-          const slots = Math.max(1, Math.min(4, Math.floor(trading.maxPositions ?? d.paper.n ?? 1)));
+          const slots = Math.max(1, Math.min(4, Math.floor(d.paper.n ?? trading.maxPositions ?? 1)));
           const safety = trading.safetyNet ?? d.paper.safetyNet;
           const mt = Math.round(Math.max(0, eq - safety) * 100) / 100;
           d.paper.safetyNet = safety;

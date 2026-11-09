@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.29",
-  "appVersion": "0.0.0.4.29",
+  "version": "0.4.30",
+  "appVersion": "0.0.0.4.30",
   "changelog": [
+    "v0.0.0.4.30: human-paced sequential mock deliberation (~1.5s per turn), duplicate position prevention across PAPER and LIVE modes, removal of 2-slot candidate promotion cap allowing full N=4 allocation, watchlist screening announcement to desk room, and Discord /ask two-word role alias support.",
     "v0.0.0.4.29: intelligent offline mock deliberation engine (two-phase consensus, observe disagreement with cartoon sparring, execution candidate tickets, explicit Risk APPROVE decision, and natural Indonesian & English chat support), expanded /cycle command alias matching, and Discord channel sync reliability.",
     "v0.0.0.4.28: sovereign SL and TP percentage contract (eliminated leverage divisor from stop and take profit calculations; SL and TP are direct percentages of open position entry price across core money sizing, V2 decision cycle baselines, runtime execution anchoring, desk prompts, and UI configuration).",
     "v0.0.0.4.27: live operational hardening (45m TTL resting limit fix with created_at persistence, queue-aware CLI gb reporting pending orders and occupied slots, fast reflex intraday ROE calibration for +8% BE+ and +12% ATR ratchet, tpPrice retention after limit fill, dynamic protection tightening on HOLD verdicts, deterministic exchange error handling for Bybit 10029, accountCapital slot transparency, and tolerant agent schema validation).",

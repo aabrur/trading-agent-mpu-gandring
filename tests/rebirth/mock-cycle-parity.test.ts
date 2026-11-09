@@ -116,4 +116,56 @@ describe('V2 Mock Agent Deliberation and Chat Parity', () => {
     }));
     expect(researchChallenge.stance).toBe('LONG');
   });
+
+  it('returns HOLD verdict without opening duplicate positions when symbol already has an active position', async () => {
+    const providerCaller = createOfficialProviderCaller();
+    const roleRunner = new RoleRunner({
+      providerCaller,
+      resolveAssignment: () => ({
+        provider: 'mock',
+        model: 'mock-desk-v1',
+        apiKey: null
+      })
+    });
+
+    const cycleRunner = new CycleRunner({ roleRunner });
+    const cycleResult = await cycleRunner.run({
+      cycleId: `test-cycle-hold-${Date.now()}`,
+      reason: 'schedule',
+      accountRef: 'paper:default',
+      symbol: 'SOLUSDT',
+      evidenceId: 'ev-test-hold-1',
+      configVersion: 1,
+      policy: {
+        minEntryConfidencePct: 60,
+        requireTwoOfThreeAnalysts: true,
+        maxLeverage: 10,
+        defaultStopPct: 30,
+        takeProfitPct: 60,
+        takeProfitR: 2.0,
+        availableCapitalUsdt: 50000,
+        allocationPerOrderUsdt: 12500,
+        maxPositions: 4,
+        orderSizePct: null,
+        safetyNet: 10000,
+        sizingMode: 'AUTO_EQUAL_SLOTS_MONEY_TRADE_DIV_N',
+        tradingProfile: 'balance',
+        hasPosition: true,
+        positionSide: 'LONG'
+      },
+      marketSummary: {
+        symbol: 'SOLUSDT',
+        last: 86.5,
+        change24hPct: 2.8,
+        hasPosition: true,
+        positionSide: 'LONG'
+      }
+    });
+
+    expect(cycleResult.status).toBe('completed');
+    expect(cycleResult.verdict).toBeDefined();
+    expect(cycleResult.verdict?.action).toBe('HOLD');
+    expect(cycleResult.verdict?.symbol).toBe('SOLUSDT');
+    expect(cycleResult.verdict?.thesis).toBeNull();
+  });
 });

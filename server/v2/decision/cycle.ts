@@ -32,6 +32,8 @@ export interface CyclePolicy {
   profileBaselineStopPrice?: { long: string | null; short: string | null };
   profileBaselineTpPrice?: { long: string | null; short: string | null };
   supportsLimitGtc?: boolean;
+  hasPosition?: boolean;
+  positionSide?: 'LONG' | 'SHORT';
   accountCapital?: Record<string, unknown>;
 }
 
@@ -285,7 +287,8 @@ export class CycleRunner {
           deadlineAt,
           symbol: input.symbol,
           promptContext: {
-            marketSummary: input.marketSummary
+            marketSummary: input.marketSummary,
+            policy: input.policy
           }
         })
       )
@@ -321,7 +324,8 @@ export class CycleRunner {
           promptContext: {
             marketSummary: input.marketSummary,
             peerObservations: observeResults.map(toPeerDigest),
-            jevReview
+            jevReview,
+            policy: input.policy
           }
         })
       )
@@ -505,6 +509,26 @@ export class CycleRunner {
 
     const typedRisk = riskResult as RiskRoleResult;
     const desiredStance = leadResult.stance;
+
+    if (input.policy.hasPosition && (desiredStance === 'LONG' || desiredStance === 'SHORT')) {
+      return {
+        cycleId,
+        reason: input.reason,
+        status: 'completed',
+        verdict: {
+          action: 'HOLD',
+          symbol: input.symbol,
+          thesis: null,
+          exit: null,
+          rejectionReason: null
+        },
+        roleResults,
+        jevReview,
+        jevReviewId,
+        configVersion: input.configVersion,
+        evidenceId: input.evidenceId
+      };
+    }
 
     if (desiredStance !== 'LONG' && desiredStance !== 'SHORT') {
       const holdThesis: TradeThesis | null = (desiredStance === 'HOLD' && (leadResult.proposedStop || leadResult.proposedTp))

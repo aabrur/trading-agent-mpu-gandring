@@ -75,9 +75,20 @@ export function parseCommand(text: string): Parsed {
   if (word === 'ask' || word === 'chat' || (AGENTS as string[]).includes(word)) {
     let agent: AgentId = 'lead';
     let textContent = '';
+    const twoWord = rest.length >= 2 ? `${rest[0]} ${rest[1]}`.toLowerCase() : '';
+    const twoWordAgent: AgentId | null = twoWord === 'desk lead' ? 'lead'
+      : twoWord === 'market analyst' || twoWord === 'market watch' ? 'market'
+      : twoWord === 'research analyst' || twoWord === 'research library' ? 'research'
+      : twoWord === 'risk manager' || twoWord === 'risk review' ? 'risk'
+      : twoWord === 'execution trader' || twoWord === 'execution desk' ? 'execution'
+      : null;
+
     if ((AGENTS as string[]).includes(word)) {
       agent = word as AgentId;
       textContent = rest.join(' ').trim();
+    } else if (twoWordAgent) {
+      agent = twoWordAgent;
+      textContent = rest.slice(2).join(' ').trim();
     } else if (rest[0] && (AGENTS as string[]).includes(rest[0].toLowerCase())) {
       agent = rest[0].toLowerCase() as AgentId;
       textContent = rest.slice(1).join(' ').trim();

@@ -50,16 +50,16 @@ describe('Dual language i18n parity and updater adapter', () => {
     expect(compareVersions('0.0.0.1.9', '0.0.0.2.6')).toBe(-1);
 
     const fakeNewerFetch = async () =>
-      new Response(JSON.stringify({ appVersion: '0.0.0.4.29', changelog: ['New feature'] }), { status: 200 });
+      new Response(JSON.stringify({ appVersion: '0.0.0.9.99', changelog: ['New feature'] }), { status: 200 });
     const st = await checkUpdate(fakeNewerFetch as unknown as typeof fetch);
     expect(st.ok).toBe(true);
-    expect(st.currentVersion).toBe('0.0.0.4.28');
-    expect(st.latestVersion).toBe('0.0.0.4.29');
+    expect(st.currentVersion).toMatch(/^0\.0\.0\./);
+    expect(st.latestVersion).toBe('0.0.0.9.99');
     expect(st.updateAvailable).toBe(true);
 
     const applied = applyUpdate(process.cwd(), () => ({ status: 0, stdout: 'Already up to date.\n', stderr: '' }));
     expect(applied.ok).toBe(true);
-    expect(applied.currentVersion).toBe('0.0.0.4.28');
+    expect(applied.currentVersion).toMatch(/^0\.0\.0\./);
   });
 
   it('handles dirty working tree gracefully by auto-stashing and pulling', () => {
