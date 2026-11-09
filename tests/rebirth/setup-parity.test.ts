@@ -112,6 +112,34 @@ describe('Setup API Parity Verification', () => {
       expect(postRes.status).toBe(200);
       const postData = (await postRes.json()) as { ok: boolean };
       expect(postData.ok).toBe(true);
+
+      // Verify switching to offline demo (mock) model succeeds and persists
+      const mockPostRes = await fetch(`${baseUrl}/api/setup/models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', host: '127.0.0.1' },
+        body: JSON.stringify({
+          defaultProvider: 'mock',
+          defaultModel: 'mock-desk-v1'
+        })
+      });
+      expect(mockPostRes.status).toBe(200);
+      const mockPostData = (await mockPostRes.json()) as { ok: boolean };
+      expect(mockPostData.ok).toBe(true);
+
+      const afterMockGet = await fetch(`${baseUrl}/api/setup/models`, {
+        headers: { host: '127.0.0.1' }
+      });
+      expect(afterMockGet.status).toBe(200);
+      const afterMockData = (await afterMockGet.json()) as {
+        ok: boolean;
+        defaultProvider: string;
+        defaultModel: string;
+        agents: Array<{ id: string; provider: string; model: string }>;
+      };
+      expect(afterMockData.ok).toBe(true);
+      expect(afterMockData.defaultProvider).toBe('mock');
+      expect(afterMockData.defaultModel).toBe('mock-desk-v1');
+      expect(afterMockData.agents.every((a) => a.provider === 'mock' && a.model === 'mock-desk-v1')).toBe(true);
     });
   });
 

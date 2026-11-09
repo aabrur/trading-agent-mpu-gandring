@@ -85,7 +85,7 @@ import {
 import { ResearchHost, fetchPublicCryptoNews } from './research/host.js';
 import { GrokBridge } from './connectors/grok/bridge.js';
 import type { KeyRegistry } from './connectors/grok/auth.js';
-import { HELP_TEXT, DiscordGateway, syncDiscordCommandsV2 } from './channels.js';
+import { HELP_TEXT, DiscordGateway, syncDiscordCommandsV2, syncTelegramCommandsV2, TelegramPoller } from './channels.js';
 import { formatDeskReportText, ReportsService } from './reports.js';
 import {
   deskOpenPnl,
@@ -2659,9 +2659,56 @@ export function createReplacementRuntime(
     const toAll = /^@all\s+/i.test(raw);
     const targetRole = input.agent ? resolveCanonicalRole(input.agent) : null;
 
-    if (!isOperational && (targetRole || toAll)) {
-      const roles: RoleId[] = targetRole ? [targetRole] : [...ROLE_IDS];
-      const prompt = toAll ? raw.replace(/^@all\s+/i, '') : raw;
+    const isAsk = /^(?:ask|chat|tanya)\b/i.test(cleanCmd);
+    let askPrompt = '';
+    let askRole: RoleId | null = targetRole;
+    let askToAll = toAll;
+
+    if (isAsk) {
+      const remainder = cleanCmd.replace(/^(?:ask|chat|tanya)\s*/i, '').trim();
+      if (!remainder) {
+        return {
+          ok: false,
+          command: 'ask',
+          error: 'Usage: /ask <question> or /ask <agent> <question>'
+        };
+      }
+      if (/^@?all\b/i.test(remainder)) {
+        askToAll = true;
+        askPrompt = remainder.replace(/^@?all\s*/i, '').trim();
+      } else {
+        const words = remainder.split(/\s+/);
+        const twoWordRole = words.length >= 2 ? resolveCanonicalRole(`${words[0]} ${words[1]}`) : null;
+        if (twoWordRole) {
+          askRole = twoWordRole;
+          askPrompt = words.slice(2).join(' ').trim();
+        } else {
+          const oneWordRole = resolveCanonicalRole(words[0]);
+          if (oneWordRole) {
+            askRole = oneWordRole;
+            askPrompt = words.slice(1).join(' ').trim();
+          } else {
+            askRole = targetRole ?? 'lead';
+            askPrompt = remainder;
+          }
+        }
+      }
+      if (!askPrompt) {
+        return {
+          ok: false,
+          command: 'ask',
+          error: 'Usage: /ask <question> or /ask <agent> <question>'
+        };
+      }
+    } else if (!isOperational && (targetRole || toAll)) {
+      askPrompt = toAll ? raw.replace(/^@all\s+/i, '') : raw;
+      askRole = targetRole;
+      askToAll = toAll;
+    }
+
+    if (askPrompt) {
+      const roles: RoleId[] = askToAll ? [...ROLE_IDS] : [askRole ?? 'lead'];
+      const prompt = askPrompt;
       const conversationId = input.conversationId || 'office';
       if (snapshot().mode !== 'PAPER' && options.syncVenueAccount) {
         try {
@@ -2695,7 +2742,7 @@ export function createReplacementRuntime(
         if (!draft.roomHistory) draft.roomHistory = [];
         draft.roomHistory.push({
           id: randomUUID(), conversationId, at, from: 'owner',
-          to: toAll ? 'all' : roles[0], text: prompt
+          to: askToAll ? 'all' : roles[0], text: prompt
         });
         for (const { role, answer } of results) {
           const chatList = draft.chats[role] ?? [];
@@ -2738,11 +2785,13 @@ export function createReplacementRuntime(
           }
         }
       }
+      const replyFormatted = results
+        .map(({ role, answer }) => (roles.length === 1 ? `[${role.toUpperCase()}]: ${answer}` : `${role}: ${answer}`))
+        .join('\n\n');
       return {
         ok: failures === 0,
-        command: 'chat',
-        reply: results.map(({ role, answer }) => `${role}: ${answer}`).join('\n\n') +
-          (failures ? `\n${failures} agent(s) failed to reply.` : ''),
+        command: isAsk ? 'ask' : 'chat',
+        reply: replyFormatted + (failures ? `\n${failures} agent(s) failed to reply.` : ''),
         error: failures ? `${failures} agent(s) failed to reply.` : undefined
       };
     }
@@ -2803,7 +2852,7 @@ export function createReplacementRuntime(
       return { ok: true, command: 'help', reply: HELP_TEXT };
     }
 
-    if (cleanCmd === 'report' || cleanCmd.startsWith('report')) {
+    if (cleanCmd === 'report' || cleanCmd === 'report now' || cleanCmd === 'desk report' || /^report\s+now\b/i.test(cleanCmd)) {
       const snap = snapshot();
       const open = deskOpenPnl({
         mode: snap.mode,
@@ -3248,7 +3297,7 @@ export function createReplacementRuntime(
       return { ok: false, error: 'Balance must be a non-negative number.' };
     }
 
-    const safetyMatch = raw.match(/^(?:set\s+)?(?:safety(?:\s*net)?|sn)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i);
+    const safetyMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?(?:safety(?:\s*net)?|sn)\s*(?:=|to|:)?\s*(\d+(?:\.\d+)?)/i);
     if (safetyMatch) {
       const val = Number(safetyMatch[1]);
       if (Number.isFinite(val) && val >= 0) {
@@ -3283,7 +3332,7 @@ export function createReplacementRuntime(
       return { ok: false, error: 'Safety net must be a non-negative number.' };
     }
 
-    const nMatch = raw.match(/^(?:set\s+)?(?:n|orders?|open\s+orders?|order)\s*(?:=|to|:)?\s*(\d+)\b/i);
+    const nMatch = raw.replace(/^\//, '').match(/^(?:set\s+)?(?:n|orders?|open\s+orders?|order)\s*(?:=|to|:)?\s*(\d+)\b/i);
     if (nMatch) {
       const count = Number(nMatch[1]);
       if (Number.isInteger(count) && count >= 1 && count <= 100) {
@@ -5294,6 +5343,42 @@ export async function startReplacementServer(
     }
   }
 
+  // Start Telegram Poller and auto-sync commands if configured
+  let telegramPoller: any = null;
+  const tgToken = (env.TELEGRAM_BOT_TOKEN ?? '').trim();
+  const tgChatId = (env.TELEGRAM_CHAT_ID ?? '').trim();
+  const tgAllowed = (env.TELEGRAM_ALLOWED_USER_IDS ?? '').split(/[\s,]+/).filter(Boolean);
+
+  if (tgToken) {
+    syncTelegramCommandsV2(tgToken, fetch).then((res) => {
+      if (res.ok) log(`[channels:telegram] Bot commands auto-synced (${res.count ?? 0} commands)`);
+    }).catch((err) => {
+      log(`[channels:telegram] Bot commands sync deferred: ${(err as Error).message}`);
+    });
+
+    if (commandsEnabled && tgChatId) {
+      try {
+        telegramPoller = new TelegramPoller(
+          tgToken,
+          tgChatId,
+          tgAllowed,
+          async (commandText: string, _actor: string) => {
+            const res = await runtime.handleCommand({
+              text: commandText,
+              conversationId: 'telegram'
+            });
+            return res.reply ?? res.error ?? 'Command executed.';
+          },
+          fetch
+        );
+        telegramPoller.start();
+        log('[channels:telegram] Inbound poller started');
+      } catch (err) {
+        console.error(`[channels:telegram] Failed to start poller: ${(err as Error).message}`);
+      }
+    }
+  }
+
   if (startup.tradingMode !== 'PAPER') {
     void syncVenueAccount();
     if (syncTimer) clearInterval(syncTimer);
@@ -5305,6 +5390,10 @@ export async function startReplacementServer(
     if (discordGateway) {
       try { discordGateway.stop(); } catch {}
       discordGateway = null;
+    }
+    if (telegramPoller) {
+      try { telegramPoller.stop(); } catch {}
+      telegramPoller = null;
     }
     if (syncTimer) clearInterval(syncTimer);
     wss.close();

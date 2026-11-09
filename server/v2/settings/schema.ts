@@ -23,7 +23,7 @@ export const API_PROVIDERS = [
 ] as const;
 export type ApiProviderId = (typeof API_PROVIDERS)[number];
 
-export const MODEL_PROVIDERS = ['unconfigured', 'local', ...API_PROVIDERS] as const;
+export const MODEL_PROVIDERS = ['unconfigured', 'mock', 'local', ...API_PROVIDERS] as const;
 export type ModelProviderId = (typeof MODEL_PROVIDERS)[number];
 
 export const REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;

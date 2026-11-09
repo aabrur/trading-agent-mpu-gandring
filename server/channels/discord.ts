@@ -39,7 +39,21 @@ const option = (name: string, description: string, required = false, type = 3) =
 export const DIRECT_DISCORD_COMMANDS = [
   ...['status', 'report', 'positions', 'balance', 'mode', 'health', 'scan', 'watchlist', 'scorecard', 'lessons', 'pause', 'resume', 'sync', 'cycle', 'unkill', 'help'].map(name => ({ name, description: `${name} command from the desk`, type: 1 })),
   { name: 'analyze', description: 'Start an agent debate and analysis for a symbol', type: 1, options: [option('symbol', 'Symbol e.g. BTCUSDT', true)] },
-  { name: 'ask', description: 'Ask an agent or Desk Lead', type: 1, options: [option('text', 'Question or message', true), option('agent', 'lead, market, research, strategist, risk, execution', false)] },
+  { name: 'ask', description: 'Ask an agent or Desk Lead', type: 1, options: [
+      option('text', 'Question or message', true),
+      {
+        ...option('agent', 'Select agent or Desk Lead', false),
+        choices: [
+          { name: 'Desk Lead', value: 'lead' },
+          { name: 'Market Analyst', value: 'market' },
+          { name: 'Research Analyst', value: 'research' },
+          { name: 'Strategist', value: 'strategist' },
+          { name: 'Risk Manager', value: 'risk' },
+          { name: 'Execution Trader', value: 'execution' }
+        ]
+      }
+    ]
+  },
   { name: 'open', description: 'Open a position with required stop loss', type: 1, options: [option('side', 'long or short', true), option('symbol', 'Symbol e.g. BTCUSDT', true), option('stop', 'Required stop loss price', true, 10), option('tp', 'Optional take profit price', false, 10), option('size', 'Order size percentage of Money Trade', false, 10), option('leverage', 'Leverage integer e.g. 5, 10', false, 4)] },
   { name: 'buy', description: 'Quick long order with required stop loss', type: 1, options: [option('symbol', 'Symbol e.g. BTCUSDT', true), option('stop', 'Required stop loss price', true, 10), option('tp', 'Optional take profit price', false, 10), option('size', 'Order size percentage', false, 10), option('leverage', 'Leverage integer', false, 4)] },
   { name: 'sell', description: 'Quick short order with required stop loss', type: 1, options: [option('symbol', 'Symbol e.g. BTCUSDT', true), option('stop', 'Required stop loss price', true, 10), option('tp', 'Optional take profit price', false, 10), option('size', 'Order size percentage', false, 10), option('leverage', 'Leverage integer', false, 4)] },

@@ -49,6 +49,7 @@ export interface SettingsCoordinatorHooks {
 
 const DEFAULT_PROVIDER_MODELS: Record<ModelProviderId, string> = {
   unconfigured: 'unconfigured',
+  mock: 'mock-desk-v1',
   local: 'codex:default',
   xai: 'grok-3-mini',
   openai: 'gpt-4o-mini',
@@ -255,7 +256,7 @@ export class SettingsService {
 
     const rawDefaultProvider = (env.DEFAULT_PROVIDER ?? '').trim().toLowerCase();
     const defaultProvider: ModelProviderId =
-      rawDefaultProvider && rawDefaultProvider !== 'mock' && (MODEL_PROVIDERS as readonly string[]).includes(rawDefaultProvider)
+      rawDefaultProvider && (MODEL_PROVIDERS as readonly string[]).includes(rawDefaultProvider)
         ? (rawDefaultProvider as ModelProviderId)
         : 'unconfigured';
 
@@ -263,7 +264,7 @@ export class SettingsService {
       const upper = role.toUpperCase();
       const rawProv = (env[`AGENT_${upper}_PROVIDER`] ?? '').trim().toLowerCase();
       let provider: ModelProviderId =
-        rawProv && rawProv !== 'mock' && (MODEL_PROVIDERS as readonly string[]).includes(rawProv)
+        rawProv && (MODEL_PROVIDERS as readonly string[]).includes(rawProv)
           ? (rawProv as ModelProviderId)
           : defaultProvider;
 
@@ -275,11 +276,13 @@ export class SettingsService {
         }
       }
 
-      const providerModelEnv = provider !== 'unconfigured' && provider !== 'local'
+      const providerModelEnv = provider !== 'unconfigured' && provider !== 'local' && provider !== 'mock'
         ? env[`${provider.toUpperCase()}_MODEL`]
         : provider === 'local'
           ? env.LOCAL_MODEL
-          : undefined;
+          : provider === 'mock'
+            ? (env.MOCK_MODEL ?? 'mock-desk-v1')
+            : undefined;
       const model =
         (env[`AGENT_${upper}_MODEL`] ?? '').trim() ||
         (providerModelEnv ?? '').trim() ||

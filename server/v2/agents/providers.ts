@@ -94,7 +94,13 @@ export function createOfficialProviderCaller(
   return async (req: ProviderCallRequest): Promise<string> => {
     const provider = req.provider.trim().toLowerCase();
     if (provider === 'mock') {
-      throw new Error('Mock provider is prohibited in replacement runtime');
+      return JSON.stringify({
+        role: req.role,
+        reply: `[${req.role} Demo]: Offline demo reply. Operating in demo mode without live API key.`,
+        stance: 'HOLD',
+        confidence: 0.5,
+        reasoning: 'Offline demo response. Real provider or local CLI can be configured in Setup.'
+      });
     }
 
     if (req.apiKey) {

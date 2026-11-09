@@ -48,6 +48,9 @@ import {
   telegramChatsV2,
   discordRegisterCommand,
   syncDiscordCommandsV2,
+  syncTelegramCommandsV2,
+  syncSlackCommandsV2,
+  syncWhatsAppCommandsV2,
   inspectDiscordBotV2,
   DiscordBotBody
 } from '../channels.js';
@@ -430,7 +433,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     const snap = deps.settings.current();
     // This is a compatibility catalogue, not proof of live model availability.
     // Provider discovery is a separate authenticated operation; never fabricate 25 entries.
-    const allProviderIds = [...MODEL_PROVIDERS.filter((id) => id !== 'unconfigured'), 'mock'];
+    const allProviderIds = [...new Set([...MODEL_PROVIDERS.filter((id) => id !== 'unconfigured'), 'mock'])];
     const catalog = allProviderIds.map((id) => {
       const provider = id as keyof typeof MODEL_CHOICES;
       const keyEnv = provider === 'local' || provider === 'mock'
@@ -454,12 +457,18 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
 
     const leadProviderRaw = snap.effective.agents.lead.provider;
     const defaultProvider = leadProviderRaw === 'unconfigured' || !catalog.some((c) => c.provider === leadProviderRaw) ? 'mock' : leadProviderRaw;
-    const defaultModel = snap.effective.agents.lead.model || (catalog.find((c) => c.provider === defaultProvider)?.defaultModel ?? 'mock-desk-v1');
+    const rawDefaultModel = snap.effective.agents.lead.model;
+    const defaultModel = (!rawDefaultModel || rawDefaultModel === 'unconfigured')
+      ? (catalog.find((c) => c.provider === defaultProvider)?.defaultModel ?? 'mock-desk-v1')
+      : rawDefaultModel;
 
     const agentRows = ROLE_IDS.map((r) => {
       const a = snap.effective.agents[r];
       const prov = a.provider === 'unconfigured' || !catalog.some((c) => c.provider === a.provider) ? 'mock' : a.provider;
-      const model = a.model || (catalog.find((c) => c.provider === prov)?.defaultModel ?? 'mock-desk-v1');
+      const rawModel = a.model;
+      const model = (!rawModel || rawModel === 'unconfigured')
+        ? (catalog.find((c) => c.provider === prov)?.defaultModel ?? 'mock-desk-v1')
+        : rawModel;
       const isCustom = prov !== defaultProvider || model !== defaultModel;
       return {
         id: r,
@@ -547,7 +556,8 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     for (const role of ROLE_IDS) {
       const explicit = parsed.data.agents?.[role];
       const provider = (explicit?.provider ?? parsed.data.defaultProvider ?? currentAgents[role].provider) as any;
-      const model = explicit?.model ?? parsed.data.defaultModel ?? currentAgents[role].model;
+      const rawModel = explicit?.model ?? parsed.data.defaultModel ?? currentAgents[role].model;
+      const model = (provider === 'mock' && (!rawModel || rawModel === 'unconfigured')) ? 'mock-desk-v1' : rawModel;
       const reasoning = explicit?.reasoning !== undefined ? (explicit.reasoning as any) : currentAgents[role].reasoning;
       const route = explicit?.route ?? currentAgents[role].route;
       patchedAgents[role] = {
@@ -1114,6 +1124,37 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     }
   });
 
+  app.post('/api/setup/channels/telegram-sync', async (_req, res) => {
+    try {
+      const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
+      const result = await syncTelegramCommandsV2(token, deps.fetchImpl ?? fetch);
+      res.status(result.ok ? 200 : 422).json(result);
+    } catch (error) {
+      res.status(422).json({ ok: false, detail: (error as Error).message });
+    }
+  });
+
+  app.post('/api/setup/channels/slack-sync', async (_req, res) => {
+    try {
+      const url = (process.env.SLACK_WEBHOOK_URL ?? '').trim();
+      const result = await syncSlackCommandsV2(url, deps.fetchImpl ?? fetch);
+      res.status(result.ok ? 200 : 422).json(result);
+    } catch (error) {
+      res.status(422).json({ ok: false, detail: (error as Error).message });
+    }
+  });
+
+  app.post('/api/setup/channels/whatsapp-sync', async (_req, res) => {
+    try {
+      const token = (process.env.WHATSAPP_ACCESS_TOKEN ?? '').trim();
+      const phoneId = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? '').trim();
+      const result = await syncWhatsAppCommandsV2(token, phoneId);
+      res.status(result.ok ? 200 : 422).json(result);
+    } catch (error) {
+      res.status(422).json({ ok: false, detail: (error as Error).message });
+    }
+  });
+
   app.post('/api/setup/channels/save', async (req, res) => {
     const raw = (req.body ?? {}) as { channel?: unknown; values?: Record<string, string>; commands?: boolean };
     const ch = raw.channel;
@@ -1129,6 +1170,25 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       if (raw.commands !== undefined) {
         process.env.CHANNEL_COMMANDS = raw.commands ? 'on' : 'off';
         await deps.settings.apply({ channels: { commandsEnabled: raw.commands } }, deps.settings.current().activeVersion);
+      }
+      // Auto-sync commands for this channel
+      if (ch === 'discord') {
+        const token = process.env.DISCORD_BOT_TOKEN || '';
+        const appId = process.env.DISCORD_APPLICATION_ID || '';
+        const guildId = process.env.DISCORD_GUILD_ID || undefined;
+        if (token && appId) {
+          void syncDiscordCommandsV2(token, appId, guildId, deps.fetchImpl ?? fetch).catch(() => {});
+        }
+      } else if (ch === 'telegram') {
+        const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
+        if (token) {
+          void syncTelegramCommandsV2(token, deps.fetchImpl ?? fetch).catch(() => {});
+        }
+      } else if (ch === 'slack') {
+        const url = (process.env.SLACK_WEBHOOK_URL ?? '').trim();
+        if (url) {
+          void syncSlackCommandsV2(url, deps.fetchImpl ?? fetch).catch(() => {});
+        }
       }
     }
     res.status(result.ok ? 200 : 422).json(result);

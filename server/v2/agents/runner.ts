@@ -462,18 +462,7 @@ export class RoleRunner {
         return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Task cancelled before start');
       }
 
-    if (provider === 'mock') {
-      return this.makeEmptyResult(
-        task,
-        'unavailable',
-        provider,
-        model,
-        toolTraceIds,
-        'Mock provider is disabled; real provider or local CLI required.'
-      );
-    }
-
-    if (provider !== 'local' && (!assignment.apiKey || !assignment.apiKey.trim())) {
+    if (provider !== 'local' && provider !== 'mock' && (!assignment.apiKey || !assignment.apiKey.trim())) {
       return this.makeEmptyResult(
         task,
         'unavailable',

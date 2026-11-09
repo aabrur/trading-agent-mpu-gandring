@@ -21,6 +21,7 @@ data/kill-switch.json
 data/kill-switch.json.audit.jsonl
 *.xml
 *repomix*
+trading-agent-mpu-gandring.md
 
 # Execution ownership and cumulative-fill checkpoints
 data/execution-*.json
