@@ -240,13 +240,16 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
     setBusy(id);
     setMessage(old => ({...old, [id]: lang === 'id' ? 'Memeriksa login, model, dan konfigurasi...' : 'Checking authentication, discovering models, and configuring...'}));
     try {
-      const response = await fetch('/api/setup/local-agents/connect', { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, continue: continuation, assignAll: true, model: editSettings[id]?.model || settings[id]?.model || 'default'}) }, 45_000);
+      const response = await fetch('/api/setup/local-agents/connect', { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({id, continue: continuation, assignAll: true, model: editSettings[id]?.model || settings[id]?.model || 'default'}) }, 90_000);
       const result = await response.json();
-      setMessage(old => ({...old, [id]: `${result.state}: ${result.detail || ''}`}));
+      setMessage(old => ({...old, [id]: `${result.state || 'FAILED'}: ${result.detail || ''}`}));
       setVerified(old => ({...old, [id]: result.active === true}));
       if (result.active) { window.dispatchEvent(new Event('mpu-models-updated')); await load(); }
       else if (result.state === 'AUTHENTICATING') setWaiting(old => ({...old, [id]: old[id] || Date.now()}));
-    } catch { setMessage(old => ({...old, [id]: 'CONFIGURATION FAILED'})); }
+    } catch (err: any) {
+      const errDetail = err?.message || (lang === 'id' ? 'Koneksi gagal atau timed out.' : 'Connection failed or timed out.');
+      setMessage(old => ({...old, [id]: `CONFIGURATION FAILED: ${errDetail}`}));
+    }
     finally { setBusy(null); }
   }
 

@@ -168,7 +168,7 @@ export function createReplacementApp(
 
   if (options.setupDeps) {
     mountSetupApiRoutes(app, { ...options.setupDeps, runtime });
-    mountLocalAgentsRoutes(app, options.setupDeps);
+    mountLocalAgentsRoutes(app, { ...options.setupDeps, runtime });
   }
 
   const walletDeps =

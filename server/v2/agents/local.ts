@@ -161,6 +161,50 @@ export function parseLocalCliReply(output: string): string {
   return texts.length ? texts.join('\n').trim() : output.trim();
 }
 
+class LocalCliQueue {
+  private active = 0;
+  private readonly waiting: Array<{ signal?: AbortSignal; run: () => void; cancel: () => void }> = [];
+  constructor(private readonly maxConcurrent = 1) {}
+
+  acquire(signal?: AbortSignal): Promise<() => void> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error('Model request cancelled'));
+        return;
+      }
+      const entry = {
+        signal,
+        run: () => {
+          signal?.removeEventListener('abort', entry.cancel);
+          this.active++;
+          let released = false;
+          resolve(() => {
+            if (released) return;
+            released = true;
+            this.active--;
+            const next = this.waiting.shift();
+            if (next) next.run();
+          });
+        },
+        cancel: () => {
+          const idx = this.waiting.indexOf(entry);
+          if (idx !== -1) this.waiting.splice(idx, 1);
+          signal?.removeEventListener('abort', entry.cancel);
+          reject(new Error('Model request cancelled'));
+        }
+      };
+      if (this.active < this.maxConcurrent) {
+        entry.run();
+      } else {
+        this.waiting.push(entry);
+        signal?.addEventListener('abort', entry.cancel, { once: true });
+      }
+    });
+  }
+}
+
+const localCliQueue = new LocalCliQueue(Number(process.env.LOCAL_AGENT_MAX_CONCURRENCY) || 1);
+
 export async function runLocalCliInference(
   options: LocalCliInferenceOptions
 ): Promise<LocalCliInferenceResult> {
@@ -197,6 +241,18 @@ export async function runLocalCliInference(
     };
   }
 
+  let releaseQueue: (() => void) | null = null;
+  try {
+    releaseQueue = await localCliQueue.acquire(options.signal);
+  } catch (err) {
+    return {
+      ok: false,
+      output: '',
+      sandboxStatus: sandbox.sandboxStatus,
+      error: err instanceof Error ? err.message : 'Local CLI queue cancelled'
+    };
+  }
+
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'mpu-cli-infer-'));
   const timeoutMs = options.timeoutMs ?? 120_000;
 
@@ -212,17 +268,15 @@ export async function runLocalCliInference(
       if (model !== 'default') args.push('-m', model);
     } else if (id === 'antigravity') {
       args.push(
-        '--print=',
+        '-p',
+        options.prompt,
+        '--output-format',
+        'json',
         '--sandbox',
         '--disable-slash-commands',
-        '--input-format',
-        'stream-json',
-        '--output-format',
-        'stream-json',
         '--dangerously-skip-permissions'
       );
       if (model !== 'default') args.push('--model', model);
-      stdinInput = JSON.stringify({ event: 'user', message: { content: options.prompt } }) + '\n';
     } else if (id === 'gemini') {
       args.push('-p', options.prompt);
       if (model !== 'default') args.push('--model', model);
@@ -277,6 +331,30 @@ export async function runLocalCliInference(
       let stderr = '';
       let killed = false;
 
+      const killProcessTree = () => {
+        if (killed) return;
+        killed = true;
+        if (process.platform === 'win32' && child.pid) {
+          try {
+            const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+              stdio: 'ignore',
+              windowsHide: true
+            });
+            killer.on('error', () => child.kill());
+          } catch {
+            child.kill();
+          }
+        } else if (child.pid) {
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {
+            child.kill('SIGKILL');
+          }
+        } else {
+          child.kill();
+        }
+      };
+
       if (stdinInput) {
         child.stdin?.write(stdinInput);
         child.stdin?.end();
@@ -285,14 +363,12 @@ export async function runLocalCliInference(
       }
 
       const timer = setTimeout(() => {
-        killed = true;
-        child.kill();
+        killProcessTree();
         reject(new Error(`Local CLI ${id} timed out after ${Math.round(timeoutMs / 1000)}s`));
       }, timeoutMs);
 
       const onAbort = () => {
-        killed = true;
-        child.kill();
+        killProcessTree();
         clearTimeout(timer);
         reject(new Error('Model request cancelled'));
       };
@@ -344,6 +420,7 @@ export async function runLocalCliInference(
       error: err instanceof Error ? err.message : 'Local CLI inference failed'
     };
   } finally {
+    if (releaseQueue) releaseQueue();
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch {

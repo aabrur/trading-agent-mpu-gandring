@@ -1,5 +1,6 @@
 import type express from 'express';
 import { z } from 'zod';
+import type { AgentId } from '../contracts.js';
 import {
   LOCAL_CLI_AGENTS,
   buildLocalCliEnv,
@@ -177,8 +178,12 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
     }
 
     const modelString = `${def.id}:${selectedModel}`;
+    const assignAll = parsed.data.assignAll !== false;
+    const targetRoles = assignAll
+      ? (['lead', 'market', 'research', 'strategist', 'risk', 'execution'] as const)
+      : (['lead'] as const);
     const nextAgents: Record<string, { provider: 'local'; model: string }> = {};
-    for (const role of parsed.data.assignAll ? ['lead', 'market', 'research', 'strategist', 'risk', 'execution'] : ['lead']) {
+    for (const role of targetRoles) {
       nextAgents[role] = { provider: 'local', model: modelString };
     }
     await deps.settings.apply(
@@ -186,12 +191,45 @@ export function mountLocalAgentsRoutes(app: express.Express, deps: SetupApiDeps)
       deps.settings.current().activeVersion
     );
 
+    if (deps.runtime?.updateState) {
+      deps.runtime.updateState((draft) => {
+        for (const role of targetRoles) {
+          const agent = draft.agents[role as AgentId];
+          if (agent) {
+            agent.provider = 'local';
+            agent.model = modelString;
+            agent.configuredProvider = 'local';
+            agent.configuredModel = modelString;
+            agent.invokedProvider = 'local';
+            agent.invokedModel = modelString;
+            agent.actualModel = modelString;
+            agent.fellBackToMock = false;
+            agent.fallbackReason = null;
+            agent.executionStatus = 'IDLE';
+          }
+        }
+      });
+    }
+
+    if (deps.secrets) {
+      const updates: Record<string, string> = {
+        DEFAULT_PROVIDER: 'local',
+        DEFAULT_MODEL: modelString
+      };
+      for (const role of targetRoles) {
+        const prefix = `AGENT_${role.toUpperCase()}`;
+        updates[`${prefix}_PROVIDER`] = 'local';
+        updates[`${prefix}_MODEL`] = modelString;
+      }
+      deps.secrets.writeSecrets(updates);
+    }
+
     res.json({
       ok: true,
       active: true,
       state: 'CONNECTED & ACTIVE',
       model: modelString,
-      detail: `Connected & Active: ${modelString}. ${parsed.data.assignAll ? 'Applied to all six agents.' : ''}`
+      detail: `Connected & Active: ${modelString}. ${assignAll ? 'Applied to all six agents.' : ''}`
     });
   });
 

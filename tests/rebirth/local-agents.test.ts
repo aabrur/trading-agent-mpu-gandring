@@ -31,6 +31,7 @@ describe('Local CLI Agents Integration', () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await store.close();
+      await new Promise((r) => setTimeout(r, 60));
       try { rmSync(dbFile, { force: true }); } catch {}
     }
   }
