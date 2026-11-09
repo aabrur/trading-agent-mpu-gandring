@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.30",
-  "appVersion": "0.0.0.4.30",
+  "version": "0.4.31",
+  "appVersion": "0.0.0.4.31",
   "changelog": [
+    "v0.0.0.4.31: local CLI Windows spawn ENAMETOOLONG resolution via Node shim unwrapping and stdin/file prompt transport, tactical desk SL/TP preservation from debate consensus, deliberation robustness on CLI timeout, symbol-isolated critical news filtering, chronological chat message ordering, and lean multi-timeframe SMC prompt context.",
     "v0.0.0.4.30: human-paced sequential mock deliberation (~1.5s per turn), duplicate position prevention across PAPER and LIVE modes, removal of 2-slot candidate promotion cap allowing full N=4 allocation, watchlist screening announcement to desk room, and Discord /ask two-word role alias support.",
     "v0.0.0.4.29: intelligent offline mock deliberation engine (two-phase consensus, observe disagreement with cartoon sparring, execution candidate tickets, explicit Risk APPROVE decision, and natural Indonesian & English chat support), expanded /cycle command alias matching, and Discord channel sync reliability.",
     "v0.0.0.4.28: sovereign SL and TP percentage contract (eliminated leverage divisor from stop and take profit calculations; SL and TP are direct percentages of open position entry price across core money sizing, V2 decision cycle baselines, runtime execution anchoring, desk prompts, and UI configuration).",

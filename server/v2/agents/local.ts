@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -106,15 +106,40 @@ export function parseLocalAgentSpec(spec: string): { id: string; model: string }
   };
 }
 
-function findExecutableOnPath(bin: string, env: Record<string, string>): string | null {
+export interface LocalExecutableTarget {
+  file: string;
+  prefix: string[];
+}
+
+export function findExecutableOnPath(bin: string, env: Record<string, string>): string | null {
+  const target = resolveLocalCliExecutable(bin, env);
+  return target?.file ?? null;
+}
+
+export function resolveLocalCliExecutable(bin: string, env: Record<string, string>): LocalExecutableTarget | null {
   const pathVal = env.PATH ?? env.Path ?? '';
   const dirs = pathVal.split(path.delimiter).filter(Boolean);
   const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
   for (const dir of dirs) {
     for (const ext of exts) {
-      const candidate = path.join(dir, `${bin}${ext}`);
+      const candidate = path.join(dir.replace(/^"|"$/g, ''), `${bin}${ext}`);
       if (existsSync(candidate)) {
-        return candidate;
+        if (ext !== '.cmd') return { file: candidate, prefix: [] };
+        try {
+          const content = readFileSync(candidate, 'utf8');
+          const matches = [...content.matchAll(/"%dp0%[\\/]([^"\r\n]+)"/gi)];
+          for (const m of matches) {
+            const sub = m[1].trim();
+            if (sub.toLowerCase().endsWith('.exe')) continue;
+            const entry = path.resolve(dir, sub);
+            if (existsSync(entry)) {
+              if (/\.(?:c?js|mjs)$/i.test(entry) || /^#!.*node/i.test(readFileSync(entry, 'utf8').slice(0, 100))) {
+                return { file: process.execPath, prefix: [entry] };
+              }
+            }
+          }
+        } catch {}
+        return { file: candidate, prefix: [] };
       }
     }
   }
@@ -156,6 +181,8 @@ export function parseLocalCliReply(output: string): string {
       else if (obj.type === 'say' && obj.say === 'text' && typeof obj.text === 'string') texts.push(obj.text);
       else if (obj.type === 'run_result' && typeof obj.text === 'string') return obj.text.trim();
       else if (obj.type === 'result' && typeof obj.result === 'string') return obj.result.trim();
+      else if (obj.event === 'content' && typeof obj.message?.content === 'string') texts.push(obj.message.content);
+      else if (obj.type === 'message' && typeof obj.content === 'string') texts.push(obj.content);
     } catch {}
   }
   return texts.length ? texts.join('\n').trim() : output.trim();
@@ -164,7 +191,7 @@ export function parseLocalCliReply(output: string): string {
 class LocalCliQueue {
   private active = 0;
   private readonly waiting: Array<{ signal?: AbortSignal; run: () => void; cancel: () => void }> = [];
-  constructor(private readonly maxConcurrent = 1) {}
+  constructor(private readonly maxConcurrent = 3) {}
 
   acquire(signal?: AbortSignal): Promise<() => void> {
     return new Promise((resolve, reject) => {
@@ -203,7 +230,7 @@ class LocalCliQueue {
   }
 }
 
-const localCliQueue = new LocalCliQueue(Number(process.env.LOCAL_AGENT_MAX_CONCURRENCY) || 1);
+const localCliQueue = new LocalCliQueue(Number(process.env.LOCAL_AGENT_MAX_CONCURRENCY) || 3);
 
 export async function runLocalCliInference(
   options: LocalCliInferenceOptions
@@ -231,8 +258,8 @@ export async function runLocalCliInference(
   }
 
   const cleanEnv = buildLocalCliEnv(process.env);
-  const binPath = findExecutableOnPath(def.bin, cleanEnv);
-  if (!binPath) {
+  const execTarget = resolveLocalCliExecutable(def.bin, cleanEnv);
+  if (!execTarget) {
     return {
       ok: false,
       output: '',
@@ -259,69 +286,99 @@ export async function runLocalCliInference(
   try {
     const args: string[] = [];
     let stdinInput: string | null = null;
+    const usesPromptFile = ['grok', 'hermes', 'openclaw', 'muse'].includes(id);
+    let promptFilePath = '';
+    if (usesPromptFile) {
+      promptFilePath = path.join(tempDir, 'prompt.txt');
+      try {
+        writeFileSync(promptFilePath, options.prompt, 'utf8');
+      } catch (err) {
+        return {
+          ok: false,
+          output: '',
+          sandboxStatus: sandbox.sandboxStatus,
+          error: `Failed to write prompt file: ${err instanceof Error ? err.message : String(err)}`
+        };
+      }
+    }
 
     if (id === 'claude') {
-      args.push('-p', options.prompt);
+      args.push('--print', '--safe-mode', '--output-format', 'json', '--no-session-persistence');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'codex') {
-      args.push('exec', '--skip-git-repo-check', options.prompt);
+      args.push('exec', '--skip-git-repo-check', '--ephemeral', '--json', '-');
       if (model !== 'default') args.push('-m', model);
+      stdinInput = options.prompt;
     } else if (id === 'antigravity') {
       args.push(
-        '-p',
-        options.prompt,
-        '--output-format',
-        'json',
+        '--print=',
         '--sandbox',
+        '--mode',
+        'plan',
         '--disable-slash-commands',
+        '--input-format',
+        'stream-json',
+        '--output-format',
+        'stream-json',
         '--dangerously-skip-permissions'
       );
       if (model !== 'default') args.push('--model', model);
+      stdinInput = JSON.stringify({ event: 'user', message: { content: options.prompt } }) + '\n';
     } else if (id === 'gemini') {
-      args.push('-p', options.prompt);
+      args.push('-p', '-');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'pi') {
-      args.push('--print', '--mode', 'text', '--no-tools', '--no-extensions', '--no-skills', '--no-session', '-p', options.prompt);
+      args.push('--print', '--mode', 'text', '--no-tools', '--no-extensions', '--no-skills', '--no-session');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'kimi') {
-      args.push('-p', options.prompt);
+      args.push('--output-format', 'text', '-p', '-');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'kilo') {
-      args.push('--pure', 'run', options.prompt);
+      args.push('--pure', 'run', '--format', 'json');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'cline') {
-      args.push('-p', options.prompt);
+      args.push('--json', '--plan', '--auto-approve', 'false', '--timeout', '300');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'grok') {
-      args.push('-p', options.prompt);
+      args.push('--prompt-file', promptFilePath, '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain');
       if (model !== 'default') args.push('--model', model);
     } else if (id === 'hermes') {
-      args.push('chat', '-Q', '--safe-mode', '-q', options.prompt);
+      args.push('chat', '--query-file', promptFilePath, '-Q', '--safe-mode', '-t', 'todo');
       if (model !== 'default') args.push('--model', model);
     } else if (id === 'openclaw') {
-      args.push('agent', '--local', '-p', options.prompt);
+      args.push('agent', '--message-file', promptFilePath, '--local', '--json');
       if (model !== 'default') args.push('--model', model);
     } else if (id === 'copilot') {
-      args.push('-p', options.prompt);
+      args.push('-p', '-', '-s');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'cursor') {
-      args.push('-p', options.prompt, '--mode', 'ask', '--output-format', 'json');
+      args.push('-p', '-', '--mode', 'ask', '--output-format', 'json');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'qwen') {
-      args.push('--approval-mode', 'plan', '-p', options.prompt);
+      args.push('--approval-mode', 'plan', '-p', '-');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'opencode') {
-      args.push('run', options.prompt);
+      args.push('run', '--format', 'json');
       if (model !== 'default') args.push('--model', model);
+      stdinInput = options.prompt;
     } else if (id === 'muse') {
-      args.push('exec', options.prompt);
+      args.push('exec', '--prompt-file', promptFilePath);
       if (model !== 'default') args.push('--model', model);
     } else {
-      args.push(options.prompt);
+      stdinInput = options.prompt;
     }
 
     const output = await new Promise<string>((resolve, reject) => {
-      const child = spawn(binPath, args, {
+      const child = spawn(execTarget.file, [...execTarget.prefix, ...args], {
         cwd: tempDir,
         env: cleanEnv,
         windowsHide: true,

@@ -136,9 +136,21 @@ export function coinOf(symbol: string): string {
 export function eventRelevantToSymbol(event: NormalizedNewsEvent, symbol: string): boolean {
   const coin = coinOf(symbol);
   if (!event.affectedAssets.length) return false;
+  const isDirectAsset = event.affectedAssets.some((a) => {
+    const asset = a.replace(/USDT?$|USDC$/i, '').toUpperCase();
+    return asset === coin;
+  });
+  if (isDirectAsset) return true;
+
+  if (['exploit_hack', 'blockchain_outage', 'listing_delisting'].includes(event.category)) {
+    const text = `${event.title} ${event.summary ?? ''}`.toUpperCase();
+    const coinRegex = new RegExp(`(^|[^A-Z0-9])${coin}($|[^A-Z0-9])`, 'i');
+    return coinRegex.test(text);
+  }
+
   return event.affectedAssets.some((a) => {
     const asset = a.replace(/USDT?$|USDC$/i, '').toUpperCase();
-    return asset === coin || asset === '*' || asset === 'CRYPTO' || asset === 'MARKET';
+    return asset === '*' || asset === 'CRYPTO' || asset === 'MARKET';
   });
 }
 
@@ -230,6 +242,13 @@ export function normalizeLegacyItem(item: NewsItem, symbol: string, now: number 
   const { impactAssessment } = assessImpact(cat, item.sentiment, item.headline);
   const status: EvidenceStatus = item.example ? 'UNAVAILABLE' : 'REPORTED';
   const publishedAt = parsePublishedAt(item.publishedAt);
+  const rawSymbol = item.symbol ? String(item.symbol).toUpperCase() : '';
+  const affected = (rawSymbol === 'MARKET' || (item as any).targetScope === 'GENERAL_MARKET')
+    ? ['MARKET']
+    : rawSymbol && rawSymbol !== symbol
+      ? [coinOf(rawSymbol)]
+      : [coinOf(symbol)];
+
   return {
     metricProvenance: metricProvenance(item, item.observedAt ?? now),
     id: item.id,
@@ -239,7 +258,7 @@ export function normalizeLegacyItem(item: NewsItem, symbol: string, now: number 
     sourceUrl: item.sourceUrl ?? null,
     publishedAt,
     observedAt: item.observedAt ?? now,
-    affectedAssets: [coinOf(symbol)],
+    affectedAssets: affected,
     category: cat,
     evidenceStatus: status,
     impactAssessment,
@@ -271,7 +290,8 @@ export function buildNewsBriefing(symbol: string, events: NormalizedNewsEvent[],
 
   for (const ev of deduped) {
     const { isVetoCandidate, vetoReason: vr } = assessImpact(ev.category, ev.sentiment, ev.title);
-    if (isVetoCandidate && ev.evidenceStatus !== 'UNAVAILABLE' && !ev.example) {
+    const isRelevant = eventRelevantToSymbol(ev, symbol);
+    if (isVetoCandidate && ev.evidenceStatus !== 'UNAVAILABLE' && !ev.example && isRelevant) {
       criticalClaimFound = true;
     }
     const auto = canAutoVeto(ev, symbol);
@@ -280,7 +300,7 @@ export function buildNewsBriefing(symbol: string, events: NormalizedNewsEvent[],
       vetoReason = auto.reason;
       break;
     }
-    if (isVetoCandidate && !vetoReason) vetoReason = vr;
+    if (isVetoCandidate && isRelevant && !vetoReason) vetoReason = vr;
   }
 
   const claimNote = criticalVetoFound

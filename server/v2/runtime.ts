@@ -1264,8 +1264,8 @@ export function createReplacementRuntime(
             ...(smcData ? {
               marketTrend: smcData.marketTrend,
               lastBreak: smcData.lastBreak,
-              activeFVGs: smcData.activeFVGs,
-              activeOrderBlocks: smcData.activeOrderBlocks,
+              activeFVGs: Array.isArray(smcData.activeFVGs) ? smcData.activeFVGs.slice(-4) : smcData.activeFVGs,
+              activeOrderBlocks: Array.isArray(smcData.activeOrderBlocks) ? smcData.activeOrderBlocks.slice(-4) : smcData.activeOrderBlocks,
               premiumDiscountZone: smcData.premiumDiscountZone
             } : {})
           },
@@ -2020,21 +2020,26 @@ export function createReplacementRuntime(
             ? entryPrice * (1 + tpPricePct)
             : entryPrice * (1 - tpPricePct);
 
-          // Owner profile SL/TP bind every position. Agents choose symbol, direction and entry;
-          // their structural stop/target is advisory and only used when no profile is configured.
-          const profileAnchored = Boolean(currentSnap.trading?.values);
           const priceDp = entryPrice >= 100 ? 2 : entryPrice >= 1 ? 4 : 8;
           const profileStop = Number(fallbackCalcStop.toFixed(priceDp));
           const profileTp = Number(fallbackCalcTp.toFixed(priceDp));
-          const stopPrice = profileAnchored ? profileStop : (Number(out.verdict.thesis.stop) || profileStop);
-          const tpPrice = profileAnchored ? profileTp : (out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : profileTp);
-          if (profileAnchored && (Number(out.verdict.thesis.stop) !== stopPrice || Number(out.verdict.thesis.tp) !== tpPrice)) {
-            hub.emit('log', {
-              at: Date.now(),
-              kind: 'execution',
-              text: `${targetSymbol}: profile ${currentSnap.trading?.profile ?? 'custom'} anchors SL ${stopPrice} (${stopPct}%) / TP ${tpPrice} (${tpPct}%); desk proposal was SL ${out.verdict.thesis.stop ?? 'none'} / TP ${out.verdict.thesis.tp ?? 'none'}.`
-            });
-          }
+
+          const rawThesisStop = Number(out.verdict.thesis.stop);
+          const hasValidThesisStop = Number.isFinite(rawThesisStop) && rawThesisStop > 0 &&
+            (side === 'LONG' ? rawThesisStop < entryPrice : rawThesisStop > entryPrice);
+
+          const rawThesisTp = out.verdict.thesis.tp ? Number(out.verdict.thesis.tp) : null;
+          const hasValidThesisTp = rawThesisTp !== null && Number.isFinite(rawThesisTp) && rawThesisTp > 0 &&
+            (side === 'LONG' ? rawThesisTp > entryPrice : rawThesisTp < entryPrice);
+
+          const stopPrice = hasValidThesisStop ? Number(rawThesisStop.toFixed(priceDp)) : profileStop;
+          const tpPrice = hasValidThesisTp ? Number(rawThesisTp!.toFixed(priceDp)) : profileTp;
+
+          hub.emit('log', {
+            at: Date.now(),
+            kind: 'execution',
+            text: `${targetSymbol}: executed with ${hasValidThesisStop ? 'tactical desk SL' : 'profile SL'} ${stopPrice} and ${hasValidThesisTp ? 'tactical desk TP' : 'profile TP'} ${tpPrice}.`
+          });
           const margin = Math.round(perOrder * 100) / 100;
           const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
 
@@ -2755,6 +2760,43 @@ export function createReplacementRuntime(
         }
       });
       const deskContext = `Live desk snapshot (informational only; not an execution command).\n${JSON.stringify(deskSnapshot, null, 2)}`;
+      const ownerAt = Date.now();
+      const ownerMessageId = randomUUID();
+
+      updateState(draft => {
+        if (!draft.roomHistory) draft.roomHistory = [];
+        draft.roomHistory.push({
+          id: ownerMessageId,
+          conversationId,
+          at: ownerAt,
+          from: 'owner',
+          to: askToAll ? 'all' : roles[0],
+          text: prompt
+        });
+        for (const role of roles) {
+          const chatList = draft.chats[role] ?? [];
+          chatList.push({
+            from: 'user',
+            text: prompt,
+            at: ownerAt,
+            conversationId,
+            clientRequestId: input.clientRequestId
+          });
+          draft.chats[role] = chatList.slice(-50);
+        }
+        draft.roomHistory = draft.roomHistory.slice(-100);
+      });
+
+      if (options.chatService) {
+        void options.chatService.recordMessage({
+          messageId: ownerMessageId,
+          conversationId,
+          clientRequestId: input.clientRequestId,
+          role: 'owner',
+          text: prompt
+        });
+      }
+
       const outcomes = await Promise.allSettled(roles.map(async role => {
         const answer = await roleRunner.chat({
           cycleId: `chat-${randomUUID()}`,
@@ -2768,16 +2810,10 @@ export function createReplacementRuntime(
       const results = outcomes.flatMap((item) => item.status === 'fulfilled' ? [item.value] : []);
       const failures = outcomes.length - results.length;
       updateState(draft => {
-        const at = Date.now();
         if (!draft.roomHistory) draft.roomHistory = [];
-        draft.roomHistory.push({
-          id: randomUUID(), conversationId, at, from: 'owner',
-          to: askToAll ? 'all' : roles[0], text: prompt
-        });
         for (const { role, answer } of results) {
           const chatList = draft.chats[role] ?? [];
           chatList.push(
-            { from: 'user', text: prompt, at, conversationId, clientRequestId: input.clientRequestId },
             { from: role, text: answer, at: Date.now(), conversationId }
           );
           draft.chats[role] = chatList.slice(-50);
@@ -2786,12 +2822,6 @@ export function createReplacementRuntime(
         draft.roomHistory = draft.roomHistory.slice(-100);
       });
       if (options.chatService) {
-        void options.chatService.recordMessage({
-          conversationId,
-          clientRequestId: input.clientRequestId,
-          role: 'owner',
-          text: prompt
-        });
         for (const { role, answer } of results) {
           void options.chatService.recordMessage({
             conversationId,
@@ -3634,6 +3664,9 @@ export function createReplacementRuntime(
     }
     if (typeof (marketHub as any)?.stop === 'function') {
       await marketHub.stop();
+    }
+    if (typeof (options.researchHost as any)?.close === 'function') {
+      await (options.researchHost as any).close().catch(() => {});
     }
   };
 

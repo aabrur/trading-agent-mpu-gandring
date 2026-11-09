@@ -488,9 +488,10 @@ export class CycleRunner {
       }
     }
 
+    const hasExecutionOrCandidate = executionResult.status === 'completed' || Boolean(candidateOrder.side);
     if (
       riskResult.status !== 'completed' ||
-      executionResult.status !== 'completed' ||
+      !hasExecutionOrCandidate ||
       leadResult.status !== 'completed' ||
       latestAnalystByRole.size < ANALYST_ROLES.length
     ) {
