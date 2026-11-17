@@ -303,12 +303,39 @@ export async function runLocalCliInference(
     }
 
     if (id === 'claude') {
-      args.push('--print', '--safe-mode', '--output-format', 'json', '--no-session-persistence');
-      if (model !== 'default') args.push('--model', model);
+      args.push(
+        '-p',
+        '--output-format',
+        'text',
+        '--disable-slash-commands',
+        '--tools',
+        '',
+        '--strict-mcp-config',
+        '--mcp-config',
+        '{"mcpServers":{}}',
+        '--settings',
+        '{"disableAllHooks":true}',
+        '--model',
+        model && model !== 'default' ? model : 'sonnet'
+      );
       stdinInput = options.prompt;
     } else if (id === 'codex') {
-      args.push('exec', '--skip-git-repo-check', '--ephemeral', '--json', '-');
+      args.push(
+        'exec',
+        '--skip-git-repo-check',
+        '--color',
+        'never',
+        '--sandbox',
+        'read-only',
+        '--disable',
+        'shell_tool',
+        '--disable',
+        'unified_exec',
+        '-c',
+        'mcp_servers={}'
+      );
       if (model !== 'default') args.push('-m', model);
+      args.push('-');
       stdinInput = options.prompt;
     } else if (id === 'antigravity') {
       args.push(
@@ -343,8 +370,9 @@ export async function runLocalCliInference(
       stdinInput = options.prompt;
     } else if (id === 'cline') {
       args.push('--json', '--plan', '--auto-approve', 'false', '--timeout', '300');
-      if (model !== 'default') args.push('--model', model);
-      stdinInput = options.prompt;
+      if (model !== 'default') args.push('-m', model);
+      args.push(options.prompt.slice(0, 16000));
+      stdinInput = null;
     } else if (id === 'grok') {
       args.push('--prompt-file', promptFilePath, '--deny', '*', '--disable-web-search', '--permission-mode', 'dontAsk', '--output-format', 'plain');
       if (model !== 'default') args.push('--model', model);

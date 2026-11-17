@@ -98,6 +98,36 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
     };
   }
 
+  async function publicReq(
+    path: string,
+    params: Record<string, unknown> = {}
+  ): Promise<Array<Record<string, unknown>>> {
+    const defined = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined));
+    const qsEntries = Object.entries(defined).map(([k, v]) => [k, String(v)] as [string, string]);
+    const query = qsEntries.length > 0 ? `?${new URLSearchParams(qsEntries).toString()}` : '';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (options.network === 'testnet') {
+      headers['x-simulated-trading'] = '1';
+    }
+    const json = ((await fetchVenueJson(options.fetchImpl, `${base}${path}${query}`, {
+      method: 'GET',
+      headers
+    })) ?? {}) as Record<string, unknown>;
+    if (String(json.code ?? '') !== '0') {
+      const dataArr = Array.isArray(json.data)
+        ? (json.data as Array<Record<string, unknown>>)
+        : [];
+      const subMsg = dataArr[0]?.sMsg ? String(dataArr[0].sMsg) : '';
+      throw new VenueTransportError(
+        `okx ${path}: ${String(json.msg || subMsg || 'error')} (${String(json.code ?? 'unknown')})`,
+        String(json.code ?? 'unknown')
+      );
+    }
+    return Array.isArray(json.data) ? (json.data as Array<Record<string, unknown>>) : [];
+  }
+
   async function req(
     method: 'GET' | 'POST',
     path: string,
@@ -228,7 +258,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
 
     async instruments(symbol: string): Promise<NativeRules> {
       const id = okxInstId(symbol);
-      const data = await req('GET', '/api/v5/public/instruments', {
+      const data = await publicReq('/api/v5/public/instruments', {
         instType: 'SWAP',
         instId: id
       });
@@ -261,7 +291,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
 
     async quote(symbol: string): Promise<VenueQuote> {
       const id = okxInstId(symbol);
-      const data = await req('GET', '/api/v5/market/ticker', { instId: id });
+      const data = await publicReq('/api/v5/market/ticker', { instId: id });
       const observedAt = Date.now();
       const row = data[0];
       const last = parsePositiveDecimalOrNull(row?.last);

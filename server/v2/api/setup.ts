@@ -13,6 +13,7 @@ import {
 } from '../contracts.js';
 import { venueCredentialEnvNames } from '../runtime.js';
 import { MODEL_CHOICES, MODEL_KEY_ENV, MODEL_SOURCES, MODEL_CATALOG_DATE, USAGE_SOURCE, fetchLiveProviderModels } from '../settings/model-catalog.js';
+import { JEV_DECISION_MODELS } from '../../decision/schemas.js';
 import { LOCAL_CLI_AGENTS } from '../agents/local.js';
 import type { AccountRegistry } from '../accounts/registry.js';
 import {
@@ -597,6 +598,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       health,
       dedicatedKeySet,
       openrouterKeySet,
+      models: JEV_DECISION_MODELS,
       jev
     });
   });
@@ -643,9 +645,31 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     const status = result.applyStatus === 'conflict' ? 409 : result.applyStatus === 'failed' ? 400 : 200;
     const snap = deps.settings.current();
     const jev = snap.effective.jev;
+    if (result.applyStatus === 'applied') {
+      deps.secrets.writeSecrets({
+        JEV_ENABLED: jev.enabled ? 'true' : 'false',
+        JEV_MODEL: jev.model || 'typesafe/jev-1.14',
+        JEV_MODE: jev.mode || 'off',
+        JEV_ALLOW_LIVE: jev.allowLive ? 'true' : 'false'
+      });
+    }
     const dedicatedKeySet = Boolean(deps.secrets.getSecret('JEV_OPENROUTER_API_KEY'));
     const openrouterKeySet = deps.secrets.hasProviderKey('openrouter');
     const uiMode = jev.mode === 'advisory' ? 'shadow' : jev.mode === 'strict' ? 'assist' : jev.mode;
+    if (result.applyStatus === 'applied') {
+      deps.runtime?.updateState?.((draft) => {
+        if (draft.jev) {
+          draft.jev.enabled = jev.enabled;
+          draft.jev.model = jev.model || 'typesafe/jev-1.14';
+          draft.jev.mode = uiMode;
+          draft.jev.configuredMode = uiMode;
+          draft.jev.allowLive = jev.allowLive;
+          draft.jev.dedicatedKeySet = dedicatedKeySet;
+          draft.jev.openrouterKeySet = openrouterKeySet;
+          draft.jev.health = !jev.enabled ? 'disabled' : ((dedicatedKeySet || openrouterKeySet) ? 'healthy' : 'unavailable');
+        }
+      });
+    }
 
     res.status(status).json({
       ok: result.applyStatus === 'applied',
@@ -659,6 +683,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       health: !jev.enabled ? 'disabled' : ((dedicatedKeySet || openrouterKeySet) ? 'healthy' : 'unavailable'),
       dedicatedKeySet,
       openrouterKeySet,
+      models: JEV_DECISION_MODELS,
       ...result
     });
   });

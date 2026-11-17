@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { isOpenRouterDecisionsModel } from '../../decision/schemas.js';
 import { registerSecrets, safe } from '../../redact.js';
 
 // JevReview carries zero permission, approval or veto fields.
@@ -59,10 +60,11 @@ const RemoteJevPayloadSchema = z
   .passthrough();
 
 export class JevClient {
-  private readonly enabled: boolean;
-  private readonly apiKey: string | null;
-  private readonly endpoint: string;
-  private readonly model: string;
+  private enabled: boolean;
+  private apiKey: string | null;
+  private endpoint: string;
+  private model: string;
+  private customEndpoint: boolean;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly fallbackCaller?: (prompt: string, systemPrompt?: string) => Promise<string | null>;
@@ -79,12 +81,13 @@ export class JevClient {
     this.enabled = options.enabled;
     this.apiKey = options.apiKey?.trim() || null;
     this.model = (options.model ?? 'typesafe/jev-1.14').trim();
-    if (!options.endpoint) {
-      this.endpoint = this.model.startsWith('typesafe/jev')
+    this.customEndpoint = Boolean(options.endpoint?.trim());
+    if (!this.customEndpoint) {
+      this.endpoint = isOpenRouterDecisionsModel(this.model)
         ? 'https://openrouter.ai/api/alpha/decisions'
         : 'https://openrouter.ai/api/v1/chat/completions';
     } else {
-      this.endpoint = options.endpoint.trim();
+      this.endpoint = options.endpoint!.trim();
     }
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -92,6 +95,33 @@ export class JevClient {
 
     if (this.apiKey) {
       registerSecrets([this.apiKey]);
+    }
+  }
+
+  configure(patch: { enabled?: boolean; apiKey?: string | null; model?: string; endpoint?: string }): void {
+    if (patch.enabled !== undefined) {
+      this.enabled = patch.enabled;
+    }
+    if (patch.apiKey !== undefined) {
+      this.apiKey = patch.apiKey?.trim() || null;
+      if (this.apiKey) {
+        registerSecrets([this.apiKey]);
+      }
+    }
+    if (patch.model !== undefined) {
+      this.model = patch.model.trim() || 'typesafe/jev-1.14';
+    }
+    if (patch.endpoint !== undefined) {
+      const trimmed = patch.endpoint.trim();
+      this.customEndpoint = Boolean(trimmed);
+      if (trimmed) {
+        this.endpoint = trimmed;
+      }
+    }
+    if (!this.customEndpoint) {
+      this.endpoint = isOpenRouterDecisionsModel(this.model)
+        ? 'https://openrouter.ai/api/alpha/decisions'
+        : 'https://openrouter.ai/api/v1/chat/completions';
     }
   }
 
@@ -177,7 +207,7 @@ export class JevClient {
     try {
       this.requests += 1;
       const started = Date.now();
-      const isDecisions = this.endpoint.includes('/decisions') || this.model.startsWith('typesafe/jev');
+      const isDecisions = this.endpoint.includes('/decisions') || isOpenRouterDecisionsModel(this.model);
       const systemPrompt = 'You are Jev, the trading desk objective evidence and market regime reviewer. Analyze market context and role observations. You carry ZERO execution or veto authority. Return JSON with keys: "reviewId", "market_regime" (one of TRENDING_BULL, TRENDING_BEAR, RANGING, VOLATILE, UNCERTAIN), "claimRefs" (array of strings), "contraryRefs" (array of strings), "reason" (concise string).';
 
       const reqBody = isDecisions
@@ -263,7 +293,8 @@ export class JevClient {
         const claimRefs = contraryRisk < 0.5 ? ['Jev: Low contrary risk confirmation'] : [];
         const contraryRefs = contraryRisk >= 0.7 ? ['Jev: Elevated contrary risk alert'] : [];
         const confStr = regimeConf !== null ? ` (confidence: ${(regimeConf * 100).toFixed(0)}%)` : '';
-        const reason = `TypeSafe Jev: ${regimeChoice}${confStr} (informational context only, zero veto authority)`;
+        const modelLabel = this.model.startsWith('typesafe/jev') ? 'TypeSafe Jev' : `Jev (${this.model})`;
+        const reason = `${modelLabel}: ${regimeChoice}${confStr} (informational context only, zero veto authority)`;
         this.success += 1;
         this.lastLatencyMs = Date.now() - started;
         this.lastError = null;
@@ -384,11 +415,16 @@ export class JevClient {
   }
 
   private evaluateHeuristic(input: JevReviewInput, fallbackId: string, note: string): JevReview {
-    const rawState = input.state as { observations?: Array<{ stance?: string }>; marketSummary?: { opposingFacts?: Array<{ code?: string }> } } | undefined;
+    const rawState = input.state as {
+      observations?: Array<{ stance?: string }>;
+      opposingFacts?: Array<unknown>;
+      marketSummary?: { opposingFacts?: Array<{ code?: string }> };
+    } | undefined;
     const obs = rawState?.observations ?? [];
     const bulls = obs.filter((o) => o.stance === 'LONG').length;
     const bears = obs.filter((o) => o.stance === 'SHORT').length;
-    const regime = bulls > bears ? 'TRENDING_BULL' : bears > bulls ? 'TRENDING_BEAR' : (rawState?.marketSummary?.opposingFacts?.length ? 'RANGING' : 'UNCERTAIN');
+    const hasOpposing = Boolean(rawState?.marketSummary?.opposingFacts?.length || rawState?.opposingFacts?.length);
+    const regime = bulls > bears ? 'TRENDING_BULL' : bears > bulls ? 'TRENDING_BEAR' : (hasOpposing ? 'RANGING' : 'UNCERTAIN');
 
     return {
       status: 'unavailable',

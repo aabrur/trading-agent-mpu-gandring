@@ -1690,6 +1690,35 @@ export function createReplacementRuntime(
     };
 
     try {
+      const liveJev = options.settings?.current().effective.jev;
+      if (liveJev) {
+        const liveJevKey = (
+          options.secrets?.getSecret('JEV_OPENROUTER_API_KEY') ??
+          options.secrets?.getSecret('OPENROUTER_API_KEY') ??
+          env.JEV_OPENROUTER_API_KEY ??
+          env.OPENROUTER_API_KEY ??
+          ''
+        ).trim();
+        const resolvedModel = (liveJev.model && liveJev.model !== 'openai/gpt-5-mini' ? liveJev.model : null) || env.JEV_MODEL || 'typesafe/jev-1.14';
+        if (!options.jevClient) {
+          jevClient.configure({
+            enabled: liveJev.enabled,
+            apiKey: liveJevKey || null,
+            model: resolvedModel
+          });
+        }
+        updateState((draft) => {
+          if (draft.jev) {
+            draft.jev.enabled = liveJev.enabled;
+            draft.jev.provider = liveJev.provider || 'openrouter';
+            draft.jev.model = resolvedModel;
+            draft.jev.mode = liveJev.mode;
+            draft.jev.configuredMode = liveJev.mode;
+            draft.jev.allowLive = liveJev.allowLive;
+            draft.jev.health = !liveJev.enabled ? 'disabled' : (liveJevKey ? 'configured' : 'fallback_ready');
+          }
+        });
+      }
       const out = await cycleRunner.run({
         cycleId,
         reason,

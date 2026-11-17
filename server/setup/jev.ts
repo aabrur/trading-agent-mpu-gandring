@@ -1,13 +1,14 @@
 import { z } from 'zod';
 import { setEnv } from '../../cli/envfile.js';
 import { loadJevSettings, publicJevStatus, type JevMetrics } from '../decision/jev.js';
-import { JEV_MODEL } from '../decision/schemas.js';
+import { JEV_DECISION_MODELS, JEV_MODEL } from '../decision/schemas.js';
 
 export const JevSetupBody = z.object({
   enabled: z.boolean(),
   mode: z.enum(['off', 'shadow', 'assist']),
   key: z.string().max(400).optional(),
-  allowLive: z.boolean().optional()
+  allowLive: z.boolean().optional(),
+  model: z.string().min(1).max(200).optional()
 }).strict();
 
 export function jevSetupInfo(env: NodeJS.ProcessEnv, tradingMode: string, metrics: JevMetrics, lastDecision: Record<string, unknown> | null = null) {
@@ -17,7 +18,8 @@ export function jevSetupInfo(env: NodeJS.ProcessEnv, tradingMode: string, metric
     tradingMode,
     liveAssist: settings.effectiveMode === 'assist' && tradingMode === 'LIVE',
     liveAssistBlocked: settings.mode === 'assist' && tradingMode === 'LIVE' && !settings.allowLive,
-    modelLocked: JEV_MODEL
+    modelLocked: JEV_MODEL,
+    models: JEV_DECISION_MODELS
   });
 }
 
@@ -27,7 +29,7 @@ export function saveJevSetup(envFile: string, input: z.infer<typeof JevSetupBody
     JEV_ENABLED: input.enabled ? 'true' : 'false',
     JEV_MODE: input.mode === 'off' ? 'shadow' : input.mode,
     JEV_PROVIDER: 'openrouter',
-    JEV_MODEL
+    JEV_MODEL: (input.model ?? '').trim() || JEV_MODEL
   };
   if (input.mode === 'off') updates.JEV_ENABLED = 'false';
   if (input.allowLive === true) updates.JEV_ALLOW_LIVE = 'yes';

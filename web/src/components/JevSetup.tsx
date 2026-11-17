@@ -2,6 +2,28 @@ import { useEffect, useState } from 'react';
 import { officeFetch as fetch } from '../officeApi';
 import { useI18n } from '../i18n';
 
+interface JevModelOption {
+  id: string;
+  label: string;
+  tier: 'top_usage' | 'top_tier';
+  weeklyTokens: string;
+  latency: string;
+  pricePerM: string;
+}
+
+const FALLBACK_JEV_MODELS: JevModelOption[] = [
+  { id: 'typesafe/jev-1.13', label: 'TypeSafe: Jev 1.13 (3.09T tokens · 131ms · $0.042/M)', tier: 'top_usage', weeklyTokens: '3.09T', latency: '131ms', pricePerM: '$0.042' },
+  { id: 'openai/gpt-6-luna-decisions', label: 'OpenAI: GPT-6 Luna Decisions (129B tokens · 683ms · $0.10/M)', tier: 'top_usage', weeklyTokens: '129B', latency: '683ms', pricePerM: '$0.10' },
+  { id: 'microsoft/microsoft-decision-1', label: 'Microsoft: Microsoft-Decision-1 (38.3B tokens · 308ms · $0.042/M)', tier: 'top_usage', weeklyTokens: '38.3B', latency: '308ms', pricePerM: '$0.042' },
+  { id: 'cloudflare/clef-flash', label: 'Cloudflare: Clef Flash (29.8B tokens · 402ms · $0.019/M)', tier: 'top_usage', weeklyTokens: '29.8B', latency: '402ms', pricePerM: '$0.019' },
+  { id: 'liquid/d1', label: 'LiquidAI: d1 (27.1B tokens · 168ms · $0.02/M)', tier: 'top_usage', weeklyTokens: '27.1B', latency: '168ms', pricePerM: '$0.02' },
+  { id: 'typesafe/jev-1.14', label: 'TypeSafe: Jev 1.14 (2.31T tokens · 127ms · $0.042/M)', tier: 'top_tier', weeklyTokens: '2.31T', latency: '127ms', pricePerM: '$0.042' },
+  { id: 'nace-ai/drex-v1.5', label: 'Nace.AI: Drex v1.5 (26.2B tokens · 196ms · $0.04/M)', tier: 'top_tier', weeklyTokens: '26.2B', latency: '196ms', pricePerM: '$0.04' },
+  { id: 'nace-ai/drex-v2.0', label: 'Nace.AI: Drex v2.0 (12.9B tokens · 337ms · $0.06/M)', tier: 'top_tier', weeklyTokens: '12.9B', latency: '337ms', pricePerM: '$0.06' },
+  { id: 'cloudflare/clef', label: 'Cloudflare: Clef (12.4B tokens · 760ms · $0.192/M)', tier: 'top_tier', weeklyTokens: '12.4B', latency: '760ms', pricePerM: '$0.192' },
+  { id: 'cloudflare/clef-omni', label: 'Cloudflare: Clef Omni (2.67B tokens · 211ms · $0.15/M)', tier: 'top_tier', weeklyTokens: '2.67B', latency: '211ms', pricePerM: '$0.15' }
+];
+
 interface JevInfo {
   ok: boolean;
   enabled: boolean;
@@ -17,6 +39,7 @@ interface JevInfo {
   liveAssistBlocked?: boolean;
   tradingMode?: string;
   detail?: string;
+  models?: JevModelOption[];
   dataCollection?: { routedBy: string; route: string; completedAt: number; routing: { status: string; reason: string | null }; feeds: Record<string, { status: string }> } | null;
 }
 
@@ -25,6 +48,8 @@ export function JevSetup({ available }: { available: boolean }) {
   const [info, setInfo] = useState<JevInfo | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [mode, setMode] = useState<'off' | 'shadow' | 'assist'>('shadow');
+  const [model, setModel] = useState('typesafe/jev-1.14');
+  const [models, setModels] = useState<JevModelOption[]>(FALLBACK_JEV_MODELS);
   const [allowLive, setAllowLive] = useState(false);
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
@@ -39,6 +64,8 @@ export function JevSetup({ available }: { available: boolean }) {
       setInfo(d);
       setEnabled(d.enabled);
       setMode((d.configuredMode === 'assist' || d.configuredMode === 'off' ? d.configuredMode : 'shadow'));
+      if (d.model) setModel(d.model);
+      if (Array.isArray(d.models) && d.models.length > 0) setModels(d.models);
       setAllowLive(!!d.allowLive);
       setKey('');
     } catch {
@@ -51,11 +78,11 @@ export function JevSetup({ available }: { available: boolean }) {
   const save = async () => {
     setBusy(true); setMessage('');
     try {
-      const r = await fetch('/api/setup/jev', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled, mode, allowLive, ...(key.trim() ? { key: key.trim() } : {}) }) });
+      const r = await fetch('/api/setup/jev', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled, mode, model, allowLive, ...(key.trim() ? { key: key.trim() } : {}) }) });
       const d: JevInfo = await r.json();
       setOk(r.ok && d.ok);
       setMessage(d.detail || (lang === 'id' ? 'Gagal menyimpan Jev.' : 'Unable to save Jev settings.'));
-      if (r.ok && d.ok) { setInfo(d); setKey(''); }
+      if (r.ok && d.ok) { setInfo(d); if (d.model) setModel(d.model); if (Array.isArray(d.models) && d.models.length > 0) setModels(d.models); setKey(''); }
     } catch {
       setOk(false);
       setMessage(lang === 'id' ? 'Meja tidak terjangkau.' : 'Office not reachable.');
@@ -104,6 +131,20 @@ export function JevSetup({ available }: { available: boolean }) {
               <option value="off">{t('setupJevModeOff')}</option>
               <option value="shadow">{t('setupJevModeShadow')}</option>
               <option value="assist">{t('setupJevModeAssist')}</option>
+            </select>
+          </label>
+          <label>{lang === 'id' ? 'Model AI Decision' : 'AI Decision model'}
+            <select aria-label="Jev decision model" disabled={!available || busy || !enabled} value={model} onChange={(e) => setModel(e.target.value)}>
+              <optgroup label="Top Token Usage (OpenRouter Decisions)">
+                {models.filter((m) => m.tier === 'top_usage').map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Top Tier (OpenRouter Decisions)">
+                {models.filter((m) => m.tier === 'top_tier').map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </optgroup>
             </select>
           </label>
         </div>

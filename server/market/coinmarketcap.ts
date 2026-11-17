@@ -149,10 +149,10 @@ export async function checkCoinMarketCapKey(
 
 const optionalNumber = z.number().finite().nullish();
 const v3Quotes = z.object({
-  status: z.object({ error_code: z.number() }),
+  status: z.object({ error_code: z.coerce.number() }),
   data: z.array(z.object({
     id: z.number().int().positive(), symbol: z.string().min(1), cmc_rank: optionalNumber,
-    quote: z.array(z.object({ id: optionalNumber, symbol: z.string().optional(), price: z.number().finite().positive(),
+    quote: z.array(z.object({ id: optionalNumber, symbol: z.string().optional(), price: optionalNumber,
       volume_24h: optionalNumber, volume_change_24h: optionalNumber, percent_change_1h: optionalNumber,
       percent_change_24h: optionalNumber, percent_change_7d: optionalNumber, market_cap: optionalNumber,
       market_cap_dominance: optionalNumber, last_updated: z.string().datetime() }))
@@ -185,16 +185,25 @@ export async function fetchCoinMarketCapQuotes(
           headers: { Accept: 'application/json', 'X-CMC_PRO_API_KEY': key }, signal: AbortSignal.timeout(7000)
         });
         const body: unknown = await res.json().catch(() => null);
-        const status = z.object({ status: z.object({ error_code: z.number() }) }).safeParse(body);
+        const status = z.object({ status: z.object({ error_code: z.coerce.number() }) }).safeParse(body);
         backoff(key, res, status.success ? status.data.status.error_code : undefined);
         const parsed = v3Quotes.safeParse(body);
         if (!res.ok || !parsed.success || parsed.data.status.error_code !== 0) return result;
         for (const sym of group) {
           const matches = parsed.data.data.filter(item => item.symbol.toUpperCase() === sym && (!ids[sym] || item.id === ids[sym]));
           // Ambiguous symbols require an explicit CMC ID, never an arbitrary first record.
-          if (matches.length !== 1) continue;
-          const item = matches[0], usd = item.quote.find(q => q.symbol === 'USD' || q.id === 2781);
-          if (!usd) continue;
+          let resolved = matches.length === 1 ? matches[0] : null;
+          if (!resolved && !ids[sym] && matches.length > 1) {
+            const ranked = matches
+              .filter(m => typeof m.cmc_rank === 'number' && Number.isFinite(m.cmc_rank) && m.cmc_rank > 0)
+              .sort((a, b) => (a.cmc_rank ?? Infinity) - (b.cmc_rank ?? Infinity));
+            if (ranked.length === 1 || (ranked.length > 1 && ranked[0].cmc_rank! < ranked[1].cmc_rank!)) {
+              resolved = ranked[0];
+            }
+          }
+          if (!resolved) continue;
+          const item = resolved, usd = item.quote.find(q => q.symbol === 'USD' || q.id === 2781);
+          if (!usd || typeof usd.price !== 'number' || !Number.isFinite(usd.price) || usd.price <= 0) continue;
           const q: CoinMarketCapQuote = { cmcId: item.id, symbol: sym, price: usd.price, volume24h: usd.volume_24h ?? null,
             volumeChange24hPct: usd.volume_change_24h ?? null, percentChange1h: usd.percent_change_1h ?? null,
             percentChange24h: usd.percent_change_24h ?? null, percentChange7d: usd.percent_change_7d ?? null,
