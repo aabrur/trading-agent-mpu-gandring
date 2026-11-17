@@ -825,6 +825,13 @@
           "errorBehavior": "Preserves disabled/busy/error role=status|alert feedback without clearing unsaved input or faking numeric 0"
         },
         {
+          "id": "JevSetup:select:aria-label:Jev-decision-model",
+          "tag": "select",
+          "targetOwner": "T07",
+          "behaviorTest": "tests/rebirth/jev.test.ts > jev_setup_and_connection_probe",
+          "errorBehavior": "Preserves disabled/busy/error role=status|alert feedback without clearing unsaved input or faking numeric 0"
+        },
+        {
           "id": "JevSetup:input:aria-label:Jev-OpenRouter-API-key",
           "tag": "input",
           "targetOwner": "T07",

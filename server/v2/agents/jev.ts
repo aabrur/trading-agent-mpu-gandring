@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { isOpenRouterDecisionsModel } from '../../decision/schemas.js';
+import { isOpenRouterDecisionsModel } from '../../../shared/jev-models.js';
 import { registerSecrets, safe } from '../../redact.js';
 
 // JevReview carries zero permission, approval or veto fields.

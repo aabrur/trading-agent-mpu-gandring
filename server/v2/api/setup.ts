@@ -13,7 +13,7 @@ import {
 } from '../contracts.js';
 import { venueCredentialEnvNames } from '../runtime.js';
 import { MODEL_CHOICES, MODEL_KEY_ENV, MODEL_SOURCES, MODEL_CATALOG_DATE, USAGE_SOURCE, fetchLiveProviderModels } from '../settings/model-catalog.js';
-import { JEV_DECISION_MODELS } from '../../decision/schemas.js';
+import { JEV_DECISION_MODELS } from '../../../shared/jev-models.js';
 import { LOCAL_CLI_AGENTS } from '../agents/local.js';
 import type { AccountRegistry } from '../accounts/registry.js';
 import {
