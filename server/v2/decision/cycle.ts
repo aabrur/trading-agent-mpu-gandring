@@ -217,7 +217,8 @@ function reviseTicket(lead: RoleResult, ticket: CandidateOrder, policy?: CyclePo
     if (!lead.proposedStop || isLimitChanged || isOrderTypeChangedToLimit || isStopGeometryInvalid) {
       const baselines = computeBaselinePricesForReference(numLimit, side, policy);
       stop = (!isStopGeometryInvalid && lead.proposedStop) ? lead.proposedStop : baselines.stop;
-      tp = (!isTpGeometryInvalid && lead.proposedTp) ? lead.proposedTp : baselines.tp;
+      const candidateTp = lead.proposedTp ?? ticket.tp;
+      tp = (!isTpGeometryInvalid && candidateTp) ? candidateTp : baselines.tp;
     }
   }
 

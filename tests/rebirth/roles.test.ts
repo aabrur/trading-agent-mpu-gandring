@@ -415,4 +415,87 @@ describe('T07 six-role integrity, task fencing, confidence scales and non-mock u
     runner.cleanupCycle('cycle-mem-29');
     expect(runner.getAcceptedResult('cycle-mem-29', 'lead', 'final')).toBeUndefined();
   });
+
+  it('prioritizes risk REJECT reasoning over LONG stance, exposes orderType/limitPrice in strategist/execution schemas, and blocks mock in LIVE mode', async () => {
+    const seenSchemas: Record<string, string> = {};
+    const runner = new RoleRunner({
+      isLiveMode: () => false,
+      providerCaller: async (req) => {
+        seenSchemas[req.role] = req.user;
+        if (req.role === 'risk') {
+          return JSON.stringify({
+            stance: 'LONG',
+            reasoning: 'REJECT due to extreme funding and spread expansion',
+            confidence: 0.7
+          });
+        }
+        return JSON.stringify({
+          stance: 'LONG',
+          reasoning: 'Trend alignment',
+          confidence: 0.8
+        });
+      },
+      resolveAssignment: () => ({
+        provider: 'openrouter',
+        model: 'deepseek/deepseek-v4.1-flash',
+        apiKey: 'test-key'
+      })
+    });
+
+    const riskRes = await runner.run({
+      cycleId: 'c-risk-prio',
+      role: 'risk',
+      phase: 'final',
+      taskAttempt: 1,
+      evidenceId: 'ev-r1',
+      configVersion: 1,
+      accountRef: 'acct1',
+      route: 'LOCAL',
+      deadlineAt: Date.now() + 60000,
+      symbol: 'BTCUSDT'
+    });
+    expect(riskRes.status).toBe('completed');
+    expect((riskRes as any).decision).toBe('REJECT');
+
+    for (const r of ['strategist', 'execution'] as const) {
+      await runner.run({
+        cycleId: `c-${r}`,
+        role: r,
+        phase: 'observe',
+        taskAttempt: 1,
+        evidenceId: `ev-${r}`,
+        configVersion: 1,
+        accountRef: 'acct1',
+        route: 'LOCAL',
+        deadlineAt: Date.now() + 60000,
+        symbol: 'BTCUSDT'
+      });
+      expect(seenSchemas[r]).toContain('"proposedOrderType"');
+      expect(seenSchemas[r]).toContain('"proposedLimitPrice"');
+    }
+
+    const liveRunner = new RoleRunner({
+      isLiveMode: () => true,
+      resolveAssignment: () => ({
+        provider: 'mock',
+        model: 'mock-desk-v1',
+        apiKey: null
+      })
+    });
+    const liveMockRes = await liveRunner.run({
+      cycleId: 'c-live-mock',
+      role: 'lead',
+      phase: 'final',
+      taskAttempt: 1,
+      evidenceId: 'ev-lm',
+      configVersion: 1,
+      accountRef: 'acct-live',
+      route: 'LOCAL',
+      tradingMode: 'LIVE',
+      deadlineAt: Date.now() + 60000,
+      symbol: 'BTCUSDT'
+    });
+    expect(liveMockRes.status).toBe('unavailable');
+    expect(liveMockRes.errorReason).toMatch(/mock.*live/i);
+  });
 });

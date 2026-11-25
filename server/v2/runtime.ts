@@ -786,6 +786,7 @@ export function createReplacementRuntime(
     new RoleRunner({
       researchHost: options.researchHost,
       providerCaller,
+      isLiveMode: () => (runtimeRef?.snapshot().mode ?? state.mode) === 'LIVE',
       resolveAssignment: (role, _version) => {
         const settingsSnap = options.settings?.current();
         const configuredAgent = settingsSnap?.effective?.agents?.[role];

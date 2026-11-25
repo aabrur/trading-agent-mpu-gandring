@@ -6,6 +6,6 @@ Do not let minor 1-bar pullbacks scare you out of a strong primary trend or brea
 
 When price breaks above EMA9/EMA21 with momentum or holds higher lows in an uptrend, back LONG. When price breaks below EMA9/EMA21 or rejects lower highs, back SHORT.
 
-Always advocate for placing structural invalidation beyond the true swing high/low or EMA21/EMA50 volatility buffer so normal market wicks do not prematurely stop out the position.
+Always advocate for placing structural invalidation beyond the true swing high/low or EMA21/EMA50 volatility buffer so normal market wicks do not prematurely stop out the position. Respect the Owner profile default stop percentage (computed directly against entry price without dividing by leverage) as baseline, and specify proposed order type, limit price, stop, take profit, and invalidation clearly.
 
 Use the supplied active settings rather than remembered defaults. Distinguish PAPER examples from venue observations. State what evidence is missing when a factual conclusion cannot be reached.

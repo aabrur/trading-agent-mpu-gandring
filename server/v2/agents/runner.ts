@@ -32,6 +32,7 @@ export interface RoleTask {
   route: RoleRoute;
   deadlineAt: number;
   symbol?: string;
+  tradingMode?: 'PAPER' | 'TESTNET' | 'LIVE';
   promptContext?: Record<string, unknown>;
 }
 
@@ -220,20 +221,27 @@ Respond strictly with a valid JSON object matching this schema:
 }`;
   }
 
-  if (role === 'lead') {
+  if (role === 'lead' || role === 'strategist' || role === 'execution') {
+    const roleHintLine =
+      role === 'lead'
+        ? 'Executive decision synthesis in character (max 3 sentences)'
+        : role === 'strategist'
+          ? 'Tactical structure, entry trigger, stop and take-profit synthesis in character (max 3 sentences)'
+          : 'Execution plan, order type, limit/market entry and protection levels in character (max 3 sentences)';
     return `${toolHint}
 
 Respond strictly with a valid JSON object matching this schema:
 {
   "stance": "LONG" | "SHORT" | "HOLD" | "CLOSE",
-  "reasoning": "Executive decision synthesis in character (max 3 sentences)",
+  "reasoning": "${roleHintLine}",
   "confidence": { "value": 0.0 to 1.0, "scale": "probability_0_1" },
   "claimRefs": [],
   "contraryRefs": [],
+  "proposedOrderType": "MARKET" | "LIMIT_GTC",
+  "proposedLimitPrice": "optional limit price when LIMIT_GTC",
   "proposedStop": "optional SL price string",
   "proposedTp": "optional TP price string",
-  "proposedOrderType": "MARKET" | "LIMIT_GTC",
-  "proposedLimitPrice": "optional limit price when LIMIT_GTC"
+  "invalidationPredicate": { "kind": "PRICE_BELOW" | "PRICE_ABOVE" | "STRUCTURE_BREAK", "level": "optional price string", "description": "clear invalidation condition" }
 }`;
   }
 
@@ -253,12 +261,14 @@ export interface RoleRunnerOptions {
   researchHost?: ResearchHost;
   providerCaller?: ProviderCaller;
   resolveAssignment: (role: RoleId, configVersion: number) => ProviderAssignment;
+  isLiveMode?: () => boolean;
 }
 
 export class RoleRunner {
   private readonly researchHost?: ResearchHost;
   private readonly providerCaller: ProviderCaller;
   private readonly resolveAssignment: (role: RoleId, configVersion: number) => ProviderAssignment;
+  private readonly isLiveMode?: () => boolean;
   private readonly activeAttempts = new Map<string, { attempt: number; abort: AbortController }>();
   private readonly acceptedResults = new Map<string, RoleResult>();
   private readonly cycleOrder: string[] = [];
@@ -268,6 +278,7 @@ export class RoleRunner {
     this.researchHost = options.researchHost;
     this.providerCaller = options.providerCaller ?? createOfficialProviderCaller();
     this.resolveAssignment = options.resolveAssignment;
+    this.isLiveMode = options.isLiveMode;
   }
 
   /** Direct owner chat uses the same typed provider route as strategy roles, without a trade side effect. */
@@ -461,6 +472,17 @@ export class RoleRunner {
       if (combinedSignal.aborted) {
         return this.makeEmptyResult(task, 'cancelled', provider, model, toolTraceIds, 'Task cancelled before start');
       }
+
+    if (provider === 'mock' && (task.tradingMode === 'LIVE' || this.isLiveMode?.())) {
+      return this.makeEmptyResult(
+        task,
+        'unavailable',
+        provider,
+        model,
+        toolTraceIds,
+        'Mock provider is disabled in LIVE trading mode'
+      );
+    }
 
     if (provider !== 'local' && provider !== 'mock' && (!assignment.apiKey || !assignment.apiKey.trim())) {
       return this.makeEmptyResult(
@@ -660,19 +682,22 @@ export class RoleRunner {
           }
         }
 
-        if (task.role === 'risk' && !obj.decision) {
-          if (typeof obj.decision === 'string' && /reject|veto/i.test(obj.decision)) {
-            obj.decision = 'REJECT';
-          } else if (typeof obj.decision === 'string' && /approve/i.test(obj.decision)) {
-            obj.decision = 'APPROVE';
-          } else if (obj.stance === 'LONG' || obj.stance === 'SHORT') {
-            obj.decision = 'APPROVE';
-          } else if (typeof obj.reasoning === 'string' && /reject|veto|risk too high/i.test(obj.reasoning)) {
-            obj.decision = 'REJECT';
-          } else if (typeof obj.reasoning === 'string' && /approve|acceptable risk/i.test(obj.reasoning)) {
-            obj.decision = 'APPROVE';
-          } else {
-            obj.decision = 'REJECT';
+        if (task.role === 'risk') {
+          if (typeof obj.decision === 'string') {
+            const dUpper = obj.decision.trim().toUpperCase();
+            if (/REJECT|VETO|FAIL|DENY/.test(dUpper)) obj.decision = 'REJECT';
+            else if (/APPROVE|PASS|ALLOW/.test(dUpper)) obj.decision = 'APPROVE';
+          }
+          if (!obj.decision) {
+            if (typeof obj.reasoning === 'string' && /reject|veto|risk too high|unsafe/i.test(obj.reasoning)) {
+              obj.decision = 'REJECT';
+            } else if (typeof obj.reasoning === 'string' && /approve|acceptable risk|within risk/i.test(obj.reasoning)) {
+              obj.decision = 'APPROVE';
+            } else if (obj.stance === 'LONG' || obj.stance === 'SHORT') {
+              obj.decision = 'APPROVE';
+            } else {
+              obj.decision = 'REJECT';
+            }
           }
         }
 
@@ -688,6 +713,12 @@ export class RoleRunner {
         }
         if (typeof obj.tp === 'number' || typeof obj.tp === 'string') {
           if (!obj.proposedTp) obj.proposedTp = String(obj.tp);
+        }
+        if (typeof obj.orderType === 'string' && !obj.proposedOrderType) {
+          obj.proposedOrderType = obj.orderType;
+        }
+        if ((typeof obj.limitPrice === 'number' || typeof obj.limitPrice === 'string') && !obj.proposedLimitPrice) {
+          obj.proposedLimitPrice = String(obj.limitPrice);
         }
 
         if (typeof obj.proposedStop === 'number') obj.proposedStop = String(obj.proposedStop);
