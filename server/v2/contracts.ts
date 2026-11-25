@@ -240,6 +240,7 @@ export interface StoreTransaction {
 }
 
 export interface OfficeRuntime {
+  readonly hub?: { emit(type: import('../../shared/office.js').OfficeEventType, data: unknown, at?: number): OfficeEvent };
   snapshot(): OfficeState;
   dispatch(input: OfficeCommand): Promise<OfficeReply>;
   triggerCycle?(symbol?: string, reason?: string): Promise<{ ok: boolean; message: string; cycleId?: string }>;

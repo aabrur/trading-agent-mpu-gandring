@@ -499,11 +499,11 @@ export function mountOperationsRoutes(
       source: 'ops' as const,
       status: 'new' as const
     };
-    runtime.updateState((draft) => {
+    runtime.updateState?.((draft) => {
       draft.lessons = draft.lessons ?? [];
       draft.lessons.push(entry as any);
     });
-    runtime.hub.emit('lesson', entry);
+    runtime.hub?.emit('lesson', entry);
     res.json({ ok: true, lesson: entry });
   });
 }

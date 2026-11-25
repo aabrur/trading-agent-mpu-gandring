@@ -811,7 +811,7 @@ export function createReplacementRuntime(
     new RoleRunner({
       researchHost: options.researchHost,
       providerCaller,
-      isLiveMode: () => (runtimeRef?.snapshot().mode ?? state.mode) === 'LIVE',
+      isLiveMode: () => state.mode === 'LIVE',
       resolveAssignment: (role, _version) => {
         const settingsSnap = options.settings?.current();
         const configuredAgent = settingsSnap?.effective?.agents?.[role];
@@ -1757,7 +1757,7 @@ export function createReplacementRuntime(
         const jevAllowed = Boolean(
           liveJev.enabled &&
           liveJev.mode !== 'off' &&
-          (snap.mode !== 'LIVE' || liveJev.allowLive || liveJev.mode === 'shadow')
+          (snap.mode !== 'LIVE' || liveJev.allowLive)
         );
         if (!options.jevClient) {
           jevClient.configure({
@@ -5516,7 +5516,7 @@ export async function startReplacementServer(
                 id,
                 role: String(lr.role) as AgentId,
                 kind: String(lr.kind),
-                symbol: lr.symbol ? String(lr.symbol) : null,
+                symbol: lr.symbol ? String(lr.symbol) : undefined,
                 happened: String(lr.happened),
                 rootCause: String(lr.root_cause),
                 lesson: String(lr.lesson_text),
@@ -5524,7 +5524,7 @@ export async function startReplacementServer(
                 firstAt: Date.parse(String(lr.first_at)) || Date.now(),
                 lastAt: Date.parse(String(lr.last_at)) || Date.now(),
                 source: 'runtime',
-                status: (String(lr.status ?? 'new') as 'new' | 'promoted' | 'retired')
+                status: (lr.status === 'confirmed' || lr.status === 'promoted' ? lr.status : 'new')
               });
             }
           }
@@ -5639,13 +5639,13 @@ export async function startReplacementServer(
         }
         if (command === 'scorecard') {
           return snapNow.scorecard
-            .map((s) => `${s.name}: ${s.right}/${s.calls} (${Math.round(s.accuracy * 100)}%)`)
+            .map((s) => `${s.name}: ${s.right}/${s.calls} (${s.calls > 0 ? Math.round((s.right / s.calls) * 100) : 0}%)`)
             .join('\n');
         }
         if (command === 'scan') {
           return `Watchlist (${snapNow.watchlist.length}): ${snapNow.watchlist.join(', ')}`;
         }
-        return `Mode=${snapNow.mode} Venue=${snapNow.venue.name} Balance=${snapNow.paper.balance} Equity=${snapNow.paper.equity} Open=${snapNow.paper.positions.length}/${snapNow.paper.n}`;
+        return `Mode=${snapNow.mode} Venue=${snapNow.venue?.name ?? 'paper'} Balance=${snapNow.paper.balance} Equity=${snapNow.paper.equity} Open=${snapNow.paper.positions.length}/${snapNow.paper.n}`;
       },
       backtest: async (rawBody) => {
         const b = (rawBody ?? {}) as Record<string, unknown>;

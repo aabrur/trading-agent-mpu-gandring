@@ -546,7 +546,7 @@ export const eventTypes = [
   'cendol'
 ] as const;
 
-export type OfficeEventType = (typeof eventTypes)[number] | 'candle';
+export type OfficeEventType = (typeof eventTypes)[number] | 'candle' | 'lesson';
 
 export interface OfficeEvent {
   type: OfficeEventType;

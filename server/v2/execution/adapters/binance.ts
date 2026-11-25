@@ -141,7 +141,7 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
     async permissions(): Promise<PermissionEvidence> {
       const observedAt = Date.now();
       try {
-        const host = options.network === 'testnet' ? baseUrl : 'https://api.binance.com';
+        const host = options.network === 'testnet' ? base : 'https://api.binance.com';
         const r = ((await req('GET', '/sapi/v1/account/apiRestrictions', {}, host)) ?? {}) as Record<
           string,
           unknown
