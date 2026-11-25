@@ -151,12 +151,24 @@ export function createTransportFromAdapter(adapter: VenueAdapter): GatewayVenueT
     },
     closePosition: async (position, clientOrderId) => {
       const r = await adapter.close(toNativePosition(position), clientOrderId);
+      let resolved = r;
+      if (
+        resolved.state === 'ACCEPTED' &&
+        (!resolved.filledQty || Number(resolved.filledQty) <= 0)
+      ) {
+        const lookedUp = await adapter.lookupOrder(position.symbol, resolved.clientOrderId).catch(() => null);
+        if (lookedUp && lookedUp.state !== 'ACCEPTED' && lookedUp.state !== 'SUBMITTING') {
+          resolved = lookedUp;
+        } else if (lookedUp && lookedUp.filledQty && Number(lookedUp.filledQty) > 0) {
+          resolved = lookedUp;
+        }
+      }
       return {
-        clientOrderId: r.clientOrderId,
-        venueOrderId: r.venueOrderId,
-        state: r.state,
-        filledQty: r.filledQty,
-        avgFillPrice: r.avgFillPrice ?? null
+        clientOrderId: resolved.clientOrderId,
+        venueOrderId: resolved.venueOrderId,
+        state: resolved.state,
+        filledQty: resolved.filledQty,
+        avgFillPrice: resolved.avgFillPrice ?? null
       };
     }
   };

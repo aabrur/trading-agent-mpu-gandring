@@ -334,9 +334,11 @@ export class SettingsService {
         provider: 'openrouter',
         model: (env.JEV_MODEL ?? 'typesafe/jev-1.14').trim() || 'typesafe/jev-1.14',
         mode:
-          env.JEV_MODE === 'advisory' || env.JEV_MODE === 'strict'
-            ? env.JEV_MODE
-            : 'off',
+          (env.JEV_MODE ?? '').trim().toLowerCase() === 'advisory' || (env.JEV_MODE ?? '').trim().toLowerCase() === 'assist'
+            ? 'advisory'
+            : (env.JEV_MODE ?? '').trim().toLowerCase() === 'strict'
+              ? 'strict'
+              : 'off',
         allowLive: boolOr(env.JEV_ALLOW_LIVE, false)
       },
       dataSources: {

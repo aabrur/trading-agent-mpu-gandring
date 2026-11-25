@@ -284,8 +284,15 @@ export class RoleRunner {
   /** Direct owner chat uses the same typed provider route as strategy roles, without a trade side effect. */
   async chat(input: { role: RoleId; prompt: string; configVersion: number; cycleId: string; deskContext?: string }): Promise<string> {
     const assignment = this.resolveAssignment(input.role, input.configVersion);
+    const provider = assignment.provider.trim().toLowerCase();
+    if (provider === 'mock' && this.isLiveMode?.()) {
+      throw new Error('Mock provider is forbidden in LIVE mode');
+    }
     let user = input.deskContext ? `${input.deskContext}\n\n${input.prompt}` : input.prompt;
-    const system = buildRoleSystemPrompt(input.role);
+    const system = buildRoleSystemPrompt(
+      input.role,
+      'OWNER CHAT MODE: The Owner is asking you a direct conversational question. Answer clearly, concisely, and honestly in plain natural prose matching the Owner language, grounded in the Live Desk Snapshot and any host tool results. Respond either as plain text or JSON {"reply": "<your clear direct answer>"} (no markdown fences). Never emit order execution commands; conversational chat is strictly advisory.'
+    );
     let rawText = '';
 
     for (let turn = 0; turn < 2; turn += 1) {
@@ -295,7 +302,7 @@ export class RoleRunner {
         phase: 'final',
         taskAttempt: 1,
         turn,
-        provider: assignment.provider.trim().toLowerCase(),
+        provider,
         model: assignment.model.trim(),
         apiKey: assignment.apiKey ?? '',
         baseUrl: assignment.baseUrl,

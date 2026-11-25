@@ -525,6 +525,28 @@ export function createReplacementRuntime(
   }
   if (options.venue) {
     state.venue = options.venue;
+  } else {
+    const inferredVenue = (
+      options.venueAdapter?.venue ??
+      options.settings?.current().effective.venue.exchange ??
+      (options.env?.EXCHANGE ?? '').trim().toLowerCase()
+    );
+    if (inferredVenue && inferredVenue !== 'none' && (EXCHANGES as readonly string[]).includes(inferredVenue)) {
+      const vId = inferredVenue as VenueId;
+      state.venue = {
+        name: vId,
+        label: vId.toUpperCase(),
+        kind: ['aster', 'dydx', 'hyperliquid', 'orderly', 'paradex'].includes(vId) ? 'DEX' : 'CEX',
+        experimental: vId !== 'bybit'
+      };
+      if (state.mode !== 'PAPER' && !state.live) {
+        state.live = {
+          exchange: vId,
+          network: state.mode === 'LIVE' ? 'mainnet' : 'testnet',
+          experimental: vId !== 'bybit'
+        };
+      }
+    }
   }
   if (options.runtimeIdentity) {
     state.runtimeIdentity = options.runtimeIdentity;
@@ -758,6 +780,9 @@ export function createReplacementRuntime(
           const upper = 'LEAD';
           const rawProv = (defaultAgent?.provider ?? env[`AGENT_${upper}_PROVIDER`] ?? env.DEFAULT_PROVIDER ?? '').trim().toLowerCase();
           const provider = rawProv || 'mock';
+          if (provider === 'mock' && state.mode === 'LIVE') {
+            return null;
+          }
           const model = (defaultAgent?.model ?? env[`AGENT_${upper}_MODEL`] ?? env.DEFAULT_MODEL ?? 'default').trim();
           const envKey = PROVIDER_KEY_ENV[provider as keyof typeof PROVIDER_KEY_ENV];
           const secretKey = envKey ? (options.secrets?.getSecret(envKey) ?? env[envKey]) : undefined;
@@ -1617,11 +1642,12 @@ export function createReplacementRuntime(
       }
     };
 
+    const hubLastStr = marketHub?.snapshot(targetSymbol)?.last?.value ?? null;
     const marketSummary: Record<string, unknown> = {
       symbol: targetSymbol,
       venue: 'bybit',
       category: 'linear',
-      lastPrice: snap.tickers[targetSymbol]?.last ? String(snap.tickers[targetSymbol].last) : undefined,
+      lastPrice: snap.tickers[targetSymbol]?.last ? String(snap.tickers[targetSymbol].last) : (hubLastStr ? String(hubLastStr) : undefined),
       evidenceId: intelFrame.evidenceId,
       timeframes: timeframesSummary,
       microstructure: microstructureSummary,
@@ -1632,7 +1658,7 @@ export function createReplacementRuntime(
         instruction: 'Owner Sovereignty: The user/owner is the ultimate decision maker. Adhere strictly to any risk, position, or market directives given in recent owner messages.'
       },
       venueCapabilities: {
-        supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false)
+        supportsLimitGtc: (options.getVenueAdapter?.() ?? options.venueAdapter)?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false)
       },
       tradingviewAlert: recentTvAlert ? {
         action: recentTvAlert.action,
@@ -1674,7 +1700,7 @@ export function createReplacementRuntime(
     };
 
     const tv = snap.trading?.values;
-    const currentPrice = Number(snap.tickers[targetSymbol]?.last ?? 0);
+    const currentPrice = Number(snap.tickers[targetSymbol]?.last ?? hubLastStr ?? 0);
     const activeLev = tv?.maxLeverage ?? snap.paper.maxLeverage ?? 1;
     const stopPct = tv?.defaultStopPct ?? snap.paper.defaultStopPct ?? 30;
     const stopPricePct = stopPct / 100;
@@ -1712,7 +1738,7 @@ export function createReplacementRuntime(
       tradingProfile: snap.trading?.profile,
       profileBaselineStopPrice,
       profileBaselineTpPrice,
-      supportsLimitGtc: options.venueAdapter?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false),
+      supportsLimitGtc: (options.getVenueAdapter?.() ?? options.venueAdapter)?.capabilities?.restingLimitGtcEntry ?? (snap.mode === 'PAPER' ? true : false),
       hasPosition: Boolean(existingPos),
       positionSide: existingPos?.side === 'SHORT' ? 'SHORT' : existingPos?.side ? 'LONG' : undefined
     };
@@ -1728,22 +1754,27 @@ export function createReplacementRuntime(
           ''
         ).trim();
         const resolvedModel = (liveJev.model && liveJev.model !== 'openai/gpt-5-mini' ? liveJev.model : null) || env.JEV_MODEL || 'typesafe/jev-1.14';
+        const jevAllowed = Boolean(
+          liveJev.enabled &&
+          liveJev.mode !== 'off' &&
+          (snap.mode !== 'LIVE' || liveJev.allowLive || liveJev.mode === 'shadow')
+        );
         if (!options.jevClient) {
           jevClient.configure({
-            enabled: liveJev.enabled,
+            enabled: jevAllowed,
             apiKey: liveJevKey || null,
             model: resolvedModel
           });
         }
         updateState((draft) => {
           if (draft.jev) {
-            draft.jev.enabled = liveJev.enabled;
+            draft.jev.enabled = jevAllowed;
             draft.jev.provider = liveJev.provider || 'openrouter';
             draft.jev.model = resolvedModel;
             draft.jev.mode = liveJev.mode;
             draft.jev.configuredMode = liveJev.mode;
             draft.jev.allowLive = liveJev.allowLive;
-            draft.jev.health = !liveJev.enabled ? 'disabled' : (liveJevKey ? 'configured' : 'fallback_ready');
+            draft.jev.health = !jevAllowed ? 'disabled' : (liveJevKey ? 'configured' : 'fallback_ready');
           }
         });
       }
@@ -2064,7 +2095,7 @@ export function createReplacementRuntime(
           const thesisLimit = out.verdict.thesis.limitPrice ?? null;
           const entryPrice = thesisOrderType === 'LIMIT_GTC' && thesisLimit
             ? Number(thesisLimit)
-            : Number(currentSnap.tickers[targetSymbol]?.last ?? out.verdict.thesis.stop);
+            : Number(currentSnap.tickers[targetSymbol]?.last ?? marketHub?.snapshot(targetSymbol)?.last?.value ?? out.verdict.thesis.stop);
 
           const stopPct = currentSnap.trading?.values.defaultStopPct ?? currentSnap.paper.defaultStopPct ?? 30;
           const stopPricePct = stopPct / 100;
@@ -2711,28 +2742,32 @@ export function createReplacementRuntime(
 
   const extractCleanAgentReply = (raw: string): string => {
     if (!raw) return '';
-    const trimmed = raw.trim();
+    const trimmed = raw
+      .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+      .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
+      .trim();
     let candidate = trimmed;
     if (candidate.startsWith('```')) {
       candidate = candidate.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
     }
     if (candidate.startsWith('{') && candidate.endsWith('}')) {
       try {
-        const parsed = JSON.parse(candidate);
+        const parsed = JSON.parse(candidate) as Record<string, unknown>;
         if (parsed && typeof parsed === 'object') {
-          if (typeof parsed.reply === 'string' && parsed.reply) return parsed.reply;
-          if (typeof parsed.text === 'string' && parsed.text) return parsed.text;
-          if (typeof parsed.message === 'string' && parsed.message) return parsed.message;
-          if (typeof parsed.content === 'string' && parsed.content) return parsed.content;
+          for (const key of ['reply', 'answer', 'response', 'text', 'message', 'content', 'reasoning']) {
+            if (typeof parsed[key] === 'string' && parsed[key].trim()) {
+              return parsed[key].trim();
+            }
+          }
         }
       } catch {
-        const fieldMatch = candidate.match(/"(?:reply|text|message|content)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*$)/i);
+        const fieldMatch = candidate.match(/"(?:reply|answer|response|text|message|content|reasoning)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\}\s*$)/i);
         if (fieldMatch && fieldMatch[1]) {
-          return fieldMatch[1].replace(/\\"/g, '"');
+          return fieldMatch[1].replace(/\\"/g, '"').trim();
         }
       }
     }
-    return raw;
+    return trimmed || raw;
   };
 
   const handleCommand = async (input: {
@@ -2842,6 +2877,11 @@ export function createReplacementRuntime(
           text: prompt
         });
         for (const role of roles) {
+          if (draft.agents[role]) {
+            draft.agents[role].status = 'thinking';
+            draft.agents[role].executionStatus = 'THINKING';
+            draft.agents[role].lastAttemptAt = ownerAt;
+          }
           const chatList = draft.chats[role] ?? [];
           chatList.push({
             from: 'user',
@@ -2854,6 +2894,9 @@ export function createReplacementRuntime(
         }
         draft.roomHistory = draft.roomHistory.slice(-100);
       });
+      for (const role of roles) {
+        hub.emit('status', { agent: role, status: 'thinking' });
+      }
 
       if (options.chatService) {
         void options.chatService.recordMessage({
@@ -2875,20 +2918,65 @@ export function createReplacementRuntime(
         });
         return { role, answer: extractCleanAgentReply(String(answer)), rawAnswer: String(answer) };
       }));
-      const results = outcomes.flatMap((item) => item.status === 'fulfilled' ? [item.value] : []);
-      const failures = outcomes.length - results.length;
+      const results: Array<{ role: RoleId; answer: string; rawAnswer: string }> = [];
+      const failureReasons: string[] = [];
+      outcomes.forEach((item, idx) => {
+        const role = roles[idx]!;
+        if (item.status === 'fulfilled') {
+          results.push(item.value);
+        } else {
+          const reasonMsg = safe(item.reason instanceof Error ? item.reason.message : String(item.reason ?? 'unknown error'));
+          failureReasons.push(`${role}: ${reasonMsg}`);
+        }
+      });
+      const failures = failureReasons.length;
+      const replyAt = Date.now();
       updateState(draft => {
         if (!draft.roomHistory) draft.roomHistory = [];
+        for (const role of roles) {
+          if (draft.agents[role]) {
+            draft.agents[role].status = 'idle';
+            draft.agents[role].executionStatus = 'IDLE';
+          }
+        }
         for (const { role, answer } of results) {
+          if (draft.agents[role]) {
+            draft.agents[role].lastSuccessAt = replyAt;
+            draft.agents[role].lastLine = answer.slice(0, 160);
+          }
           const chatList = draft.chats[role] ?? [];
           chatList.push(
-            { from: role, text: answer, at: Date.now(), conversationId }
+            { from: role, text: answer, at: replyAt, conversationId }
           );
           draft.chats[role] = chatList.slice(-50);
-          draft.roomHistory.push({ id: randomUUID(), conversationId, at: Date.now(), from: role, to: 'owner', text: answer });
+          draft.roomHistory.push({ id: randomUUID(), conversationId, at: replyAt, from: role, to: 'owner', text: answer });
         }
+        outcomes.forEach((item, idx) => {
+          const role = roles[idx]!;
+          if (item.status === 'rejected' && draft.agents[role]) {
+            const reasonMsg = safe(item.reason instanceof Error ? item.reason.message : String(item.reason ?? 'unknown error'));
+            draft.agents[role].lastError = reasonMsg;
+            draft.agents[role].executionStatus = 'ERROR';
+          }
+        });
         draft.roomHistory = draft.roomHistory.slice(-100);
       });
+      for (const { role, answer } of results) {
+        hub.emit('status', { agent: role, status: 'idle' });
+        hub.emit('speech', {
+          id: `speech-${replyAt}-${role}`,
+          agent: role,
+          text: answer,
+          done: true,
+          at: replyAt,
+          conversationId
+        });
+      }
+      for (let i = 0; i < outcomes.length; i += 1) {
+        if (outcomes[i]?.status === 'rejected') {
+          hub.emit('status', { agent: roles[i]!, status: 'idle' });
+        }
+      }
       if (options.chatService) {
         for (const { role, answer } of results) {
           void options.chatService.recordMessage({
@@ -2899,28 +2987,37 @@ export function createReplacementRuntime(
         }
       }
 
+      // Conversational Q&A is strictly advisory; permit only read-only informational commandToExecute hints.
+      const SAFE_CHAT_FOLLOWUP_RE = /^(status|report|positions|scan|balance|health|mode|watchlist|scorecard|lessons)$/i;
       for (const { rawAnswer } of results) {
         if (!rawAnswer) continue;
+        let maybeCmd = '';
         try {
           const parsed = JSON.parse(rawAnswer);
-          if (parsed && typeof parsed === 'object' && typeof parsed.commandToExecute === 'string' && parsed.commandToExecute.trim()) {
-            void handleCommand({ text: parsed.commandToExecute.trim(), conversationId }).catch(console.error);
+          if (parsed && typeof parsed === 'object' && typeof parsed.commandToExecute === 'string') {
+            maybeCmd = parsed.commandToExecute.trim().replace(/^\//, '');
           }
         } catch {
           const match = rawAnswer.match(/"commandToExecute"\s*:\s*"([^"]+)"/i);
           if (match && match[1]) {
-            void handleCommand({ text: match[1].trim(), conversationId }).catch(console.error);
+            maybeCmd = match[1].trim().replace(/^\//, '');
           }
+        }
+        if (maybeCmd && SAFE_CHAT_FOLLOWUP_RE.test(maybeCmd)) {
+          void handleCommand({ text: maybeCmd, conversationId }).catch(console.error);
         }
       }
       const replyFormatted = results
         .map(({ role, answer }) => (roles.length === 1 ? `[${role.toUpperCase()}]: ${answer}` : `${role}: ${answer}`))
         .join('\n\n');
+      const failureSummary = failures ? `${failures} agent(s) failed to reply (${failureReasons.join('; ')}).` : undefined;
       return {
         ok: failures === 0,
         command: isAsk ? 'ask' : 'chat',
-        reply: replyFormatted + (failures ? `\n${failures} agent(s) failed to reply.` : ''),
-        error: failures ? `${failures} agent(s) failed to reply.` : undefined
+        reply: replyFormatted
+          ? replyFormatted + (failureSummary ? `\n${failureSummary}` : '')
+          : (failureSummary ?? 'No agent reply.'),
+        error: failureSummary
       };
     }
 
@@ -4274,14 +4371,15 @@ export async function startReplacementServer(
     configFingerprint: configurationFingerprint(startup)
   });
 
-  const dataDir = path.resolve('.mpu-gandring', 'rebirth');
+  const isolatedDataDir = (env.MPU_DATA_DIR ?? '').trim();
+  const dataDir = path.resolve(isolatedDataDir || path.join('.mpu-gandring', 'rebirth'));
   try {
     mkdirSync(dataDir, { recursive: true });
   } catch {
     // Directory may already exist
   }
   const store = await RuntimeStore.open(path.join(dataDir, 'runtime.sqlite'));
-  const secrets = new SecretStore({ envFile: '.env', allowWrite: true });
+  const secrets = new SecretStore({ envFile: '.env', allowWrite: !isolatedDataDir });
   const authority = new ExecutionAuthorityService(store);
   const accounts = await AccountRegistry.open(store, authority);
   const settings = await SettingsService.initialize(store, secrets);
@@ -4398,9 +4496,11 @@ export async function startReplacementServer(
     getTransport: () => transport,
     getAccountPolicy: () => {
       const snap = settings.current();
+      const rtSnap = runtimeRef?.snapshot();
       const equityBasis = Number(
-        runtimeRef?.snapshot().paper.equity ??
-        runtimeRef?.snapshot().paper.balance ??
+        rtSnap?.financial.equity.value ??
+        rtSnap?.paper.equity ??
+        rtSnap?.paper.balance ??
         snap.effective.paper.balance ??
         0
       );
@@ -5926,13 +6026,16 @@ export async function startReplacementServer(
   }
 
   if (startup.tradingMode !== 'PAPER') {
-    void syncVenueAccount();
+    await syncVenueAccount().catch(() => {});
     if (syncTimer) clearInterval(syncTimer);
     syncTimer = setInterval(syncVenueAccount, 10_000);
     syncTimer.unref();
   }
 
-  const shutdown = () => {
+  let closedAll = false;
+  const cleanupServerResources = async () => {
+    if (closedAll) return;
+    closedAll = true;
     if (discordGateway) {
       try { discordGateway.stop(); } catch {}
       discordGateway = null;
@@ -5941,10 +6044,28 @@ export async function startReplacementServer(
       try { telegramPoller.stop(); } catch {}
       telegramPoller = null;
     }
-    if (syncTimer) clearInterval(syncTimer);
-    wss.close();
+    if (syncTimer) {
+      clearInterval(syncTimer);
+      syncTimer = null;
+    }
+    try { wss.close(); } catch {}
+    try { await store.close(); } catch {}
+  };
+
+  const baseStop = runtime.stop;
+  const wrappedRuntime: ReplacementRuntimeHandle = {
+    ...runtime,
+    stop: async () => {
+      await baseStop();
+      await cleanupServerResources();
+    }
+  };
+  runtimeRef = wrappedRuntime;
+
+  const shutdown = () => {
+    void cleanupServerResources();
     server.closeAllConnections();
-    void runtime.stop().catch(() => {});
+    void baseStop().catch(() => {});
     server.close(() => {
       void (getSessionLogger()?.finish('INTERRUPTED', 'Server shutdown completed') ?? Promise.resolve()).finally(() => {
         process.exit(0);
@@ -5956,5 +6077,5 @@ export async function startReplacementServer(
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 
-  return { server, runtime };
+  return { server, runtime: wrappedRuntime };
 }
