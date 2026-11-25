@@ -519,6 +519,17 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
       protection: NativeProtection
     ): Promise<ProtectionEvidence> {
       const rules = await adapter.instruments(position.symbol);
+      const prior = await adapter.protection(position).catch(() => null);
+      const staleIds = new Set<string>();
+      if (prior?.stopOrderId) staleIds.add(prior.stopOrderId);
+      if (protection.tpPrice != null && prior?.tpOrderId) staleIds.add(prior.tpOrderId);
+      for (const orderId of staleIds) {
+        await req(
+          'DELETE',
+          `/v1/algo/order?order_id=${encodeURIComponent(orderId)}&symbol=${encodeURIComponent(rules.nativeSymbol)}`
+        ).catch(() => {});
+      }
+
       const exitSide = position.side === 'LONG' ? 'SELL' : 'BUY';
       const stopChild = {
         symbol: rules.nativeSymbol,
@@ -526,7 +537,11 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         side: exitSide,
         type: 'CLOSE_POSITION',
         trigger_price_type: 'MARK_PRICE',
-        trigger_price: quantize(protection.stopPrice, rules.tickSize, 'floor'),
+        trigger_price: quantize(
+          protection.stopPrice,
+          rules.tickSize,
+          position.side === 'LONG' ? 'floor' : 'ceil'
+        ),
         reduce_only: true
       };
       const children: Array<Record<string, unknown>> = [stopChild];
@@ -537,7 +552,11 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
           side: exitSide,
           type: 'CLOSE_POSITION',
           trigger_price_type: 'MARK_PRICE',
-          trigger_price: quantize(protection.tpPrice, rules.tickSize, 'ceil'),
+          trigger_price: quantize(
+            protection.tpPrice,
+            rules.tickSize,
+            position.side === 'LONG' ? 'ceil' : 'floor'
+          ),
           reduce_only: true
         });
       }

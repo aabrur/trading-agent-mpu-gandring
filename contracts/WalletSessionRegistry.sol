@@ -9,19 +9,19 @@ contract WalletSessionRegistry {
 
     struct Session {
         uint64 expiresAt;
-        uint256 epoch;
+        uint64 epoch;
     }
 
-    mapping(address owner => uint256 epoch) public epochs;
+    mapping(address owner => uint64 epoch) public epochs;
     mapping(address owner => mapping(address agent => mapping(bytes32 context => Session))) public sessions;
 
     error InvalidAgent();
     error InvalidContext();
     error InvalidExpiry();
 
-    event Authorized(address indexed owner, address indexed agent, bytes32 indexed context, uint64 expiresAt, uint256 epoch);
+    event Authorized(address indexed owner, address indexed agent, bytes32 indexed context, uint64 expiresAt, uint64 epoch);
     event Revoked(address indexed owner, address indexed agent, bytes32 indexed context);
-    event RevokedAll(address indexed owner, uint256 epoch);
+    event RevokedAll(address indexed owner, uint64 epoch);
 
     /// @notice Create or renew a session. Context should hash the venue, network and application origin.
     /// @dev Only msg.sender's sessions can be changed; no relayer signatures or reusable permits are accepted.
@@ -29,8 +29,9 @@ contract WalletSessionRegistry {
         if (agent == address(0) || agent == msg.sender || agent == address(this)) revert InvalidAgent();
         if (context == bytes32(0)) revert InvalidContext();
         if (expiresAt <= block.timestamp || expiresAt > block.timestamp + MAX_SESSION_DURATION) revert InvalidExpiry();
-        sessions[msg.sender][agent][context] = Session(expiresAt, epochs[msg.sender]);
-        emit Authorized(msg.sender, agent, context, expiresAt, epochs[msg.sender]);
+        uint64 currentEpoch = epochs[msg.sender];
+        sessions[msg.sender][agent][context] = Session(expiresAt, currentEpoch);
+        emit Authorized(msg.sender, agent, context, expiresAt, currentEpoch);
     }
 
     function revoke(address agent, bytes32 context) external {
@@ -39,7 +40,7 @@ contract WalletSessionRegistry {
     }
 
     function revokeAll() external {
-        uint256 epoch = ++epochs[msg.sender];
+        uint64 epoch = ++epochs[msg.sender];
         emit RevokedAll(msg.sender, epoch);
     }
 

@@ -106,14 +106,14 @@ export function useWalletSession() {
     const storage = (event: StorageEvent) => { if (event.key === 'mg-wallet-address') void sync(); };
     void sync();
     wallet?.on?.('accountsChanged', accountsChanged);
-    wallet?.on?.('chainChanged', changed);
+    wallet?.on?.('chainChanged', accountsChanged);
     wallet?.on?.('disconnect', changed);
     window.addEventListener('mg-wallet-updated', sync);
     window.addEventListener('storage', storage);
     return () => {
       alive = false;
       wallet?.removeListener?.('accountsChanged', accountsChanged);
-      wallet?.removeListener?.('chainChanged', changed);
+      wallet?.removeListener?.('chainChanged', accountsChanged);
       wallet?.removeListener?.('disconnect', changed);
       window.removeEventListener('mg-wallet-updated', sync);
       window.removeEventListener('storage', storage);

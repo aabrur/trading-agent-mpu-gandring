@@ -688,22 +688,60 @@ export function createVenueAdapter(
       const rules = await adapter.instruments(position.symbol);
       const chain = getChain(info.creds, info.authId);
       const isExitBuy = position.side === 'SHORT';
-      const tick = Number(rules.tickSize);
+      const exitSideStr = isExitBuy ? 'BUY' : 'SELL';
+      const openTrigRaw = await indexerGet(
+        `/orders?address=${info.creds.key}&subaccountNumber=${subaccount}&ticker=${rules.nativeSymbol}&limit=100&status=UNTRIGGERED`
+      ).catch(() => null);
+      if (Array.isArray(openTrigRaw)) {
+        for (const o of openTrigRaw as Array<Record<string, unknown>>) {
+          if (String(o.side ?? '').toUpperCase() !== exitSideStr) continue;
+          const oType = String(o.type ?? '').toUpperCase();
+          const isStop = oType.includes('STOP');
+          const isTp = protection.tpPrice != null && oType.includes('TAKE_PROFIT');
+          if (!isStop && !isTp) continue;
+          const cid = Number(o.clientId);
+          if (Number.isInteger(cid) && cid >= 0) {
+            await chain
+              .cancelOrder({ market: rules.nativeSymbol, clientId: cid, orderFlags: 32 })
+              .catch(() => {});
+          }
+        }
+      }
       const stopPx = Number(protection.stopPrice);
       const worstStop = isExitBuy ? stopPx * (1 + SLIPPAGE) : stopPx * (1 - SLIPPAGE);
       const numCid = dydxClientId(`${protection.clientOrderId}s`);
 
       await chain.placeOrder({
         market: rules.nativeSymbol,
-        side: isExitBuy ? 'BUY' : 'SELL',
+        side: exitSideStr,
         type: 'STOP_MARKET',
         size: Number(position.qty),
         price: worstStop,
-        triggerPrice: Number(quantize(protection.stopPrice, rules.tickSize, 'floor')),
+        triggerPrice: Number(
+          quantize(protection.stopPrice, rules.tickSize, position.side === 'LONG' ? 'floor' : 'ceil')
+        ),
         clientId: numCid,
         reduceOnly: true,
         goodTilTimeSec: COND_GOOD_TIL_S
       });
+
+      if (protection.tpPrice) {
+        const tpPx = Number(protection.tpPrice);
+        const worstTp = isExitBuy ? tpPx * (1 + SLIPPAGE) : tpPx * (1 - SLIPPAGE);
+        await chain.placeOrder({
+          market: rules.nativeSymbol,
+          side: exitSideStr,
+          type: 'TAKE_PROFIT_MARKET',
+          size: Number(position.qty),
+          price: worstTp,
+          triggerPrice: Number(
+            quantize(protection.tpPrice, rules.tickSize, position.side === 'LONG' ? 'ceil' : 'floor')
+          ),
+          clientId: dydxClientId(`${protection.clientOrderId}t`),
+          reduceOnly: true,
+          goodTilTimeSec: COND_GOOD_TIL_S
+        });
+      }
 
       return adapter.protection(position);
     },

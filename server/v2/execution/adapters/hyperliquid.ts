@@ -625,6 +625,19 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         throw new AdapterCapabilityError('Hyperliquid does not support HEDGE mode');
       }
       const asset = await resolveAsset(position.symbol);
+      const prior = await adapter.protection(position).catch(() => null);
+      const staleOids = [...new Set([
+        prior?.stopOrderId,
+        ...(protection.tpPrice != null ? [prior?.tpOrderId] : [])
+      ])]
+        .map((id) => Number(id))
+        .filter((oid) => Number.isInteger(oid) && oid > 0);
+      if (staleOids.length > 0) {
+        await exchangeReq({
+          type: 'cancel',
+          cancels: staleOids.map((o) => ({ a: asset.idx, o }))
+        }).catch(() => {});
+      }
       const isBuyExit = position.side === 'SHORT';
       const sz = floatToWire(Number(Number(position.qty).toFixed(asset.szDecimals)));
       const buildTrigger = (pxStr: DecimalString, tpsl: 'sl' | 'tp') => {

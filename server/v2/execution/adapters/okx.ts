@@ -522,6 +522,17 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
     ): Promise<ProtectionEvidence> {
       const posSide = posSideForOrder(position.positionMode, position.hedgeLeg);
       const rules = await adapter.instruments(position.symbol);
+      const prior = await adapter.protection(position).catch(() => null);
+      const staleAlgos = new Set<string>();
+      if (prior?.stopOrderId) staleAlgos.add(prior.stopOrderId);
+      if (protection.tpPrice != null && prior?.tpOrderId) staleAlgos.add(prior.tpOrderId);
+      if (staleAlgos.size > 0) {
+        await req(
+          'POST',
+          '/api/v5/trade/cancel-algos',
+          [...staleAlgos].map((algoId) => ({ algoId, instId: rules.nativeSymbol }))
+        ).catch(() => {});
+      }
       const exitSide = position.side === 'LONG' ? 'sell' : 'buy';
       const pxType =
         protection.triggerBy === 'LAST_PRICE'

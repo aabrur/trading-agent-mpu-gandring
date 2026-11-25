@@ -186,8 +186,9 @@ export function sizeSovereignOrderQuantity(params: {
   entryPrice: number;
   qtyStep?: string | null;
   minQty?: string | null;
+  contractMultiplier?: string | number | null;
 }): { ok: true; qty: string } | { ok: false; reason: string } {
-  const { marginUsdt, leverage, entryPrice, qtyStep, minQty } = params;
+  const { marginUsdt, leverage, entryPrice, qtyStep, minQty, contractMultiplier } = params;
   if (!Number.isFinite(marginUsdt) || marginUsdt <= 0) {
     return { ok: false, reason: 'Owner-derived per-order margin is 0; refusing to substitute a fallback size.' };
   }
@@ -195,8 +196,10 @@ export function sizeSovereignOrderQuantity(params: {
     return { ok: false, reason: 'Valid positive entry price is required to size quantity.' };
   }
   const lev = Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
+  const parsedMult = contractMultiplier != null ? Number(contractMultiplier) : 1;
+  const mult = Number.isFinite(parsedMult) && parsedMult > 0 ? parsedMult : 1;
   const rawNotional = marginUsdt * lev;
-  const rawQty = (rawNotional / entryPrice).toFixed(12);
+  const rawQty = (rawNotional / (entryPrice * mult)).toFixed(12);
   const step = qtyStep && compareDecimals(qtyStep, '0') > 0 ? qtyStep : '0.0001';
   const floored = quantize(rawQty, step, 'floor');
   if (compareDecimals(floored, '0') <= 0) {

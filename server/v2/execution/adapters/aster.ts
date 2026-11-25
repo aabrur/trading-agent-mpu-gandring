@@ -259,7 +259,9 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         };
       }
 
-      const envPin = (options.network === 'testnet' ? process.env.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED : process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED)?.trim() || process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED?.trim() || '';
+      const envPin = (options.network === 'testnet'
+        ? process.env.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED
+        : process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED)?.trim() || '';
       const pinned = creds.verifiedAgentAddress?.trim() || envPin;
       if (!pinned || pinned.toLowerCase() !== signerAddress.toLowerCase()) {
         return {
@@ -667,6 +669,14 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
       position: NativePosition,
       protection: NativeProtection
     ): Promise<ProtectionEvidence> {
+      const prior = await adapter.protection(position).catch(() => null);
+      const staleIds = new Set<string>();
+      if (prior?.stopOrderId) staleIds.add(prior.stopOrderId);
+      if (protection.tpPrice != null && prior?.tpOrderId) staleIds.add(prior.tpOrderId);
+      for (const orderId of staleIds) {
+        await req('DELETE', '/fapi/v3/order', { symbol: position.nativeSymbol, orderId }).catch(() => {});
+      }
+
       const posSide = positionSideForOrder(position.positionMode, position.hedgeLeg);
       const rules = await adapter.instruments(position.symbol);
       const exitSide = position.side === 'LONG' ? 'SELL' : 'BUY';

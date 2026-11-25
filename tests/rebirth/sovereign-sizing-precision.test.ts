@@ -61,5 +61,26 @@ describe('Sovereign direct-price SL/TP precision & quantity sizing', () => {
       qtyStep: '0.001'
     });
     expect(zeroPx.ok).toBe(false);
+
+    // OKX ctVal contractMultiplier sizing: 100 USDT * 5x = 500 USDT on 68500 BTC, ctVal=0.01 -> 500 / (68500 * 0.01) = 0.7299 contracts, floor step 1 -> fails below minQty 1; 200 USDT * 5x -> 1.459 -> floors to 1 contract
+    const okxSmall = sizeSovereignOrderQuantity({
+      marginUsdt: 100,
+      leverage: 5,
+      entryPrice: 68500,
+      qtyStep: '1',
+      minQty: '1',
+      contractMultiplier: '0.01'
+    });
+    expect(okxSmall.ok).toBe(false);
+
+    const okxValid = sizeSovereignOrderQuantity({
+      marginUsdt: 200,
+      leverage: 5,
+      entryPrice: 68500,
+      qtyStep: '1',
+      minQty: '1',
+      contractMultiplier: '0.01'
+    });
+    expect(okxValid).toEqual({ ok: true, qty: '1' });
   });
 });

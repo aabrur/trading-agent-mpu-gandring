@@ -140,35 +140,58 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
 
     async permissions(): Promise<PermissionEvidence> {
       const observedAt = Date.now();
-      if (options.network === 'testnet') {
-        const bal = await req('GET', '/fapi/v2/balance');
-        const readable = Array.isArray(bal);
-        return {
-          ok: readable,
-          canTrade: readable,
-          canWithdraw: null,
-          verified: false,
-          delegatedOnly: true,
-          detail:
-            'Demo Trading signed balance check succeeded; apiRestrictions endpoint is unavailable on testnet',
-          observedAt
-        };
+      try {
+        const host = options.network === 'testnet' ? baseUrl : 'https://api.binance.com';
+        const r = ((await req('GET', '/sapi/v1/account/apiRestrictions', {}, host)) ?? {}) as Record<
+          string,
+          unknown
+        >;
+        if (!Array.isArray(r) && typeof r.enableWithdrawals === 'boolean') {
+          const canWithdraw = Boolean(r.enableWithdrawals);
+          const canTrade = Boolean(r.enableFutures ?? r.enableSpotAndMarginTrading ?? false);
+          return {
+            ok: canTrade && !canWithdraw,
+            canTrade,
+            canWithdraw,
+            verified: true,
+            delegatedOnly: !canWithdraw,
+            detail: `${canWithdraw ? 'key HAS withdraw permission' : 'no withdraw permission'}; futures ${canTrade ? 'enabled' : 'disabled'}; ipRestrict ${r.ipRestrict ? 'on' : 'off'}`,
+            observedAt
+          };
+        }
+        if (options.network !== 'testnet') {
+          return {
+            ok: false,
+            canTrade: false,
+            canWithdraw: null,
+            verified: false,
+            delegatedOnly: false,
+            detail: 'Binance apiRestrictions response did not report withdrawal flags',
+            observedAt
+          };
+        }
+      } catch (err) {
+        if (options.network !== 'testnet') throw err;
       }
-      const r = ((await req(
-        'GET',
-        '/sapi/v1/account/apiRestrictions',
-        {},
-        'https://api.binance.com'
-      )) ?? {}) as Record<string, unknown>;
-      const canWithdraw = Boolean(r.enableWithdrawals);
-      const canTrade = Boolean(r.enableFutures);
+
+      const [bal, acct] = await Promise.all([
+        req('GET', '/fapi/v2/balance'),
+        req('GET', '/fapi/v2/account').catch(() => null)
+      ]);
+      const acctObj =
+        acct && typeof acct === 'object' && !Array.isArray(acct)
+          ? (acct as Record<string, unknown>)
+          : null;
+      const canTradeFlag = acctObj?.canTrade !== false;
+      const readable = Array.isArray(bal) || acctObj !== null;
       return {
-        ok: canTrade && !canWithdraw,
-        canTrade,
-        canWithdraw,
-        verified: true,
-        delegatedOnly: !canWithdraw,
-        detail: `${canWithdraw ? 'key HAS withdraw permission' : 'no withdraw permission'}; futures ${canTrade ? 'enabled' : 'disabled'}; ipRestrict ${r.ipRestrict ? 'on' : 'off'}`,
+        ok: readable && canTradeFlag,
+        canTrade: readable && canTradeFlag,
+        canWithdraw: null,
+        verified: false,
+        delegatedOnly: true,
+        detail:
+          'Demo Trading signed balance/account check succeeded; apiRestrictions endpoint is unavailable on testnet',
         observedAt
       };
     },
@@ -485,6 +508,14 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
       position: NativePosition,
       protection: NativeProtection
     ): Promise<ProtectionEvidence> {
+      const prior = await adapter.protection(position).catch(() => null);
+      const staleIds = new Set<string>();
+      if (prior?.stopOrderId) staleIds.add(prior.stopOrderId);
+      if (protection.tpPrice != null && prior?.tpOrderId) staleIds.add(prior.tpOrderId);
+      for (const orderId of staleIds) {
+        await req('DELETE', '/fapi/v1/order', { symbol: position.nativeSymbol, orderId }).catch(() => {});
+      }
+
       const posSide = positionSideForOrder(position.positionMode, position.hedgeLeg);
       const rules = await adapter.instruments(position.symbol);
       const exitSide = position.side === 'LONG' ? 'SELL' : 'BUY';

@@ -12,6 +12,12 @@ import {
   type VenueId
 } from '../contracts.js';
 import { venueCredentialEnvNames } from '../runtime.js';
+import { safe } from '../../redact.js';
+import { getVenueAdapter } from '../execution/adapters/factory.js';
+import {
+  assertLivePermissionEvidence,
+  validateDelegatedCredentialInput
+} from '../execution/adapters/types.js';
 import { MODEL_CHOICES, MODEL_KEY_ENV, MODEL_SOURCES, MODEL_CATALOG_DATE, USAGE_SOURCE, fetchLiveProviderModels } from '../settings/model-catalog.js';
 import { JEV_DECISION_MODELS } from '../../../shared/jev-models.js';
 import { LOCAL_CLI_AGENTS } from '../agents/local.js';
@@ -800,6 +806,27 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Data source configuration updated.', ...result });
   });
 
+  const verifyVenueModePermissions = async (venue: VenueId, network: Network) => {
+    const adapter = getVenueAdapter(venue, {
+      network,
+      credentialRef: `${venue}:${network}`,
+      fetchImpl: deps.fetchImpl ?? fetch,
+      readSecret: async () => {
+        const names = venueCredentialEnvNames(venue, network);
+        const key = (deps.secrets.getSecret(names.key) ?? '').trim();
+        const secret = (deps.secrets.getSecret(names.secret) ?? '').trim();
+        const passphrase = names.passphrase ? (deps.secrets.getSecret(names.passphrase) ?? '').trim() : null;
+        const pinKey =
+          network === 'testnet'
+            ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED'
+            : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
+        const verifiedAgentAddress = (deps.secrets.getSecret(pinKey) ?? '').trim() || null;
+        return { key, secret, passphrase, verifiedAgentAddress };
+      }
+    });
+    return adapter.permissions();
+  };
+
   app.post('/api/setup/venue', async (req, res) => {
     const bodySchema = z
       .object({
@@ -849,6 +876,35 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
           process.env.EXCHANGE = nextVenue;
           process.env.TRADING_MODE = 'PAPER';
           modeWarning = `Venue changed to ${nextVenue}, but missing ${net} credentials in .env. Trading mode stepped down to PAPER for safety.`;
+        } else if (net && (currentMode === 'LIVE' || currentMode === 'TESTNET')) {
+          let permError: string | null = null;
+          try {
+            const perm = await verifyVenueModePermissions(nextVenue, net);
+            if (perm.canWithdraw === true) {
+              permError = `${nextVenue} key has withdrawal permission enabled`;
+            } else if (currentMode === 'LIVE') {
+              assertLivePermissionEvidence(perm);
+            } else if (!perm.canTrade) {
+              permError = `${nextVenue} key cannot trade (${perm.detail})`;
+            }
+          } catch (err) {
+            if (currentMode === 'LIVE' || deps.fetchImpl) {
+              permError = safe((err as Error).message);
+            }
+          }
+          if (permError) {
+            effectiveMode = 'PAPER';
+            deps.secrets.writeSecrets({
+              EXCHANGE: nextVenue,
+              TRADING_MODE: 'PAPER'
+            });
+            process.env.EXCHANGE = nextVenue;
+            process.env.TRADING_MODE = 'PAPER';
+            modeWarning = `Venue changed to ${nextVenue}, stepped down to PAPER: ${permError}.`;
+          } else {
+            deps.secrets.writeSecrets({ EXCHANGE: nextVenue });
+            process.env.EXCHANGE = nextVenue;
+          }
         } else {
           deps.secrets.writeSecrets({ EXCHANGE: nextVenue });
           process.env.EXCHANGE = nextVenue;
@@ -927,6 +983,17 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
       res.status(400).json({ ok: false, error: `Missing required ${names.passphrase} field.` });
       return;
     }
+    try {
+      validateDelegatedCredentialInput({
+        venue: parsed.data.venue as VenueId,
+        key: parsed.data.key,
+        secret: parsed.data.secret,
+        passphrase: pass ?? null
+      });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: safe((err as Error).message) });
+      return;
+    }
     const updates: Record<string, string> = {
       [names.key]: parsed.data.key.trim(),
       [names.secret]: parsed.data.secret.trim()
@@ -979,6 +1046,30 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
         res.status(400).json({ ok: false, error: 'SAFETY_NET must be above zero outside PAPER.' });
         return;
       }
+      try {
+        const perm = await verifyVenueModePermissions(venue as VenueId, net);
+        if (perm.canWithdraw === true) {
+          res.status(400).json({
+            ok: false,
+            error: `Refused: ${venue} key has withdraw permission enabled. Use a trade-only key.`
+          });
+          return;
+        }
+        if (parsed.data.mode === 'LIVE') {
+          assertLivePermissionEvidence(perm);
+        } else if (!perm.canTrade) {
+          res.status(400).json({
+            ok: false,
+            error: `Refused: ${venue} key cannot trade (${perm.detail}).`
+          });
+          return;
+        }
+      } catch (err) {
+        if (parsed.data.mode === 'LIVE' || deps.fetchImpl) {
+          res.status(400).json({ ok: false, error: safe((err as Error).message) });
+          return;
+        }
+      }
     }
     const expected = parsed.data.expectedActiveVersion ?? snap.activeVersion;
     const result = await deps.settings.apply(
@@ -1022,7 +1113,7 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
     res.status(status).json({ ok: result.applyStatus === 'applied', detail: 'Trading mode updated.', ...result });
   });
 
-  app.post('/api/setup/doctor', (_req, res) => {
+  app.post('/api/setup/doctor', async (_req, res) => {
     const snap = deps.settings.current();
     const lines: Array<{ ok: boolean | null; label: string; detail: string }> = [];
 
@@ -1050,6 +1141,22 @@ export function mountSetupApiRoutes(app: express.Express, deps: SetupApiDeps): v
           ? 'Trading keys configured; withdrawal protection active'
           : 'Missing credentials for active exchange and network'
       });
+      if (hasCreds) {
+        try {
+          const perm = await verifyVenueModePermissions(venue as VenueId, network);
+          lines.push({
+            ok: perm.canTrade && perm.canWithdraw !== true,
+            label: `Exchange permissions (${venue.toUpperCase()} ${network})`,
+            detail: perm.detail
+          });
+        } catch (err) {
+          lines.push({
+            ok: snap.effective.mode === 'PAPER' ? null : false,
+            label: `Exchange permissions (${venue.toUpperCase()} ${network})`,
+            detail: safe((err as Error).message)
+          });
+        }
+      }
     }
 
     const provCount = Object.values(deps.secrets.statusSummary().providersConfigured).filter(Boolean).length;

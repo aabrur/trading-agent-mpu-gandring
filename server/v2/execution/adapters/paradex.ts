@@ -589,6 +589,14 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
       position: NativePosition,
       protection: NativeProtection
     ): Promise<ProtectionEvidence> {
+      const prior = await adapter.protection(position).catch(() => null);
+      const staleIds = new Set<string>();
+      if (prior?.stopOrderId) staleIds.add(prior.stopOrderId);
+      if (protection.tpPrice != null && prior?.tpOrderId) staleIds.add(prior.tpOrderId);
+      for (const orderId of staleIds) {
+        await req('DELETE', `/orders/${encodeURIComponent(orderId)}`).catch(() => {});
+      }
+
       const rules = await adapter.instruments(position.symbol);
       const exitSide = position.side === 'LONG' ? 'SELL' : 'BUY';
       const stopBody = await buildSignedOrderBody({
@@ -597,7 +605,9 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
         type: 'STOP_MARKET',
         size: Number(position.qty),
         clientId: `${protection.clientOrderId}s`,
-        trigger: Number(quantize(protection.stopPrice, rules.tickSize, 'floor')),
+        trigger: Number(
+          quantize(protection.stopPrice, rules.tickSize, position.side === 'LONG' ? 'floor' : 'ceil')
+        ),
         reduceOnly: true
       });
       await req('POST', '/orders', stopBody);
@@ -609,7 +619,9 @@ export function createVenueAdapter(options: AdapterOptions): VenueAdapter {
           type: 'TAKE_PROFIT_MARKET',
           size: Number(position.qty),
           clientId: `${protection.clientOrderId}t`,
-          trigger: Number(quantize(protection.tpPrice, rules.tickSize, 'ceil')),
+          trigger: Number(
+            quantize(protection.tpPrice, rules.tickSize, position.side === 'LONG' ? 'ceil' : 'floor')
+          ),
           reduceOnly: true
         });
         await req('POST', '/orders', tpBody);

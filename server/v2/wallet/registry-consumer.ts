@@ -19,7 +19,7 @@ export const WALLET_SESSION_REGISTRY_ABI = [
     type: 'function',
     name: 'epochs',
     inputs: [{ name: 'owner', type: 'address' }],
-    outputs: [{ name: '', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint64' }],
     stateMutability: 'view'
   },
   {
@@ -32,7 +32,7 @@ export const WALLET_SESSION_REGISTRY_ABI = [
     ],
     outputs: [
       { name: 'expiresAt', type: 'uint64' },
-      { name: 'epoch', type: 'uint256' }
+      { name: 'epoch', type: 'uint64' }
     ],
     stateMutability: 'view'
   },
@@ -128,11 +128,31 @@ export async function readRegistrySession(
     owner: Address;
     agent: Address;
     context: Hex;
+    expectedChainId?: number | null;
+    clockSkewSec?: number;
   }
 ): Promise<RegistrySessionStatus> {
-  const { contractAddress, owner, agent, context } = params;
+  const { contractAddress, owner, agent, context, expectedChainId, clockSkewSec = 30 } = params;
 
   try {
+    const clientChainId =
+      typeof (publicClient as { getChainId?: () => Promise<number> }).getChainId === 'function'
+        ? await (publicClient as { getChainId: () => Promise<number> }).getChainId()
+        : publicClient.chain?.id ?? null;
+
+    if (expectedChainId != null && clientChainId != null && clientChainId !== expectedChainId) {
+      return {
+        configured: true,
+        contractAddress,
+        chainId: clientChainId,
+        isAuthorized: false,
+        expiresAt: null,
+        epoch: null,
+        currentOwnerEpoch: null,
+        isExpired: true
+      };
+    }
+
     const isAuth = (await publicClient.readContract({
       address: contractAddress,
       abi: WALLET_SESSION_REGISTRY_ABI,
@@ -145,25 +165,26 @@ export async function readRegistrySession(
       abi: WALLET_SESSION_REGISTRY_ABI,
       functionName: 'sessions',
       args: [owner, agent, context]
-    })) as readonly [bigint, bigint];
+    })) as readonly [bigint | number, bigint | number];
 
-    const ownerEpoch = (await publicClient.readContract({
+    const ownerEpochRaw = (await publicClient.readContract({
       address: contractAddress,
       abi: WALLET_SESSION_REGISTRY_ABI,
       functionName: 'epochs',
       args: [owner]
-    })) as bigint;
+    })) as bigint | number;
 
     const expiresAtSec = Number(sessionData[0]);
-    const sessionEpoch = sessionData[1];
+    const sessionEpoch = BigInt(sessionData[1]);
+    const ownerEpoch = BigInt(ownerEpochRaw);
     const nowSec = Math.floor(Date.now() / 1000);
-    const isExpired = expiresAtSec <= nowSec;
+    const isExpired = expiresAtSec <= nowSec + clockSkewSec;
 
     return {
       configured: true,
       contractAddress,
-      chainId: publicClient.chain?.id ?? null,
-      isAuthorized: Boolean(isAuth),
+      chainId: clientChainId,
+      isAuthorized: Boolean(isAuth) && !isExpired,
       expiresAt: expiresAtSec > 0 ? expiresAtSec * 1000 : null,
       epoch: sessionEpoch,
       currentOwnerEpoch: ownerEpoch,

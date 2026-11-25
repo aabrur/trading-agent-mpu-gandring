@@ -85,12 +85,25 @@ export function createTransportFromAdapter(adapter: VenueAdapter): GatewayVenueT
         leverage: order.leverage,
         expireAt: null
       });
+      let resolved = r;
+      if (
+        order.orderType === 'MARKET' &&
+        resolved.state === 'ACCEPTED' &&
+        (!resolved.filledQty || Number(resolved.filledQty) <= 0)
+      ) {
+        const lookedUp = await adapter.lookupOrder(order.symbol, resolved.clientOrderId).catch(() => null);
+        if (lookedUp && lookedUp.state !== 'ACCEPTED' && lookedUp.state !== 'SUBMITTING') {
+          resolved = lookedUp;
+        } else if (lookedUp && lookedUp.filledQty && Number(lookedUp.filledQty) > 0) {
+          resolved = lookedUp;
+        }
+      }
       return {
-        clientOrderId: r.clientOrderId,
-        venueOrderId: r.venueOrderId,
-        state: r.state,
-        filledQty: r.filledQty,
-        avgFillPrice: r.avgFillPrice ?? null
+        clientOrderId: resolved.clientOrderId,
+        venueOrderId: resolved.venueOrderId,
+        state: resolved.state,
+        filledQty: resolved.filledQty,
+        avgFillPrice: resolved.avgFillPrice ?? null
       };
     },
     lookupOrder: async (symbol, clientOrderId) => {

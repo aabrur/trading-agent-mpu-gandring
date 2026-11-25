@@ -189,4 +189,23 @@ describe('Setup API Parity Verification', () => {
       expect(data.channels).toContain('discord');
     });
   });
+
+  it('POST /api/setup/keys rejects seed phrases as delegated credentials', async () => {
+    await withTestApp(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/setup/keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', host: '127.0.0.1' },
+        body: JSON.stringify({
+          venue: 'hyperliquid',
+          network: 'testnet',
+          key: '0x1111111111111111111111111111111111111111',
+          secret: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+        })
+      });
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { ok: boolean; error: string };
+      expect(data.ok).toBe(false);
+      expect(data.error).toMatch(/seed phrase/i);
+    });
+  });
 });

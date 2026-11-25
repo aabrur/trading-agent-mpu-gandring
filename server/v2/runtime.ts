@@ -2079,7 +2079,8 @@ export function createReplacementRuntime(
             leverage,
             entryPrice,
             qtyStep: instRules?.qtyStep ?? fallbackStep,
-            minQty: instRules?.minQty ?? null
+            minQty: instRules?.minQty ?? null,
+            contractMultiplier: instRules?.contractMultiplier ?? '1'
           });
           const qty = sizedQty.ok ? Number(sizedQty.qty) : 0;
 
@@ -4272,13 +4273,11 @@ export async function startReplacementServer(
       const key = (envMap[names.key] ?? env[names.key] ?? '').trim();
       const secret = (envMap[names.secret] ?? env[names.secret] ?? '').trim();
       const passphrase = names.passphrase ? (envMap[names.passphrase] ?? env[names.passphrase] ?? '').trim() : null;
-      const verifiedAgentAddress = (
-        envMap.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
-        env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
-        envMap.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
-        env.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
-        ''
-      ).trim() || null;
+      const pinKey =
+        startup.network === 'testnet'
+          ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED'
+          : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
+      const verifiedAgentAddress = (envMap[pinKey] ?? env[pinKey] ?? '').trim() || null;
       return { key, secret, passphrase, verifiedAgentAddress };
     };
 
@@ -4535,7 +4534,8 @@ export async function startReplacementServer(
           leverage,
           entryPrice: refPrice,
           qtyStep: rules?.qtyStep ?? (refPrice > 0 && refPrice < 0.01 ? '1' : '0.0001'),
-          minQty: rules?.minQty ?? null
+          minQty: rules?.minQty ?? null,
+          contractMultiplier: rules?.contractMultiplier ?? '1'
         });
         if (!sized.ok) {
           return {
@@ -5140,13 +5140,12 @@ export async function startReplacementServer(
         const key = (envMap[names.key] ?? process.env[names.key] ?? env[names.key] ?? '').trim();
         const secret = (envMap[names.secret] ?? process.env[names.secret] ?? env[names.secret] ?? '').trim();
         const passphrase = names.passphrase ? (envMap[names.passphrase] ?? process.env[names.passphrase] ?? env[names.passphrase] ?? '').trim() : null;
-        const verifiedAgentAddress = (
-          envMap.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
-          process.env.ASTER_AGENT_WITHDRAW_OFF_VERIFIED ??
-          envMap.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
-          process.env.ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED ??
-          ''
-        ).trim() || null;
+        const pinKey =
+          targetNetwork === 'testnet'
+            ? 'ASTER_TESTNET_AGENT_WITHDRAW_OFF_VERIFIED'
+            : 'ASTER_AGENT_WITHDRAW_OFF_VERIFIED';
+        const verifiedAgentAddress =
+          (envMap[pinKey] ?? process.env[pinKey] ?? env[pinKey] ?? '').trim() || null;
         return { key, secret, passphrase, verifiedAgentAddress };
       };
 

@@ -77,4 +77,39 @@ describe('Solidity WalletSessionRegistry Consumer', () => {
     expect(revokeAllTx.to).toBe('0x1111111111111111111111111111111111111111');
     expect(revokeAllTx.functionName).toBe('revokeAll');
   });
+
+  it('rejects chainId mismatch and flags near-expiry sessions inside clockSkewSec window', async () => {
+    const soonSec = BigInt(Math.floor(Date.now() / 1000) + 10);
+    const mockSkewClient = {
+      getChainId: async () => 56,
+      readContract: async ({ functionName }: { functionName: string }) => {
+        if (functionName === 'isAuthorized') return true;
+        if (functionName === 'sessions') return [soonSec, BigInt(1)] as const;
+        if (functionName === 'epochs') return BigInt(1);
+        return null;
+      }
+    };
+
+    const mismatch = await readRegistrySession(mockSkewClient as any, {
+      contractAddress: '0x1111111111111111111111111111111111111111',
+      owner: '0x3333333333333333333333333333333333333333',
+      agent: '0x2222222222222222222222222222222222222222',
+      context: buildSessionContext('aster', 'testnet'),
+      expectedChainId: 42161
+    });
+    expect(mismatch.isAuthorized).toBe(false);
+    expect(mismatch.isExpired).toBe(true);
+    expect(mismatch.chainId).toBe(56);
+
+    const skewed = await readRegistrySession(mockSkewClient as any, {
+      contractAddress: '0x1111111111111111111111111111111111111111',
+      owner: '0x3333333333333333333333333333333333333333',
+      agent: '0x2222222222222222222222222222222222222222',
+      context: buildSessionContext('aster', 'testnet'),
+      expectedChainId: 56,
+      clockSkewSec: 30
+    });
+    expect(skewed.isExpired).toBe(true);
+    expect(skewed.isAuthorized).toBe(false);
+  });
 });
