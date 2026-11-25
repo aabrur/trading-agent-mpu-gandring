@@ -1391,14 +1391,39 @@ export function createReplacementRuntime(
           fundingRate: intelFrame.microstructure?.funding?.value ?? bybitDerivs?.fundingRate ?? null,
           openInterest: intelFrame.microstructure?.openInterest?.value ?? bybitDerivs?.openInterest ?? null
         },
-        aster: {
-          last: venueOb?.microPrice ?? null,
-          bid: venueOb?.bids?.[0]?.[0] ?? null,
-          ask: venueOb?.asks?.[0]?.[0] ?? null,
-          spreadBps: venueOb?.spreadBps ?? null,
-          fundingRate: venueDerivs?.fundingRate ?? venueDerivs?.multiVenueFunding?.aster?.fundingRate ?? null,
-          openInterest: venueDerivs?.openInterest ?? venueDerivs?.multiVenueFunding?.aster?.openInterest ?? null
-        },
+        ...(venueName === 'aster'
+          ? {
+              aster: {
+                last: venueOb?.microPrice ?? null,
+                bid: venueOb?.bids?.[0]?.[0] ?? null,
+                ask: venueOb?.asks?.[0]?.[0] ?? null,
+                spreadBps: venueOb?.spreadBps ?? null,
+                fundingRate: venueDerivs?.fundingRate ?? venueDerivs?.multiVenueFunding?.aster?.fundingRate ?? null,
+                openInterest: venueDerivs?.openInterest ?? venueDerivs?.multiVenueFunding?.aster?.openInterest ?? null
+              }
+            }
+          : {
+              aster: {
+                last: null,
+                bid: null,
+                ask: null,
+                spreadBps: null,
+                fundingRate: venueDerivs?.multiVenueFunding?.aster?.fundingRate ?? null,
+                openInterest: venueDerivs?.multiVenueFunding?.aster?.openInterest ?? null
+              },
+              ...(venueName !== 'bybit' && venueName !== 'hyperliquid'
+                ? {
+                    [venueName]: {
+                      last: venueOb?.microPrice ?? null,
+                      bid: venueOb?.bids?.[0]?.[0] ?? null,
+                      ask: venueOb?.asks?.[0]?.[0] ?? null,
+                      spreadBps: venueOb?.spreadBps ?? null,
+                      fundingRate: venueDerivs?.fundingRate ?? null,
+                      openInterest: venueDerivs?.openInterest ?? null
+                    }
+                  }
+                : {})
+            }),
         hyperliquid: {
           last: hlOb?.microPrice ?? null,
           bid: hlOb?.bids?.[0]?.[0] ?? null,
@@ -1412,7 +1437,7 @@ export function createReplacementRuntime(
 
     const recentTvAlert = (snap.tradingview as any)?.recentAlerts?.find(
       (a: any) => a.symbol === targetSymbol && Date.now() - a.receivedAt < 30 * 60 * 1000
-    ) ?? ((snap.tradingview as any)?.lastAlert?.symbol === targetSymbol ? (snap.tradingview as any)?.lastAlert : null);
+    ) ?? ((snap.tradingview as any)?.lastAlert?.symbol === targetSymbol && Date.now() - Number((snap.tradingview as any)?.lastAlert?.receivedAt ?? 0) < 30 * 60 * 1000 ? (snap.tradingview as any)?.lastAlert : null);
 
     const symbolsForBreadth = (snap.watchlist && snap.watchlist.length > 0)
       ? snap.watchlist

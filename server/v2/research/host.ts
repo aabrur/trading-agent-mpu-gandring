@@ -243,7 +243,13 @@ export async function fetchPublicCryptoNews(
     : cleanSym;
   const symbolRegex = new RegExp(`\\b(${cleanSym}|${alias})\\b`, 'i');
 
-  const itemsWithScope: PublicNewsItem[] = allItems.map((item) => {
+  const maxAgeMs = 48 * 3600 * 1000;
+  const nowMs = Date.now();
+  const freshItems = allItems.filter(
+    (item) => item.publishedAt === null || nowMs - item.publishedAt <= maxAgeMs
+  );
+
+  const itemsWithScope: PublicNewsItem[] = freshItems.map((item) => {
     const isSpecific = symbolRegex.test(item.title) || symbolRegex.test(item.body);
     return {
       ...item,

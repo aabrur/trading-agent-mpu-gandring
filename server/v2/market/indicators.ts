@@ -360,6 +360,8 @@ export function computeStructureSummary(bars: readonly MarketCandle[]): Structur
           p.rsiAtPivot < prevHigh.rsiAtPivot
         ) {
           rsiDivergence = 'BEARISH';
+        } else if (rsiDivergence === 'BEARISH') {
+          rsiDivergence = null;
         }
       }
       prevHigh = p;
@@ -373,6 +375,8 @@ export function computeStructureSummary(bars: readonly MarketCandle[]): Structur
           p.rsiAtPivot > prevLow.rsiAtPivot
         ) {
           rsiDivergence = 'BULLISH';
+        } else if (rsiDivergence === 'BULLISH') {
+          rsiDivergence = null;
         }
       }
       prevLow = p;

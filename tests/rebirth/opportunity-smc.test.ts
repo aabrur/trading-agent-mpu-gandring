@@ -39,4 +39,21 @@ describe('SMC order blocks', () => {
       expect(fvg.id.startsWith('fvg-ETHUSDT-15m-')).toBe(true);
     }
   });
+
+  it('marks bullish OB mitigated when an intervening bar wicks below its low even if latest close recovers', () => {
+    const bars = [
+      { timestamp: 1000, open: 100, high: 102, low: 98, close: 101, volume: 10 },
+      { timestamp: 2000, open: 101, high: 104, low: 99, close: 103, volume: 10 },
+      { timestamp: 3000, open: 103, high: 110, low: 102, close: 104, volume: 10 }, // swing high 110
+      { timestamp: 4000, open: 104, high: 106, low: 100, close: 102, volume: 10 },
+      { timestamp: 5000, open: 102, high: 105, low: 99, close: 100, volume: 10 },
+      { timestamp: 6000, open: 103, high: 104, low: 97, close: 98, volume: 10 }, // bearish candle OB (97..104)
+      { timestamp: 7000, open: 98, high: 115, low: 98, close: 114, volume: 20 }, // BOS above 110
+      { timestamp: 8000, open: 114, high: 116, low: 94, close: 112, volume: 20 }, // intervening wick below 97 mitigates OB, closes at 112
+      { timestamp: 9000, open: 112, high: 115, low: 110, close: 113, volume: 10 },
+      { timestamp: 10000, open: 113, high: 114, low: 111, close: 113.5, volume: 10 }
+    ];
+    const smc = analyzeSMC(bars, { symbol: 'BTCUSDT', tf: '15m' })!;
+    expect(smc.activeOrderBlocks.some((ob) => ob.bottomPrice === 97)).toBe(false);
+  });
 });

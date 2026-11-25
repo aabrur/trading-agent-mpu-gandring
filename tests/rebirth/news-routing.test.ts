@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { fetchPublicCryptoNews } from '../../server/v2/research/host.js';
 
 describe('Task 5: News Routing and Symbol vs General Market Scope', () => {
-  it('identifies symbol-specific vs general market news based on ticker keywords', async () => {
-    // Custom mock fetch returning 1 specific and 1 general news
+  it('identifies symbol-specific vs general market news based on ticker keywords and filters >48h stale items', async () => {
+    const recentDate = new Date(Date.now() - 2 * 3600 * 1000).toUTCString();
+    const staleDate = new Date(Date.now() - 72 * 3600 * 1000).toUTCString();
+    // Custom mock fetch returning 1 specific, 1 general, and 1 stale news
     const mockRssXml = `
       <rss version="2.0">
         <channel>
@@ -11,13 +13,19 @@ describe('Task 5: News Routing and Symbol vs General Market Scope', () => {
             <title>Ethereum Layer-2 TVL Reaches All Time High</title>
             <link>https://example.com/eth-l2</link>
             <description>Growth in ETH rollups accelerates.</description>
-            <pubDate>Mon, 05 Nov 2026 12:00:00 GMT</pubDate>
+            <pubDate>${recentDate}</pubDate>
           </item>
           <item>
             <title>SEC Regulatory Framework Faces Scrutiny Across Global Markets</title>
             <link>https://example.com/sec-market</link>
             <description>Broader macro policy remains uncertain for crypto assets.</description>
-            <pubDate>Mon, 05 Nov 2026 12:05:00 GMT</pubDate>
+            <pubDate>${recentDate}</pubDate>
+          </item>
+          <item>
+            <title>Ethereum Old Weekly Recap</title>
+            <link>https://example.com/eth-stale</link>
+            <description>Old ETH news from days ago.</description>
+            <pubDate>${staleDate}</pubDate>
           </item>
         </channel>
       </rss>
@@ -34,6 +42,7 @@ describe('Task 5: News Routing and Symbol vs General Market Scope', () => {
       const items = await fetchPublicCryptoNews('ETHUSDT', fakeFetch);
 
       expect(items.length).toBeGreaterThan(0);
+      expect(items.some((i) => i.title.includes('Old Weekly Recap'))).toBe(false);
       const ethItem = items.find((i) => i.title.includes('Ethereum'));
       const secItem = items.find((i) => i.title.includes('SEC'));
 

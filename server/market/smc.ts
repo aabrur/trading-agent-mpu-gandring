@@ -217,7 +217,9 @@ export function analyzeSMC(candles: any[], options?: { symbol?: string; tf?: str
 
   let currentTrend: 'BULLISH' | 'BEARISH' | 'RANGING' = 'RANGING';
   let lastBreak: SMCStructureBreak | null = null;
-  const orderBlocks: SMCOrderBlock[] = [];
+  const orderBlocks: Array<SMCStructureBreak & { ob: SMCOrderBlock; originIndex: number }> = [];
+  const brokenHighIndices = new Set<number>();
+  const brokenLowIndices = new Set<number>();
 
   // Track structure progression across swings
   for (let i = 0; i < bars.length; i++) {
@@ -228,8 +230,9 @@ export function analyzeSMC(candles: any[], options?: { symbol?: string; tf?: str
     const lastHigh = prevHighs.length > 0 ? prevHighs[prevHighs.length - 1] : null;
     const lastLow = prevLows.length > 0 ? prevLows[prevLows.length - 1] : null;
 
-    // Break above Swing High
-    if (lastHigh && bar.close > lastHigh.price) {
+    // Break above un-broken Swing High
+    if (lastHigh && !brokenHighIndices.has(lastHigh.index) && bar.close > lastHigh.price) {
+      brokenHighIndices.add(lastHigh.index);
       const isChoCH = currentTrend === 'BEARISH';
       const breakType: SMCStructureBreakType = isChoCH ? 'BULLISH_CHOCH' : 'BULLISH_BOS';
 
@@ -245,20 +248,25 @@ export function analyzeSMC(candles: any[], options?: { symbol?: string; tf?: str
       for (let k = bar.index - 1; k >= Math.max(0, bar.index - 6); k--) {
         if (bars[k].close < bars[k].open) {
           orderBlocks.push({
-            id: `ob-${prefix}bull-${bars[k].timestamp}`,
-            type: 'BULLISH',
-            topPrice: bars[k].high,
-            bottomPrice: bars[k].low,
-            createdTime: bars[k].timestamp,
-            mitigated: false,
+            ...lastBreak,
+            originIndex: i,
+            ob: {
+              id: `ob-${prefix}bull-${bars[k].timestamp}`,
+              type: 'BULLISH',
+              topPrice: bars[k].high,
+              bottomPrice: bars[k].low,
+              createdTime: bars[k].timestamp,
+              mitigated: false,
+            }
           });
           break;
         }
       }
     }
 
-    // Break below Swing Low
-    if (lastLow && bar.close < lastLow.price) {
+    // Break below un-broken Swing Low
+    if (lastLow && !brokenLowIndices.has(lastLow.index) && bar.close < lastLow.price) {
+      brokenLowIndices.add(lastLow.index);
       const isChoCH = currentTrend === 'BULLISH';
       const breakType: SMCStructureBreakType = isChoCH ? 'BEARISH_CHOCH' : 'BEARISH_BOS';
 
@@ -274,12 +282,16 @@ export function analyzeSMC(candles: any[], options?: { symbol?: string; tf?: str
       for (let k = bar.index - 1; k >= Math.max(0, bar.index - 6); k--) {
         if (bars[k].close > bars[k].open) {
           orderBlocks.push({
-            id: `ob-${prefix}bear-${bars[k].timestamp}`,
-            type: 'BEARISH',
-            topPrice: bars[k].high,
-            bottomPrice: bars[k].low,
-            createdTime: bars[k].timestamp,
-            mitigated: false,
+            ...lastBreak,
+            originIndex: i,
+            ob: {
+              id: `ob-${prefix}bear-${bars[k].timestamp}`,
+              type: 'BEARISH',
+              topPrice: bars[k].high,
+              bottomPrice: bars[k].low,
+              createdTime: bars[k].timestamp,
+              mitigated: false,
+            }
           });
           break;
         }
@@ -287,19 +299,26 @@ export function analyzeSMC(candles: any[], options?: { symbol?: string; tf?: str
     }
   }
 
-  // Evaluate Order Block mitigation by current price
+  // Evaluate Order Block mitigation across all subsequent bars (including wicks/closes through the OB)
   const latestPrice = bars[bars.length - 1].close;
   const activeOrderBlocks: SMCOrderBlock[] = [];
   const seenOrderBlocks = new Set<string>();
 
-  for (const ob of orderBlocks) {
-    // Every bar that closes beyond the same swing re-detects the same origin candle; keep one.
+  for (const item of orderBlocks) {
+    const ob = item.ob;
     if (seenOrderBlocks.has(ob.id)) continue;
     seenOrderBlocks.add(ob.id);
-    if (ob.type === 'BULLISH' && latestPrice < ob.bottomPrice) {
-      ob.mitigated = true;
-    } else if (ob.type === 'BEARISH' && latestPrice > ob.topPrice) {
-      ob.mitigated = true;
+    for (let m = item.originIndex + 1; m < bars.length; m++) {
+      if (ob.type === 'BULLISH' && bars[m].low < ob.bottomPrice) {
+        ob.mitigated = true;
+        ob.mitigatedTime = bars[m].timestamp;
+        break;
+      }
+      if (ob.type === 'BEARISH' && bars[m].high > ob.topPrice) {
+        ob.mitigated = true;
+        ob.mitigatedTime = bars[m].timestamp;
+        break;
+      }
     }
     if (!ob.mitigated) {
       activeOrderBlocks.push(ob);

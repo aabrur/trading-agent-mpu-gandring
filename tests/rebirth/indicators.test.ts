@@ -201,4 +201,17 @@ describe('T05 deterministic indicators and traceable intelligence', () => {
     expect(intel.microstructure.coverage).not.toBe('broad_market_verified');
     expect(intel.microstructure.takerFlow.certainty).not.toBe('VERIFIED');
   });
+
+  it('resets historical rsiDivergence when a subsequent pivot pair no longer diverges', () => {
+    // Craft 40 bars with an early bearish divergence then a stronger higher high with higher RSI
+    const closes = [
+      100, 102, 104, 106, 108, 110, 107, 105, // up
+      104, 103, 102, 103, 105, 107, 112, 109, 106, // marginal higher high
+      105, 104, 103, 105, 108, 113, 118, 125, 120, 118 // surging higher high
+    ];
+    const bars = makeCandles('1m', closes.map((c) => ({ o: c - 0.5, h: c + 0.5, l: c - 1, c })));
+    const frame = emptyFrameWith({ '1m': bars });
+    const intel = computeIntelligence(frame);
+    expect(intel.byTimeframe['1m'].structure.rsiDivergence).toBeNull();
+  });
 });

@@ -495,4 +495,54 @@ describe('T04 Bybit linear realtime hub', () => {
     unsub();
     await hub.stop();
   });
+
+  it('paginates linear instruments cursor and preserves real feed timestamps in snapshot asOf', async () => {
+    const pageRequests: string[] = [];
+    const customFetch: typeof fetch = async (input) => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      if (url.pathname.endsWith('/v5/market/instruments-info')) {
+        const cursor = url.searchParams.get('cursor') ?? '';
+        pageRequests.push(cursor);
+        if (!cursor) {
+          return new Response(
+            JSON.stringify({
+              retCode: 0,
+              result: { list: [fixtures.instruments[0]], nextPageCursor: 'page-2' }
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            retCode: 0,
+            result: { list: fixtures.instruments.slice(1), nextPageCursor: '' }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.pathname.endsWith('/v5/market/tickers')) {
+        return new Response(
+          JSON.stringify({
+            retCode: 0,
+            time: 1_760_000_000_000,
+            result: { list: [{ symbol: 'BTCUSDT', lastPrice: '95000' }] }
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ retCode: 0, time: 1_760_000_000_000, result: { list: [] } }), { status: 200 });
+    };
+
+    const hub = new BybitMarketHub({
+      fetchImpl: customFetch,
+      wsFactory: () => {
+        const ws = new FakeBybitWs();
+        queueMicrotask(() => ws.emit('open'));
+        return ws;
+      }
+    });
+    await hub.configure(['BTCUSDT']);
+    expect(pageRequests).toEqual(['', 'page-2']);
+    await hub.stop();
+  });
 });

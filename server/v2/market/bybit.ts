@@ -96,6 +96,9 @@ export class BybitMarketHub {
   private wsOpen = false;
   private stopped = false;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private lastWsMessageAt = 0;
 
   constructor(options: BybitMarketHubOptions = {}) {
     this.restBaseUrl = (options.restBaseUrl ?? 'https://api.bybit.com').replace(/\/+$/, '');
@@ -174,7 +177,10 @@ export class BybitMarketHub {
       } catch {
         return;
       }
-      this.handleWsMessage(parsed, Date.now());
+      const nowMs = Date.now();
+      this.lastWsMessageAt = nowMs;
+      this.reconnectAttempts = 0;
+      this.handleWsMessage(parsed, nowMs);
     });
 
     socket.on('close', () => {
@@ -236,7 +242,7 @@ export class BybitMarketHub {
     for (const [k, v] of Object.entries(params)) {
       url.searchParams.set(k, v);
     }
-    const res = await this.fetchImpl(url.href);
+    const res = await this.fetchImpl(url.href, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
       throw new Error(`Bybit linear HTTP ${res.status} on ${pathname}`);
     }
@@ -254,27 +260,38 @@ export class BybitMarketHub {
 
   private async ensureInstrumentsLoaded(): Promise<void> {
     if (this.instruments.size > 0) return;
-    const body = await this.fetchLinearJson('/v5/market/instruments-info', { limit: '1000' });
-    const result = (body.result ?? {}) as { list?: Array<Record<string, unknown>> };
-    for (const raw of result.list ?? []) {
-      const sym = String(raw.symbol ?? '').trim().toUpperCase();
-      if (!sym) continue;
-      this.instruments.set(
-        sym,
-        normalizeBybitInstrument({
-          symbol: sym,
-          baseCoin: String(raw.baseCoin ?? sym.replace(/USDT$/, '')),
-          quoteCoin: String(raw.quoteCoin ?? 'USDT'),
-          settleCoin: String(raw.settleCoin ?? 'USDT'),
-          priceFilter: raw.priceFilter as { tickSize?: string } | undefined,
-          lotSizeFilter: raw.lotSizeFilter as {
-            qtyStep?: string;
-            minOrderQty?: string;
-            maxOrderQty?: string;
-            minNotionalValue?: string;
-          } | undefined
-        })
-      );
+    let cursor = '';
+    for (let page = 0; page < 10; page += 1) {
+      const params: Record<string, string> = { limit: '1000' };
+      if (cursor) params.cursor = cursor;
+      const body = await this.fetchLinearJson('/v5/market/instruments-info', params);
+      const result = (body.result ?? {}) as {
+        list?: Array<Record<string, unknown>>;
+        nextPageCursor?: string;
+      };
+      for (const raw of result.list ?? []) {
+        const sym = String(raw.symbol ?? '').trim().toUpperCase();
+        if (!sym) continue;
+        this.instruments.set(
+          sym,
+          normalizeBybitInstrument({
+            symbol: sym,
+            baseCoin: String(raw.baseCoin ?? sym.replace(/USDT$/, '')),
+            quoteCoin: String(raw.quoteCoin ?? 'USDT'),
+            settleCoin: String(raw.settleCoin ?? 'USDT'),
+            priceFilter: raw.priceFilter as { tickSize?: string } | undefined,
+            lotSizeFilter: raw.lotSizeFilter as {
+              qtyStep?: string;
+              minOrderQty?: string;
+              maxOrderQty?: string;
+              minNotionalValue?: string;
+            } | undefined
+          })
+        );
+      }
+      const next = typeof result.nextPageCursor === 'string' ? result.nextPageCursor.trim() : '';
+      if (!next || next === cursor) break;
+      cursor = next;
     }
   }
 
@@ -360,10 +377,23 @@ export class BybitMarketHub {
 
   private async handleReconnect(): Promise<void> {
     if (this.stopped) return;
+    const attempt = this.reconnectAttempts;
+    this.reconnectAttempts += 1;
+    const delayMs = attempt === 0 ? 0 : Math.min(30_000, 1000 * 2 ** (attempt - 1));
+    if (delayMs > 0) {
+      await new Promise<void>((resolve) => {
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          resolve();
+        }, delayMs);
+        this.reconnectTimer.unref?.();
+      });
+      if (this.stopped) return;
+    }
     this.connectSocket();
     const active = this.effectiveSymbols().filter((s) => this.instruments.has(s));
     for (const sym of active) {
-      await this.backfillCandlesAndOrderbook(sym);
+      await this.backfillCandlesAndOrderbook(sym).catch(() => {});
     }
   }
 
@@ -675,13 +705,19 @@ export class BybitMarketHub {
     const bestAsk = bookView?.asks[0]?.price ?? ticker?.ask1Price;
     const lastCloseFallback = closed['1m'].at(-1)?.close;
 
+    const latestObserved = Math.max(
+      ticker?.observedAt ?? 0,
+      bookView?.observedAt ?? 0,
+      this.lastWsMessageAt
+    );
+
     return {
       evidenceId: `mkt-${clean}-r${st.revision}`,
       revision: st.revision,
       symbol: clean,
       venue: 'bybit',
       category: 'linear',
-      asOf: Math.max(ticker?.observedAt ?? 0, bookView?.observedAt ?? 0, now),
+      asOf: latestObserved > 0 ? latestObserved : now,
       last: makePriceEvidence(
         ticker?.lastPrice ?? lastCloseFallback,
         ticker?.lastPrice ? 'bybit.linear.tickers' : 'bybit.linear.kline',
@@ -734,6 +770,10 @@ export class BybitMarketHub {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.pingTimer) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;

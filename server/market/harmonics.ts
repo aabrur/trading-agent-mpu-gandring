@@ -66,8 +66,24 @@ export function detectHarmonicPatterns(candles: any[]): HarmonicPattern[] {
   }
 
   if (bars.length < 15) return [];
+  bars.sort((a, b) => a.timestamp - b.timestamp);
+  if (bars.length > 250) {
+    bars = bars.slice(-250);
+  }
+  for (let idx = 0; idx < bars.length; idx++) {
+    bars[idx].index = idx;
+  }
 
-  const swings = findSwingPoints(bars, 2);
+  const rawSwings = findSwingPoints(bars, 2);
+  const swings: SMCSwingPoint[] = [];
+  for (const s of rawSwings) {
+    const prev = swings[swings.length - 1];
+    if (!prev || prev.type !== s.type) {
+      swings.push(s);
+    } else if ((s.type === 'HIGH' && s.price >= prev.price) || (s.type === 'LOW' && s.price <= prev.price)) {
+      swings[swings.length - 1] = s;
+    }
+  }
   if (swings.length < 5) return [];
 
   const patterns: HarmonicPattern[] = [];
@@ -80,9 +96,13 @@ export function detectHarmonicPatterns(candles: any[]): HarmonicPattern[] {
     const C = swings[i + 3];
     const D = swings[i + 4];
 
-    // Must alternate High-Low-High-Low-High or Low-High-Low-High-Low
-    const isBullishStructure = X.type === 'LOW' && A.type === 'HIGH' && B.type === 'LOW' && C.type === 'HIGH' && D.type === 'LOW';
-    const isBearishStructure = X.type === 'HIGH' && A.type === 'LOW' && B.type === 'HIGH' && C.type === 'LOW' && D.type === 'HIGH';
+    // Must alternate High-Low-High-Low-High or Low-High-Low-High-Low with monotonic zigzag legs
+    const isBullishStructure =
+      X.type === 'LOW' && A.type === 'HIGH' && B.type === 'LOW' && C.type === 'HIGH' && D.type === 'LOW' &&
+      A.price > X.price && B.price < A.price && C.price > B.price && D.price < C.price;
+    const isBearishStructure =
+      X.type === 'HIGH' && A.type === 'LOW' && B.type === 'HIGH' && C.type === 'LOW' && D.type === 'HIGH' &&
+      A.price < X.price && B.price > A.price && C.price < B.price && D.price > C.price;
 
     if (!isBullishStructure && !isBearishStructure) continue;
 

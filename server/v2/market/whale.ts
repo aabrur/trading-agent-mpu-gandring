@@ -121,6 +121,8 @@ export interface WhaleIntelligenceReport {
 }
 
 const LARGE_TRADE_USD_THRESHOLD = 50_000;
+const WHALE_CACHE_TTL_MS = 60_000;
+const whaleOnchainCache = new Map<string, { at: number; report: WhaleIntelligenceReport['onchain'] }>();
 
 export async function computeWhaleIntelligence(params: {
   symbol: string;
@@ -142,11 +144,15 @@ export async function computeWhaleIntelligence(params: {
   };
 
   if (apiKey && apiKey.trim()) {
-    try {
-      const minVal = 500_000;
-      const startSec = Math.floor((now - 24 * 3600 * 1000) / 1000);
-      const url = `https://api.whale-alert.io/v1/transactions?api_key=${encodeURIComponent(apiKey.trim())}&min_value=${minVal}&start=${startSec}&currency=${encodeURIComponent(coin.toLowerCase())}`;
-      const res = await fetchImpl(url);
+    const cached = fetchImpl === fetch ? whaleOnchainCache.get(coin) : undefined;
+    if (cached && now - cached.at < WHALE_CACHE_TTL_MS) {
+      onchainReport = cached.report;
+    } else {
+      try {
+        const minVal = 500_000;
+        const startSec = Math.floor((now - 24 * 3600 * 1000) / 1000);
+        const url = `https://api.whale-alert.io/v1/transactions?api_key=${encodeURIComponent(apiKey.trim())}&min_value=${minVal}&start=${startSec}&currency=${encodeURIComponent(coin.toLowerCase())}`;
+        const res = await fetchImpl(url, { signal: AbortSignal.timeout(8_000) });
       if (!res.ok) {
         throw new Error(`Whale Alert HTTP ${res.status}`);
       }
@@ -201,25 +207,29 @@ export async function computeWhaleIntelligence(params: {
         else if (ev.classification === 'EXCHANGE_OUTFLOW') outflow += usd;
       }
 
-      onchainReport = {
-        status: events.length > 0 ? 'DATA_AVAILABLE' : 'NO_RELEVANT_EVENTS',
-        providerName: 'Whale Alert API',
-        events,
-        inflowUsdTotal: inflow,
-        outflowUsdTotal: outflow,
-        summary: events.length > 0
-          ? `${events.length} large transfer(s) observed. Top: ${events[0].interpretation}`
-          : `No whale-tier transactions (> $500k) observed for ${coin} in the last 24h.`
-      };
-    } catch (err) {
-      onchainReport = {
-        status: 'UNAVAILABLE',
-        providerName: 'Whale Alert API',
-        events: [],
-        inflowUsdTotal: 0,
-        outflowUsdTotal: 0,
-        summary: `Whale Alert query error: ${safe((err as Error).message)}`
-      };
+        onchainReport = {
+          status: events.length > 0 ? 'DATA_AVAILABLE' : 'NO_RELEVANT_EVENTS',
+          providerName: 'Whale Alert API',
+          events,
+          inflowUsdTotal: inflow,
+          outflowUsdTotal: outflow,
+          summary: events.length > 0
+            ? `${events.length} large transfer(s) observed. Top: ${events[0].interpretation}`
+            : `No whale-tier transactions (> $500k) observed for ${coin} in the last 24h.`
+        };
+        if (fetchImpl === fetch) {
+          whaleOnchainCache.set(coin, { at: now, report: onchainReport });
+        }
+      } catch (err) {
+        onchainReport = {
+          status: 'UNAVAILABLE',
+          providerName: 'Whale Alert API',
+          events: [],
+          inflowUsdTotal: 0,
+          outflowUsdTotal: 0,
+          summary: `Whale Alert query error: ${safe((err as Error).message)}`
+        };
+      }
     }
   }
 
