@@ -204,12 +204,28 @@ export class PerpBacktestEngine {
 
     if (sortedCandles.length === 0) return this.generateMetrics();
 
-    for (const bar of sortedCandles) {
+    let rollingAtr = 0;
+    for (let idx = 0; idx < sortedCandles.length; idx++) {
+      const bar = sortedCandles[idx]!;
+      const prevClose = idx > 0 ? sortedCandles[idx - 1]!.close : bar.close;
+      const tr = Math.max(
+        bar.high - bar.low,
+        Math.abs(bar.high - prevClose),
+        Math.abs(bar.low - prevClose)
+      );
+      if (idx === 0) {
+        rollingAtr = tr;
+      } else if (idx < 14) {
+        rollingAtr = ((rollingAtr * idx) + tr) / (idx + 1);
+      } else {
+        rollingAtr = ((rollingAtr * 13) + tr) / 14;
+      }
+
       // 1. Process Funding Settlement if applicable
       this.processFunding(bar.closedAt, feed);
 
       // 2. Check Exits on Active Positions against the Current Bar (Stop, TP, Liquidation)
-      this.processPositionExits(bar);
+      this.processPositionExits(bar, idx >= 14 ? rollingAtr : undefined);
 
       // 3. Query Strategy for Decisions
       const strategyFeed = feed.pointInTimeView(bar.closedAt);
@@ -265,7 +281,7 @@ export class PerpBacktestEngine {
     }
   }
 
-  private processPositionExits(bar: PITCandle): void {
+  private processPositionExits(bar: PITCandle, currentAtr?: number): void {
     const remaining: BacktestPosition[] = [];
 
     for (const pos of this.openPositions) {
@@ -319,7 +335,8 @@ export class PerpBacktestEngine {
           : (pos.entryPrice - bar.close) * pos.qty;
         if (this.roiEngine.shouldTakeProfit(durationMin, (grossPnL / pos.initialMargin) * 100)) {
           exitReason = 'MINIMAL_ROI';
-          exitPrice = bar.close;
+          const slip = this.config.slippageBps / 10_000;
+          exitPrice = pos.side === 'LONG' ? bar.close * (1 - slip) : bar.close * (1 + slip);
         }
       }
 
@@ -328,7 +345,7 @@ export class PerpBacktestEngine {
       } else {
         // Dynamic Trailing Stop update for surviving positions
         if (this.trailingEngine && pos.trailingState) {
-          this.trailingEngine.updateStop(pos.trailingState, bar.close);
+          this.trailingEngine.updateStop(pos.trailingState, bar.close, currentAtr);
           pos.stopPrice = pos.trailingState.currentStopPrice;
         }
         remaining.push(pos);
@@ -341,9 +358,11 @@ export class PerpBacktestEngine {
   private processSignal(signal: StrategySignal, bar: PITCandle): void {
     if (signal.action === 'CLOSE') {
       const remaining: BacktestPosition[] = [];
+      const slip = this.config.slippageBps / 10_000;
       for (const pos of this.openPositions) {
         if (pos.symbol === signal.symbol) {
-          this.closePosition(pos, bar.close, bar.closedAt, 'SIGNAL_CLOSE');
+          const closePx = pos.side === 'LONG' ? bar.close * (1 - slip) : bar.close * (1 + slip);
+          this.closePosition(pos, closePx, bar.closedAt, 'SIGNAL_CLOSE');
         } else {
           remaining.push(pos);
         }
@@ -567,8 +586,14 @@ export class PerpBacktestEngine {
         const variance = returns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / returns.length;
         const stdDev = Math.sqrt(variance);
 
-        // Annualized scaling assuming 1h bars (~8760 periods/year)
-        const annualizationFactor = Math.sqrt(8760);
+        const deltas: number[] = [];
+        for (let j = 1; j < this.equityCurve.length; j++) {
+          const dt = this.equityCurve[j]!.timestamp - this.equityCurve[j - 1]!.timestamp;
+          if (dt > 0) deltas.push(dt);
+        }
+        deltas.sort((a, b) => a - b);
+        const barMs = deltas.length > 0 ? deltas[Math.floor(deltas.length / 2)]! : 900_000;
+        const annualizationFactor = Math.sqrt((365 * 86_400_000) / barMs);
         if (stdDev > 0) {
           sharpeRatio = (meanReturn / stdDev) * annualizationFactor;
         }

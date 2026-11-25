@@ -125,4 +125,51 @@ describe('T12 Sandbox Isolation: Paper and Backtest', () => {
     expect(result.initialCapital).toBe(1000);
     expect(maxSeenTimestampInStrategy).toBe(1120);
   });
+
+  it('paper_simulates_limit_gtc_sl_tp_fees_and_live_quote_provider', async () => {
+    let livePx = '70000';
+    const paper = createPaperVenue({
+      initialBalance: '1000',
+      quoteProvider: () => ({ last: livePx, bid: livePx, ask: livePx })
+    });
+
+    const q = await paper.quote('BTCUSDT');
+    expect(q.last).toBe('70000');
+
+    // Resting LONG LIMIT_GTC below live price stays ACCEPTED until price crosses down
+    const limitOrder = await paper.submit({
+      clientOrderId: 'lim-1',
+      symbol: 'BTCUSDT',
+      side: 'LONG',
+      positionMode: 'ONE_WAY',
+      hedgeLeg: null,
+      orderType: 'LIMIT_GTC',
+      quantity: '0.1',
+      limitPrice: '69000',
+      leverage: 5,
+      expireAt: null
+    });
+    expect(limitOrder.state).toBe('ACCEPTED');
+    expect(await paper.positions()).toHaveLength(0);
+
+    const filledEvs = await paper.evaluateTick('BTCUSDT', '68950');
+    expect(filledEvs.some((e) => e.kind === 'LIMIT_FILLED')).toBe(true);
+    const positions = await paper.positions();
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.entryPrice).toBe('69000');
+
+    await paper.protect(positions[0]!, {
+      clientOrderId: 'prot-lim-1',
+      stopPrice: '68000',
+      tpPrice: '71000',
+      triggerBy: 'MARK_PRICE'
+    });
+
+    // Crossing TP triggers TAKE_PROFIT and settles PnL minus fees into equity
+    const tpEvs = await paper.evaluateTick('BTCUSDT', '71050');
+    expect(tpEvs.some((e) => e.kind === 'TAKE_PROFIT')).toBe(true);
+    expect(await paper.positions()).toHaveLength(0);
+    const bal = await paper.balance();
+    expect(Number(bal.equity)).toBeGreaterThan(1000);
+  });
 });

@@ -26,6 +26,10 @@ const json = flag('json') === 'true';
 
 const source = (flag('source', 'sample') ?? 'sample') as any;
 const snapshot = await getSnapshot(symbol, source, false);
+const inferredBarMs =
+  snapshot.candles.length >= 2 && snapshot.candles[1]!.t > snapshot.candles[0]!.t
+    ? snapshot.candles[1]!.t - snapshot.candles[0]!.t
+    : 900_000;
 const candles: PITCandle[] = snapshot.candles.map(c => ({
   timestamp: c.t,
   open: c.o,
@@ -33,7 +37,7 @@ const candles: PITCandle[] = snapshot.candles.map(c => ({
   low: c.l,
   close: c.c,
   volume: c.v,
-  closedAt: c.t + 60_000
+  closedAt: c.t + inferredBarMs
 }));
 
 const engine = new PerpBacktestEngine({

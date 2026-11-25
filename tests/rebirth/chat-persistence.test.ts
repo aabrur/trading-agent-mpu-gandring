@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChatService } from '../../server/v2/api/chat.js';
@@ -17,7 +18,7 @@ afterEach(() => {
 });
 
 function tempDbPath(): string {
-  const p = path.resolve(`.mpu-gandring/test-chat-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+  const p = path.join(os.tmpdir(), `mpu-test-chat-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
   tempFiles.push(p);
   return p;
 }

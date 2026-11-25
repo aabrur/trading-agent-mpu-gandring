@@ -458,4 +458,52 @@ export function mountOperationsRoutes(
       reply: reply.message
     });
   });
+
+  app.get('/api/ops/lessons', (req, res) => {
+    if (!verifyOwner(req, res)) return;
+    const snap = runtime.snapshot();
+    res.json({
+      ok: true,
+      lessons: (snap.lessons ?? []).slice(-30),
+      standingRules: [],
+      refused: []
+    });
+  });
+
+  app.post('/api/ops/lessons', async (req, res) => {
+    if (!verifyOwner(req, res)) return;
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const lessonText = String(b.lesson ?? b.text ?? '').trim();
+    const happened = String(b.happened ?? '').trim();
+    const rootCause = String(b.rootCause ?? b.cause ?? '').trim();
+    const role = String(b.role ?? 'lead').toLowerCase();
+    const kind = String(b.kind ?? 'mistake').trim();
+    const symbol = b.symbol ? String(b.symbol).toUpperCase() : null;
+    if (!lessonText) {
+      res.status(400).json({ ok: false, error: 'lesson is required' });
+      return;
+    }
+    const id = `lesson-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const now = Date.now();
+    const entry = {
+      id,
+      role,
+      kind,
+      symbol,
+      happened: happened || lessonText,
+      rootCause: rootCause || 'Owner/operator entry',
+      lesson: lessonText,
+      count: 1,
+      firstAt: now,
+      lastAt: now,
+      source: 'ops' as const,
+      status: 'new' as const
+    };
+    runtime.updateState((draft) => {
+      draft.lessons = draft.lessons ?? [];
+      draft.lessons.push(entry as any);
+    });
+    runtime.hub.emit('lesson', entry);
+    res.json({ ok: true, lesson: entry });
+  });
 }

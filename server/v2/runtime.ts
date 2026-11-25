@@ -3419,6 +3419,12 @@ export function createReplacementRuntime(
             .apply({ paper: { balance: val } }, options.settings.current().activeVersion)
             .catch(() => {});
         }
+        try {
+          const activeAdapter = options.getVenueAdapter?.() ?? options.venueAdapter;
+          if (activeAdapter && 'setBalance' in activeAdapter && typeof (activeAdapter as PaperVenue).setBalance === 'function') {
+            (activeAdapter as PaperVenue).setBalance(String(val));
+          }
+        } catch {}
         hub.emit('state', snapshot());
         return { ok: true, command: 'set_balance', reply: `Balance set to ${val} USDT. Money trade: ${snapshot().paper.moneyTrade} USDT.` };
       }
@@ -4286,6 +4292,16 @@ export async function startReplacementServer(
     process.env.EXCHANGE = startup.venue;
   }
 
+  const marketHub = new BybitMarketHub({
+    retainedSymbolsProvider: () => settings.current().effective.watchlist
+  });
+  const readPaperQuote = (sym: string) => {
+    const frame = marketHub.snapshot(sym);
+    return frame.last.value !== null
+      ? { last: frame.last.value, bid: frame.bid.value, ask: frame.ask.value }
+      : null;
+  };
+
   let venueAdapter: import('./execution/adapters/types.js').VenueAdapter;
   let accountRef: string;
   let nativeBalance: NativeBalance;
@@ -4355,7 +4371,8 @@ export async function startReplacementServer(
     }
   } else {
     const paperVenue = new PaperVenue({
-      initialBalance: String(settings.current().effective.paper.balance ?? 1000)
+      initialBalance: String(settings.current().effective.paper.balance ?? 1000),
+      quoteProvider: readPaperQuote
     });
     venueAdapter = paperVenue;
     const identity = await venueAdapter.accountIdentity();
@@ -4374,9 +4391,6 @@ export async function startReplacementServer(
   }
 
   let transport = createTransportFromAdapter(venueAdapter);
-  const marketHub = new BybitMarketHub({
-    retainedSymbolsProvider: () => settings.current().effective.watchlist
-  });
 
   const gateway = new ExecutionGateway({
     store,
@@ -5231,7 +5245,8 @@ export async function startReplacementServer(
         syncTimer = null;
       }
       const paperVenue = new PaperVenue({
-        initialBalance: String(settings.current().effective.paper.balance ?? 1000)
+        initialBalance: String(settings.current().effective.paper.balance ?? 1000),
+        quoteProvider: readPaperQuote
       });
       venueAdapter = paperVenue;
       const accountContext = await accounts.register({
@@ -5369,6 +5384,105 @@ export async function startReplacementServer(
           draft.logs = draft.logs.slice(-500);
         });
       }
+
+      const cycleRes = await store.execute(
+        `SELECT cycle_id, symbol, status, verdict_json, started_at FROM cycles ORDER BY started_at DESC LIMIT 30`
+      ).catch(() => ({ rows: [] as Record<string, unknown>[] }));
+      if (cycleRes.rows.length > 0) {
+        runtime.updateState((draft) => {
+          for (const cr of [...cycleRes.rows].reverse()) {
+            try {
+              const v = cr.verdict_json ? JSON.parse(String(cr.verdict_json)) : null;
+              if (v && v.id && !draft.verdicts.some((x) => x.id === v.id)) {
+                draft.verdicts.push(v);
+              }
+            } catch {}
+          }
+          draft.verdicts = draft.verdicts.slice(-30);
+          draft.lastVerdict = draft.verdicts.at(-1) ?? draft.lastVerdict;
+        });
+      }
+
+      const lessonRes = await store.execute(
+        `SELECT lesson_id, role, kind, symbol, status, count, happened, root_cause, lesson_text, first_at, last_at FROM lessons ORDER BY last_at DESC LIMIT 50`
+      ).catch(() => ({ rows: [] as Record<string, unknown>[] }));
+      if (lessonRes.rows.length > 0) {
+        runtime.updateState((draft) => {
+          draft.lessons = draft.lessons ?? [];
+          for (const lr of [...lessonRes.rows].reverse()) {
+            const id = String(lr.lesson_id);
+            if (!draft.lessons.some((l) => l.id === id)) {
+              draft.lessons.push({
+                id,
+                role: String(lr.role) as AgentId,
+                kind: String(lr.kind),
+                symbol: lr.symbol ? String(lr.symbol) : null,
+                happened: String(lr.happened),
+                rootCause: String(lr.root_cause),
+                lesson: String(lr.lesson_text),
+                count: Number(lr.count ?? 1),
+                firstAt: Date.parse(String(lr.first_at)) || Date.now(),
+                lastAt: Date.parse(String(lr.last_at)) || Date.now(),
+                source: 'runtime',
+                status: (String(lr.status ?? 'new') as 'new' | 'promoted' | 'retired')
+              });
+            }
+          }
+          draft.lessons = draft.lessons.slice(-50);
+        });
+      }
+
+      runtime.hub.subscribe((evt) => {
+        if (evt.type === 'verdict' && evt.data && typeof evt.data === 'object') {
+          const v = evt.data as Record<string, unknown>;
+          const cid = String(v.id ?? `cycle-${Date.now()}`);
+          const sym = String(v.symbol ?? 'BTCUSDT');
+          const snapNow = runtime.snapshot();
+          const nowIso = new Date(typeof v.at === 'number' ? v.at : Date.now()).toISOString();
+          void store
+            .execute(
+              `INSERT OR REPLACE INTO cycles (cycle_id, account_ref, symbol, mode, config_version, evidence_id, status, verdict_json, started_at, completed_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)`,
+              [
+                cid,
+                accountRef,
+                sym,
+                snapNow.mode,
+                settings.current().activeVersion,
+                `ev-${cid}`,
+                JSON.stringify(v),
+                nowIso,
+                nowIso
+              ]
+            )
+            .catch(() => {});
+        } else if (evt.type === 'lesson' && evt.data && typeof evt.data === 'object') {
+          const l = evt.data as Record<string, unknown>;
+          const lid = String(l.id ?? `lesson-${Date.now()}`);
+          const firstIso = new Date(typeof l.firstAt === 'number' ? l.firstAt : Date.now()).toISOString();
+          const lastIso = new Date(typeof l.lastAt === 'number' ? l.lastAt : Date.now()).toISOString();
+          void store
+            .execute(
+              `INSERT OR REPLACE INTO lessons (lesson_id, account_ref, role, kind, symbol, status, is_legacy_readonly, count, happened, root_cause, lesson_text, source_json, first_at, last_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, '{}', ?, ?)`,
+              [
+                lid,
+                accountRef,
+                String(l.role ?? 'lead'),
+                String(l.kind ?? 'mistake'),
+                l.symbol ? String(l.symbol) : null,
+                String(l.status ?? 'new'),
+                Number(l.count ?? 1),
+                String(l.happened ?? ''),
+                String(l.rootCause ?? ''),
+                String(l.lesson ?? ''),
+                firstIso,
+                lastIso
+              ]
+            )
+            .catch(() => {});
+        }
+      });
     } catch {}
   }
 
@@ -5394,7 +5508,149 @@ export async function startReplacementServer(
     chatService,
     reportsService,
     setupDeps: { settings, secrets, accounts },
-    researchDeps: { host: researchHost, activeAccountRef: () => accountRef },
+    researchDeps: {
+      host: researchHost,
+      activeAccountRef: () => accountRef,
+      closeReview: async (symbol, trigger) => {
+        const snapNow = runtime.snapshot();
+        const cleanSym = symbol.toUpperCase();
+        const pos = snapNow.paper.positions.find((p) => p.symbol.toUpperCase() === cleanSym) ?? null;
+        const mkt = marketHub.snapshot(cleanSym);
+        const latestVerdict = [...snapNow.verdicts].reverse().find((v) => v.symbol.toUpperCase() === cleanSym) ?? null;
+        return {
+          ok: true,
+          observedAt: Date.now(),
+          symbol: cleanSym,
+          trigger: trigger ?? null,
+          mode: snapNow.mode,
+          quote: { last: mkt.last.value, asOf: mkt.asOf, availability: mkt.last.availability },
+          position: pos,
+          latestVerdict
+        };
+      },
+      summary: async (command) => {
+        const snapNow = runtime.snapshot();
+        if (command === 'positions') {
+          return snapNow.paper.positions.length === 0
+            ? 'No open positions.'
+            : snapNow.paper.positions
+                .map((p) => `${p.symbol} ${p.side} qty=${p.qty} entry=${p.entry} stop=${p.stop} tp=${p.tp ?? 'none'} upnl=${p.unrealizedPnl}`)
+                .join('\n');
+        }
+        if (command === 'scorecard') {
+          return snapNow.scorecard
+            .map((s) => `${s.name}: ${s.right}/${s.calls} (${Math.round(s.accuracy * 100)}%)`)
+            .join('\n');
+        }
+        if (command === 'scan') {
+          return `Watchlist (${snapNow.watchlist.length}): ${snapNow.watchlist.join(', ')}`;
+        }
+        return `Mode=${snapNow.mode} Venue=${snapNow.venue.name} Balance=${snapNow.paper.balance} Equity=${snapNow.paper.equity} Open=${snapNow.paper.positions.length}/${snapNow.paper.n}`;
+      },
+      backtest: async (rawBody) => {
+        const b = (rawBody ?? {}) as Record<string, unknown>;
+        const sym = String(b.symbol ?? 'BTCUSDT').trim().toUpperCase();
+        if (!/^[A-Z0-9]{3,24}$/.test(sym)) {
+          return { status: 400, payload: { ok: false, error: 'Invalid symbol' } };
+        }
+        const initialCapital = Math.max(10, Math.min(1_000_000, Number(b.initialCapital ?? 1000) || 1000));
+        const slippageBps = Math.max(0, Math.min(100, Number(b.slippageBps ?? 5) || 0));
+        const maxLeverage = Math.max(1, Math.min(50, Number(b.maxLeverage ?? 5) || 5));
+        const strategy = String(b.strategy ?? 'simple_momentum');
+        const custom = Array.isArray(b.candles)
+          ? (b.candles as Array<Record<string, unknown>>).map((c) => ({
+              t: Number(c.timestamp ?? c.startAt ?? 0),
+              o: Number(c.open ?? 0),
+              h: Number(c.high ?? 0),
+              l: Number(c.low ?? 0),
+              c: Number(c.close ?? 0)
+            }))
+          : (marketHub.candles(sym, '15m')?.closed ?? []).map((c) => ({
+              t: c.startAt,
+              o: Number(c.open),
+              h: Number(c.high),
+              l: Number(c.low),
+              c: Number(c.close)
+            }));
+        const bars = custom.filter((c) => c.t > 0 && c.o > 0 && c.h > 0 && c.l > 0 && c.c > 0).sort((a, b2) => a.t - b2.t);
+        if (bars.length < 3) {
+          return { status: 400, payload: { ok: false, error: 'Insufficient candle data for backtest (minimum 3 required).' } };
+        }
+        let cash = initialCapital;
+        let wins = 0;
+        let losses = 0;
+        const returns: number[] = [];
+        let openPos: { side: 'LONG' | 'SHORT'; entry: number; qty: number; margin: number; stop: number; tp: number } | null = null;
+        for (let i = 5; i < bars.length; i += 1) {
+          const bar = bars[i]!;
+          const prevEq = cash + (openPos ? (openPos.side === 'LONG' ? (bars[i - 1]!.c - openPos.entry) : (openPos.entry - bars[i - 1]!.c)) * openPos.qty + openPos.margin : 0);
+          if (openPos) {
+            const hitSl = openPos.side === 'LONG' ? bar.l <= openPos.stop : bar.h >= openPos.stop;
+            const hitTp = openPos.side === 'LONG' ? bar.h >= openPos.tp : bar.l <= openPos.tp;
+            if (hitSl || hitTp) {
+              const rawExit = hitSl ? openPos.stop : openPos.tp;
+              const slip = hitSl ? slippageBps / 10_000 : 0;
+              const exitPx = openPos.side === 'LONG' ? rawExit * (1 - slip) : rawExit * (1 + slip);
+              const gross = openPos.side === 'LONG' ? (exitPx - openPos.entry) * openPos.qty : (openPos.entry - exitPx) * openPos.qty;
+              const exitFee = openPos.qty * exitPx * 0.00055;
+              const net = gross - exitFee;
+              cash += Math.max(0, openPos.margin + net);
+              if (net > 0) wins += 1;
+              else losses += 1;
+              openPos = null;
+            }
+          }
+          if (!openPos) {
+            const sma5 = bars.slice(i - 4, i + 1).reduce((s, x) => s + x.c, 0) / 5;
+            const sma20 = bars.slice(Math.max(0, i - 19), i + 1);
+            const avg20 = sma20.reduce((s, x) => s + x.c, 0) / sma20.length;
+            const side: 'LONG' | 'SHORT' | null =
+              strategy === 'buy_and_hold' ? 'LONG' : sma5 > avg20 ? 'LONG' : sma5 < avg20 ? 'SHORT' : null;
+            if (side && cash > 10) {
+              const margin = Math.min(cash * 0.5, cash / (1 + maxLeverage * 0.00055));
+              const slip = slippageBps / 10_000;
+              const entry = side === 'LONG' ? bar.c * (1 + slip) : bar.c * (1 - slip);
+              const qty = (margin * maxLeverage) / entry;
+              const fee = margin * maxLeverage * 0.00055;
+              cash -= margin + fee;
+              openPos = {
+                side,
+                entry,
+                qty,
+                margin,
+                stop: side === 'LONG' ? entry * 0.98 : entry * 1.02,
+                tp: side === 'LONG' ? entry * 1.04 : entry * 0.96
+              };
+            }
+          }
+          const currEq = cash + (openPos ? (openPos.side === 'LONG' ? (bar.c - openPos.entry) : (openPos.entry - bar.c)) * openPos.qty + openPos.margin : 0);
+          returns.push(prevEq > 0 ? (currEq - prevEq) / prevEq : 0);
+        }
+        const lastClose = bars.at(-1)!.c;
+        const finalEquity = Math.round((cash + (openPos ? (openPos.side === 'LONG' ? (lastClose - openPos.entry) : (openPos.entry - lastClose)) * openPos.qty + openPos.margin : 0)) * 100) / 100;
+        const meanR = returns.length > 0 ? returns.reduce((a, b2) => a + b2, 0) / returns.length : 0;
+        const stdR = returns.length > 1 ? Math.sqrt(returns.reduce((s, r) => s + (r - meanR) ** 2, 0) / returns.length) : 0;
+        const dt = bars.length >= 2 ? Math.max(60_000, bars[1]!.t - bars[0]!.t) : 900_000;
+        const sharpeRatio = stdR > 0 ? Number(((meanR / stdR) * Math.sqrt((365 * 86_400_000) / dt)).toFixed(2)) : 0;
+        return {
+          status: 200,
+          payload: {
+            ok: true,
+            observedAt: Date.now(),
+            symbol: sym,
+            metrics: {
+              initialCapital,
+              finalEquity,
+              netPnL: Math.round((finalEquity - initialCapital) * 100) / 100,
+              totalTrades: wins + losses,
+              winningTrades: wins,
+              losingTrades: losses,
+              sharpeRatio
+            }
+          }
+        };
+      }
+    },
     grokBridge,
     grokKeyRegistry: grokRegistry
   });
@@ -5424,12 +5680,24 @@ export async function startReplacementServer(
     console.warn(`[market] Bybit bootstrap warning: ${(err as Error).message}`);
   });
 
-  // Wire market frame updates to tickers with state update throttling
+  // Wire market frame updates to tickers, live candles, and PAPER SL/TP/limit evaluation
   const lastTickerUpdateBySymbol = new Map<string, { price: number; at: number }>();
+  const lastCandleEmitBySymbol = new Map<string, number>();
   runtime.marketHub.onFrame((frame) => {
+    const now = Date.now();
+    const lastCandleAt = lastCandleEmitBySymbol.get(frame.symbol) ?? 0;
+    if (now - lastCandleAt >= 900) {
+      lastCandleEmitBySymbol.set(frame.symbol, now);
+      runtime.hub.emit('candle', {
+        symbol: frame.symbol,
+        closed: frame.closed,
+        current: frame.current,
+        last: frame.last.value != null ? Number(frame.last.value) : null
+      });
+    }
+
     const lastPrice = frame.last.value !== null ? Number(frame.last.value) : null;
     if (lastPrice !== null && Number.isFinite(lastPrice)) {
-      const now = Date.now();
       const prev = lastTickerUpdateBySymbol.get(frame.symbol);
       if (prev && prev.price === lastPrice && now - prev.at < 2000) {
         return;
@@ -5438,6 +5706,94 @@ export async function startReplacementServer(
         return;
       }
       lastTickerUpdateBySymbol.set(frame.symbol, { price: lastPrice, at: now });
+      if (runtime.snapshot().mode === 'PAPER' && venueAdapter instanceof PaperVenue) {
+        void venueAdapter.evaluateTick(frame.symbol, String(lastPrice)).then(async (events) => {
+          if (events.length === 0) return;
+          const [bal, openPos] = await Promise.all([venueAdapter.balance(), venueAdapter.positions()]);
+          const openMap = new Map(openPos.map((p) => [p.symbol.toUpperCase(), p]));
+          runtime.updateState((draft) => {
+            if (bal.available != null) {
+              const avNum = Number(bal.available);
+              if (Number.isFinite(avNum)) {
+                draft.paper.balance = Math.round(avNum * 100) / 100;
+              }
+            }
+            const symUpper = frame.symbol.toUpperCase();
+            const stillOpen = openMap.get(symUpper);
+            for (const ev of events) {
+              if (ev.kind === 'LIMIT_FILLED' && stillOpen) {
+                if (!draft.paper.positions.some((p) => p.symbol.toUpperCase() === symUpper)) {
+                  const lev = stillOpen.leverage ?? draft.paper.maxLeverage ?? 5;
+                  const qtyNum = Number(stillOpen.qty);
+                  const entNum = Number(stillOpen.entryPrice);
+                  draft.paper.positions.push({
+                    id: `pos-${Date.now()}`,
+                    symbol: symUpper,
+                    side: stillOpen.side,
+                    qty: qtyNum,
+                    entry: entNum,
+                    stop: 0,
+                    tp: null,
+                    margin: (qtyNum * entNum) / lev,
+                    leverage: lev,
+                    openedAt: Date.now(),
+                    mark: lastPrice,
+                    unrealizedPnl: 0,
+                    protectionStatus: 'confirmed',
+                    entryStatus: 'confirmed'
+                  });
+                }
+                for (const v of draft.verdicts ?? []) {
+                  if (v.symbol.toUpperCase() === symUpper && (v as any).operationalStatus === 'PENDING') {
+                    (v as any).operationalStatus = 'FILLED';
+                    v.executed = true;
+                  }
+                }
+              } else if (ev.kind === 'STOP_LOSS' || ev.kind === 'TAKE_PROFIT') {
+                const idx = draft.paper.positions.findIndex((p) => p.symbol.toUpperCase() === symUpper);
+                if (idx >= 0) {
+                  const removed = draft.paper.positions.splice(idx, 1)[0]!;
+                  const exitPx = Number(ev.price);
+                  const mult = removed.side === 'LONG' ? 1 : -1;
+                  const realized = Math.round(mult * (exitPx - removed.entry) * removed.qty * 100) / 100;
+                  draft.paper.closed.push({
+                    id: `closed-${Date.now()}-${symUpper}`,
+                    symbol: symUpper,
+                    side: removed.side,
+                    qty: removed.qty,
+                    entry: removed.entry,
+                    exit: exitPx,
+                    realizedPnl: realized,
+                    reason: ev.kind,
+                    closedAt: Date.now()
+                  });
+                }
+              }
+            }
+            draft.paper.usedMargin = draft.paper.positions.reduce((s, p) => s + (p.margin ?? 0), 0);
+            const totalUpnl = Math.round(draft.paper.positions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0) * 100) / 100;
+            draft.paper.unrealized = totalUpnl;
+            draft.paper.equity = Math.round((draft.paper.balance + totalUpnl) * 100) / 100;
+            const mt = Math.round(Math.max(0, draft.paper.balance - draft.paper.safetyNet) * 100) / 100;
+            draft.paper.moneyTrade = mt;
+            draft.paper.perOrder = ownerAllocationPerOrder(mt, draft.paper.n, draft.paper.orderSizePct);
+            draft.paper.canOpen = draft.paper.perOrder > 0 && draft.paper.positions.length < draft.paper.n;
+            draft.financial.balance = availableFinancialField(draft.paper.balance);
+            draft.financial.equity = availableFinancialField(draft.paper.equity);
+            draft.financial.unrealizedPnl = availableFinancialField(totalUpnl);
+            if (bal.realizedDailyPnl != null && Number.isFinite(Number(bal.realizedDailyPnl))) {
+              draft.financial.realizedPnl = availableFinancialField(Math.round(Number(bal.realizedDailyPnl) * 100) / 100);
+            }
+          });
+          for (const ev of events) {
+            runtime.hub.emit('log', {
+              at: Date.now(),
+              kind: 'execution',
+              text: `[PAPER] ${ev.kind} ${ev.symbol} @ ${ev.price}`
+            });
+          }
+        }).catch(() => {});
+      }
       runtime.updateState((draft) => {
         const rawPcnt = frame.price24hPcnt != null ? Number(frame.price24hPcnt) * 100 : 0;
         draft.tickers[frame.symbol] = {
