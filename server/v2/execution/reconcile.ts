@@ -82,7 +82,7 @@ export async function reconcileAccountState(params: {
   const intentRows = await store.execute(
     `SELECT intent_id, client_order_id, symbol, side, intent_kind, order_state, payload_json, created_at
      FROM execution_intents
-     WHERE account_ref = ?`,
+     WHERE account_ref = ? AND intent_kind != 'CLOSE'`,
     [accountRef]
   );
 
@@ -162,7 +162,10 @@ export async function reconcileAccountState(params: {
       }
       try {
         const lookedUp = await transport.lookupOrder(symbol, clientOrderId);
-        const isNotFound = lookedUp.state === 'UNKNOWN' && (lookedUp.reason?.toLowerCase().includes('not found') ?? false);
+        const notFoundByReason =
+          lookedUp.state === 'UNKNOWN' && /not found|does not exist/i.test(lookedUp.reason ?? '');
+        const pastGraceWindow = createdAt === null || Date.now() - createdAt > 10_000;
+        const isNotFound = notFoundByReason && pastGraceWindow;
         const resolvedState = isNotFound ? 'CANCELLED' : lookedUp.state;
         resolvedIntentUpdates.push({
           intentId,
@@ -326,6 +329,7 @@ export async function reconcileAccountState(params: {
         ON CONFLICT(account_ref, position_key) DO UPDATE SET
           qty = excluded.qty,
           entry_price = excluded.entry_price,
+          stop_price = COALESCE(excluded.stop_price, managed_positions.stop_price),
           tp_price = COALESCE(excluded.tp_price, managed_positions.tp_price),
           protection_state = excluded.protection_state,
           updated_at = excluded.updated_at`,

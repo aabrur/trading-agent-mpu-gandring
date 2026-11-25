@@ -89,7 +89,8 @@ export function createTransportFromAdapter(adapter: VenueAdapter): GatewayVenueT
         clientOrderId: r.clientOrderId,
         venueOrderId: r.venueOrderId,
         state: r.state,
-        filledQty: r.filledQty
+        filledQty: r.filledQty,
+        avgFillPrice: r.avgFillPrice ?? null
       };
     },
     lookupOrder: async (symbol, clientOrderId) => {
@@ -108,7 +109,8 @@ export function createTransportFromAdapter(adapter: VenueAdapter): GatewayVenueT
         clientOrderId: r.clientOrderId,
         venueOrderId: r.venueOrderId,
         state: r.state,
-        filledQty: r.filledQty
+        filledQty: r.filledQty,
+        avgFillPrice: r.avgFillPrice ?? null
       };
     },
     readProtection: async (position): Promise<ProtectionSnapshot> => {
@@ -140,7 +142,8 @@ export function createTransportFromAdapter(adapter: VenueAdapter): GatewayVenueT
         clientOrderId: r.clientOrderId,
         venueOrderId: r.venueOrderId,
         state: r.state,
-        filledQty: r.filledQty
+        filledQty: r.filledQty,
+        avgFillPrice: r.avgFillPrice ?? null
       };
     }
   };

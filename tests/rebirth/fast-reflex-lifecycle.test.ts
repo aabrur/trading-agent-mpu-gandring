@@ -752,5 +752,83 @@ describe('Fast Reflex & End-to-End Trading Lifecycle Hardening', () => {
         await runtime.stop();
       }
     });
+
+    it('uses prevBar.close for True Range and dispatches at most one protect call at >= 1.5R', async () => {
+      let protectCalls = 0;
+      const seenStops: number[] = [];
+      let releaseProtect!: () => void;
+      const protectGate = new Promise<void>((r) => { releaseProtect = r; });
+
+      const roleRunner = new RoleRunner({
+        providerCaller: async () => JSON.stringify({ stance: 'HOLD' }),
+        resolveAssignment: () => ({ provider: 'mock', model: 'mock' })
+      });
+      const cycleRunner = new CycleRunner({ roleRunner });
+
+      // 14 closed bars with a large gap between bar 12 close (100) and bar 13 open/low/high (110..111..111)
+      // Old broken formula used same-bar close -> TR=1; real prevBar.close TR=11
+      const bars15m = Array.from({ length: 14 }, (_, i) => ({
+        startAt: Date.now() - (14 - i) * 900000,
+        open: i === 13 ? 110 : 100,
+        high: i === 13 ? 111 : 101,
+        low: i === 13 ? 110 : 100,
+        close: i === 13 ? 111 : 100,
+        volume: 1000,
+        confirmed: true
+      }));
+      const mockMarketHub = {
+        snapshot: () => ({
+          last: { value: '120', availability: 'AVAILABLE' },
+          closed: { '15m': bars15m }
+        })
+      } as any;
+
+      const runtime = createReplacementRuntime({
+        roleRunner,
+        cycleRunner,
+        marketHub: mockMarketHub,
+        dispatcher: async (input) => {
+          if (input.kind === 'protect') {
+            protectCalls += 1;
+            seenStops.push(Number(input.payload?.stop));
+            await protectGate;
+            return { ok: true, code: 'OK', message: 'ok' };
+          }
+          return { ok: true, code: 'OK', message: 'ok' };
+        }
+      });
+
+      try {
+        runtime.updateState((draft: any) => {
+          draft.paper.positions = [
+            {
+              id: 'pos-gap-1',
+              symbol: 'SOLUSDT',
+              side: 'LONG',
+              qty: 1,
+              entry: 100,
+              stop: 90, // 1R = 10; mark 120 -> +2.0R
+              tp: 150,
+              margin: 20,
+              leverage: 5,
+              mark: 120,
+              unrealizedPnl: 20
+            }
+          ];
+        });
+
+        const p1 = runtime.runFastReflex?.();
+        const p2 = runtime.runFastReflex?.();
+        releaseProtect();
+        await Promise.all([p1, p2]);
+
+        expect(protectCalls).toBe(1);
+        // True avg TR = (13*1 + 11)/14 = 1.7143; 1.5*ATR = 2.5714; trailStop = 120 - 2.5714 = 117.43
+        expect(seenStops[0]).toBeGreaterThan(116);
+        expect(seenStops[0]).toBeLessThan(118);
+      } finally {
+        await runtime.stop();
+      }
+    });
   });
 });

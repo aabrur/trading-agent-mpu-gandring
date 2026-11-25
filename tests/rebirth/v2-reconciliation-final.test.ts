@@ -444,3 +444,132 @@ describe('kill audit', () => {
     expect(extra).not.toContain('secret-token-value');
   });
 });
+
+describe('V2 gateway ONE_WAY:NET reconciliation and CLOSE intent filtering', () => {
+  it('retains ownership of immediately FILLED market positions using :ONE_WAY:NET and ignores CLOSE intents in pending', async () => {
+    const { store, accountRef } = await openStore();
+    const { ExecutionGateway } = await import('../../server/v2/execution/gateway.js');
+    const { ExecutionAuthorityService } = await import('../../server/v2/accounts/authority.js');
+    const { unavailableEvidence, verifiedEvidence } = await import('../../server/v2/contracts.js');
+
+    const authority = new ExecutionAuthorityService(store, 'holder-main');
+    const lease = await authority.claim(accountRef, 'holder-main');
+    const now = new Date().toISOString();
+    await store.execute(
+      `INSERT INTO execution_intents (
+        account_ref, intent_id, client_order_id, cycle_id, symbol, side, intent_kind,
+        order_state, protection_state, venue_order_id, payload_json, created_at, updated_at
+      ) VALUES (?, 'close-pending-1', 'cid-close-1', NULL, 'ETHUSDT', 'LONG', 'CLOSE', 'ACCEPTED', 'NOT_APPLICABLE', NULL, '{}', ?, ?)`,
+      [accountRef, now, now]
+    );
+
+    const venueTransport = {
+      balance: async () => ({ balanceUsdt: '1000', availableUsdt: '900', realizedDailyPnlUsdt: '0' }),
+      positions: async () => [
+        {
+          positionKey: 'BTCUSDT:ONE_WAY:NET',
+          symbol: 'BTCUSDT',
+          side: 'LONG' as const,
+          qty: '0.01',
+          entryPrice: '68510'
+        }
+      ],
+      submitOrder: async (o: any) => ({
+        clientOrderId: o.clientOrderId,
+        venueOrderId: 'ord-net-1',
+        state: 'FILLED' as const,
+        filledQty: o.quantity,
+        avgFillPrice: '68510'
+      }),
+      lookupOrder: async (_sym: string, cid: string) => ({
+        clientOrderId: cid,
+        venueOrderId: 'ord-net-1',
+        state: 'FILLED' as const,
+        filledQty: '0.01',
+        avgFillPrice: '68510'
+      }),
+      cancelEntryOrder: async (_sym: string, cid: string) => ({
+        clientOrderId: cid,
+        venueOrderId: null,
+        state: 'CANCELLED' as const,
+        filledQty: '0'
+      }),
+      readProtection: async (pos: any) => ({
+        state: 'VERIFIED' as const,
+        coveredQty: pos.qty,
+        stopPrice: '67000',
+        reduceOnly: true
+      }),
+      placeProtection: async (pos: any, stopPrice: string) => ({
+        state: 'VERIFIED' as const,
+        coveredQty: pos.qty,
+        stopPrice,
+        reduceOnly: true
+      }),
+      closePosition: async (pos: any, cid: string) => ({
+        clientOrderId: cid,
+        venueOrderId: null,
+        state: 'FILLED' as const,
+        filledQty: pos.qty
+      })
+    };
+
+    const gw = new ExecutionGateway({
+      store,
+      authority,
+      getTransport: () => venueTransport,
+      getAccountPolicy: () => ({
+        activeConfigVersion: 1,
+        safetyNetUsdt: '100',
+        maxPositions: 3,
+        dailyLossCapUsdt: '100',
+        minEntryConfidencePct: 50
+      }),
+      readFreshMarket: () => ({
+        evidenceId: 'ev-1',
+        revision: 1,
+        symbol: 'BTCUSDT',
+        venue: 'bybit',
+        category: 'linear',
+        asOf: Date.now(),
+        last: verifiedEvidence({ value: '68500', source: 'bybit', unit: 'USDT' }),
+        bid: verifiedEvidence({ value: '68500', source: 'bybit', unit: 'USDT' }),
+        ask: verifiedEvidence({ value: '68500', source: 'bybit', unit: 'USDT' }),
+        closed: { '1m': [], '5m': [], '15m': [], '1h': [], '4h': [], '1d': [] },
+        current: {},
+        tradesEvidenceId: null,
+        bookEvidenceId: null,
+        funding: unavailableEvidence('bybit', 'n/a'),
+        openInterest: unavailableEvidence('bybit', 'n/a')
+      })
+    });
+
+    const receipt = await gw.submit({
+      intentId: 'intent-net-open-1',
+      accountRef,
+      configVersion: 1,
+      authorityEpoch: lease.writerEpoch,
+      action: 'OPEN',
+      symbol: 'BTCUSDT',
+      side: 'LONG',
+      quantity: '0.01',
+      entry: null,
+      stop: '67000',
+      tp: '72000',
+      leverage: 10,
+      thesisId: null
+    });
+    expect(receipt.orderState).toBe('FILLED');
+
+    const recon = await gw.reconcile(accountRef);
+    expect(recon.externalCredentialConflict).toBe(false);
+    expect(recon.pending.some((p) => p.clientOrderId === 'cid-close-1')).toBe(false);
+    const managed = await store.execute(
+      `SELECT position_key, entry_price, state FROM managed_positions WHERE account_ref = ? AND symbol = 'BTCUSDT'`,
+      [accountRef]
+    );
+    expect(managed.rows[0]?.position_key).toBe('BTCUSDT:ONE_WAY:NET');
+    expect(managed.rows[0]?.entry_price).toBe('68510');
+    expect(managed.rows[0]?.state).toBe('OPEN');
+  });
+});

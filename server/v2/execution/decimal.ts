@@ -165,3 +165,51 @@ export function assertCompatibleInstrumentUnits(
     );
   }
 }
+
+export function adaptivePriceDecimals(refPrice: number): number {
+  const abs = Math.abs(refPrice);
+  if (!Number.isFinite(abs) || abs <= 0) return 8;
+  if (abs < 0.01) return 8;
+  if (abs < 1) return 6;
+  if (abs < 100) return 4;
+  return 2;
+}
+
+export function formatAdaptivePrice(value: number, refPrice = value): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  return value.toFixed(adaptivePriceDecimals(refPrice));
+}
+
+export function sizeSovereignOrderQuantity(params: {
+  marginUsdt: number;
+  leverage: number;
+  entryPrice: number;
+  qtyStep?: string | null;
+  minQty?: string | null;
+}): { ok: true; qty: string } | { ok: false; reason: string } {
+  const { marginUsdt, leverage, entryPrice, qtyStep, minQty } = params;
+  if (!Number.isFinite(marginUsdt) || marginUsdt <= 0) {
+    return { ok: false, reason: 'Owner-derived per-order margin is 0; refusing to substitute a fallback size.' };
+  }
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    return { ok: false, reason: 'Valid positive entry price is required to size quantity.' };
+  }
+  const lev = Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
+  const rawNotional = marginUsdt * lev;
+  const rawQty = (rawNotional / entryPrice).toFixed(12);
+  const step = qtyStep && compareDecimals(qtyStep, '0') > 0 ? qtyStep : '0.0001';
+  const floored = quantize(rawQty, step, 'floor');
+  if (compareDecimals(floored, '0') <= 0) {
+    return {
+      ok: false,
+      reason: `Allocated notional (${rawNotional.toFixed(2)} USDT) is below instrument step (${step}).`
+    };
+  }
+  if (minQty && compareDecimals(minQty, '0') > 0 && compareDecimals(floored, minQty) < 0) {
+    return {
+      ok: false,
+      reason: `Floored quantity ${floored} is below venue minQty ${minQty}.`
+    };
+  }
+  return { ok: true, qty: floored };
+}

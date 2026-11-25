@@ -2,6 +2,7 @@ import type express from 'express';
 import { z } from 'zod';
 import { safe } from '../../redact.js';
 import { isLocalLoopbackClient, type OfficeRuntime } from '../contracts.js';
+import { sizeSovereignOrderQuantity } from '../execution/decimal.js';
 
 const sizeBodySchema = z.object({
   symbol: z.string().min(1),
@@ -102,9 +103,18 @@ export function mountOperationsRoutes(
 
     const moneyTrade = Math.max(0, balanceVal - safetyNet);
     const perOrder = orderSizePct != null ? (moneyTrade * orderSizePct) / 100 : moneyTrade / n;
-    const notional = perOrder * maxLeverage;
-    const rawQty = entryNum > 0 ? notional / entryNum : 0;
-    const quantizedQty = Math.max(0.001, Math.floor(rawQty * 1000) / 1000).toFixed(3);
+    const sized = sizeSovereignOrderQuantity({
+      marginUsdt: perOrder,
+      leverage: maxLeverage,
+      entryPrice: entryNum,
+      qtyStep: '0.001',
+      minQty: '0.001'
+    });
+    if (!sized.ok) {
+      res.status(400).json({ ok: false, error: sized.reason });
+      return;
+    }
+    const quantizedQty = sized.qty;
     const actualNotional = (parseFloat(quantizedQty) * entryNum).toFixed(2);
     const riskAmount = (parseFloat(quantizedQty) * riskDistance).toFixed(2);
 

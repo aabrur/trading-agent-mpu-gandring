@@ -37,6 +37,7 @@ import { BybitMarketHub } from './market/bybit.js';
 import { computeIntelligence, type IntelligenceFrame } from './market/intelligence.js';
 import { RoleRunner } from './agents/runner.js';
 import { CycleRunner, type CyclePolicy, type CycleReason } from './decision/cycle.js';
+import type { TradeThesis } from './decision/revalidate.js';
 import { JevClient } from './agents/jev.js';
 import { createOfficialProviderCaller } from './agents/providers.js';
 import { resolveCanonicalRole } from './agents/roles.js';
@@ -56,6 +57,7 @@ import { ExecutionAuthorityService } from './accounts/authority.js';
 import { AccountRegistry } from './accounts/registry.js';
 import { SettingsService } from './settings/service.js';
 import { ExecutionGateway, convertDailyLossPctToUsdt, resolveOwnerPerOrderUsdt } from './execution/gateway.js';
+import { formatAdaptivePrice, sizeSovereignOrderQuantity } from './execution/decimal.js';
 import { getVenueAdapter, createTransportFromAdapter } from './execution/adapters/factory.js';
 import { ChatService, buildLiveDeskChatContext } from './api/chat.js';
 import { PaperVenue } from './sandbox/paper.js';
@@ -1658,12 +1660,12 @@ export function createReplacementRuntime(
 
     if (currentPrice > 0) {
       profileBaselineStopPrice = {
-        long: (currentPrice * (1 - stopPricePct)).toFixed(4),
-        short: (currentPrice * (1 + stopPricePct)).toFixed(4)
+        long: formatAdaptivePrice(currentPrice * (1 - stopPricePct), currentPrice),
+        short: formatAdaptivePrice(currentPrice * (1 + stopPricePct), currentPrice)
       };
       profileBaselineTpPrice = {
-        long: (currentPrice * (1 + tpPricePct)).toFixed(4),
-        short: (currentPrice * (1 - tpPricePct)).toFixed(4)
+        long: formatAdaptivePrice(currentPrice * (1 + tpPricePct), currentPrice),
+        short: formatAdaptivePrice(currentPrice * (1 - tpPricePct), currentPrice)
       };
     }
 
@@ -2049,9 +2051,8 @@ export function createReplacementRuntime(
             ? entryPrice * (1 + tpPricePct)
             : entryPrice * (1 - tpPricePct);
 
-          const priceDp = entryPrice >= 100 ? 2 : entryPrice >= 1 ? 4 : 8;
-          const profileStop = Number(fallbackCalcStop.toFixed(priceDp));
-          const profileTp = Number(fallbackCalcTp.toFixed(priceDp));
+          const profileStop = Number(formatAdaptivePrice(fallbackCalcStop, entryPrice));
+          const profileTp = Number(formatAdaptivePrice(fallbackCalcTp, entryPrice));
 
           const rawThesisStop = Number(out.verdict.thesis.stop);
           const hasValidThesisStop = Number.isFinite(rawThesisStop) && rawThesisStop > 0 &&
@@ -2061,8 +2062,8 @@ export function createReplacementRuntime(
           const hasValidThesisTp = rawThesisTp !== null && Number.isFinite(rawThesisTp) && rawThesisTp > 0 &&
             (side === 'LONG' ? rawThesisTp > entryPrice : rawThesisTp < entryPrice);
 
-          const stopPrice = hasValidThesisStop ? Number(rawThesisStop.toFixed(priceDp)) : profileStop;
-          const tpPrice = hasValidThesisTp ? Number(rawThesisTp!.toFixed(priceDp)) : profileTp;
+          const stopPrice = hasValidThesisStop ? Number(formatAdaptivePrice(rawThesisStop, entryPrice)) : profileStop;
+          const tpPrice = hasValidThesisTp ? Number(formatAdaptivePrice(rawThesisTp!, entryPrice)) : profileTp;
 
           hub.emit('log', {
             at: Date.now(),
@@ -2070,11 +2071,21 @@ export function createReplacementRuntime(
             text: `${targetSymbol}: executed with ${hasValidThesisStop ? 'tactical desk SL' : 'profile SL'} ${stopPrice} and ${hasValidThesisTp ? 'tactical desk TP' : 'profile TP'} ${tpPrice}.`
           });
           const margin = Math.round(perOrder * 100) / 100;
-          const qty = entryPrice > 0 ? Math.round(((margin * leverage) / entryPrice) * 1000) / 1000 : 1;
+          const activeAdapter = options.getVenueAdapter?.() ?? options.venueAdapter;
+          const instRules = activeAdapter ? await activeAdapter.instruments(targetSymbol).catch(() => null) : null;
+          const fallbackStep = entryPrice > 0 && entryPrice < 0.01 ? '1' : '0.0001';
+          const sizedQty = sizeSovereignOrderQuantity({
+            marginUsdt: margin,
+            leverage,
+            entryPrice,
+            qtyStep: instRules?.qtyStep ?? fallbackStep,
+            minQty: instRules?.minQty ?? null
+          });
+          const qty = sizedQty.ok ? Number(sizedQty.qty) : 0;
 
-          if (perOrder <= 0) {
+          if (!sizedQty.ok) {
             verdictRecord.executed = false;
-            verdictRecord.reason = 'Owner-derived per-order size is 0; refusing to substitute a fallback size.';
+            verdictRecord.reason = sizedQty.reason;
           } else if (currentSnap.mode === 'PAPER') {
             const alreadyOpen = currentSnap.paper.positions.some((p) => p.symbol.toUpperCase() === targetSymbol);
             if (alreadyOpen) {
@@ -2151,7 +2162,8 @@ export function createReplacementRuntime(
                   leverage,
                   orderType: thesisOrderType,
                   limitPrice: thesisLimit,
-                  entry: thesisLimit
+                  entry: thesisLimit,
+                  thesis: out.verdict.thesis
                 }
               });
 
@@ -3987,6 +3999,7 @@ export function createReplacementRuntime(
     };
   };
 
+  const inFlightProtectSymbols = new Set<string>();
   const runFastReflexLoop = async (): Promise<void> => {
     const snap = snapshot();
     if (snap.killed || snap.paused) return;
@@ -3998,6 +4011,7 @@ export function createReplacementRuntime(
 
     for (const pos of activePositions) {
       const sym = pos.symbol.toUpperCase();
+      if (inFlightProtectSymbols.has(sym)) continue;
       const frame = marketHub?.snapshot(sym);
       const currPrice = frame?.last?.value ? Number(frame.last.value) : (pos.mark || pos.entry);
       if (!currPrice || currPrice <= 0 || !pos.entry || pos.entry <= 0) continue;
@@ -4012,35 +4026,28 @@ export function createReplacementRuntime(
       const priceMovePct = (unrealizedPnlDist / pos.entry) * 100;
       const roePct = priceMovePct * leverage;
 
+      let beCandidate: number | null = null;
       // 1a. Breakeven Plus (+1.0R threshold OR >= +8.0% ROE)
       if (rMultiple >= 1.0 || roePct >= 8.0) {
-        const beStop = isLong
-          ? Math.round(pos.entry * 1.0015 * 10000) / 10000
-          : Math.round(pos.entry * 0.9985 * 10000) / 10000;
+        const beStop = Number(formatAdaptivePrice(
+          isLong ? pos.entry * 1.0015 : pos.entry * 0.9985,
+          pos.entry
+        ));
 
         const hasSafeBuffer = isLong
           ? (currPrice >= beStop * 1.0005)
           : (currPrice <= beStop * 0.9995);
 
-        const needsBeAdjustment = hasSafeBuffer && (isLong
+        const needsBeAdjustment = beStop > 0 && hasSafeBuffer && (isLong
           ? (pos.stop < beStop)
           : (pos.stop > beStop || pos.stop <= 0));
 
         if (needsBeAdjustment) {
-          hub.emit('log', {
-            at: Date.now(),
-            kind: 'system',
-            text: `[FAST REFLEX] ${sym} reached +${rMultiple.toFixed(2)}R. Ratcheting stop to Breakeven+ (${beStop}).`
-          });
-          void dispatch({
-            kind: 'protect',
-            actor: 'system',
-            symbol: sym,
-            payload: { symbol: sym, stop: beStop, tp: pos.tp }
-          }).catch(() => {});
+          beCandidate = beStop;
         }
       }
 
+      let trailCandidate: number | null = null;
       // 1b. ATR Ratchet Trailing (+1.5R threshold OR >= +12.0% ROE)
       if (rMultiple >= 1.5 || roePct >= 12.0) {
         const closed15m = frame?.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
@@ -4048,36 +4055,65 @@ export function createReplacementRuntime(
         const primaryBars = closed15m.length >= 14 ? closed15m : closed5m;
         let atr = initialRisk;
         if (primaryBars.length >= 14) {
-          const recent = primaryBars.slice(-14);
-          const trs = recent.map((b) => Math.max(
-            Number(b.high) - Number(b.low),
-            Math.abs(Number(b.high) - Number(b.close)),
-            Math.abs(Number(b.low) - Number(b.close))
-          ));
+          const startIdx = Math.max(0, primaryBars.length - 14);
+          const recent = primaryBars.slice(startIdx);
+          const trs = recent.map((b, i) => {
+            const absIdx = startIdx + i;
+            const prevClose = absIdx > 0 ? Number(primaryBars[absIdx - 1]!.close) : Number(b.close);
+            const high = Number(b.high);
+            const low = Number(b.low);
+            return Math.max(
+              high - low,
+              Math.abs(high - prevClose),
+              Math.abs(low - prevClose)
+            );
+          });
           atr = trs.reduce((a, b) => a + b, 0) / trs.length;
         }
 
-        const trailStop = isLong
-          ? Math.round((currPrice - (1.5 * atr)) * 10000) / 10000
-          : Math.round((currPrice + (1.5 * atr)) * 10000) / 10000;
+        const trailStop = Number(formatAdaptivePrice(
+          isLong ? (currPrice - (1.5 * atr)) : (currPrice + (1.5 * atr)),
+          pos.entry
+        ));
 
-        const needsTrailingAdjustment = isLong
+        const needsTrailingAdjustment = trailStop > 0 && (isLong
           ? (trailStop > pos.stop && trailStop > pos.entry * 1.0015 && trailStop < currPrice)
-          : ((pos.stop <= 0 || trailStop < pos.stop) && trailStop < pos.entry * 0.9985 && trailStop > currPrice);
+          : ((pos.stop <= 0 || trailStop < pos.stop) && trailStop < pos.entry * 0.9985 && trailStop > currPrice));
 
         if (needsTrailingAdjustment) {
-          hub.emit('log', {
-            at: Date.now(),
-            kind: 'system',
-            text: `[FAST REFLEX] ${sym} profit +${rMultiple.toFixed(2)}R. Trailing stop ratchet to ${trailStop}.`
-          });
-          void dispatch({
-            kind: 'protect',
-            actor: 'system',
-            symbol: sym,
-            payload: { symbol: sym, stop: trailStop, tp: pos.tp }
-          }).catch(() => {});
+          trailCandidate = trailStop;
         }
+      }
+
+      let chosenKind: 'be' | 'trail' | null = null;
+      let chosenStop: number | null = null;
+      if (trailCandidate !== null && (beCandidate === null || (isLong ? trailCandidate >= beCandidate : trailCandidate <= beCandidate))) {
+        chosenKind = 'trail';
+        chosenStop = trailCandidate;
+      } else if (beCandidate !== null) {
+        chosenKind = 'be';
+        chosenStop = beCandidate;
+      }
+
+      if (chosenKind !== null && chosenStop !== null) {
+        inFlightProtectSymbols.add(sym);
+        hub.emit('log', {
+          at: Date.now(),
+          kind: 'system',
+          text: chosenKind === 'trail'
+            ? `[FAST REFLEX] ${sym} profit +${rMultiple.toFixed(2)}R. Trailing stop ratchet to ${chosenStop}.`
+            : `[FAST REFLEX] ${sym} reached +${rMultiple.toFixed(2)}R. Ratcheting stop to Breakeven+ (${chosenStop}).`
+        });
+        void dispatch({
+          kind: 'protect',
+          actor: 'system',
+          symbol: sym,
+          payload: { symbol: sym, stop: chosenStop, tp: pos.tp }
+        })
+          .catch(() => {})
+          .finally(() => {
+            inFlightProtectSymbols.delete(sym);
+          });
       }
     }
 
@@ -4480,13 +4516,42 @@ export async function startReplacementServer(
       const p = input.payload ?? {};
       const symbol = String(p.symbol ?? input.symbol ?? '').toUpperCase();
       const side = (p.side as 'LONG' | 'SHORT') ?? 'LONG';
-      const qty = String(p.qty ?? '0');
+      let qty = p.qty != null && String(p.qty).trim() !== '' ? String(p.qty).trim() : '';
       const stop = p.stop ? String(p.stop) : null;
       const tp = p.tp ? String(p.tp) : null;
       const leverage = Number(p.leverage ?? state.trading?.values.maxLeverage ?? state.paper.maxLeverage ?? 5);
       const orderType = (p.orderType as 'MARKET' | 'LIMIT_GTC') ?? 'MARKET';
       const limitPrice = p.limitPrice != null ? String(p.limitPrice) : (p.entry != null ? String(p.entry) : null);
 
+      if (!qty || qty === '0') {
+        const snapNow = runtimeRef?.snapshot() ?? state;
+        const perOrder = resolveOwnerPerOrderUsdt(snapNow.paper);
+        const refPrice = limitPrice && Number(limitPrice) > 0
+          ? Number(limitPrice)
+          : Number(snapNow.tickers[symbol]?.last ?? (await venueAdapter.quote(symbol).catch(() => null))?.last ?? 0);
+        const rules = await venueAdapter.instruments(symbol).catch(() => null);
+        const sized = sizeSovereignOrderQuantity({
+          marginUsdt: perOrder,
+          leverage,
+          entryPrice: refPrice,
+          qtyStep: rules?.qtyStep ?? (refPrice > 0 && refPrice < 0.01 ? '1' : '0.0001'),
+          minQty: rules?.minQty ?? null
+        });
+        if (!sized.ok) {
+          return {
+            ok: false,
+            code: 'REJECTED',
+            message: sized.reason
+          };
+        }
+        qty = sized.qty;
+      }
+
+      const rawThesis = (p.thesis ?? null) as TradeThesis | null;
+      const validThesis =
+        rawThesis && Array.isArray(rawThesis.invalidation) && rawThesis.invalidation.length > 0
+          ? rawThesis
+          : null;
       const auth = await authority.claim(accountRef);
       const receipt = await gateway.submit({
         intentId: `intent-${Date.now()}`,
@@ -4501,7 +4566,8 @@ export async function startReplacementServer(
         stop,
         tp,
         leverage,
-        thesisId: null,
+        thesisId: validThesis ? `thesis-${Date.now()}` : null,
+        thesis: validThesis,
         orderType,
         limitPrice
       });
@@ -4557,9 +4623,13 @@ export async function startReplacementServer(
 
         if (pendingOrder || isPendingSymbol || activeIntent || hasPendingVerdict) {
           const clientOrderId = pendingOrder?.clientOrderId ?? (activeIntent?.client_order_id as string | undefined);
-          if (clientOrderId && transport.cancelEntryOrder) {
+          if (clientOrderId) {
             try {
-              await transport.cancelEntryOrder(symbol, String(clientOrderId));
+              await gateway.cancelEntry({
+                accountRef,
+                symbol,
+                clientOrderId: String(clientOrderId)
+              });
             } catch (err) {
               console.warn(`[cancelEntryOrder] Failed on transport: ${(err as Error).message}`);
             }
@@ -4693,30 +4763,33 @@ export async function startReplacementServer(
 
     if (input.kind === 'protect') {
       const symbol = String(input.symbol ?? input.payload?.symbol ?? '').toUpperCase();
-      const positions = await transport.positions();
-      const targetPos = positions.find((p) => p.symbol.toUpperCase() === symbol);
-      if (!targetPos) {
-        return { ok: false, code: 'INVALID_INPUT', message: `No active position found on venue for ${symbol}` };
-      }
       const stop = input.payload?.stop ? String(input.payload.stop) : null;
       const tp = input.payload?.tp ? String(input.payload.tp) : null;
       if (!stop) {
         return { ok: false, code: 'INVALID_INPUT', message: 'Stop price is required to protect position' };
       }
-      const prot = await transport.placeProtection(targetPos, stop, tp);
+      const res = await gateway.protectPosition({
+        accountRef,
+        symbol,
+        stopPrice: stop,
+        tpPrice: tp
+      });
+      if (res.code === 'INVALID_INPUT') {
+        return { ok: false, code: 'INVALID_INPUT', message: res.message };
+      }
       try { await syncVenueAccount(); } catch {}
       return {
-        ok: prot.state === 'VERIFIED',
-        code: prot.state === 'VERIFIED' ? 'OK' : 'REJECTED',
-        message: `Protection updated on venue for ${symbol}: SL ${stop}, TP ${tp ?? 'none'} (${prot.state})`,
-        data: prot as unknown as Record<string, unknown>
+        ok: res.ok,
+        code: res.code,
+        message: res.message,
+        data: (res.protection ?? {}) as unknown as Record<string, unknown>
       };
     }
 
     if (input.kind === 'cancel_entry') {
       const clientOrderId = String(input.payload?.clientOrderId ?? '');
       const symbol = String(input.payload?.symbol ?? input.symbol ?? 'BTCUSDT');
-      const result = await transport.cancelEntryOrder(symbol, clientOrderId);
+      const result = await gateway.cancelEntry({ accountRef, symbol, clientOrderId });
       return {
         ok: result.state === 'CANCELLED',
         code: result.state === 'CANCELLED' ? 'OK' : 'REJECTED',
@@ -4898,7 +4971,7 @@ export async function startReplacementServer(
               };
             })
           };
-          d.paper.balance = eq;
+          d.paper.balance = Math.round((eq - totalUnrealized) * 100) / 100;
           d.paper.unrealized = totalUnrealized;
           d.paper.equity = eq;
 

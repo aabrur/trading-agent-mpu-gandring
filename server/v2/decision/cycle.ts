@@ -10,6 +10,7 @@ import {
 } from '../agents/runner.js';
 import type { VerifiedExit } from './exits.js';
 import type { TradeThesis } from './revalidate.js';
+import { formatAdaptivePrice } from '../execution/decimal.js';
 
 export type CycleReason = 'owner' | 'schedule' | 'market-event' | 'position-event' | 'timer' | 'signal';
 
@@ -180,11 +181,11 @@ function computeBaselinePricesForReference(
   const tpPricePct = tpPct / 100;
 
   const stop = side === 'LONG'
-    ? (refPrice * (1 - stopPricePct)).toFixed(4)
-    : (refPrice * (1 + stopPricePct)).toFixed(4);
+    ? formatAdaptivePrice(refPrice * (1 - stopPricePct), refPrice)
+    : formatAdaptivePrice(refPrice * (1 + stopPricePct), refPrice);
   const tp = side === 'LONG'
-    ? (refPrice * (1 + tpPricePct)).toFixed(4)
-    : (refPrice * (1 - tpPricePct)).toFixed(4);
+    ? formatAdaptivePrice(refPrice * (1 + tpPricePct), refPrice)
+    : formatAdaptivePrice(refPrice * (1 - tpPricePct), refPrice);
 
   return { stop, tp };
 }

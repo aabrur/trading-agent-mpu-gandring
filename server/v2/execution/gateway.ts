@@ -89,6 +89,7 @@ export interface GatewayOrderResult {
   venueOrderId: string | null;
   state: IntentState;
   filledQty: DecimalString | null;
+  avgFillPrice?: DecimalString | null;
 }
 
 export interface GatewayVenueTransport {
@@ -615,12 +616,14 @@ export class ExecutionGateway {
       const filledQty = submitResult.filledQty;
 
       if (filledQty !== null && compareDecimals(filledQty, '0') > 0) {
+        const effectiveEntryPrice =
+          submitResult.avgFillPrice ?? intent.entry ?? freshMarket.last.value;
         const positionObj: NativeExposurePosition = {
-          positionKey: `${intent.symbol}:ONE_WAY`,
+          positionKey: `${intent.symbol}:ONE_WAY:NET`,
           symbol: intent.symbol,
           side: intent.side,
           qty: filledQty,
-          entryPrice: intent.entry ?? freshMarket.last.value
+          entryPrice: effectiveEntryPrice
         };
 
         const protOutcome = await ensureExposureProtection({
@@ -671,6 +674,8 @@ export class ExecutionGateway {
             compareDecimals(filledQty, '0') > 0 &&
             protectionState === 'VERIFIED'
           ) {
+            const effectiveEntryPrice =
+              submitResult.avgFillPrice ?? intent.entry ?? freshMarket.last.value;
             await tx.execute(
               `INSERT INTO managed_positions (
                 account_ref, position_key, native_position_id, symbol, native_instrument,
@@ -678,19 +683,24 @@ export class ExecutionGateway {
                 ownership, protection_state, thesis_json, state, opened_at, updated_at, closed_at
               ) VALUES (?, ?, NULL, ?, ?, 'ONE_WAY', ?, ?, ?, ?, ?, ?, 'MANAGED', ?, '{}', 'OPEN', ?, ?, NULL)
               ON CONFLICT(account_ref, position_key) DO UPDATE SET
+                side = excluded.side,
                 qty = excluded.qty,
+                entry_price = excluded.entry_price,
                 stop_price = excluded.stop_price,
                 tp_price = excluded.tp_price,
+                leverage = excluded.leverage,
                 protection_state = excluded.protection_state,
+                state = 'OPEN',
+                closed_at = NULL,
                 updated_at = excluded.updated_at`,
               [
                 intent.accountRef,
-                `${intent.symbol}:ONE_WAY`,
+                `${intent.symbol}:ONE_WAY:NET`,
                 intent.symbol,
                 intent.symbol,
                 intent.side,
                 filledQty,
-                intent.entry ?? freshMarket.last.value,
+                effectiveEntryPrice,
                 intent.stop,
                 intent.tp,
                 intent.leverage,
@@ -958,6 +968,85 @@ export class ExecutionGateway {
         source: params.source,
         reported: params.payload
       }
+    });
+  }
+
+  async protectPosition(params: {
+    accountRef: string;
+    symbol: string;
+    stopPrice: DecimalString;
+    tpPrice?: DecimalString | null;
+  }): Promise<{
+    ok: boolean;
+    code: 'OK' | 'INVALID_INPUT' | 'REJECTED';
+    message: string;
+    protection: ProtectionSnapshot | null;
+  }> {
+    return this.withAccountLock(params.accountRef, async () => {
+      const symbol = params.symbol.toUpperCase();
+      const transport = this.getTransport(params.accountRef);
+      const positions = await transport.positions();
+      const targetPos = positions.find((p) => p.symbol.toUpperCase() === symbol);
+      if (!targetPos) {
+        return {
+          ok: false,
+          code: 'INVALID_INPUT',
+          message: `No active position found on venue for ${symbol}`,
+          protection: null
+        };
+      }
+      const prot = await transport.placeProtection(
+        targetPos,
+        params.stopPrice,
+        params.tpPrice ?? null
+      );
+      const nowIso = new Date().toISOString();
+      if (prot.state === 'VERIFIED') {
+        await this.store
+          .execute(
+            `UPDATE managed_positions
+             SET stop_price = ?, tp_price = COALESCE(?, tp_price), protection_state = ?, updated_at = ?
+             WHERE account_ref = ? AND position_key = ? AND state = 'OPEN'`,
+            [
+              params.stopPrice,
+              params.tpPrice ?? null,
+              prot.state,
+              nowIso,
+              params.accountRef,
+              targetPos.positionKey
+            ]
+          )
+          .catch(() => {});
+      }
+      return {
+        ok: prot.state === 'VERIFIED',
+        code: prot.state === 'VERIFIED' ? 'OK' : 'REJECTED',
+        message: `Protection updated on venue for ${symbol}: SL ${params.stopPrice}, TP ${params.tpPrice ?? 'none'} (${prot.state})`,
+        protection: prot
+      };
+    });
+  }
+
+  async cancelEntry(params: {
+    accountRef: string;
+    symbol: string;
+    clientOrderId: string;
+  }): Promise<GatewayOrderResult> {
+    return this.withAccountLock(params.accountRef, async () => {
+      const transport = this.getTransport(params.accountRef);
+      const result = await transport.cancelEntryOrder(params.symbol, params.clientOrderId);
+      if (result.state === 'CANCELLED') {
+        const nowIso = new Date().toISOString();
+        await this.store
+          .execute(
+            `UPDATE execution_intents
+             SET order_state = 'CANCELLED', updated_at = ?
+             WHERE account_ref = ? AND client_order_id = ?`,
+            [nowIso, params.accountRef, params.clientOrderId]
+          )
+          .catch(() => {});
+      }
+      return result;
     });
   }
 }
