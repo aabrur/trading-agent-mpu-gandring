@@ -43,7 +43,7 @@ describe('Dual language i18n parity and updater adapter', () => {
   });
 
   it('compares dotted version strings and checks update status at current release version', async () => {
-    expect(APP_VERSION).toBe('0.0.0.4.28');
+    expect(APP_VERSION).toBe('0.0.0.4.33');
     expect(compareVersions('0.0.0.2.6', '0.0.0.2.6')).toBe(0);
     expect(compareVersions('0.0.0.2.6', '0.0.0.2.5')).toBe(1);
     expect(compareVersions('0.0.0.3.3', '0.0.0.2.6')).toBe(1);

@@ -4,11 +4,11 @@
   <img src="web/public/mpu-gandring-logo.webp" alt="Trading Agent Mpu Gandring" width="240" />
 </p>
 
-**v0.0.0.4.21 · Six agent roles · PAPER / TESTNET / LIVE · MIT**
+**v0.0.0.4.33 · Six agent roles · PAPER / TESTNET / LIVE · MIT**
 
 A trading desk that collects market evidence, runs a six-role debate, and executes eligible orders through exchange adapters. The Office brings together the discussion, positions, protection, reports and session history. You choose the models, venue and trading settings.
 
-[Release v0.0.0.4.21](https://github.com/aabrur/trading-agent-mpu-gandring/releases/tag/v0.0.0.4.21) · [Public validation](https://github.com/aabrur/trading-agent-mpu-gandring/actions/workflows/ci.yml) · [Operational evidence](docs/live-evidence.md) · [Changelog](CHANGELOG.md)
+[Release v0.0.0.4.33](https://github.com/aabrur/trading-agent-mpu-gandring/releases/tag/v0.0.0.4.33) · [Public validation](https://github.com/aabrur/trading-agent-mpu-gandring/actions/workflows/ci.yml) · [Operational evidence](docs/live-evidence.md) · [Changelog](CHANGELOG.md)
 
 A fresh installation starts in **PAPER**, uses mock agents, and leaves **Auto Trading off**. Exchange and model API keys are optional for getting started. Public market-data requests may still use the network.
 
@@ -80,7 +80,9 @@ flowchart TD
     Reduce --> History
 ```
 
-**OPEN:** actual Lead confidence must meet the saved Owner Minimum Entry Confidence, Risk must approve, and execution guards must pass. Templates do not add another confidence floor or silently change sizing.
+**OPEN:** actual Lead confidence must meet the saved Owner Minimum Entry Confidence, Risk must approve, and execution guards must pass. Templates do not add another confidence floor or silently change sizing. Stop Loss and Take Profit settings follow sovereign direct-price math: percentages are applied directly to the open entry price (never divided by leverage), and Owner risk parameters are never clamped or overridden.
+
+**LIVE and AI Q&A:** verified LIVE sessions sync venue permissions, account state, and Jev credentials cleanly before trading, while direct `/ask` prompts keep all six roles strictly advisory with mock fallback blocked in LIVE mode.
 
 **CLOSE:** Lead selects a genuine verified exit trigger for an actual managed position. Evidence is refreshed after deliberation and checked again under the execution lock. The 30-second freshness limit stays in place. Full slots, entry margin and entry confidence do not veto a valid CLOSE. An opposite signal does not automatically reverse the position.
 

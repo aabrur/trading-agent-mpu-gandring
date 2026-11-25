@@ -2,6 +2,16 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.33] - 2026-11-25
+
+### Added & Improved
+- Enforced sovereign direct-price SL/TP calculation across engine sizing, fast reflex stops, and UI help copy: percentages always apply directly to open entry price and are never divided by leverage or silently clamped away from Owner settings.
+- Hardened all 8 venue adapters (including Bybit v5, Binance, OKX, Hyperliquid, Aster, dYdX, Paradex, Orderly), setup permission guards, `web/src/walletSession.ts` chain-change listeners, and `contracts/WalletSessionRegistry.sol`.
+- Hardened LIVE startup and execution: immediate startup account reconciliation sync, bounded close order fill readback in `server/v2/execution/adapters/factory.ts`, isolated `MPU_DATA_DIR` runtime support, legacy `JEV_MODE=assist` mapping in `SettingsService.parseLegacyEnv`, LIVE mock guard in `RoleRunner.chat()`, advisory-only `/ask` chat routing without order injection, and `tests/rebirth/live-session-e2e.test.ts`.
+- Verified real LIVE session flow against Bybit mainnet trade-only credentials, `/api/setup/jev/test`, and parallel `/ask @all` Q&A across all 6 configured OpenRouter roles (`lead`, `market`, `research`, `strategist`, `risk`, `execution`).
+- Improved research, backtest, and Paper sandbox fidelity: ATR warm-up gating and dynamic timeframe annualization in `server/research/backtest.ts`, resting `LIMIT_GTC` fills and live quote sync in `server/v2/sandbox/paper.ts`, market WS freshness tracking, whale caching, and SMC/harmonic/indicator precision fixes.
+- Overhauled frontend UX and Office assets: real-time WS candle streaming into `PriceChart`, near-range autoscale guard so wide SL/TP lines never crush candles, persistent chart view tabs, normalized TradingView futures prefixes, TESTNET/LIVE close confirmations, accurate `Money Trade` preview in `PreferencesSetup.tsx`, improved night-theme contrast tokens, Indonesian tab translations, and removal of unsolicited hourly Trakteer popup/external CDN script loading.
+
 ## [v0.0.0.4.28] - 2026-11-08
 
 ### Added & Improved

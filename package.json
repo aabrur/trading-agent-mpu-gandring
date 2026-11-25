@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.32",
-  "appVersion": "0.0.0.4.32",
+  "version": "0.4.33",
+  "appVersion": "0.0.0.4.33",
   "changelog": [
+    "v0.0.0.4.33: Sovereign direct-price SL/TP math, hardened 8-venue LIVE execution and live 6-agent Q&A, real-time chart candle streaming, night-theme contrast, and clean S5 release gate.",
     "v0.0.0.4.32: added 10 OpenRouter Decisions API models (5 Top Token Usage and 5 Top Tier) to Jev setup with runtime hot-reload and .env persistence, fixed CoinMarketCap v3 live quote schema coercion and primary-rank symbol filtering, fixed OKX public instruments/quote endpoints without credentials, aligned V2 agent SL/TP system prompt contract with direct entry price percentage math, and hardened claude/codex/cline headless CLI spawn flags.",
     "v0.0.0.4.31: local CLI Windows spawn ENAMETOOLONG resolution via Node shim unwrapping and stdin/file prompt transport, tactical desk SL/TP preservation from debate consensus, deliberation robustness on CLI timeout, symbol-isolated critical news filtering, chronological chat message ordering, and lean multi-timeframe SMC prompt context.",
     "v0.0.0.4.30: human-paced sequential mock deliberation (~1.5s per turn), duplicate position prevention across PAPER and LIVE modes, removal of 2-slot candidate promotion cap allowing full N=4 allocation, watchlist screening announcement to desk room, and Discord /ask two-word role alias support.",
