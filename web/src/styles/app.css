@@ -116,7 +116,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 .tick b { font-weight: 800; }
 .tick span { font-family: var(--font-mono); }
 .tick em { font-style: normal; font-weight: 700; font-family: var(--font-mono); }
-.tick small { color: var(--text-faint); font-size: 9px; }
+.tick small { color: var(--text-faint); font-size: 10px; }
 @keyframes marquee { to { transform: translateX(-33.333%); } }
 
 /* ---------- layout ---------- */
@@ -336,13 +336,14 @@ code { font-family: var(--font-mono); font-size: 0.9em; color: var(--wood-dark);
 @keyframes powout { to { transform: translate(-50%, -80%) scale(1.25); opacity: 0; } }
 
 .office-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); font-size: var(--fs-xs); font-weight: 700; color: var(--ink); background: rgba(255, 250, 241, .92); border: 1.5px solid var(--line); padding: 5px 14px; border-radius: 999px; white-space: nowrap; z-index: 1300; }
+[data-theme='night'] .office-hint { background: rgba(35, 38, 42, 0.94); color: var(--text); border-color: var(--line-bright); }
 
 /* ---------- roster (compact with avatars) ---------- */
 .roster { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .roster-item { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 4px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--panel); font-size: 12px; font-weight: 700; box-shadow: var(--shadow); transition: border-color var(--fast), transform var(--fast); line-height: 1.1; }
 .roster-item:hover { border-color: var(--agent); transform: translateY(-1px); }
 .roster-hint { align-self: center; font-size: 11px; font-weight: 700; color: var(--text-faint); margin-left: auto; }
-.roster-item small { font-family: var(--font-mono); color: var(--text-faint); font-size: 9.5px; font-weight: 400; }
+.roster-item small { font-family: var(--font-mono); color: var(--text-faint); font-size: 10px; font-weight: 400; }
 .roster-item .bot .mug, .ap-avatar .bot .mug { display: none; }
 
 /* ---------- command bar (compact & efficient) ---------- */
@@ -1126,7 +1127,7 @@ button:disabled { cursor: default; }
 .verdicts-compact .v-top, .verdicts-compact .v-meta { gap: 4px; font-size: 10px; }
 .verdicts-compact .v-top { flex-wrap: wrap; }
 .verdicts-compact .v-action { font-size: 12px; }
-.verdicts-compact .v-top time { font-size: 9px; }
+.verdicts-compact .v-top time { font-size: 10px; }
 .verdicts-compact .v-meta span { padding: 0; border: 0; }
 .verdicts-compact .v-meta { margin-top: 3px; }
 .verdicts-compact summary { cursor: pointer; color: var(--text-dim); font-size: 10px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1270,7 +1271,7 @@ button:disabled { cursor: default; }
 .session-event { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; align-items: start; gap: 4px 8px; padding: 7px; border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 7px; font-size: 10px; overflow-wrap: anywhere; }
 .session-event.level-warn { border-left-color: var(--warn); }
 .session-event.level-error { border-left-color: var(--short); background: color-mix(in srgb, var(--short) 7%, transparent); }
-.session-event time, .session-event small { color: var(--text-dim); font-family: var(--font-mono); font-size: 9px; }
+.session-event time, .session-event small { color: var(--text-dim); font-family: var(--font-mono); font-size: 10px; }
 .session-event p { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; }
 .session-correlation { grid-column: 1 / -1; justify-self: start; max-width: 100%; border: 0; padding: 0; background: none; color: var(--teal); font: 9px var(--font-mono); overflow-wrap: anywhere; cursor: pointer; }
 .session-event-details { grid-column: 1 / -1; min-width: 0; }

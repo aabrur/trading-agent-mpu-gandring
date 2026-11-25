@@ -108,24 +108,6 @@
     "bytes": 1908
   },
   {
-    "file": "mg_item_bookmarks.webp",
-    "source": "mg_batch_b/mg_item_bookmarks.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "183,548,366,731",
-    "sourceWidth": 127,
-    "sourceHeight": 131,
-    "bytes": 3748
-  },
-  {
-    "file": "mg_item_cactus_ornament.webp",
-    "source": "mg_batch_b/mg_item_cactus_ornament.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "1097,366,1280,548",
-    "sourceWidth": 82,
-    "sourceHeight": 123,
-    "bytes": 2552
-  },
-  {
     "file": "mg_item_coffee_mug_dustyblue.webp",
     "source": "mg_batch_b/mg_item_coffee_mug_dustyblue.png",
     "referenceImage": "mg_batch_b_catalog.jpg",
@@ -151,15 +133,6 @@
     "sourceWidth": 119,
     "sourceHeight": 101,
     "bytes": 2104
-  },
-  {
-    "file": "mg_item_desk_bell.webp",
-    "source": "mg_batch_b/mg_item_desk_bell.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "366,548,549,731",
-    "sourceWidth": 66,
-    "sourceHeight": 82,
-    "bytes": 1722
   },
   {
     "file": "mg_item_desk_lantern.webp",
@@ -189,33 +162,6 @@
     "bytes": 2216
   },
   {
-    "file": "mg_item_leadership_journal.webp",
-    "source": "mg_batch_b/mg_item_leadership_journal.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "0,0,183,183",
-    "sourceWidth": 80,
-    "sourceHeight": 106,
-    "bytes": 1660
-  },
-  {
-    "file": "mg_item_market_tablet.webp",
-    "source": "mg_batch_b/mg_item_market_tablet.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "549,0,731,183",
-    "sourceWidth": 97,
-    "sourceHeight": 82,
-    "bytes": 1600
-  },
-  {
-    "file": "mg_item_reading_glasses.webp",
-    "source": "mg_batch_b/mg_item_reading_glasses.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "914,0,1097,183",
-    "sourceWidth": 131,
-    "sourceHeight": 52,
-    "bytes": 2036
-  },
-  {
     "file": "mg_item_rolled_chart.webp",
     "source": "mg_batch_b/mg_item_rolled_chart.png",
     "referenceImage": "mg_batch_b_catalog.jpg",
@@ -225,15 +171,6 @@
     "bytes": 2066
   },
   {
-    "file": "mg_item_soft_cushion.webp",
-    "source": "mg_batch_b/mg_item_soft_cushion.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "731,548,914,731",
-    "sourceWidth": 131,
-    "sourceHeight": 103,
-    "bytes": 2778
-  },
-  {
     "file": "mg_item_strategy_notebook.webp",
     "source": "mg_batch_b/mg_item_strategy_notebook.png",
     "referenceImage": "mg_batch_b_catalog.jpg",
@@ -241,24 +178,6 @@
     "sourceWidth": 96,
     "sourceHeight": 111,
     "bytes": 2306
-  },
-  {
-    "file": "mg_item_token_medallion.webp",
-    "source": "mg_batch_b/mg_item_token_medallion.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "1097,548,1280,731",
-    "sourceWidth": 109,
-    "sourceHeight": 111,
-    "bytes": 4006
-  },
-  {
-    "file": "mg_item_trading_ticket.webp",
-    "source": "mg_batch_b/mg_item_trading_ticket.png",
-    "referenceImage": "mg_batch_b_catalog.jpg",
-    "referenceCrop": "731,183,914,366",
-    "sourceWidth": 118,
-    "sourceHeight": 100,
-    "bytes": 1844
   },
   {
     "file": "mg_prop_bookshelf.webp",
@@ -288,15 +207,6 @@
     "bytes": 54362
   },
   {
-    "file": "mg_prop_execution_terminal.webp",
-    "source": "mg_batch_a/mg_prop_execution_terminal.png",
-    "referenceImage": "mg_batch_a_catalog.jpg",
-    "referenceCrop": "0,256,256,512",
-    "sourceWidth": 156,
-    "sourceHeight": 184,
-    "bytes": 4916
-  },
-  {
     "file": "mg_prop_floor_lamp.webp",
     "source": "013_lampshade_floor-lamp.png",
     "referenceImage": "mg_batch_a_catalog.jpg",
@@ -304,24 +214,6 @@
     "sourceWidth": 383,
     "sourceHeight": 1117,
     "bytes": 27232
-  },
-  {
-    "file": "mg_prop_lead_desk.webp",
-    "source": "003_jar-carving_wooden-cabinet-1.png",
-    "referenceImage": "mg_batch_a_catalog.jpg",
-    "referenceCrop": "0,0,256,256",
-    "sourceWidth": 1067,
-    "sourceHeight": 609,
-    "bytes": 48152
-  },
-  {
-    "file": "mg_prop_market_workstation.webp",
-    "source": "mg_batch_a/mg_prop_market_workstation.png",
-    "referenceImage": "mg_batch_a_catalog.jpg",
-    "referenceCrop": "256,0,512,256",
-    "sourceWidth": 158,
-    "sourceHeight": 162,
-    "bytes": 4294
   },
   {
     "file": "mg_prop_office_rug.webp",
@@ -367,33 +259,6 @@
     "sourceWidth": 101,
     "sourceHeight": 152,
     "bytes": 4110
-  },
-  {
-    "file": "mg_prop_research_desk.webp",
-    "source": "mg_batch_a/mg_prop_research_desk.png",
-    "referenceImage": "mg_batch_a_catalog.jpg",
-    "referenceCrop": "512,0,768,256",
-    "sourceWidth": 186,
-    "sourceHeight": 154,
-    "bytes": 4282
-  },
-  {
-    "file": "mg_prop_risk_desk.webp",
-    "source": "mg_batch_a/mg_prop_risk_desk.png",
-    "referenceImage": "mg_batch_a_catalog.jpg",
-    "referenceCrop": "1024,0,1280,256",
-    "sourceWidth": 174,
-    "sourceHeight": 145,
-    "bytes": 3550
-  },
-  {
-    "file": "mg_prop_strategy_workbench.webp",
-    "source": "mg_batch_a/mg_prop_strategy_workbench.png",
-    "referenceImage": "mg_batch_a_catalog.jpg",
-    "referenceCrop": "768,0,1024,256",
-    "sourceWidth": 189,
-    "sourceHeight": 167,
-    "bytes": 4870
   },
   {
     "file": "mg_prop_wall_clock.webp",

@@ -124,8 +124,8 @@ export function TopBar({
     ? latestVer
     : (diskVer && runningVer && compareVer(diskVer, runningVer) > 0)
       ? diskVer
-      : (latestVer ?? diskVer ?? '0.0.0.4.21');
-  const ver = diskVer ?? '0.0.0.4.21';
+      : (latestVer ?? diskVer ?? '0.0.0.4.33');
+  const ver = diskVer ?? '0.0.0.4.33';
 
   const [currencyCode, setCurrencyCode] = useState<string>(() => {
     try {
@@ -779,6 +779,11 @@ export function Portfolio({ state, command }: { state: DeskState; command: (t: s
   );
 }
 
+// PAPER closes run directly; TESTNET and LIVE closes send a real venue order, so ask once.
+const confirmVenueClose = (mode: string, cmd: string, lang: string) => mode === 'PAPER' || window.confirm(lang === 'id'
+  ? `Konfirmasi "${cmd}" pada mode ${mode}? Ini mengirim order ke bursa.`
+  : `Confirm "${cmd}" in ${mode} mode? This sends an order to the venue.`);
+
 export function OpenOrders({ state, command }: { state: DeskState; command?: (text: string) => Promise<{ ok: boolean; reply?: string }> | void }) {
   const { t, lang } = useI18n();
   const p = state.paper;
@@ -787,6 +792,7 @@ export function OpenOrders({ state, command }: { state: DeskState; command?: (te
   const [nError, setNError] = useState<string | null>(null);
   const runClose = async (cmd: string) => {
     if (!command || closingBusy) return;
+    if (!confirmVenueClose(state.mode, cmd, lang)) return;
     setClosingBusy(true);
     setNError(null);
     try {
@@ -868,7 +874,7 @@ export function OpenOrders({ state, command }: { state: DeskState; command?: (te
 }
 
 function OrderDetails({ state, command }: { state: DeskState; command: (text: string) => void }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const p = state.paper;
   return <div className="order-details">
       <div className="mini-charts"><AllocationBars state={state} /><EquityChart state={state} /></div>
@@ -882,7 +888,7 @@ function OrderDetails({ state, command }: { state: DeskState; command: (text: st
             <span className="sl">SL {x.stop > 0 ? fmtPx(x.stop) : 'unavailable'}{x.protectionStatus ? ` (${x.protectionStatus})` : ''}{x.tp ? <em className="tp"> TP {fmtPx(x.tp)}</em> : null}</span>
             <span>{x.leverage}x · {fmt(x.margin)}</span>
             <span className={x.unrealizedPnl >= 0 ? 'up' : 'down'}>{x.unrealizedPnl >= 0 ? '+' : ''}{fmt(x.unrealizedPnl)}</span>
-            <button className="mini" onClick={() => command(`close ${x.symbol}`)}>{t('closeBtn')}</button>
+            <button className="mini" onClick={() => { if (confirmVenueClose(state.mode, `close ${x.symbol}`, lang)) command(`close ${x.symbol}`); }}>{t('closeBtn')}</button>
           </div>
         ))}
       </div>

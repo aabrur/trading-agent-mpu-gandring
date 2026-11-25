@@ -246,7 +246,9 @@ export function Office({ state, sceneEvents, speech, fights, reactions, disagree
       const top = office.getBoundingClientRect().top + window.scrollY;
       const gap = parseFloat(getComputedStyle(stage).rowGap) || 0;
       const height = window.innerHeight - top - roster.offsetHeight - gap - 16;
-      office.style.setProperty('--office-fit-height', `${Math.max(180, height)}px`);
+      // Cap the room on very tall screens while keeping at least 60% of standard viewports.
+      const maxFit = Math.max(720, Math.ceil(window.innerHeight * 0.68));
+      office.style.setProperty('--office-fit-height', `${Math.min(maxFit, Math.max(180, height))}px`);
     };
     const observer = new ResizeObserver(fit);
     observer.observe(stage);

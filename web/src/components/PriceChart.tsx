@@ -16,7 +16,14 @@ export function PriceChart({ state, symbol, onSymbol, data, theme, timeframe, on
   const { t, lang } = useI18n();
   const id = lang === 'id';
   const [view, setView] = useState<'desk' | 'tv'>(() => state.nativeMarketPreferred ? 'desk' : state.tradingview?.widget ? 'tv' : 'desk');
-  useEffect(() => { setView(state.nativeMarketPreferred ? 'desk' : state.tradingview?.widget ? 'tv' : 'desk'); }, [state.venue?.name, state.nativeMarketPreferred, state.tradingview?.widget]);
+  // Keep the Owner's tab choice; reset only on a venue switch or when the TradingView widget is turned off.
+  const prevVenue = useRef(state.venue?.name);
+  useEffect(() => {
+    if (prevVenue.current !== state.venue?.name) {
+      prevVenue.current = state.venue?.name;
+      setView(state.nativeMarketPreferred ? 'desk' : state.tradingview?.widget ? 'tv' : 'desk');
+    } else if (!state.tradingview?.widget) setView('desk');
+  }, [state.venue?.name, state.nativeMarketPreferred, state.tradingview?.widget]);
   const tv = !!state.tradingview?.widget && view === 'tv';
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -44,11 +51,15 @@ export function PriceChart({ state, symbol, onSymbol, data, theme, timeframe, on
     const s = c.addSeries(CandlestickSeries, {
       upColor: css('--long'), downColor: css('--short'), borderUpColor: css('--long'), borderDownColor: css('--short'), wickUpColor: css('--long'), wickDownColor: css('--short'),
       priceLineVisible: false, lastValueVisible: false,
-      // keep entry, stop and take profit inside the visible price range
+      // keep nearby entry, stop and take profit levels visible without crushing the candles
       autoscaleInfoProvider: (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
         const r = original();
         if (!r || !extra.current.length) return r;
-        return { ...r, priceRange: { minValue: Math.min(r.priceRange.minValue, ...extra.current), maxValue: Math.max(r.priceRange.maxValue, ...extra.current) } };
+        const { minValue, maxValue } = r.priceRange;
+        const span = Math.max(maxValue - minValue, Math.abs(maxValue) * 0.02);
+        const near = extra.current.filter((v) => Number.isFinite(v) && v >= minValue - span * 2.5 && v <= maxValue + span * 2.5);
+        if (!near.length) return r;
+        return { ...r, priceRange: { minValue: Math.min(minValue, ...near), maxValue: Math.max(maxValue, ...near) } };
       }
     });
     const v = c.addSeries(HistogramSeries, { priceScaleId: 'volume', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });

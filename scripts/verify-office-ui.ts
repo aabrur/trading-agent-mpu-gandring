@@ -142,12 +142,12 @@ async function verifyOffice() {
   assert.equal(await page.locator('.office-orders .mini-chart, .office-orders .formula, .office-orders .positions').count(), 0);
   assert.equal(await page.locator('.portfolio .order-details .mini-chart').count(), 2);
   assert.equal(await page.locator('.studio-sign img[src="/mpu-gandring-logo.webp"]').count(), 1);
-  assert.equal(await page.locator('.studio-desk-wood').evaluateAll((desks) => new Set(desks.map((desk) => (desk as HTMLImageElement).getAttribute('src'))).size), 6, 'Each agent has a distinct supplied desk set');
+  assert.equal(await page.locator('.studio-desk-prop').evaluateAll((props) => new Set(props.map((prop) => (prop as HTMLImageElement).getAttribute('src'))).size), 6, 'Each agent has a distinct role prop on the shared desk');
   assert.equal(await page.locator('.studio-meeting-label').count(), 0);
   assert.equal(await page.locator('.studio-coffee > img[src="/office-assets/mg_prop_coffee_counter.webp"]').count(), 1);
   assert.equal(await page.locator('.meeting-book, .meeting-plant').count(), 2);
-  assert(await page.locator('[data-desk="risk"] .studio-desk-wood').getAttribute('src') === '/office-assets/mg_prop_risk_desk.webp');
-  assert(await page.locator('[data-desk="execution"] .studio-desk-wood').getAttribute('src') === '/office-assets/mg_prop_execution_terminal.webp');
+  assert.equal(await page.locator('[data-desk="risk"] .studio-desk-prop[src="/office-assets/mg_item_approval_stamp.webp"]').count(), 1);
+  assert.equal(await page.locator('[data-desk="execution"] .studio-desk-prop[src="/office-assets/mg_item_execution_stopwatch.webp"]').count(), 1);
   assert.equal((await page.locator('.office-pnl').innerText()).includes('PAPER'), false);
   assert.equal(await page.locator('.report').count(), 5);
   assert.equal(await page.locator('.report-evidence[open]').count(), 0);

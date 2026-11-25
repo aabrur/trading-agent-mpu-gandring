@@ -41,6 +41,9 @@ function getSavedConversationId(): string {
   return 'office';
 }
 
+type LiveBar = { startAt: number | string; open: number | string; high: number | string; low: number | string; close: number | string; volume?: number | string };
+export interface LiveCandle { symbol: string; closed?: Partial<Record<string, LiveBar[]>>; current?: Partial<Record<string, LiveBar>>; last?: unknown }
+
 export function useDesk() {
   const [activeConversationId, setActiveConversationId] = useState<string>(getSavedConversationId);
   const conversationId = useRef(activeConversationId);
@@ -90,47 +93,8 @@ export function useDesk() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void fetch('/api/trakteer/config')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { ok?: boolean; channelId?: string } | null) => {
-        if (cancelled || !d?.ok || !d.channelId) return;
-        const channelId = d.channelId;
-        const bind = () => {
-          if (cancelled || !window.TrakteerWS) return;
-          try {
-            window.TrakteerWS.register(channelId);
-            const onTip = (data: Record<string, unknown>) => {
-              void fetch('/api/trakteer/tip', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify(data || {})
-              }).catch(() => {});
-            };
-            window.TrakteerWS.onNewTipSuccess = onTip;
-            window.TrakteerWS.onStreamTest = onTip;
-          } catch { /* ignore */ }
-        };
-        if (window.TrakteerWS) {
-          bind();
-          return;
-        }
-        const existing = document.querySelector<HTMLScriptElement>('script[data-trakteer-ws="1"]');
-        if (existing) {
-          existing.addEventListener('load', bind, { once: true });
-          return;
-        }
-        const script = document.createElement('script');
-        script.src = 'https://assets.trakteer.id/js/trws.min.js';
-        script.async = true;
-        script.dataset.trakteerWs = '1';
-        script.onload = bind;
-        document.head.appendChild(script);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
+  // Latest streamed candle frame from the server market hub (throttled per symbol).
+  const [liveCandle, setLiveCandle] = useState<LiveCandle | null>(null);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -172,6 +136,7 @@ export function useDesk() {
           if (payload.done) setSceneEvents((events) => events.some((e) => e.id === id) ? events : [...events.slice(-11), { id, kind: 'speech', agent: payload.agent, at }]);
         }
         else if (type === 'meter') setMeter(payload);
+        else if (type === 'candle' && payload?.symbol) setLiveCandle(payload as LiveCandle);
         else if (type === 'fight') {
           const f: Fight = { ...payload, id: ++fightId.current, at: Date.now() };
           setFights((xs) => [...xs.slice(-4), f]);
@@ -221,5 +186,5 @@ export function useDesk() {
     return { ok: res.ok && result.ok, reply: result.reply || result.error || 'Office request failed.', command: result.command || 'invalid', failureKind: result.failureKind, requestId: result.requestId };
   }, []);
 
-  return { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation, deleteConversation };
+  return { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation, deleteConversation, liveCandle };
 }

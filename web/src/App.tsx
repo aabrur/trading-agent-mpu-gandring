@@ -1,4 +1,4 @@
-import { lazy, useCallback, useEffect, useState } from 'react';
+import { lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { useDesk } from './useDesk';
 import type { AgentId, CandleData, ChartTimeframe } from './types';
 import { Office } from './components/Office';
@@ -33,7 +33,7 @@ function initialTourOpen() {
 
 function AppInner() {
   const { t, lang } = useI18n();
-  const { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation, deleteConversation } = useDesk();
+  const { state, connected, speech, fights, meter, reactions, cendolBanner, dismissCendolBanner, triggerCendolTip, sceneEvents, command, activeConversationId, selectConversation, newConversation, deleteConversation, liveCandle } = useDesk();
   const [selected, setSelected] = useState<AgentId | null>(null);
   const [theme, setTheme] = useState<string>(initialTheme);
   const [symbol, setSymbol] = useState<string>('');
@@ -41,6 +41,7 @@ function AppInner() {
   const [timeframe, setTimeframe] = useState<ChartTimeframe>('15m');
   const [chartError, setChartError] = useState('');
   const [chartRetry, setChartRetry] = useState(0);
+  const prevSymRef = useRef('');
   const [setup, setSetup] = useState<boolean>(() => ['#setup', '#setup-trading-default', '#setup-trading-manual'].includes(window.location.hash));
   const [setupEntry, setSetupEntry] = useState(window.location.hash);
   const [venueKeys, setVenueKeys] = useState<boolean>(() => window.location.hash === '#venue-keys');
@@ -48,13 +49,6 @@ function AppInner() {
   const [updateOpen, setUpdateOpen] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [trakteerOpen, setTrakteerOpen] = useState<boolean>(false);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setTrakteerOpen(true);
-    }, 60 * 60_000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     const h = () => {
@@ -105,7 +99,8 @@ function AppInner() {
     if (!sym) return;
     const controller = new AbortController();
     let timer: number;
-    setCandles(null);
+    // Clear only on a symbol switch so periodic refreshes never blank the chart.
+    if (prevSymRef.current !== sym) { setCandles(null); prevSymRef.current = sym; }
     setChartError('');
     const load = async () => {
       try {
@@ -122,6 +117,26 @@ function AppInner() {
     void load();
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [sym, timeframe, chartRetry]);
+
+  // Merge the streamed WS candle into the loaded series so the chart moves in real time.
+  useEffect(() => {
+    if (!liveCandle || liveCandle.symbol !== sym) return;
+    const closed = liveCandle.closed?.[timeframe];
+    const bar = liveCandle.current?.[timeframe] ?? (closed && closed.length ? closed[closed.length - 1] : undefined);
+    if (!bar) return;
+    const startMs = Number(bar.startAt);
+    const time = Math.floor(startMs > 1e12 ? startMs / 1000 : startMs);
+    const open = Number(bar.open), high = Number(bar.high), low = Number(bar.low), close = Number(bar.close), vol = Number(bar.volume);
+    if (![time, open, high, low, close].every(Number.isFinite)) return;
+    setCandles((cur) => {
+      if (!cur || cur.symbol !== sym || (cur.tf && cur.tf !== timeframe) || !cur.candles.length) return cur;
+      const last = cur.candles[cur.candles.length - 1]!;
+      if (time < last.time) return cur;
+      const candle = { time, open, high, low, close, volume: Number.isFinite(vol) ? vol : undefined };
+      const candles = time === last.time ? [...cur.candles.slice(0, -1), candle] : [...cur.candles, candle];
+      return { ...cur, candles, last: close };
+    });
+  }, [liveCandle, sym, timeframe]);
 
   if (!state) {
     return (

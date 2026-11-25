@@ -138,7 +138,7 @@ export function PreferencesSetup() {
           {numeric('debateInterval', t('setupDeskDebateInterval'), 1, 1440)}
           {numeric('reportInterval', t('setupDeskReportInterval'), 1, 1440)}
         </div>
-        <p className="wallet-note">{lang === 'id' ? 'Pratinjau alokasi (Rumus Safety Net & Auto-Hedge):' : 'Allocation preview (Safety Net & Auto-Hedge Formula):'} {t('moneyTrade')} {(values.balance * 0.6).toFixed(2)} USDT (60%) · {t('safetyNet')} {values.safetyNet.toFixed(2)} USDT · {lang === 'id' ? 'per slot' : 'per slot'} {((Math.max(0, values.balance - values.safetyNet)) / (values.n || 1)).toFixed(2)} USDT · Trigger Auto-Hedge -{(values.safetyNet * 0.625).toFixed(2)} USDT · Buffer {(values.safetyNet * 0.375).toFixed(2)} USDT.</p>
+        <p className="wallet-note">{lang === 'id' ? 'Pratinjau alokasi (Rumus Safety Net & Auto-Hedge):' : 'Allocation preview (Safety Net & Auto-Hedge Formula):'} {t('moneyTrade')} {Math.max(0, values.balance - values.safetyNet).toFixed(2)} USDT ({values.balance > 0 ? Math.round((Math.max(0, values.balance - values.safetyNet) / values.balance) * 100) : 0}%) · {t('safetyNet')} {values.safetyNet.toFixed(2)} USDT · {lang === 'id' ? 'per slot' : 'per slot'} {((Math.max(0, values.balance - values.safetyNet)) / (values.n || 1)).toFixed(2)} USDT · Trigger Auto-Hedge -{(values.safetyNet * 0.625).toFixed(2)} USDT · Buffer {(values.safetyNet * 0.375).toFixed(2)} USDT.</p>
         <label className="setup-check"><input type="checkbox" checked={values.auto} onChange={(e) => setValues({ ...values, auto: e.target.checked })} /> {t('setupDeskAutoScheduleCheck')}</label>
         <p className="field-help">{t('setupDeskAutoScheduleHelp')}</p>
         <div className="setup-nav">
