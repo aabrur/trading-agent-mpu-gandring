@@ -350,7 +350,7 @@ export class BybitMarketHub {
         const klineBody = await this.fetchLinearJson('/v5/market/kline', {
           symbol,
           interval: BYBIT_INTERVAL_BY_TF[tf],
-          limit: '200'
+          limit: '250'
         });
         const observedAt = Date.now();
         const sourceAt = Number(klineBody.time ?? observedAt);
@@ -406,7 +406,7 @@ export class BybitMarketHub {
       const klineBody = await this.fetchLinearJson('/v5/market/kline', {
         symbol,
         interval: BYBIT_INTERVAL_BY_TF[tf],
-        limit: '200'
+        limit: '250'
       });
       const observedAt = Date.now();
       const sourceAt = Number(klineBody.time ?? observedAt);

@@ -60,8 +60,7 @@ export class ReportsService {
   private runtime: OfficeRuntime | null = null;
 
   constructor() {
-    // Generate initial startup report
-    this.createStartupReport();
+    // Initial report is generated from live runtime state inside start(runtime) so PAPER defaults never leak into LIVE.
   }
 
   public start(runtime: OfficeRuntime, intervalMin = 60): void {
@@ -69,11 +68,15 @@ export class ReportsService {
     if (this.timer) {
       clearInterval(this.timer);
     }
-    const snap = runtime.snapshot();
-    if ((!snap.reports || snap.reports.length === 0) && this.reports.length > 0 && runtime.updateState) {
-      runtime.updateState((draft) => {
-        draft.reports = [...this.reports];
-      });
+    if (this.reports.length === 0) {
+      this.generateReportNow(runtime, { broadcast: false });
+    } else {
+      const snap = runtime.snapshot();
+      if ((!snap.reports || snap.reports.length === 0) && runtime.updateState) {
+        runtime.updateState((draft) => {
+          draft.reports = [...this.reports];
+        });
+      }
     }
     const intervalMs = Math.max(1, intervalMin) * 60_000;
     this.timer = setInterval(() => {
@@ -91,40 +94,11 @@ export class ReportsService {
     }
   }
 
-  private createStartupReport(): void {
-    const now = Date.now();
-    this.reports.push({
-      id: `rep-${now.toString(36)}`,
-      at: now,
-      since: now - 3600000,
-      mode: 'PAPER',
-      exchange: null,
-      balance: 1000,
-      safetyNet: 200,
-      moneyTrade: 800,
-      n: 3,
-      perOrder: 266.66,
-      equity: 1000,
-      unrealized: 0,
-      realized: 0,
-      dailyLoss: { limitPct: 10, hit: false },
-      auto: { on: false, cycles: 0, intervalMin: 15 },
-      positions: [],
-      opened: [],
-      closed: [],
-      skipped: [],
-      scorecard: [],
-      lessons: [],
-      scan: [],
-      text: `Desk report ${new Date(now).toISOString()}\nMode: PAPER. Kill switch: OFF. Office: UP.\nEquity: 1000 USDT (balance 1000, safety net 200, Money Trade 800). Today: 0 USDT.\nPositions: none.`
-    });
-  }
-
   public listReports(): Report[] {
     return [...this.reports];
   }
 
-  public generateReportNow(runtime: OfficeRuntime): Report {
+  public generateReportNow(runtime: OfficeRuntime, options: { broadcast?: boolean } = {}): Report {
     this.sequence += 1;
     const now = Date.now();
     const state = runtime.snapshot();
@@ -222,10 +196,12 @@ export class ReportsService {
       });
     }
 
-    // Broadcast report text to channels
-    void broadcastChannelMessage(process.env, reportText).catch((err: unknown) => {
-      console.error('[reports] failed to broadcast report to channels:', (err as Error)?.message);
-    });
+    if (options.broadcast !== false) {
+      // Broadcast report text to channels
+      void broadcastChannelMessage(process.env, reportText).catch((err: unknown) => {
+        console.error('[reports] failed to broadcast report to channels:', (err as Error)?.message);
+      });
+    }
 
     return report;
   }

@@ -2,6 +2,15 @@
 
 All notable changes to Trading Agent Mpu Gandring are documented in this file.
 
+## [v0.0.0.4.34] - 2026-11-27
+
+### Added & Fixed
+- **Sovereign Exchange Order-Cost Sizing & Floor Precision (Fixes Bybit `110007`)**: Extended `sizeSovereignOrderQuantity` in `server/v2/execution/decimal.ts` with exact Bybit V5 Order Cost accounting (`IM + open taker fee + bankruptcy close taker fee + 5 bps market-fill cushion`), replaced upward `Math.round` with `floorUsdt` across all allocatable balance/margin calculations in `server/v2/runtime.ts`, and capped live/testnet sizing by actual free venue balance without ever altering Owner `safetyNet`, `orderSizePct`, `N`, or `leverage`.
+- **Zero Hidden Gates or Throttling**: Removed the hidden 80% daily loss pre-throttle (now triggers strictly at 100% of Owner `dailyLossLimitPct`), removed `SYSTEMIC_RISK_OFF` long blocks, `REJECT_COOLDOWN` penalties, hardcoded `INSUFFICIENT_NOTIONAL` score drops, and Stage 4 `< 50` candidate dropping in `server/v2/runtime.ts` and `server/v2/market/opportunity.ts`, and reinforced anti-paternalistic Owner sovereignty in `server/v2/agents/roles.ts`.
+- **Real-Time Indicator & Data Completeness**: Increased Bybit kline REST bootstrap/backfill `limit` from `200` to `250` in `server/v2/market/bybit.ts` so `ema200` populates immediately across `15m`, `1h`, `4h`, and `1d`; increased `quantFactors` (`roc5`, `roc20`, `vwap20Ratio`) rounding precision from 2 to 4 decimals in `server/v2/api/chat.ts` and `server/v2/runtime.ts`; added bounded 5-minute TTL `liveNews` refresh across active watchlist symbols during `/ask`; and synced `state.dailyLoss.limitPct` and `startEquity` with active settings and LIVE equity.
+- **Accurate Startup Reports & Windows Stability**: Removed hardcoded `PAPER / 1000 USDT` dummy startup report from `ReportsService` (`server/v2/reports.ts`) in favor of a real initial snapshot generated on `start()` (without startup channel broadcast spam), and replaced recurring `AbortSignal.any([signal, AbortSignal.timeout(35_000)])` handle churn in `TelegramPoller` (`server/v2/channels.ts`) with a clean per-request `AbortController` + `clearTimeout` lifecycle.
+- **Complete Local AI Agent Model Refresh (All 16 CLIs)**: Updated Antigravity (`agy`) strictly to `gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`, `claude-opus-5-5`, and `claude-sonnet-5-5` (removing all `gemini-3.8-flash-*`, `gemini-4-argon-*`, and `gpt-oss-120b-medium`), and refreshed all 15 remaining local CLI agents (`codex`, `claude`, `gemini`, `pi`, `kimi`, `kilo`, `cline`, `grok`, `hermes`, `openclaw`, `copilot`, `cursor`, `qwen`, `opencode`, `muse`) across `server/v2/agents/local.ts`, `server/providers/local.ts`, `server/v2/settings/model-catalog.ts`, and `web/src/components/LocalAgentsSetup.tsx`.
+
 ## [v0.0.0.4.33] - 2026-11-25
 
 ### Added & Improved

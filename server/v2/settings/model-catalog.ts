@@ -1,7 +1,7 @@
 import { API_PROVIDERS, type ApiProviderId } from './schema.js';
 import { LOCAL_CLI_AGENTS } from '../agents/local.js';
 
-export const MODEL_CATALOG_DATE = '2026-11-01';
+export const MODEL_CATALOG_DATE = '2026-11-27';
 export const USAGE_SOURCE = { url: 'https://openrouter.ai/rankings', asOf: '2026-11-01', period: '7 days' };
 
 export const MODEL_KEY_ENV: Record<ApiProviderId, string> = {

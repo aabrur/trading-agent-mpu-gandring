@@ -159,20 +159,19 @@ describe('Fast Reflex & End-to-End Trading Lifecycle Hardening', () => {
       })
     } as any;
 
-    it('Stage 1: drops score to 15 when effective notional is below minimum', () => {
-      // 10 USDT allocated margin * 1x leverage = 10 USDT < minNotional 20 USDT
+    it('preserves sovereign non-blocking ranking without hidden minNotional drop', () => {
       const evaluated = evaluateWatchlistOpportunity('TESTUSDT', mockHub, {
         allocatedMarginUsdt: 10,
         leverage: 1,
         minNotionalUsdt: 20
       });
 
-      expect(evaluated.score).toBe(15);
-      expect(evaluated.reasons.some((r) => r.startsWith('INSUFFICIENT_NOTIONAL'))).toBe(true);
-      expect(evaluated.bias).toBe('NEUTRAL');
+      expect(evaluated.score).toBeGreaterThanOrEqual(50);
+      expect(evaluated.reasons.some((r) => r.startsWith('INSUFFICIENT_NOTIONAL'))).toBe(false);
+      expect(evaluated.bias).toBe('BULLISH');
     });
 
-    it('Stage 1: applies cooldown penalty of -20 if recently rejected', () => {
+    it('preserves sovereign non-blocking ranking without hidden reject cooldown penalty', () => {
       const normal = evaluateWatchlistOpportunity('TESTUSDT', mockHub, {
         allocatedMarginUsdt: 50,
         leverage: 5,
@@ -187,11 +186,11 @@ describe('Fast Reflex & End-to-End Trading Lifecycle Hardening', () => {
         rejectedRecently: true
       });
 
-      expect(cooled.score).toBeLessThan(normal.score);
-      expect(cooled.reasons.some((r) => r.startsWith('REJECT_COOLDOWN'))).toBe(true);
+      expect(cooled.score).toBe(normal.score);
+      expect(cooled.reasons.some((r) => r.startsWith('REJECT_COOLDOWN'))).toBe(false);
     });
 
-    it('Stage 2: neutralizes bullish bias and docks score when Systemic Risk-Off is active', () => {
+    it('preserves bullish bias without hidden systemicRiskOff veto while still skipping session 10029 symbols', () => {
       const normal = evaluateWatchlistOpportunity('BULLCOIN', mockHub, {
         systemicRiskOff: false
       });
@@ -200,9 +199,15 @@ describe('Fast Reflex & End-to-End Trading Lifecycle Hardening', () => {
       const riskOff = evaluateWatchlistOpportunity('BULLCOIN', mockHub, {
         systemicRiskOff: true
       });
-      expect(riskOff.bias).toBe('NEUTRAL');
-      expect(riskOff.score).toBeLessThan(normal.score);
-      expect(riskOff.reasons.some((r) => r.startsWith('SYSTEMIC_RISK_OFF'))).toBe(true);
+      expect(riskOff.bias).toBe('BULLISH');
+      expect(riskOff.score).toBe(normal.score);
+      expect(riskOff.reasons.some((r) => r.startsWith('SYSTEMIC_RISK_OFF'))).toBe(false);
+
+      const skipped10029 = evaluateWatchlistOpportunity('HYPEUSDT', mockHub, {
+        nonWhitelistedSymbols: new Set(['HYPEUSDT'])
+      });
+      expect(skipped10029.score).toBe(0);
+      expect(skipped10029.reasons).toContain('SYMBOL_NOT_WHITELISTED_10029');
     });
   });
 

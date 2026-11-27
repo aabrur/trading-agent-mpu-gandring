@@ -814,9 +814,14 @@ export class TelegramPoller {
   private async pollLoop(signal: AbortSignal): Promise<void> {
     let failures = 0;
     while (!signal.aborted && this.running) {
+      const reqCtrl = new AbortController();
+      const onParentAbort = () => reqCtrl.abort();
+      signal.addEventListener('abort', onParentAbort, { once: true });
+      const reqTimer = setTimeout(() => reqCtrl.abort(), 35_000);
+      reqTimer.unref?.();
       try {
         const url = `https://api.telegram.org/bot${this.token}/getUpdates?timeout=25&offset=${this.offset}&allowed_updates=["message"]`;
-        const res = await this.fetchImpl(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]) });
+        const res = await this.fetchImpl(url, { signal: reqCtrl.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as {
           ok?: boolean;
@@ -851,6 +856,9 @@ export class TelegramPoller {
         failures++;
         const backoff = Math.min(60_000, 5000 * Math.min(failures, 6));
         await new Promise((r) => setTimeout(r, backoff));
+      } finally {
+        clearTimeout(reqTimer);
+        signal.removeEventListener('abort', onParentAbort);
       }
     }
   }

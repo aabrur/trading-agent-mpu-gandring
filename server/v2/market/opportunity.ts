@@ -62,23 +62,6 @@ export function evaluateWatchlistOpportunity(
       return { symbol: cleanSym, score: base, reasons: ['Price feed unavailable'], bias: 'NEUTRAL' };
     }
 
-    if (opts?.allocatedMarginUsdt && opts?.leverage && opts?.minNotionalUsdt) {
-      const effectiveNotional = opts.allocatedMarginUsdt * opts.leverage;
-      if (effectiveNotional < opts.minNotionalUsdt) {
-        return {
-          symbol: cleanSym,
-          score: 15,
-          reasons: [`INSUFFICIENT_NOTIONAL (${effectiveNotional.toFixed(1)} < min ${opts.minNotionalUsdt})`],
-          bias: 'NEUTRAL'
-        };
-      }
-    }
-
-    if (opts?.rejectedRecently) {
-      base = Math.max(20, base - 20);
-      reasons.push('REJECT_COOLDOWN (-20)');
-    }
-
     const closed15m = frame.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
     const closed1h = frame.closed?.['1h']?.filter((b) => b.confirmed) ?? [];
     const closed5m = frame.closed?.['5m']?.filter((b) => b.confirmed) ?? [];
@@ -157,17 +140,9 @@ export function evaluateWatchlistOpportunity(
     if (opposing > 0) reasons.push(`CONFLICT (-${opposing})`);
     if (reasons.length === 0) reasons.push('CONSOLIDATION');
 
-    let effectiveDominant = dominant;
-    let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = bull > bear ? 'BULLISH' : bear > bull ? 'BEARISH' : 'NEUTRAL';
+    const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = bull > bear ? 'BULLISH' : bear > bull ? 'BEARISH' : 'NEUTRAL';
 
-    if (opts?.systemicRiskOff && bias === 'BULLISH') {
-      reasons.push('SYSTEMIC_RISK_OFF (bullish long blocked -30)');
-      bias = 'NEUTRAL';
-      effectiveDominant = 0;
-      base = Math.max(20, base - 30);
-    }
-
-    return { symbol: cleanSym, score: Math.max(0, base + effectiveDominant - opposing), reasons, bias };
+    return { symbol: cleanSym, score: Math.max(0, base + dominant - opposing), reasons, bias };
   } catch (err) {
     return { symbol: cleanSym, score: 35, reasons: [`Evaluation error: ${(err as Error).message}`], bias: 'NEUTRAL' };
   }

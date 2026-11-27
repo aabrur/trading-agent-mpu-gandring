@@ -505,10 +505,10 @@ export function buildLiveDeskChatContext(
                 quantFactors = {
                   compositeScore: roundRatioMetric(alpha.compositeScore, 3),
                   regime: alpha.regime,
-                  roc5: roundRatioMetric(alpha.roc5, 2),
-                  roc20: roundRatioMetric(alpha.roc20, 2),
-                  vwap20Ratio: roundRatioMetric(alpha.vwap20Ratio, 2),
-                  rsv14: roundRatioMetric(alpha.rsv14, 1)
+                  roc5: roundRatioMetric(alpha.roc5, 4),
+                  roc20: roundRatioMetric(alpha.roc20, 4),
+                  vwap20Ratio: roundRatioMetric(alpha.vwap20Ratio, 4),
+                  rsv14: roundRatioMetric(alpha.rsv14, 2)
                 };
               }
             } catch {}

@@ -119,6 +119,11 @@ function roundRatioMetric(val: number | null | undefined, decimals = 2): number 
   return Math.round(val * factor) / factor;
 }
 
+function floorUsdt(val: number): number {
+  if (!Number.isFinite(val)) return 0;
+  return Math.floor(Math.max(0, val) * 100) / 100;
+}
+
 export class StartupValidationError extends Error {
   constructor(message: string, public readonly exitCode = 2) {
     super(message);
@@ -498,6 +503,7 @@ export function createReplacementRuntime(
   options: ReplacementRuntimeOptions = {}
 ): ReplacementRuntimeHandle {
   const newsBriefingsBySymbol = new Map<string, unknown>();
+  const newsBriefingFetchedAt = new Map<string, number>();
   const hub = new OfficeEventHub();
   const env = options.env ?? process.env;
   let state = createInitialOfficeState({
@@ -610,7 +616,7 @@ export function createReplacementRuntime(
   ));
   const initN = Math.max(1, Number.isFinite(rawN) ? rawN : 3);
 
-  const moneyTrade = Math.round(Math.max(0, initBal - initSafety) * 100) / 100;
+  const moneyTrade = floorUsdt(initBal - initSafety);
   const orderSizePct = savedTrading?.orderSizePct === 1.5 ? null : (savedTrading?.orderSizePct ?? null);
   const perOrder = ownerAllocationPerOrder(moneyTrade, initN, orderSizePct);
   const canOpen = perOrder > 0 && (options.initialPositions ? options.initialPositions.length < initN : true);
@@ -714,6 +720,13 @@ export function createReplacementRuntime(
       maxLeverage: initLev
     };
     state.paper.maxLeverage = state.trading.values.maxLeverage;
+    state.dailyLoss = {
+      ...state.dailyLoss,
+      limitPct: state.trading.values.dailyLossLimitPct,
+      startEquity: state.dailyLoss.startEquity > 0 ? state.dailyLoss.startEquity : initBal
+    };
+  } else if (state.dailyLoss && state.dailyLoss.startEquity <= 0 && initBal > 0) {
+    state.dailyLoss.startEquity = initBal;
   }
 
   const snapshot = (): OfficeState => structuredClone(state);
@@ -1226,10 +1239,10 @@ export function createReplacementRuntime(
               quantFactors = {
                 compositeScore: roundRatioMetric(alpha.compositeScore, 3),
                 regime: alpha.regime,
-                roc5: roundRatioMetric(alpha.roc5, 2),
-                roc20: roundRatioMetric(alpha.roc20, 2),
-                vwap20Ratio: roundRatioMetric(alpha.vwap20Ratio, 2),
-                rsv14: roundRatioMetric(alpha.rsv14, 1)
+                roc5: roundRatioMetric(alpha.roc5, 4),
+                roc20: roundRatioMetric(alpha.roc20, 4),
+                vwap20Ratio: roundRatioMetric(alpha.vwap20Ratio, 4),
+                rsv14: roundRatioMetric(alpha.rsv14, 2)
               };
             }
           } catch {
@@ -1397,6 +1410,7 @@ export function createReplacementRuntime(
       cryptopanicKey || liveAnnouncements.length > 0 || publicNews.length > 0 ? 'CONFIGURED_LIVE' : 'UNCONFIGURED'
     );
     newsBriefingsBySymbol.set(targetSymbol, newsBriefing);
+    newsBriefingFetchedAt.set(targetSymbol, Date.now());
     const cmcSummary = catalystRes.status === 'fulfilled' ? catalystRes.value : null;
 
     const multiVenue = {
@@ -1516,9 +1530,9 @@ export function createReplacementRuntime(
       ? snap.paper.balance
       : (snap.financial.balance.value ?? snap.paper.balance);
     const safetyNet = snap.paper.safetyNet ?? 0;
-    const moneyTradeBudget = Math.max(0, Math.round((balance - safetyNet) * 100) / 100);
+    const moneyTradeBudget = floorUsdt(balance - safetyNet);
     const usedMargin = Math.round(((snap.paper.usedMargin ?? 0) > 0 ? snap.paper.usedMargin : (snap.venueAccount?.positions?.reduce((acc: number, p: any) => acc + (Number(p.margin) || 0), 0) ?? 0)) * 100) / 100;
-    const freeAllocatableMargin = Math.max(0, Math.round((moneyTradeBudget - usedMargin) * 100) / 100);
+    const freeAllocatableMargin = floorUsdt(moneyTradeBudget - usedMargin);
     const perOrderAllocation = resolveOwnerPerOrderUsdt(snap.paper);
 
     const pendingOrdersList = (snap.venueAccount as any)?.pendingOrders ?? [];
@@ -2127,7 +2141,13 @@ export function createReplacementRuntime(
             kind: 'execution',
             text: `${targetSymbol}: executed with ${hasValidThesisStop ? 'tactical desk SL' : 'profile SL'} ${stopPrice} and ${hasValidThesisTp ? 'tactical desk TP' : 'profile TP'} ${tpPrice}.`
           });
-          const margin = Math.round(perOrder * 100) / 100;
+          const rawVenueAvail = currentSnap.mode !== 'PAPER'
+            ? Number(currentSnap.venueAccount?.available ?? currentSnap.financial.availableBalance.value)
+            : NaN;
+          const effectivePerOrder = currentSnap.mode !== 'PAPER' && Number.isFinite(rawVenueAvail) && rawVenueAvail > 0
+            ? Math.min(perOrder, rawVenueAvail)
+            : perOrder;
+          const margin = floorUsdt(effectivePerOrder);
           const activeAdapter = options.getVenueAdapter?.() ?? options.venueAdapter;
           const instRules = activeAdapter ? await activeAdapter.instruments(targetSymbol).catch(() => null) : null;
           const fallbackStep = entryPrice > 0 && entryPrice < 0.01 ? '1' : '0.0001';
@@ -2137,7 +2157,10 @@ export function createReplacementRuntime(
             entryPrice,
             qtyStep: instRules?.qtyStep ?? fallbackStep,
             minQty: instRules?.minQty ?? null,
-            contractMultiplier: instRules?.contractMultiplier ?? '1'
+            contractMultiplier: instRules?.contractMultiplier ?? '1',
+            takerFeeRate: currentSnap.mode === 'PAPER' ? 0 : 0.00075,
+            side,
+            orderType: thesisOrderType
           });
           const qty = sizedQty.ok ? Number(sizedQty.qty) : 0;
 
@@ -2553,13 +2576,13 @@ export function createReplacementRuntime(
       // =========================================================================
       // FASE 2: CANDIDATE DISCOVERY (Kondisional: Hanya Jika freeSlots > 0)
       // =========================================================================
-      // 1. Guard pemakaian batas rugi harian: jika >= 80% cap terpakai, skip candidate discovery
+      // 1. Owner daily loss cap guard (exact 100% of configured dailyLossLimitPct, matching ExecutionGateway)
       const startEquity = postPhase1Snap.dailyLoss?.startEquity || (postPhase1Snap.paper?.balance ?? 100);
       const limitPct = postPhase1Snap.trading?.values?.dailyLossLimitPct ?? postPhase1Snap.dailyLoss?.limitPct ?? 10;
       const dailyCapUsdt = (startEquity * limitPct) / 100;
       const currentRealizedPnl = Number(postPhase1Snap.financial?.realizedPnl?.value ?? 0);
-      if (dailyCapUsdt > 0 && currentRealizedPnl < 0 && Math.abs(currentRealizedPnl) >= dailyCapUsdt * 0.8) {
-        const skipLossMsg = `[CYCLE] Daily loss usage (${Math.abs(currentRealizedPnl).toFixed(2)}/${dailyCapUsdt.toFixed(2)} USDT) reached >= 80% of limit. Skipping candidate discovery to preserve remaining capital.`;
+      if (dailyCapUsdt > 0 && currentRealizedPnl < 0 && Math.abs(currentRealizedPnl) >= dailyCapUsdt) {
+        const skipLossMsg = `[CYCLE] Daily loss cap reached (${Math.abs(currentRealizedPnl).toFixed(2)}/${dailyCapUsdt.toFixed(2)} USDT, ${limitPct}%). Halting new candidate entries.`;
         hub.emit('log', { at: Date.now(), kind: 'system', text: skipLossMsg });
         return lastResult ?? { ok: true, message: skipLossMsg };
       }
@@ -2578,73 +2601,12 @@ export function createReplacementRuntime(
         return lastResult ?? { ok: true, message: 'No eligible candidate symbols remaining in watchlist.' };
       }
 
-      // 2. Cross-Market Breadth Filter
-      const breadthSymbols = postPhase1Snap.auto.symbols;
-      const crossMarketTickers: Record<string, any> = {};
-      for (const s of breadthSymbols) {
-        const snap = marketHub?.snapshot(s);
-        let change15m: number | undefined;
-        let relVol15m: number | undefined;
-        let trend15m: string | undefined;
-        try {
-          const closed15m = snap?.closed?.['15m']?.filter((b) => b.confirmed) ?? [];
-          if (closed15m.length >= 2) {
-            const lastBar = closed15m[closed15m.length - 1];
-            const prevBar = closed15m[closed15m.length - 2];
-            const lastClose = Number(lastBar.close);
-            const prevClose = Number(prevBar.close);
-            if (prevClose > 0) {
-              change15m = Math.round(((lastClose - prevClose) / prevClose) * 10000) / 100;
-            }
-            trend15m = lastClose >= Number(lastBar.open) ? 'UPTREND' : 'DOWNTREND';
-            const last20 = closed15m.slice(-20);
-            const avgVol = last20.reduce((sum, b) => sum + (Number(b.volume) || 0), 0) / Math.max(1, last20.length);
-            if (avgVol > 0) {
-              relVol15m = Math.round((Number(lastBar.volume) / avgVol) * 10) / 10;
-            }
-          }
-        } catch {}
-        if (snap?.last?.value) {
-          crossMarketTickers[s] = {
-            last: Number(snap.last.value),
-            change15m,
-            relVol15m,
-            trend15m,
-            change24hPct: snap.price24hPcnt ? Number(snap.price24hPcnt) * 100 : undefined
-          };
-        }
-      }
-      const crossBreadth = computeCrossMarketBreadth(crossMarketTickers, breadthSymbols);
-      const isSystemicRiskOff = crossBreadth.regime === 'SYSTEMIC_RISK_OFF';
-
-      // 3. Pre-screening & Opportunity Ranking seluruh kandidat di watchlist (Funnel Stages 1-3)
-      const currentBalance = postPhase1Snap.paper.balance ?? 100;
-      const allocatedMargin = maxN > 0 ? currentBalance / maxN : 5;
-      const effectiveLeverage = postPhase1Snap.trading?.values?.maxLeverage ?? 5;
-      const minNotionalUsdt = 5.0;
-
-      const rankedCandidates = rawCandidates.map((sym) => {
-        let rejectedRecently = false;
-        if (rejectCache.has(sym)) {
-          const cached = rejectCache.get(sym)!;
-          const ageMs = Date.now() - cached.at;
-          const currPrice = Number(marketHub?.snapshot(sym)?.last?.value ?? 0);
-          const priceDiffPcnt = cached.price > 0 && currPrice > 0 ? Math.abs(currPrice - cached.price) / cached.price : 0;
-          if (ageMs < 15 * 60 * 1000 && priceDiffPcnt < 0.02) {
-            rejectedRecently = true;
-          } else if (ageMs >= 15 * 60 * 1000 || priceDiffPcnt >= 0.02) {
-            rejectCache.delete(sym);
-          }
-        }
-        return evaluateWatchlistOpportunity(sym, marketHub, {
-          allocatedMarginUsdt: allocatedMargin,
-          leverage: effectiveLeverage,
-          minNotionalUsdt,
-          systemicRiskOff: isSystemicRiskOff,
-          rejectedRecently,
+      // 2. Non-blocking priority ranking across Owner's watchlist (zero hidden vetoes, cooldowns, or score cutoffs)
+      const rankedCandidates = rawCandidates.map((sym) =>
+        evaluateWatchlistOpportunity(sym, marketHub, {
           nonWhitelistedSymbols
-        });
-      });
+        })
+      );
       rankedCandidates.sort((a, b) => b.score - a.score);
 
       const rankingSummary = rankedCandidates
@@ -2657,17 +2619,9 @@ export function createReplacementRuntime(
         text: `[WATCHLIST SCREEN] Evaluated ${rankedCandidates.length} candidate(s): ${rankingSummary}. Prioritizing top opportunities.`
       });
 
-      // 4. Stage 4: Top-K Promotion (Score >= 60 high conviction, utilizing up to freeSlots)
-      let promotedCandidates = rankedCandidates.filter((c) => c.score >= 60).slice(0, freeSlots);
-      if (promotedCandidates.length === 0 && rankedCandidates.length > 0) {
-        const viable = rankedCandidates.filter((c) => c.score >= 50);
-        if (viable.length > 0) {
-          promotedCandidates = viable.slice(0, freeSlots);
-        } else if (reason === 'owner') {
-          // Explicit owner command: do not drop candidates on score
-          promotedCandidates = rankedCandidates.slice(0, Math.min(freeSlots, 1));
-        }
-      }
+      // Promote top freeSlots eligible candidates directly to 6-agent debate (only skip venue-confirmed 10029 symbols in this session)
+      const eligibleCandidates = rankedCandidates.filter((c) => !nonWhitelistedSymbols.has(c.symbol));
+      const promotedCandidates = eligibleCandidates.slice(0, freeSlots);
 
       if (promotedCandidates.length > 0) {
         updateState((draft) => {
@@ -2685,7 +2639,7 @@ export function createReplacementRuntime(
       }
 
       if (promotedCandidates.length === 0) {
-        const noPromoMsg = `[WATCHLIST SCREEN] No candidates reached promotion threshold. Discovery completed.`;
+        const noPromoMsg = `[WATCHLIST SCREEN] No eligible candidates remaining for this session. Discovery completed.`;
         hub.emit('log', { at: Date.now(), kind: 'system', text: noPromoMsg });
         return lastResult ?? { ok: true, message: noPromoMsg };
       }
@@ -2852,6 +2806,83 @@ export function createReplacementRuntime(
         try {
           await options.syncVenueAccount();
         } catch {}
+      }
+      if (!env.VITEST && env.CI !== 'true') {
+        const activeSnap = snapshot();
+        const watchlistSyms = Array.from(
+          new Set(
+            (activeSnap.watchlist?.length ? activeSnap.watchlist : activeSnap.auto.symbols)
+              .map((s) => s.toUpperCase())
+              .filter(Boolean)
+          )
+        ).slice(0, 12);
+        const nowNewsMs = Date.now();
+        const staleSyms = watchlistSyms.filter((sym) => nowNewsMs - (newsBriefingFetchedAt.get(sym) ?? 0) > 5 * 60_000);
+        if (staleSyms.length > 0) {
+          const cryptopanicKey = options.secrets?.getSecret('CRYPTOPANIC_API_KEY') || env.CRYPTOPANIC_API_KEY || '';
+          const refreshTask = Promise.allSettled(
+            staleSyms.map(async (sym) => {
+              const [newsRes, liveAnnounceRes, publicNewsRes] = await Promise.allSettled([
+                cryptopanicKey
+                  ? getNewsFor(sym, {
+                      tradingMode: activeSnap.mode,
+                      news: {
+                        provider: 'cryptopanic',
+                        key: cryptopanicKey,
+                        baseUrl: 'https://cryptopanic.com/api/v1/posts/'
+                      }
+                    })
+                  : Promise.resolve([]),
+                getLiveAnnouncementsResult(sym),
+                fetchPublicCryptoNews(sym, fetch)
+              ]);
+              const newsItems = newsRes.status === 'fulfilled' ? (newsRes.value ?? []) : [];
+              const liveAnnouncements = liveAnnounceRes.status === 'fulfilled' ? (liveAnnounceRes.value?.items ?? []) : [];
+              const publicNews = publicNewsRes.status === 'fulfilled' ? publicNewsRes.value : [];
+              const publicNewsNormalized = publicNews.map((pn, i) => {
+                const isSpecific = pn.targetScope === 'SYMBOL_SPECIFIC' || (pn.matchedSymbol && pn.matchedSymbol === sym);
+                return {
+                  id: `public-news-${Date.now()}-${i}`,
+                  symbol: isSpecific ? sym : 'MARKET',
+                  targetScope: isSpecific ? 'SYMBOL_SPECIFIC' : 'GENERAL_MARKET',
+                  headline: pn.title,
+                  body: pn.body,
+                  source: pn.publisher,
+                  sourceUrl: pn.url,
+                  sentiment: 'neutral' as const,
+                  example: false,
+                  publishedAt: pn.publishedAt ?? null,
+                  observedAt: Date.now()
+                };
+              });
+              const combined = [...liveAnnouncements, ...newsItems, ...publicNewsNormalized];
+              const filtered = combined.filter((item: any) => {
+                const s = item.symbol ? String(item.symbol).toUpperCase() : '';
+                return s === sym || s === 'MARKET' || item.targetScope === 'GENERAL_MARKET';
+              });
+              const normalized = filtered.map((item) => normalizeLegacyItem(item, sym));
+              const briefing = buildNewsBriefing(
+                sym,
+                normalized,
+                cryptopanicKey || liveAnnouncements.length > 0 || publicNews.length > 0 ? 'CONFIGURED_LIVE' : 'UNCONFIGURED'
+              );
+              newsBriefingsBySymbol.set(sym, briefing);
+              newsBriefingFetchedAt.set(sym, Date.now());
+            })
+          );
+          let newsTimeout: ReturnType<typeof setTimeout> | null = null;
+          try {
+            await Promise.race([
+              refreshTask,
+              new Promise<void>((resolve) => {
+                newsTimeout = setTimeout(resolve, 3500);
+                newsTimeout.unref?.();
+              })
+            ]);
+          } finally {
+            if (newsTimeout) clearTimeout(newsTimeout);
+          }
+        }
       }
       const deskSnapshot = buildLiveDeskChatContext(snapshot(), {
         marketHub,
@@ -3502,7 +3533,7 @@ export function createReplacementRuntime(
             status: 'confirmed',
             positions: d.paper.positions.map((p) => ({ symbol: p.symbol, side: p.side, qty: p.qty }))
           };
-          const mt = Math.round(Math.max(0, val - d.paper.safetyNet) * 100) / 100;
+          const mt = floorUsdt(val - d.paper.safetyNet);
           d.paper.moneyTrade = mt;
           d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, d.paper.orderSizePct);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
@@ -3537,7 +3568,7 @@ export function createReplacementRuntime(
           if (d.trading) {
             d.trading.values.safetyNet = val;
           }
-          const mt = Math.round(Math.max(0, d.paper.balance - val) * 100) / 100;
+          const mt = floorUsdt(d.paper.balance - val);
           d.paper.moneyTrade = mt;
           d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, d.paper.orderSizePct);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
@@ -3572,7 +3603,7 @@ export function createReplacementRuntime(
           if (d.trading) {
             d.trading.values.maxPositions = count;
           }
-          const mt = Math.round(Math.max(0, d.paper.balance - d.paper.safetyNet) * 100) / 100;
+          const mt = floorUsdt(d.paper.balance - d.paper.safetyNet);
           d.paper.moneyTrade = mt;
           d.paper.perOrder = ownerAllocationPerOrder(mt, count, d.paper.orderSizePct);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < count;
@@ -3647,7 +3678,7 @@ export function createReplacementRuntime(
           if (d.trading) {
             d.trading.values.orderSizePct = null;
           }
-          const mt = Math.round(Math.max(0, d.paper.balance - d.paper.safetyNet) * 100) / 100;
+          const mt = floorUsdt(d.paper.balance - d.paper.safetyNet);
           d.paper.moneyTrade = mt;
           d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, null);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
@@ -3672,7 +3703,7 @@ export function createReplacementRuntime(
           if (d.trading) {
             d.trading.values.orderSizePct = valNum;
           }
-          const mt = Math.round(Math.max(0, d.paper.balance - d.paper.safetyNet) * 100) / 100;
+          const mt = floorUsdt(d.paper.balance - d.paper.safetyNet);
           d.paper.moneyTrade = mt;
           d.paper.perOrder = ownerAllocationPerOrder(mt, d.paper.n, valNum);
           d.paper.canOpen = d.paper.perOrder > 0 && d.paper.positions.length < d.paper.n;
@@ -4665,17 +4696,28 @@ export async function startReplacementServer(
       if (!qty || qty === '0') {
         const snapNow = runtimeRef?.snapshot() ?? state;
         const perOrder = resolveOwnerPerOrderUsdt(snapNow.paper);
+        const rawVenueAvail = snapNow.mode !== 'PAPER'
+          ? Number(snapNow.venueAccount?.available ?? snapNow.financial.availableBalance.value)
+          : NaN;
+        const effectiveMargin = floorUsdt(
+          snapNow.mode !== 'PAPER' && Number.isFinite(rawVenueAvail) && rawVenueAvail > 0
+            ? Math.min(perOrder, rawVenueAvail)
+            : perOrder
+        );
         const refPrice = limitPrice && Number(limitPrice) > 0
           ? Number(limitPrice)
           : Number(snapNow.tickers[symbol]?.last ?? (await venueAdapter.quote(symbol).catch(() => null))?.last ?? 0);
         const rules = await venueAdapter.instruments(symbol).catch(() => null);
         const sized = sizeSovereignOrderQuantity({
-          marginUsdt: perOrder,
+          marginUsdt: effectiveMargin,
           leverage,
           entryPrice: refPrice,
           qtyStep: rules?.qtyStep ?? (refPrice > 0 && refPrice < 0.01 ? '1' : '0.0001'),
           minQty: rules?.minQty ?? null,
-          contractMultiplier: rules?.contractMultiplier ?? '1'
+          contractMultiplier: rules?.contractMultiplier ?? '1',
+          takerFeeRate: snapNow.mode === 'PAPER' ? 0 : 0.00075,
+          side,
+          orderType
         });
         if (!sized.ok) {
           return {
@@ -5111,7 +5153,7 @@ export async function startReplacementServer(
               };
             })
           };
-          d.paper.balance = Math.round((eq - totalUnrealized) * 100) / 100;
+          d.paper.balance = floorUsdt(eq - totalUnrealized);
           d.paper.unrealized = totalUnrealized;
           d.paper.equity = eq;
 
@@ -5189,10 +5231,15 @@ export async function startReplacementServer(
           const trading = settings.current().effective.trading;
           const slots = Math.max(1, Math.min(4, Math.floor(d.paper.n ?? trading.maxPositions ?? 1)));
           const safety = trading.safetyNet ?? d.paper.safetyNet;
-          const mt = Math.round(Math.max(0, eq - safety) * 100) / 100;
+          const mt = floorUsdt(eq - safety);
           d.paper.safetyNet = safety;
           d.paper.n = slots;
           d.paper.moneyTrade = mt;
+          d.dailyLoss = {
+            ...d.dailyLoss,
+            limitPct: trading.dailyLossLimitPct ?? d.dailyLoss.limitPct,
+            startEquity: d.dailyLoss.startEquity > 0 ? d.dailyLoss.startEquity : eq
+          };
           const effectiveOrderSizePct = trading.orderSizePct === 1.5 ? null : (trading.orderSizePct ?? null);
           d.paper.orderSizePct = effectiveOrderSizePct;
           d.paper.perOrder = ownerAllocationPerOrder(mt, slots, effectiveOrderSizePct);
@@ -5815,7 +5862,7 @@ export async function startReplacementServer(
             if (bal.available != null) {
               const avNum = Number(bal.available);
               if (Number.isFinite(avNum)) {
-                draft.paper.balance = Math.round(avNum * 100) / 100;
+                draft.paper.balance = floorUsdt(avNum);
               }
             }
             const symUpper = frame.symbol.toUpperCase();
@@ -5874,7 +5921,7 @@ export async function startReplacementServer(
             const totalUpnl = Math.round(draft.paper.positions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0) * 100) / 100;
             draft.paper.unrealized = totalUpnl;
             draft.paper.equity = Math.round((draft.paper.balance + totalUpnl) * 100) / 100;
-            const mt = Math.round(Math.max(0, draft.paper.balance - draft.paper.safetyNet) * 100) / 100;
+            const mt = floorUsdt(draft.paper.balance - draft.paper.safetyNet);
             draft.paper.moneyTrade = mt;
             draft.paper.perOrder = ownerAllocationPerOrder(mt, draft.paper.n, draft.paper.orderSizePct);
             draft.paper.canOpen = draft.paper.perOrder > 0 && draft.paper.positions.length < draft.paper.n;

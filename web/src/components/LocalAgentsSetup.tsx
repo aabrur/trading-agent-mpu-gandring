@@ -432,7 +432,7 @@ export function LocalAgentsSetup({ available }: { available: boolean }) {
                             <input
                               type="text"
                               value={currentSettings.model || ''}
-                              placeholder="e.g. gpt-5, claude-3-7-sonnet"
+                              placeholder="e.g. gemini-4-hydrogen-high, gpt-6.2-sol, claude-opus-5-5"
                               onChange={(e) => {
                                 const val = e.target.value;
                                 setEditSettings((old) => ({ ...old, [a.id]: { ...old[a.id], model: val } }));

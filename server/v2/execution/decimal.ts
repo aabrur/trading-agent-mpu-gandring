@@ -187,8 +187,21 @@ export function sizeSovereignOrderQuantity(params: {
   qtyStep?: string | null;
   minQty?: string | null;
   contractMultiplier?: string | number | null;
+  takerFeeRate?: number | null;
+  side?: 'LONG' | 'SHORT';
+  orderType?: 'MARKET' | 'LIMIT_GTC';
 }): { ok: true; qty: string } | { ok: false; reason: string } {
-  const { marginUsdt, leverage, entryPrice, qtyStep, minQty, contractMultiplier } = params;
+  const {
+    marginUsdt,
+    leverage,
+    entryPrice,
+    qtyStep,
+    minQty,
+    contractMultiplier,
+    takerFeeRate,
+    side,
+    orderType
+  } = params;
   if (!Number.isFinite(marginUsdt) || marginUsdt <= 0) {
     return { ok: false, reason: 'Owner-derived per-order margin is 0; refusing to substitute a fallback size.' };
   }
@@ -198,7 +211,13 @@ export function sizeSovereignOrderQuantity(params: {
   const lev = Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
   const parsedMult = contractMultiplier != null ? Number(contractMultiplier) : 1;
   const mult = Number.isFinite(parsedMult) && parsedMult > 0 ? parsedMult : 1;
-  const rawNotional = marginUsdt * lev;
+  const feeRate = takerFeeRate != null && Number.isFinite(takerFeeRate) && takerFeeRate > 0 ? takerFeeRate : 0;
+  // Exact exchange Order Cost accounting (IM + open taker fee + bankruptcy close taker fee + tiny market fill tick cushion).
+  // Preserves 100% of Owner's sovereign margin, safetyNet, N, and leverage without paternalistic haircuts.
+  const closeFeeFactor = side === 'SHORT' ? 1 + 1 / lev : 1;
+  const marketSlippageMult = orderType === 'MARKET' && feeRate > 0 ? 1.0005 : 1;
+  const effectiveMarginRate = (1 / lev + feeRate * (1 + closeFeeFactor)) * marketSlippageMult;
+  const rawNotional = feeRate > 0 ? marginUsdt / effectiveMarginRate : marginUsdt * lev;
   const rawQty = (rawNotional / (entryPrice * mult)).toFixed(12);
   const step = qtyStep && compareDecimals(qtyStep, '0') > 0 ? qtyStep : '0.0001';
   const floored = quantize(rawQty, step, 'floor');

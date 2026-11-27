@@ -10,13 +10,13 @@ import { AgentWorkQueue } from './work-queue.js';
 import { researchArgs, researchEnvironment, researchPolicy, type ResearchPolicy } from './research-policy.js';
 
 export const LOCAL_AGENTS = [
-  { id: 'codex', bin: 'codex', label: 'Codex', login: ['login'], docs: 'https://developers.openai.com/codex/cli', models: ['default', 'gpt-6-astra', 'gpt-6.1-sol'] },
-  { id: 'claude', bin: 'claude', label: 'Claude Code', login: ['auth', 'login'], docs: 'https://code.claude.com/docs/en/cli-reference', models: ['default', 'opus', 'sonnet'] },
-  { id: 'pi', bin: 'pi', label: 'Pi', login: [], docs: 'https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent', models: ['default'] },
-  { id: 'kimi', bin: 'kimi', label: 'Kimi Code', login: ['login'], docs: 'https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html', models: ['default'] },
-  { id: 'kilo', bin: 'kilo', label: 'Kilo', login: ['auth', 'login'], docs: 'https://kilo.ai/docs/code-with-ai/platforms/cli', models: ['default'] },
-  { id: 'cline', bin: 'cline', label: 'Cline', login: ['auth'], docs: 'https://docs.cline.bot/cline-cli/overview', models: ['default'] },
-  { id: 'grok', bin: 'grok', label: 'Grok Build', login: ['login'], docs: 'https://docs.x.ai/build/cli/headless-scripting', models: ['default'] },
+  { id: 'codex', bin: 'codex', label: 'Codex', login: ['login'], docs: 'https://developers.openai.com/codex/cli', models: ['default', 'gpt-6.2-astra', 'gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna'] },
+  { id: 'claude', bin: 'claude', label: 'Claude Code', login: ['auth', 'login'], docs: 'https://code.claude.com/docs/en/cli-reference', models: ['default', 'opus', 'sonnet', 'haiku', 'fable', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'] },
+  { id: 'pi', bin: 'pi', label: 'Pi', login: [], docs: 'https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent', models: ['default', 'openrouter/~anthropic/claude-opus-latest', 'openrouter/~anthropic/claude-sonnet-latest', 'openrouter/~anthropic/claude-fable-latest', 'openrouter/~openai/gpt-astra-latest', 'openrouter/~openai/gpt-sol-latest', 'openrouter/~openai/gpt-luna-latest', 'openrouter/~google/gemini-pro-latest', 'openrouter/~deepseek/deepseek-pro-latest', 'openrouter/~x-ai/grok-latest'] },
+  { id: 'kimi', bin: 'kimi', label: 'Kimi Code', login: ['login'], docs: 'https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html', models: ['default', 'kimi-k3.1-pro', 'kimi-k3', 'kimi-for-coding', 'kimi-k2.8-preview'] },
+  { id: 'kilo', bin: 'kilo', label: 'Kilo', login: ['auth', 'login'], docs: 'https://kilo.ai/docs/code-with-ai/platforms/cli', models: ['default', 'kilo/~anthropic/claude-opus-latest', 'kilo/~anthropic/claude-sonnet-latest', 'kilo/~anthropic/claude-fable-latest', 'kilo/~openai/gpt-sol-latest', 'kilo/~openai/gpt-luna-latest', 'kilo/anthropic/claude-opus-5.5', 'kilo/anthropic/claude-sonnet-5.5', 'kilo/anthropic/claude-fable-5.2', 'kilo/google/gemini-4-hydrogen', 'kilo/google/gemini-4-neon', 'kilo/google/gemini-4-carbon', 'kilo/openai/gpt-6.1-sol', 'kilo/openai/gpt-6-astra', 'kilo/openai/gpt-6-luna', 'kilo/moonshotai/kimi-k3.1-pro'] },
+  { id: 'cline', bin: 'cline', label: 'Cline', login: ['auth'], docs: 'https://docs.cline.bot/cline-cli/overview', models: ['default', 'anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5.5', 'anthropic/claude-fable-5.2', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna', 'google/gemini-4-hydrogen', 'google/gemini-4-neon', 'deepseek/deepseek-v4.1-flash'] },
+  { id: 'grok', bin: 'grok', label: 'Grok Build', login: ['login'], docs: 'https://docs.x.ai/build/cli/headless-scripting', models: ['default', 'grok-4.7', 'grok-4.6', 'grok-4.5'] },
   {
     id: 'antigravity',
     bin: 'agy',
@@ -25,17 +25,23 @@ export const LOCAL_AGENTS = [
     docs: 'https://antigravity.google',
     models: [
       'default',
-      'gemini-3.8-flash-high',
-      'gemini-3.8-flash-medium',
-      'gemini-3.8-flash-low',
-      'gemini-4-argon-high',
-      'gemini-4-argon-medium',
-      'gemini-4-argon-low',
+      'gemini-4-hydrogen-xhigh',
+      'gemini-4-hydrogen-high',
+      'gemini-4-hydrogen-medium',
+      'gemini-4-hydrogen-low',
+      'gemini-4-neon-xhigh',
+      'gemini-4-neon-high',
+      'gemini-4-neon-medium',
+      'gemini-4-neon-low',
+      'gemini-4-carbon-high',
+      'gemini-4-carbon-medium',
+      'gemini-4-carbon-low',
       'claude-opus-5-5-high',
-      'claude-sonnet-5-5-high',
       'claude-opus-5-5-medium',
+      'claude-opus-5-5-low',
+      'claude-sonnet-5-5-high',
       'claude-sonnet-5-5-medium',
-      'gpt-oss-120b-medium'
+      'claude-sonnet-5-5-low'
     ]
   },
   {
@@ -44,7 +50,7 @@ export const LOCAL_AGENTS = [
     label: 'Hermes Agent',
     login: ['setup'],
     docs: 'https://hermes-agent.nousresearch.com',
-    models: ['default', 'ornith/ornith-1.5-122b:free', 'anthropic/claude-sonnet-4.6', 'nous/hermes-3-llama-3.1-405b']
+    models: ['default', 'nousresearch/hermes-4-405b', 'nousresearch/hermes-4-70b', 'anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5.5', 'anthropic/claude-fable-5.2', 'openai/gpt-6-astra', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna', 'deepseek/deepseek-v4.1-flash']
   },
   {
     id: 'openclaw',
@@ -52,7 +58,7 @@ export const LOCAL_AGENTS = [
     label: 'OpenClaw',
     login: ['configure'],
     docs: 'https://docs.openclaw.ai',
-    models: ['default', 'openai/gpt-5.5', 'anthropic/claude-sonnet-5-5']
+    models: ['default', 'anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5', 'anthropic/claude-fable-5', 'anthropic/claude-opus-4-8', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna', 'openai/gpt-5.6-sol', 'together/deepseek-ai/DeepSeek-V4-Pro']
   },
   {
     id: 'copilot',
@@ -60,7 +66,7 @@ export const LOCAL_AGENTS = [
     label: 'GitHub Copilot',
     login: ['login'],
     docs: 'https://github.com/features/copilot',
-    models: ['default', 'auto', 'claude-3.5-sonnet', 'gpt-4o']
+    models: ['default', 'auto', 'claude-opus-5.5', 'claude-sonnet-5.5', 'claude-fable-5.2', 'claude-haiku-5.5', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.4']
   },
   {
     id: 'cursor',
@@ -68,7 +74,7 @@ export const LOCAL_AGENTS = [
     label: 'Cursor Agent',
     login: ['login'],
     docs: 'https://docs.cursor.com/agent',
-    models: ['default', 'auto', 'claude-3.5-sonnet', 'gpt-5']
+    models: ['default', 'auto', 'composer-2.5', 'claude-opus-5.5', 'claude-sonnet-5.5', 'claude-fable-5.2', 'gpt-6.1-sol', 'gpt-5.6-sol', 'grok-4.7']
   },
   {
     id: 'qwen',
@@ -76,7 +82,7 @@ export const LOCAL_AGENTS = [
     label: 'Qwen Code',
     login: ['login'],
     docs: 'https://qwenlm.github.io/qwen-code',
-    models: ['default', 'qwen-2.5-coder-32b', 'qwen-max']
+    models: ['default', 'qwen4-max', 'qwen3.5-plus', 'qwen3-coder-plus', 'qwen3-coder-480b-a35b-instruct', 'qwen3-coder-next']
   },
   {
     id: 'opencode',
@@ -84,7 +90,7 @@ export const LOCAL_AGENTS = [
     label: 'OpenCode',
     login: ['login'],
     docs: 'https://opencode.ai',
-    models: ['default', 'anthropic/claude-sonnet-5-5', 'openai/gpt-5']
+    models: ['default', 'anthropic/claude-opus-5-5', 'anthropic/claude-sonnet-5-5', 'anthropic/claude-fable-5-2', 'openai/gpt-6.2-astra', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna', 'google/gemini-4-hydrogen', 'google/gemini-4-neon', 'deepseek/deepseek-v4.1-flash']
   },
   {
     id: 'muse',
@@ -92,7 +98,7 @@ export const LOCAL_AGENTS = [
     label: 'Muse Code',
     login: ['login'],
     docs: 'https://dev.meta.ai',
-    models: ['default', 'muse-spark-1.3']
+    models: ['default', 'muse-spark-1.3', 'muse-spark-1.3-contributor', 'muse-ember']
   }
 ] as const;
 export type LocalAgentId = (typeof LOCAL_AGENTS)[number]['id'];
@@ -199,6 +205,7 @@ async function discoverModels(id: LocalAgentId, refresh: boolean): Promise<Local
           const line = lines[index];
           const model = line.trim().split(/\s+/)[0];
           if (!modelIdOk(model) || !(model.includes('/') || id === 'antigravity' && line.includes('\t'))) continue;
+          if (id === 'antigravity' && !/^(gemini-4-(hydrogen|neon|carbon)-|claude-(opus|sonnet)-)/.test(model)) continue;
           let levels: string[] = [];
           if (id === 'antigravity') levels = [...LOCAL_EFFORTS.antigravity!];
           else if (lines[index + 1] === '{') {

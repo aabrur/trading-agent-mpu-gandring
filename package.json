@@ -1,8 +1,9 @@
 {
   "name": "trading-agent-mpu-gandring",
-  "version": "0.4.33",
-  "appVersion": "0.0.0.4.33",
+  "version": "0.4.34",
+  "appVersion": "0.0.0.4.34",
   "changelog": [
+    "v0.0.0.4.34: Exact Bybit V5 Order Cost sizing and floorUsdt precision fixing 110007 under full Owner sovereignty, zero hidden gates or paternalistic throttling, EMA200 kline backfill (limit 250), 4-decimal quantFactors precision, liveNews watchlist coverage, real LIVE/PAPER startup reports and dailyLoss sync, Windows TelegramPoller AbortSignal stability fix, and full model catalog refresh across Antigravity (hydrogen, neon, carbon, opus, sonnet only) and all 16 local AI CLI agents.",
     "v0.0.0.4.33: Sovereign direct-price SL/TP math, hardened 8-venue LIVE execution and live 6-agent Q&A, real-time chart candle streaming, night-theme contrast, and clean S5 release gate.",
     "v0.0.0.4.32: added 10 OpenRouter Decisions API models (5 Top Token Usage and 5 Top Tier) to Jev setup with runtime hot-reload and .env persistence, fixed CoinMarketCap v3 live quote schema coercion and primary-rank symbol filtering, fixed OKX public instruments/quote endpoints without credentials, aligned V2 agent SL/TP system prompt contract with direct entry price percentage math, and hardened claude/codex/cline headless CLI spawn flags.",
     "v0.0.0.4.31: local CLI Windows spawn ENAMETOOLONG resolution via Node shim unwrapping and stdin/file prompt transport, tactical desk SL/TP preservation from debate consensus, deliberation robustness on CLI timeout, symbol-isolated critical news filtering, chronological chat message ordering, and lean multi-timeframe SMC prompt context.",

@@ -83,4 +83,35 @@ describe('Sovereign direct-price SL/TP precision & quantity sizing', () => {
     });
     expect(okxValid).toEqual({ ok: true, qty: '1' });
   });
+
+  it('accounts for Bybit V5 Order Cost (IM + open/close taker fees) without altering Owner safetyNet=0 or N=1', () => {
+    const avail = 33.206;
+    const marginFloored = Math.floor(avail * 100) / 100; // 33.20 (never rounded up to 33.21)
+    const fee = 0.00075;
+
+    for (const [entryPrice, expectedQty] of [
+      [1729.8, '0.18'],
+      [748.0, '0.43']
+    ] as const) {
+      for (const side of ['LONG', 'SHORT'] as const) {
+        const res = sizeSovereignOrderQuantity({
+          marginUsdt: marginFloored,
+          leverage: 10,
+          entryPrice,
+          qtyStep: '0.01',
+          minQty: '0.01',
+          takerFeeRate: fee,
+          side,
+          orderType: 'MARKET'
+        });
+        expect(res).toEqual({ ok: true, qty: expectedQty });
+        if (res.ok) {
+          const notional = Number(res.qty) * entryPrice;
+          const closeFactor = side === 'SHORT' ? 1 + 1 / 10 : 1 - 1 / 10;
+          const bybitOrderCost = notional / 10 + notional * fee * (1 + closeFactor);
+          expect(bybitOrderCost).toBeLessThanOrEqual(avail);
+        }
+      }
+    }
+  });
 });

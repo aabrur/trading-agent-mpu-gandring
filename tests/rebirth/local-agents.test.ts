@@ -148,4 +148,34 @@ describe('Local CLI Agents Integration', () => {
       expect(data.state).toBe('MODEL NOT VERIFIED');
     });
   });
+
+  it('exposes refreshed Nov 2026 model catalogs across all 16 local CLI agents and removes flash/argon from Antigravity', async () => {
+    await withTestApp(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/setup/local-agents`);
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        ok: boolean;
+        agents: Array<{ id: string; models: string[] }>;
+      };
+      expect(data.ok).toBe(true);
+      expect(data.agents).toHaveLength(16);
+
+      const agy = data.agents.find((a) => a.id === 'antigravity');
+      expect(agy).toBeDefined();
+      const agyModels = agy!.models;
+      expect(agyModels).toContain('gemini-4-hydrogen-high');
+      expect(agyModels).toContain('gemini-4-neon-high');
+      expect(agyModels).toContain('gemini-4-carbon-high');
+      expect(agyModels).toContain('claude-opus-5-5-high');
+      expect(agyModels).toContain('claude-sonnet-5-5-high');
+      expect(agyModels.some((m) => /flash|argon|gpt-oss/i.test(m))).toBe(false);
+
+      for (const agent of data.agents) {
+        expect(agent.models.length).toBeGreaterThan(1);
+        expect(agent.models).not.toContain('claude-3.5-sonnet');
+        expect(agent.models).not.toContain('gpt-4o');
+        expect(agent.models).not.toContain('qwen-2.5-coder-32b');
+      }
+    });
+  });
 });
